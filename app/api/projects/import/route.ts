@@ -1,0 +1,129 @@
+import { NextRequest, NextResponse } from "next/server";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
+import { db } from "@/lib/db";
+import { settings } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { spawnClaude } from "@/lib/claude/spawn";
+import { buildImportPrompt } from "@/lib/claude/prompt-builder";
+import { arjiJsonExists, readArjiJson } from "@/lib/sync/arji-json";
+
+const ARJI_JSON = "arji.json";
+
+export async function POST(request: NextRequest) {
+  const body = await request.json();
+
+  if (!body.path) {
+    return NextResponse.json({ error: "path is required" }, { status: 400 });
+  }
+
+  // Check if arji.json already exists — skip Claude analysis if so
+  try {
+    if (await arjiJsonExists(body.path)) {
+      const existing = await readArjiJson(body.path);
+      if (existing && existing.project && Array.isArray(existing.epics)) {
+        return NextResponse.json({
+          data: { preview: existing, path: body.path, fromExistingFile: true },
+        });
+      }
+    }
+  } catch (e) {
+    // Invalid arji.json — fall through to Claude analysis
+    console.warn("[import] Existing arji.json is invalid, running Claude analysis:", e);
+  }
+
+  const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
+  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+
+  const prompt = buildImportPrompt(globalPrompt);
+
+  try {
+    console.log("[import] Spawning Claude CLI with cwd:", body.path);
+    console.log("[import] Prompt length:", prompt.length);
+
+    const { promise } = spawnClaude({
+      mode: "analyze",
+      prompt,
+      cwd: body.path,
+    });
+
+    const result = await promise;
+
+    console.log("[import] Claude CLI result:", {
+      success: result.success,
+      duration: result.duration,
+      error: result.error,
+      resultLength: result.result?.length ?? 0,
+    });
+
+    if (!result.success) {
+      return NextResponse.json({
+        error: result.error || "Claude Code failed",
+        debug: {
+          duration: result.duration,
+          rawOutput: result.result?.slice(0, 2000),
+        },
+      }, { status: 500 });
+    }
+
+    // Read the arji.json file that Claude Code wrote to disk
+    const arjiPath = join(body.path, ARJI_JSON);
+    let rawJson: string;
+
+    try {
+      rawJson = await readFile(arjiPath, "utf-8");
+    } catch {
+      return NextResponse.json(
+        {
+          error: `Claude Code finished but did not write ${ARJI_JSON}. The analysis file was not found at: ${arjiPath}`,
+          debug: {
+            duration: result.duration,
+            rawOutput: result.result?.slice(0, 2000),
+          },
+        },
+        { status: 500 }
+      );
+    }
+
+    let importData: Record<string, unknown>;
+
+    try {
+      importData = JSON.parse(rawJson);
+    } catch {
+      return NextResponse.json(
+        {
+          error: `${ARJI_JSON} exists but contains invalid JSON.`,
+          debug: {
+            duration: result.duration,
+            rawPreview: rawJson.slice(0, 2000),
+          },
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!importData.project || !importData.epics) {
+      return NextResponse.json(
+        {
+          error: `${ARJI_JSON} is missing required "project" or "epics" keys.`,
+          debug: {
+            duration: result.duration,
+            keys: Object.keys(importData),
+          },
+        },
+        { status: 500 }
+      );
+    }
+
+    return NextResponse.json({ data: { preview: importData, path: body.path } });
+  } catch (e) {
+    console.error("[import] Unexpected error:", e);
+    return NextResponse.json(
+      {
+        error: e instanceof Error ? e.message : "Unknown error",
+        debug: { stack: e instanceof Error ? e.stack : undefined },
+      },
+      { status: 500 }
+    );
+  }
+}

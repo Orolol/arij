@@ -1,0 +1,103 @@
+"use client";
+
+import Link from "next/link";
+import { useParams, usePathname } from "next/navigation";
+import { ArrowLeft, Kanban, FileText, Files, Activity, Tag } from "lucide-react";
+import { ChatPanel } from "@/components/chat/ChatPanel";
+import { useEffect, useState } from "react";
+import { cn } from "@/lib/utils";
+
+export default function ProjectLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  const params = useParams();
+  const pathname = usePathname();
+  const projectId = params.projectId as string;
+  const [projectName, setProjectName] = useState("...");
+  const [chatOpen, setChatOpen] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/projects/${projectId}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.data) setProjectName(d.data.name);
+      })
+      .catch(() => {});
+  }, [projectId]);
+
+  const navItems = [
+    { href: `/projects/${projectId}`, label: "Kanban", icon: Kanban },
+    { href: `/projects/${projectId}/spec`, label: "Spec", icon: FileText },
+    { href: `/projects/${projectId}/documents`, label: "Docs", icon: Files },
+    {
+      href: `/projects/${projectId}/sessions`,
+      label: "Sessions",
+      icon: Activity,
+    },
+    {
+      href: `/projects/${projectId}/releases`,
+      label: "Releases",
+      icon: Tag,
+    },
+  ];
+
+  return (
+    <div className="flex flex-col h-full">
+      <header className="border-b border-border px-4 py-3 flex items-center gap-4 shrink-0">
+        <Link
+          href="/"
+          className="text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <ArrowLeft className="h-4 w-4" />
+        </Link>
+        <h1 className="font-semibold text-lg">{projectName}</h1>
+        <nav className="flex items-center gap-1 ml-4">
+          {navItems.map((item) => {
+            const isActive =
+              item.href === `/projects/${projectId}`
+                ? pathname === item.href
+                : pathname.startsWith(item.href);
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                className={cn(
+                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors",
+                  isActive
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                )}
+              >
+                <item.icon className="h-4 w-4" />
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+        <div className="ml-auto">
+          <button
+            onClick={() => setChatOpen(!chatOpen)}
+            className={cn(
+              "px-3 py-1.5 rounded-md text-sm transition-colors",
+              chatOpen
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+            )}
+          >
+            Chat
+          </button>
+        </div>
+      </header>
+      <div className="flex flex-1 overflow-hidden">
+        <div className="flex-1 overflow-auto">{children}</div>
+        {chatOpen && (
+          <div className="w-96 border-l border-border shrink-0">
+            <ChatPanel projectId={projectId} />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
