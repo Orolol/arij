@@ -187,12 +187,12 @@ export async function POST(request: NextRequest, { params }: Params) {
       })
       .run();
 
-    // Spawn Claude in plan mode (read-only)
+    // Spawn agent in plan mode (read-only)
     processManager.start(sessionId, {
       mode: "plan",
       prompt,
       cwd: worktreePath,
-    });
+    }, provider);
 
     // Background: wait for completion, post review comment
     const label = REVIEW_LABELS[reviewType];

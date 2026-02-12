@@ -46,7 +46,7 @@ export default function KanbanPage() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const { activeSessions } = useAgentPolling(projectId);
-  const { codexAvailable } = useCodexAvailable();
+  const { codexAvailable, codexInstalled } = useCodexAvailable();
   const prevSessionIds = useRef<Set<string>>(new Set());
 
   // Reset team mode when selection drops below 2 or provider changes to codex
@@ -173,6 +173,7 @@ export default function KanbanPage() {
             value={provider}
             onChange={setProvider}
             codexAvailable={codexAvailable}
+            codexInstalled={codexInstalled}
           />
 
           <Select

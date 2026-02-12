@@ -15,6 +15,7 @@ import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import { buildBuildPrompt } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import type { ProviderType } from "@/lib/providers";
 import fs from "fs";
 import path from "path";
 
@@ -38,6 +39,7 @@ function hasRunningBuildForEpic(epicId: string): boolean {
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
   const body = await request.json().catch(() => ({}));
+  const provider: ProviderType = body.provider || "claude-code";
 
   // Validate epic exists
   const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
@@ -144,6 +146,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       epicId,
       status: "running",
       mode: "code",
+      provider,
       prompt,
       logsPath,
       branchName,
@@ -169,13 +172,13 @@ export async function POST(request: NextRequest, { params }: Params) {
     )
     .run();
 
-  // Spawn Claude Code
+  // Spawn agent
   processManager.start(sessionId, {
     mode: "code",
     prompt,
     cwd: worktreePath,
     allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-  });
+  }, provider);
 
   // Background: wait for completion, sync statuses, post agent comment
   (async () => {

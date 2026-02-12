@@ -38,7 +38,7 @@ export default function StoryDetailPage() {
     approve,
   } = useTicketAgent(projectId, storyId);
 
-  const { codexAvailable } = useCodexAvailable();
+  const { codexAvailable, codexInstalled } = useCodexAvailable();
 
   if (storyLoading) {
     return (
@@ -85,6 +85,7 @@ export default function StoryDetailPage() {
           isRunning={isRunning}
           activeSessions={activeSessions}
           codexAvailable={codexAvailable}
+          codexInstalled={codexInstalled}
           onSendToDev={async (comment, provider) => {
             await sendToDev(comment, provider);
             refreshStory();

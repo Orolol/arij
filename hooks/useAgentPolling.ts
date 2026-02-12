@@ -7,6 +7,7 @@ interface ActiveSession {
   epicId: string | null;
   status: string;
   mode: string;
+  provider: string | null;
   startedAt: string | null;
 }
 

@@ -1,0 +1,19 @@
+On va s'occuper des ticket : 
+
+1) On va y ajouter un système de commentaire 
+2) On va mettre les outputs finaux de CC en commentaire lorsqu'il a fini de traiter / review le ticket
+3) L'user peut ajouter un comentaire lui même.
+4) un Ticket en Todo / InProgress peut être renvoyer en dev (CC dispose des commentaires du ticket)
+5) Un ticket en REview va disposer de plusieurs options : 
+Renvoyer en Dev (on oblige a mettre un commentaire pour cette toption, à la validation, on met un agent au taf dessus et le ticket repasse a inprogress)
+Agent review , avec 3 options : Security, Code Review, Complience / accessibility (checkbox) Cacune des options va être attribué a un agent différent chargéde faire la review en question.
+
+
+
+'aimerais qu'on avance sur l'intégration avec github, qu'on puisse voir la branche actuelle, qu'on puisse se sync avec la branche remote, etc .. et de l'autre côté qu'une issue sur github puisse être incluse dans une épic (dans le chat d'une nouvelle epic, on a un sleecteur qui permet d'ajouter une ou plusieurs issue a une epic)
+
+Il faut qu'on gère les Agent teams. Quand on sélectionne plusieurs ticket, je veux qu'on ait une option pour lancer en Team. Dans ce mode, on va utiliser la fonctionnalité de Claude Code qui va gérer les X ticket en même temps, et on va lui demander de générer une équipe de sous agent pour s'occuper de ces ticket. On laisse CC gérer le nombre et la composition de ces équipes. 
+Si on ne coche pas cette case, on reste dans le mode actuel, X agent CC séparés
+
+
+On va rework la partie chat / chat de création d'epic en une seul composant, qui va de base être replié sur la droite de l'écran (mais on va en voir genre 5% en grisé sur le côté). Quand on clique sur Chat, ou New epic, on va déplier ce composant. PLut^ot que d'être au dessus du board, on va partagé l'écran en 2 avec une partie chat et une partie board, et la taille respective des deux resizable. QUand un agent travail sur un chat, on a une icone qui indique ça dans les onglets. Et il faut que la sélection du type d'agent soit bien rpésente sur chaque nouveau chat

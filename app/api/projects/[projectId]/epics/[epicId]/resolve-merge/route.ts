@@ -19,6 +19,7 @@ import {
 import { processManager } from "@/lib/claude/process-manager";
 import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import type { ProviderType } from "@/lib/providers";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import fs from "fs";
 import path from "path";
@@ -39,8 +40,10 @@ function hasRunningSessionForEpic(epicId: string): boolean {
   return running.length > 0;
 }
 
-export async function POST(_request: NextRequest, { params }: Params) {
+export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
+  const body = await request.json().catch(() => ({}));
+  const provider: ProviderType = body.provider || "claude-code";
 
   // Validate project
   const project = db
@@ -165,6 +168,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
       epicId,
       status: "running",
       mode: "code",
+      provider,
       prompt,
       logsPath,
       branchName,
@@ -174,13 +178,13 @@ export async function POST(_request: NextRequest, { params }: Params) {
     })
     .run();
 
-  // Spawn Claude in the worktree
+  // Spawn agent in the worktree
   processManager.start(sessionId, {
     mode: "code",
     prompt,
     cwd: worktreePath,
     allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-  });
+  }, provider);
 
   // Background completion handler
   (async () => {

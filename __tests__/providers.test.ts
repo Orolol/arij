@@ -12,40 +12,19 @@ vi.mock("@/lib/claude/spawn", () => ({
   })),
 }));
 
-vi.mock("@openai/codex-sdk", () => ({
-  Codex: vi.fn().mockImplementation(() => ({
-    startThread: vi.fn().mockReturnValue({
-      id: "thread-123",
-      runStreamed: vi.fn().mockResolvedValue({
-        events: (async function* () {
-          yield {
-            type: "item.completed",
-            item: { type: "agent_message", text: "Codex output" },
-          };
-          yield { type: "turn.completed", usage: { input_tokens: 10, output_tokens: 20, cached_input_tokens: 0 } };
-        })(),
-      }),
+vi.mock("@/lib/codex/spawn", () => ({
+  spawnCodex: vi.fn(() => ({
+    promise: Promise.resolve({
+      success: true,
+      result: "Codex output",
+      duration: 500,
     }),
+    kill: vi.fn(),
   })),
 }));
 
-vi.mock("@/lib/db", () => ({
-  db: {
-    select: vi.fn().mockReturnValue({
-      from: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          get: vi.fn().mockReturnValue({
-            key: "codex_api_key",
-            value: JSON.stringify("test-api-key"),
-          }),
-        }),
-      }),
-    }),
-  },
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  settings: { key: "key" },
+vi.mock("child_process", () => ({
+  execSync: vi.fn(),
 }));
 
 import { getProvider } from "@/lib/providers";
@@ -122,7 +101,7 @@ describe("CodexProvider", () => {
     expect(session.promise).toBeInstanceOf(Promise);
   });
 
-  it("spawn resolves with ProviderResult from Codex SDK", async () => {
+  it("spawn resolves with ProviderResult from Codex CLI", async () => {
     const session = provider.spawn(baseOptions);
     const result = await session.promise;
     expect(result.success).toBe(true);

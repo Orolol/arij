@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastSyncedAt": "2026-02-12T13:10:05.210Z",
+  "lastSyncedAt": "2026-02-12T16:08:47.763Z",
   "project": {
     "name": "Arij",
     "description": "A local, AI-first project orchestrator that provides a web interface for managing multi-project workflows with Claude Code as the execution engine. It covers the full project lifecycle: ideation, specification, kanban-based planning, automated code generation via Claude Code CLI, real-time agent monitoring, and release management.",
@@ -44,12 +44,103 @@
       ]
     },
     {
+      "id": "rLeT3OSozRSp",
+      "title": "Agent Teams & Codex Provider Integration",
+      "description": "Two-part feature: (1) Agent Teams mode that leverages Claude Code's native Task tool to delegate multiple tickets to sub-agents in a single session, and (2) OpenAI Codex integration as an alternative AI provider alongside Claude Code.\n\n## Implementation Plan\n\n### Part A — Agent Teams (Claude Code Only)\n\n**Schema & Data Layer:**\n- Add `orchestrationMode` column to `agentSessions` table (`'solo' | 'team'`, default `'solo'`)\n- Team mode is exclusive to Claude Code (Codex has no equivalent sub-agent delegation)\n\n**Prompt Builder:**\n- New `buildTeamBuildPrompt()` function that describes all selected epics with their worktree paths\n- Instructs Claude Code to act as a team lead and use the `Task` tool to spawn sub-agents per ticket\n- Lets CC decide team composition and size\n\n**Build Route Changes:**\n- When `team=true` in the batch build request, pre-create all git worktrees for selected epics\n- Spawn a single CC session from the main repo root (not inside a worktree)\n- Add `Task` to the `--allowedTools` list for team mode\n- Track as a single `agentSession` with `orchestrationMode: 'team'`\n- On completion, update all associated epics' statuses\n\n**UI — Build Toolbar:**\n- Add 'Team mode' checkbox in the build toolbar, visible when 2+ epics are selected\n- Checkbox disabled when fewer than 2 epics selected or when provider is Codex\n- Tooltip explains team mode behavior\n\n### Part B — Codex Provider Integration\n\n**Provider Abstraction Layer:**\n- New `lib/providers/` directory with provider interface (`AgentProvider`)\n- `lib/providers/claude-code.ts` — wraps existing CC spawn logic\n- `lib/providers/codex.ts` — wraps `@openai/codex-sdk` using `Codex` class, `startThread()`, `runStreamed()` for streaming events\n- `lib/providers/index.ts` — factory function `getProvider(type: 'claude-code' | 'codex')`\n- Codex provider uses `workingDirectory` option on `startThread()` for worktree paths\n\n**Schema Changes:**\n- Add `provider` column to `agentSessions` (`'claude-code' | 'codex'`, default `'claude-code'`)\n- Add `provider` column to `chatConversations` (if table exists) or chat messages\n\n**Process Manager Generalization:**\n- Refactor `lib/claude/process-manager.ts` to accept provider-agnostic session handles\n- Codex sessions tracked via thread ID, CC sessions tracked via PID\n- Unified start/cancel/status interface\n\n**Build & Review Routes:**\n- Build route accepts `provider` parameter, dispatches via provider factory\n- Review route accepts `provider` parameter\n- Send-to-dev route accepts `provider` parameter\n\n**UI — Provider Selector:**\n- Dropdown in build toolbar to choose between Claude Code and Codex\n- Provider selector in Send to Dev dialog\n- Provider selector in Agent Review dialog\n- Provider toggle in chat header (locked/disabled after first message in conversation)\n- Codex option disabled with tooltip if no API key configured\n\n**Settings:**\n- Add Codex API key field to Settings page\n- Stored in `settings` table with key `codex_api_key`\n- Validated on save (non-empty string check)\n\n**Codex SDK Integration Details:**\n- Install `@openai/codex-sdk` dependency\n- Use `new Codex({ env: { CODEX_API_KEY: ... } })` with API key from settings\n- `startThread({ workingDirectory })` for worktree-scoped execution\n- `runStreamed()` for streaming events, map to unified event format\n- Thread IDs stored in session metadata for resumption support",
+      "priority": 2,
+      "status": "done",
+      "position": 1,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "2oiRW1aYAD95",
+          "title": "As a developer, I want an orchestrationMode column on agent sessions so that team-mode builds are tracked separately from solo builds",
+          "description": "Add `orchestrationMode` column to the `agentSessions` table in the Drizzle schema with values 'solo' (default) or 'team'. This column distinguishes single-epic builds from multi-epic team-mode sessions. Add `provider` column to `agentSessions` with values 'claude-code' (default) or 'codex'. Push the schema changes.",
+          "acceptance_criteria": "- [ ] `orchestrationMode` column added to `agentSessions` with type text, default 'solo'\n- [ ] `provider` column added to `agentSessions` with type text, default 'claude-code'\n- [ ] `provider` column added to chat-related table (chatMessages or chatConversations) if applicable\n- [ ] Drizzle migration generated and pushed successfully\n- [ ] Existing agent session queries still work (default values applied)\n- [ ] TypeScript types updated to reflect new columns",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "2laGhKFTJPfT",
+          "title": "As a developer, I want a provider abstraction layer so that Claude Code and Codex can be used interchangeably for builds and reviews",
+          "description": "Create `lib/providers/` directory with a unified `AgentProvider` interface. Implement `claude-code.ts` wrapping the existing CC spawn logic and `codex.ts` wrapping `@openai/codex-sdk`. Add a factory function `getProvider(type)` that returns the appropriate provider. Install `@openai/codex-sdk` as a dependency.",
+          "acceptance_criteria": "- [ ] `lib/providers/types.ts` defines `AgentProvider` interface with `spawn`, `cancel`, `getStatus` methods\n- [ ] `lib/providers/claude-code.ts` wraps existing CC spawn logic, implements `AgentProvider`\n- [ ] `lib/providers/codex.ts` wraps `@openai/codex-sdk` using `Codex` class, `startThread()`, `runStreamed()`\n- [ ] `lib/providers/index.ts` exports `getProvider('claude-code' | 'codex')` factory\n- [ ] `@openai/codex-sdk` added to package.json dependencies\n- [ ] Codex provider uses `workingDirectory` option on `startThread()` for worktree paths\n- [ ] Codex provider reads API key from settings table",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "PC2XRYOn_NmK",
+          "title": "As a developer, I want a team build prompt so that Claude Code can act as team lead and delegate tickets to sub-agents",
+          "description": "Create `buildTeamBuildPrompt()` in `lib/claude/prompt-builder.ts`. The prompt describes all selected epics with their worktree paths, user stories, and acceptance criteria. It instructs Claude Code to act as a team lead, use the `Task` tool to spawn sub-agents, and lets CC decide team composition and task allocation.",
+          "acceptance_criteria": "- [ ] `buildTeamBuildPrompt()` function added to prompt-builder.ts\n- [ ] Prompt includes project spec and global prompt\n- [ ] Prompt lists all selected epics with their titles, descriptions, and user stories\n- [ ] Each epic's worktree path is included so sub-agents know where to work\n- [ ] Prompt instructs CC to use `Task` tool for delegation\n- [ ] Prompt explicitly tells CC to decide team size and composition\n- [ ] Prompt includes build instructions (commit conventions, testing expectations)",
+          "status": "review",
+          "position": 2
+        },
+        {
+          "id": "l4D9kbmzgVDa",
+          "title": "As a developer, I want the batch build route to support team mode so that a single CC session manages multiple epics via sub-agents",
+          "description": "Modify the batch build API route (`app/api/projects/[projectId]/build/route.ts`). When `team=true` is passed, pre-create all git worktrees for the selected epics, then spawn ONE Claude Code session from the main repo root with `Task` in `--allowedTools`. Track as a single `agentSession` with `orchestrationMode: 'team'`. On completion, update all associated epics' statuses.",
+          "acceptance_criteria": "- [ ] Build route accepts `team: boolean` parameter in request body\n- [ ] When `team=true`, all selected epic worktrees are pre-created before CC spawn\n- [ ] Single CC session spawned from main repo root (not inside a worktree)\n- [ ] `Task` added to `--allowedTools` for team-mode sessions\n- [ ] Session created with `orchestrationMode: 'team'` in database\n- [ ] All selected epic IDs associated with the team session\n- [ ] On session completion, all associated epics' statuses are updated\n- [ ] When `team=false` or absent, existing solo-mode behavior preserved",
+          "status": "review",
+          "position": 3
+        },
+        {
+          "id": "yDSC6MlbkIj5",
+          "title": "As a developer, I want the build route and action routes to accept a provider parameter so that I can choose between Claude Code and Codex",
+          "description": "Update the batch build route, send-to-dev route, and agent review route to accept an optional `provider` parameter ('claude-code' or 'codex'). Use the provider factory to dispatch to the correct backend. Store the provider in the created `agentSession` record. Default to 'claude-code' if not specified.",
+          "acceptance_criteria": "- [ ] Batch build route (`/api/projects/[projectId]/build`) accepts `provider` parameter\n- [ ] Send-to-dev route (`/api/projects/[projectId]/epics/[epicId]/build` or stories route) accepts `provider` parameter\n- [ ] Review route accepts `provider` parameter\n- [ ] Provider factory used to dispatch to correct backend\n- [ ] `provider` field stored in created `agentSession` records\n- [ ] Default to 'claude-code' when `provider` not specified\n- [ ] Team mode rejected with error if `provider` is 'codex' (Codex has no Task tool)",
+          "status": "review",
+          "position": 4
+        },
+        {
+          "id": "_GdYMJsZvaR8",
+          "title": "As a developer, I want the process manager generalized so that both CC and Codex sessions can be tracked and cancelled uniformly",
+          "description": "Refactor `lib/claude/process-manager.ts` to handle provider-agnostic session tracking. CC sessions are tracked by PID (existing behavior). Codex sessions are tracked by thread ID. Provide a unified start/cancel/status/listActive interface that works for both providers.",
+          "acceptance_criteria": "- [ ] Process manager accepts a `provider` type when registering a new session\n- [ ] CC sessions tracked by PID with SIGTERM→SIGKILL fallback (existing behavior preserved)\n- [ ] Codex sessions tracked by thread ID, cancellation via Codex SDK API\n- [ ] `listActive()`, `getStatus()`, `cancel()` work uniformly across both providers\n- [ ] Session metadata includes provider type for display purposes\n- [ ] No breaking changes to existing CC session management",
+          "status": "review",
+          "position": 5
+        },
+        {
+          "id": "A5kOMTJrBGCQ",
+          "title": "As a developer, I want a Team mode checkbox in the build toolbar so that I can launch multi-epic builds as a coordinated team",
+          "description": "Add a 'Team mode' checkbox to the kanban build toolbar. The checkbox is visible when 2 or more epics are selected and the provider is Claude Code. When checked, the build request includes `team: true`. Add a tooltip explaining that team mode lets CC coordinate sub-agents. Disable the checkbox when fewer than 2 epics are selected or when Codex is the selected provider.",
+          "acceptance_criteria": "- [ ] 'Team mode' checkbox rendered in build toolbar next to the Build button\n- [ ] Checkbox only visible when 2+ epics are selected\n- [ ] Checkbox disabled with tooltip when provider is Codex\n- [ ] Checking the box passes `team: true` in the build API request\n- [ ] Tooltip explains team mode: 'Launch a single CC session that coordinates sub-agents for each epic'\n- [ ] Unchecked by default (solo mode is the default behavior)\n- [ ] Checkbox state resets when selection changes to fewer than 2 epics",
+          "status": "review",
+          "position": 6
+        },
+        {
+          "id": "LwGhUPmjI0EZ",
+          "title": "As a developer, I want a provider selector in the build toolbar, Send to Dev dialog, and Agent Review dialog so that I can choose between Claude Code and Codex",
+          "description": "Add a dropdown/toggle to select the AI provider in: (1) the kanban build toolbar, (2) the Send to Dev dialog, (3) the Agent Review dialog. The selector shows 'Claude Code' and 'Codex' options. Codex option is disabled with a tooltip if no API key is configured in settings. The selected provider is passed to the respective API routes.",
+          "acceptance_criteria": "- [ ] Provider dropdown in build toolbar with Claude Code and Codex options\n- [ ] Provider dropdown in Send to Dev dialog\n- [ ] Provider dropdown in Agent Review dialog\n- [ ] Codex option disabled with 'Configure API key in Settings' tooltip when no key set\n- [ ] Selected provider passed to respective API routes in request body\n- [ ] Claude Code is the default selection\n- [ ] Provider selection persists within the session (remembers last choice)",
+          "status": "review",
+          "position": 7
+        },
+        {
+          "id": "o2iRrfD8O07k",
+          "title": "As a developer, I want a provider toggle in the chat header so that I can choose between Claude Code and Codex for brainstorming conversations",
+          "description": "Add a provider toggle (Claude Code / Codex) in the chat panel header. The toggle is enabled when creating a new conversation and becomes disabled/locked after the first message is sent. The selected provider is stored with the conversation and used for all subsequent messages in that thread.",
+          "acceptance_criteria": "- [ ] Provider toggle rendered in chat panel header\n- [ ] Toggle enabled before any messages are sent in the conversation\n- [ ] Toggle disabled/locked after the first message (provider immutable per conversation)\n- [ ] Selected provider stored in database with the conversation\n- [ ] All messages in the conversation use the locked provider\n- [ ] Visual indicator shows which provider is active (icon or label)\n- [ ] Codex option disabled if no API key configured",
+          "status": "review",
+          "position": 8
+        },
+        {
+          "id": "gbE_KX-Pv2CK",
+          "title": "As a developer, I want a Codex API key field in Settings so that I can configure the Codex provider",
+          "description": "Add a 'Codex API Key' input field to the Settings page. The key is stored in the `settings` table with key `codex_api_key`. The field uses a password-type input with show/hide toggle. Validate that the key is non-empty on save. The key is read by the Codex provider when spawning sessions.",
+          "acceptance_criteria": "- [ ] 'Codex API Key' field added to Settings page\n- [ ] Password-type input with show/hide toggle\n- [ ] Key stored in `settings` table with key `codex_api_key`\n- [ ] Save button with loading state and success/error feedback\n- [ ] Non-empty validation on save\n- [ ] Existing settings (global prompt) unaffected\n- [ ] Codex provider reads key from settings table on session spawn",
+          "status": "review",
+          "position": 9
+        }
+      ]
+    },
+    {
       "id": "6lCNLmCL75wS",
       "title": "Ticket Comments, Send-to-Dev & Agent Review",
       "description": "Add a comment system to user stories (tickets), a dedicated story detail page replacing the sheet, and review workflows powered by Claude Code agents.\n\n## Implementation Plan\n\n### Phase 1 — Schema & Data Layer\n- Add `ticketComments` table (id, userStoryId, author: 'user'|'agent', content, agentSessionId?, createdAt)\n- Add `userStoryId` column to `agentSessions` to link agent work back to a specific ticket\n- Add `\"review\"` as a valid status for user stories (todo → in_progress → review → done)\n\n### Phase 2 — API Routes\n- `GET/PATCH /api/projects/[projectId]/stories/[storyId]` — fetch & update story detail\n- `GET/POST /api/projects/[projectId]/stories/[storyId]/comments` — list & add comments\n- `POST /api/projects/[projectId]/stories/[storyId]/build` — dispatch a code-mode agent for the ticket (send-to-dev)\n- `POST /api/projects/[projectId]/stories/[storyId]/review` — dispatch review agents (security, code-review, compliance/accessibility)\n\n### Phase 3 — Hooks\n- `useStoryDetail` — fetch story with epic context\n- `useComments` — fetch comments with 5s polling\n- `useTicketAgent` — dispatch agent + poll session status, auto-post final output as agent comment\n\n### Phase 4 — Story Detail Page\n- New route: `/projects/[projectId]/stories/[storyId]`\n- Two-column layout: left = story details (title, description, acceptance criteria, status, priority), right = comment thread\n- Navigate to this page by clicking story titles in the epic detail view\n\n### Phase 5 — Send to Dev\n- Available on tickets in `todo` or `in_progress` status\n- \"Send to Dev\" button opens a dialog with an optional comment field\n- On confirm: post comment (if provided), dispatch code-mode agent with ticket context + full comment history, move ticket to `in_progress`\n- Agent reuses the epic's existing git worktree/branch with concurrency guard\n\n### Phase 6 — Agent Review (Review status)\n- Available on tickets in `review` status\n- \"Send to Dev\" button (requires mandatory comment explaining what to fix) → dispatches code agent, moves ticket back to `in_progress`\n- \"Agent Review\" button opens dialog with 3 checkboxes: Security, Code Review, Compliance/Accessibility\n- Each selected review type dispatches a separate agent in plan mode with a specialized review checklist\n- Agent outputs are posted as comments on the ticket\n\n### Phase 7 — Approve & Merge\n- \"Approve\" action on review-status tickets marks the ticket as `done`\n- Triggers merge of the epic's worktree branch into the target branch\n\n### Prompt Builder\n- `buildTicketBuildPrompt` — code mode, includes project spec, epic context, ticket details, and full comment history\n- `buildReviewPrompt` — plan mode, 3 specialized checklists (security audit, code review best practices, compliance/accessibility standards)",
       "priority": 2,
       "status": "done",
-      "position": 1,
+      "position": 2,
       "branchName": "feature/epic-6lCNLmCL75wS-ticket-comments-send-to-dev-agent-review",
       "user_stories": [
         {
@@ -124,7 +215,7 @@
       "description": "Create releases by selecting completed epics, generate changelogs via Claude Code, create git tags, and maintain release history.",
       "priority": 0,
       "status": "done",
-      "position": 2,
+      "position": 3,
       "branchName": null,
       "user_stories": [
         {
@@ -159,7 +250,7 @@
       "description": "Add image support to chat panels — users can upload images via a file picker or paste them from the clipboard. Images are saved locally, displayed as thumbnails before sending, and rendered inline in chat messages.\n\n## Implementation Plan\n\n### Phase 1 — Storage & Schema\n- Create `data/uploads/` directory for storing chat image files (gitignored)\n- Add `chatAttachments` table to Drizzle schema (id, chatMessageId FK, fileName, filePath, mimeType, sizeBytes, createdAt)\n- Add cascade delete from chatMessages to chatAttachments\n- Generate and push migration\n\n### Phase 2 — Upload API\n- Create `POST /api/projects/[projectId]/chat/upload` route\n- Accept multipart form data with image files (png, jpg, jpeg, gif, webp)\n- Validate file type and size (max 10MB per file)\n- Save files to `data/uploads/{projectId}/{nanoid}-{originalName}`\n- Return attachment metadata (id, fileName, filePath, mimeType)\n- Create `GET /api/projects/[projectId]/chat/uploads/[attachmentId]` to serve images\n\n### Phase 3 — Enhanced MessageInput Component\n- Add paste event handler on the textarea to intercept `clipboardData.items` with `type.startsWith('image/')`\n- Convert pasted image blobs to File objects and upload immediately\n- Add image upload button (paperclip/image icon) next to the send button\n- Hidden file input accepting image MIME types, triggered by the button\n- Display pending image thumbnails in a preview strip above the textarea\n- Allow removing individual thumbnails before sending\n- On send, include attachment IDs alongside the message content\n\n### Phase 4 — Message Rendering\n- Update MessageList / MarkdownContent to detect and render images associated with messages\n- Fetch attachments for each message and display them as inline images below the text\n- Support lightbox/modal view on image click for full-size viewing\n- Lazy-load images with placeholder skeleton\n\n### Phase 5 — Chat API Integration\n- Update `POST /api/projects/[projectId]/chat/messages` to accept an optional `attachmentIds` array\n- Link uploaded attachments to the created message\n- Update `GET /api/projects/[projectId]/chat/messages` to include attachment metadata in response\n- Ensure attachments are cleaned up when messages are deleted (cascade)",
       "priority": 1,
       "status": "done",
-      "position": 3,
+      "position": 4,
       "branchName": null,
       "user_stories": [
         {
@@ -218,7 +309,7 @@
       "description": "Render Markdown content as styled HTML in the document viewer and spec preview components.",
       "priority": 0,
       "status": "done",
-      "position": 4,
+      "position": 5,
       "branchName": null,
       "user_stories": [
         {
@@ -245,7 +336,7 @@
       "description": "Automatic test detection/execution and dev server preview within Arij, as planned for V2.",
       "priority": 0,
       "status": "done",
-      "position": 5,
+      "position": 6,
       "branchName": "feature/epic-DVL31NKpWZhv-tests-preview-integration-v2",
       "user_stories": [
         {
@@ -272,7 +363,7 @@
       "description": "Application-wide settings including a global prompt injected into all Claude Code sessions.",
       "priority": 0,
       "status": "done",
-      "position": 6,
+      "position": 7,
       "branchName": null,
       "user_stories": [
         {
@@ -291,7 +382,7 @@
       "description": "Chat panel integrated into project views, using Claude Code in plan mode for brainstorming, ideation, and project refinement.",
       "priority": 0,
       "status": "done",
-      "position": 7,
+      "position": 8,
       "branchName": null,
       "user_stories": [
         {
@@ -326,7 +417,7 @@
       "description": "Upload project documents (PDF, DOCX, Markdown, plain text), convert them to Markdown, and store them as project context for Claude Code sessions.",
       "priority": 0,
       "status": "done",
-      "position": 8,
+      "position": 9,
       "branchName": null,
       "user_stories": [
         {
@@ -361,7 +452,7 @@
       "description": "Track and monitor Claude Code agent sessions with real-time status updates, detailed logs, and session lifecycle management.",
       "priority": 0,
       "status": "done",
-      "position": 9,
+      "position": 10,
       "branchName": null,
       "user_stories": [
         {
@@ -396,7 +487,7 @@
       "description": "Publish Arij as an npm package with a CLI entry point so users can run it with `npx arij`.",
       "priority": 0,
       "status": "done",
-      "position": 10,
+      "position": 11,
       "branchName": "feature/epic-m1U434qC2Boc-npm-package-cli-distribution",
       "user_stories": [
         {
@@ -415,7 +506,7 @@
       "description": "Unit tests with Vitest and E2E tests with Playwright as specified in the tech stack.",
       "priority": 0,
       "status": "done",
-      "position": 11,
+      "position": 12,
       "branchName": "feature/epic-J5WxV8FyAPyI-testing-infrastructure",
       "user_stories": [
         {
@@ -442,7 +533,7 @@
       "description": "Multi-project dashboard with project creation, listing, filtering, and detail views. Core project management lifecycle including archiving.",
       "priority": 0,
       "status": "done",
-      "position": 12,
+      "position": 13,
       "branchName": null,
       "user_stories": [
         {
@@ -477,7 +568,7 @@
       "description": "SQLite database with Drizzle ORM schema, migrations, and connection management.",
       "priority": 0,
       "status": "done",
-      "position": 13,
+      "position": 14,
       "branchName": null,
       "user_stories": [
         {
@@ -496,7 +587,7 @@
       "description": "Generate project specifications with epics and user stories using Claude Code in plan mode. Edit specs in a Markdown editor with preview.",
       "priority": 0,
       "status": "done",
-      "position": 14,
+      "position": 15,
       "branchName": null,
       "user_stories": [
         {
@@ -523,7 +614,7 @@
       "description": "Launch Claude Code in code mode to implement epics. Create git worktrees and branches per epic, compose structured prompts, manage build sessions.",
       "priority": 0,
       "status": "done",
-      "position": 15,
+      "position": 16,
       "branchName": null,
       "user_stories": [
         {
@@ -558,7 +649,7 @@
       "description": "Drag-and-drop kanban board for managing epics across workflow columns (Backlog, To Do, In Progress, Review, Done) with epic detail editing.",
       "priority": 0,
       "status": "done",
-      "position": 16,
+      "position": 17,
       "branchName": null,
       "user_stories": [
         {
@@ -596,93 +687,77 @@
       ]
     },
     {
-      "id": "rLeT3OSozRSp",
-      "title": "Agent Teams & Codex Provider Integration",
-      "description": "Two-part feature: (1) Agent Teams mode that leverages Claude Code's native Task tool to delegate multiple tickets to sub-agents in a single session, and (2) OpenAI Codex integration as an alternative AI provider alongside Claude Code.\n\n## Implementation Plan\n\n### Part A — Agent Teams (Claude Code Only)\n\n**Schema & Data Layer:**\n- Add `orchestrationMode` column to `agentSessions` table (`'solo' | 'team'`, default `'solo'`)\n- Team mode is exclusive to Claude Code (Codex has no equivalent sub-agent delegation)\n\n**Prompt Builder:**\n- New `buildTeamBuildPrompt()` function that describes all selected epics with their worktree paths\n- Instructs Claude Code to act as a team lead and use the `Task` tool to spawn sub-agents per ticket\n- Lets CC decide team composition and size\n\n**Build Route Changes:**\n- When `team=true` in the batch build request, pre-create all git worktrees for selected epics\n- Spawn a single CC session from the main repo root (not inside a worktree)\n- Add `Task` to the `--allowedTools` list for team mode\n- Track as a single `agentSession` with `orchestrationMode: 'team'`\n- On completion, update all associated epics' statuses\n\n**UI — Build Toolbar:**\n- Add 'Team mode' checkbox in the build toolbar, visible when 2+ epics are selected\n- Checkbox disabled when fewer than 2 epics selected or when provider is Codex\n- Tooltip explains team mode behavior\n\n### Part B — Codex Provider Integration\n\n**Provider Abstraction Layer:**\n- New `lib/providers/` directory with provider interface (`AgentProvider`)\n- `lib/providers/claude-code.ts` — wraps existing CC spawn logic\n- `lib/providers/codex.ts` — wraps `@openai/codex-sdk` using `Codex` class, `startThread()`, `runStreamed()` for streaming events\n- `lib/providers/index.ts` — factory function `getProvider(type: 'claude-code' | 'codex')`\n- Codex provider uses `workingDirectory` option on `startThread()` for worktree paths\n\n**Schema Changes:**\n- Add `provider` column to `agentSessions` (`'claude-code' | 'codex'`, default `'claude-code'`)\n- Add `provider` column to `chatConversations` (if table exists) or chat messages\n\n**Process Manager Generalization:**\n- Refactor `lib/claude/process-manager.ts` to accept provider-agnostic session handles\n- Codex sessions tracked via thread ID, CC sessions tracked via PID\n- Unified start/cancel/status interface\n\n**Build & Review Routes:**\n- Build route accepts `provider` parameter, dispatches via provider factory\n- Review route accepts `provider` parameter\n- Send-to-dev route accepts `provider` parameter\n\n**UI — Provider Selector:**\n- Dropdown in build toolbar to choose between Claude Code and Codex\n- Provider selector in Send to Dev dialog\n- Provider selector in Agent Review dialog\n- Provider toggle in chat header (locked/disabled after first message in conversation)\n- Codex option disabled with tooltip if no API key configured\n\n**Settings:**\n- Add Codex API key field to Settings page\n- Stored in `settings` table with key `codex_api_key`\n- Validated on save (non-empty string check)\n\n**Codex SDK Integration Details:**\n- Install `@openai/codex-sdk` dependency\n- Use `new Codex({ env: { CODEX_API_KEY: ... } })` with API key from settings\n- `startThread({ workingDirectory })` for worktree-scoped execution\n- `runStreamed()` for streaming events, map to unified event format\n- Thread IDs stored in session metadata for resumption support",
+      "id": "NWKu2M0TgSzZ",
+      "title": "Agent Configuration Side Panel & Custom Review Agents",
+      "description": "Dedicated side panel for configuring agent prompts (global + per-project override), creating custom review agents, and setting the default AI provider per agent type.\n\n## Implementation Plan\n\n### Phase 1 — Schema & Data Layer\n\n**Agent Prompts Table:**\n- Add `agentPrompts` table: id, agentType (text: 'build', 'review_security', 'review_code', 'review_compliance', 'chat', 'spec_generation', 'team_build', 'ticket_build'), systemPrompt (text), scope ('global' | projectId), createdAt, updatedAt\n- Global prompts have scope='global', project overrides store the projectId\n- When resolving a prompt, project-scoped prompt takes precedence over global, which takes precedence over built-in defaults\n\n**Custom Review Agents Table:**\n- Add `customReviewAgents` table: id, name (text), systemPrompt (text), scope ('global' | projectId), position (integer), isEnabled (integer, default 1), createdAt, updatedAt\n- Custom review agents are user-defined and appear alongside the 3 built-in review types\n\n**Agent Provider Defaults Table:**\n- Add `agentProviderDefaults` table: id, agentType (text), provider ('claude-code' | 'codex'), scope ('global' | projectId), createdAt, updatedAt\n- Allows setting CC or Codex as default per agent type, with project override\n\n### Phase 2 — API Routes\n\n**Agent Prompts:**\n- `GET /api/agent-config/prompts` — list all global agent prompts\n- `GET /api/projects/[projectId]/agent-config/prompts` — list project-scoped prompts (merged with global defaults)\n- `PUT /api/agent-config/prompts/[agentType]` — upsert global prompt for an agent type\n- `PUT /api/projects/[projectId]/agent-config/prompts/[agentType]` — upsert project override\n- `DELETE /api/projects/[projectId]/agent-config/prompts/[agentType]` — remove project override (fall back to global)\n\n**Custom Review Agents:**\n- `GET /api/agent-config/review-agents` — list global custom review agents\n- `GET /api/projects/[projectId]/agent-config/review-agents` — list project-scoped + global review agents\n- `POST /api/agent-config/review-agents` — create a custom review agent (global)\n- `POST /api/projects/[projectId]/agent-config/review-agents` — create project-scoped review agent\n- `PATCH /api/agent-config/review-agents/[agentId]` — update name, prompt, enabled status\n- `DELETE /api/agent-config/review-agents/[agentId]` — delete a custom review agent\n\n**Agent Provider Defaults:**\n- `GET /api/agent-config/providers` — list global provider defaults per agent type\n- `PUT /api/agent-config/providers/[agentType]` — set global default provider for agent type\n- `PUT /api/projects/[projectId]/agent-config/providers/[agentType]` — set project override\n\n### Phase 3 — Prompt Builder Integration\n- Refactor all prompt builder functions to load custom prompts from DB before composing\n- Resolution order: project override → global custom → built-in default\n- Update `buildReviewPrompt` to accept custom review agent prompts in addition to built-in types\n- Update `buildBuildPrompt`, `buildChatPrompt`, `buildSpecPrompt`, `buildTeamBuildPrompt`, `buildTicketBuildPrompt` to use configurable prompts\n\n### Phase 4 — Side Panel UI\n- New `AgentConfigPanel` component accessible from the main sidebar\n- Three tabs: **Agent Prompts**, **Review Agents**, **Provider Defaults**\n- Agent Prompts tab: list of agent types with expandable prompt editors, toggle between global/project scope\n- Review Agents tab: list of built-in (read-only name) + custom review agents, each with name/prompt fields, add/delete actions\n- Provider Defaults tab: per-agent-type dropdown to select CC or Codex as default\n- Panel slides in from the left sidebar, can be toggled open/closed\n\n### Phase 5 — Review Dialog Integration\n- Update the Agent Review dialog on the story detail page to include custom review agents alongside the 3 built-in types\n- Custom agents displayed as additional checkboxes with their name\n- Each selected custom agent dispatches a plan-mode agent with the custom prompt\n- Agent output posted as a comment with the custom agent's name as label",
       "priority": 2,
       "status": "in_progress",
       "position": 0,
-      "branchName": "feature/epic-rLeT3OSozRSp-agent-teams-codex-provider-integration",
+      "branchName": "feature/epic-NWKu2M0TgSzZ-agent-configuration-side-panel-custom-re",
       "user_stories": [
         {
-          "id": "2oiRW1aYAD95",
-          "title": "As a developer, I want an orchestrationMode column on agent sessions so that team-mode builds are tracked separately from solo builds",
-          "description": "Add `orchestrationMode` column to the `agentSessions` table in the Drizzle schema with values 'solo' (default) or 'team'. This column distinguishes single-epic builds from multi-epic team-mode sessions. Add `provider` column to `agentSessions` with values 'claude-code' (default) or 'codex'. Push the schema changes.",
-          "acceptance_criteria": "- [ ] `orchestrationMode` column added to `agentSessions` with type text, default 'solo'\n- [ ] `provider` column added to `agentSessions` with type text, default 'claude-code'\n- [ ] `provider` column added to chat-related table (chatMessages or chatConversations) if applicable\n- [ ] Drizzle migration generated and pushed successfully\n- [ ] Existing agent session queries still work (default values applied)\n- [ ] TypeScript types updated to reflect new columns",
+          "id": "Hm69DiHNVbiG",
+          "title": "As a developer, I want database tables for agent prompts, custom review agents, and provider defaults so that agent configuration is persisted",
+          "description": "Add three new tables to the Drizzle schema: `agentPrompts` (id, agentType, systemPrompt, scope, createdAt, updatedAt), `customReviewAgents` (id, name, systemPrompt, scope, position, isEnabled, createdAt, updatedAt), and `agentProviderDefaults` (id, agentType, provider, scope, createdAt, updatedAt). The `scope` field is 'global' for app-wide config or a projectId for project overrides. Generate and push the migration.",
+          "acceptance_criteria": "- [ ] `agentPrompts` table added to `lib/db/schema.ts` with agentType, systemPrompt, scope fields\n- [ ] `customReviewAgents` table added with name, systemPrompt, scope, position, isEnabled fields\n- [ ] `agentProviderDefaults` table added with agentType, provider, scope fields\n- [ ] Unique constraint on (agentType, scope) for agentPrompts and agentProviderDefaults\n- [ ] Unique constraint on (name, scope) for customReviewAgents\n- [ ] Drizzle migration generated and pushed successfully\n- [ ] TypeScript types exported for all new tables",
           "status": "in_progress",
           "position": 0
         },
         {
-          "id": "2laGhKFTJPfT",
-          "title": "As a developer, I want a provider abstraction layer so that Claude Code and Codex can be used interchangeably for builds and reviews",
-          "description": "Create `lib/providers/` directory with a unified `AgentProvider` interface. Implement `claude-code.ts` wrapping the existing CC spawn logic and `codex.ts` wrapping `@openai/codex-sdk`. Add a factory function `getProvider(type)` that returns the appropriate provider. Install `@openai/codex-sdk` as a dependency.",
-          "acceptance_criteria": "- [ ] `lib/providers/types.ts` defines `AgentProvider` interface with `spawn`, `cancel`, `getStatus` methods\n- [ ] `lib/providers/claude-code.ts` wraps existing CC spawn logic, implements `AgentProvider`\n- [ ] `lib/providers/codex.ts` wraps `@openai/codex-sdk` using `Codex` class, `startThread()`, `runStreamed()`\n- [ ] `lib/providers/index.ts` exports `getProvider('claude-code' | 'codex')` factory\n- [ ] `@openai/codex-sdk` added to package.json dependencies\n- [ ] Codex provider uses `workingDirectory` option on `startThread()` for worktree paths\n- [ ] Codex provider reads API key from settings table",
+          "id": "wm79P9p_XK1u",
+          "title": "As a developer, I want API routes for managing agent prompts so that I can configure system prompts per agent type globally and per project",
+          "description": "Create CRUD API routes for agent prompts. `GET /api/agent-config/prompts` returns all global prompts. `PUT /api/agent-config/prompts/[agentType]` upserts a global prompt. `GET /api/projects/[projectId]/agent-config/prompts` returns merged prompts (project override > global > built-in). `PUT/DELETE` on project-scoped route manages overrides. Built-in defaults are returned when no custom prompt exists.",
+          "acceptance_criteria": "- [ ] `GET /api/agent-config/prompts` returns all global agent prompts with built-in defaults for missing types\n- [ ] `PUT /api/agent-config/prompts/[agentType]` upserts global prompt (validates agentType is known)\n- [ ] `GET /api/projects/[projectId]/agent-config/prompts` returns merged view with project overrides\n- [ ] `PUT /api/projects/[projectId]/agent-config/prompts/[agentType]` upserts project-scoped override\n- [ ] `DELETE /api/projects/[projectId]/agent-config/prompts/[agentType]` removes project override\n- [ ] Consistent `{ data }` / `{ error }` response shape\n- [ ] Known agent types: build, review_security, review_code, review_compliance, chat, spec_generation, team_build, ticket_build",
           "status": "in_progress",
           "position": 1
         },
         {
-          "id": "PC2XRYOn_NmK",
-          "title": "As a developer, I want a team build prompt so that Claude Code can act as team lead and delegate tickets to sub-agents",
-          "description": "Create `buildTeamBuildPrompt()` in `lib/claude/prompt-builder.ts`. The prompt describes all selected epics with their worktree paths, user stories, and acceptance criteria. It instructs Claude Code to act as a team lead, use the `Task` tool to spawn sub-agents, and lets CC decide team composition and task allocation.",
-          "acceptance_criteria": "- [ ] `buildTeamBuildPrompt()` function added to prompt-builder.ts\n- [ ] Prompt includes project spec and global prompt\n- [ ] Prompt lists all selected epics with their titles, descriptions, and user stories\n- [ ] Each epic's worktree path is included so sub-agents know where to work\n- [ ] Prompt instructs CC to use `Task` tool for delegation\n- [ ] Prompt explicitly tells CC to decide team size and composition\n- [ ] Prompt includes build instructions (commit conventions, testing expectations)",
+          "id": "18hBLXvGbqE1",
+          "title": "As a developer, I want API routes for custom review agents so that I can create, edit, and delete specialized review agents",
+          "description": "Create CRUD API routes for custom review agents. `POST /api/agent-config/review-agents` creates a global custom review agent with a name and system prompt. `PATCH` updates name/prompt/enabled. `DELETE` removes the agent. Project-scoped routes allow project-specific review agents. `GET` returns combined list of global + project-scoped agents.",
+          "acceptance_criteria": "- [ ] `GET /api/agent-config/review-agents` returns all global custom review agents\n- [ ] `POST /api/agent-config/review-agents` creates a custom review agent with name and systemPrompt\n- [ ] `PATCH /api/agent-config/review-agents/[agentId]` updates name, systemPrompt, or isEnabled\n- [ ] `DELETE /api/agent-config/review-agents/[agentId]` deletes a custom review agent\n- [ ] `GET /api/projects/[projectId]/agent-config/review-agents` returns global + project-scoped agents\n- [ ] `POST /api/projects/[projectId]/agent-config/review-agents` creates project-scoped agent\n- [ ] Name uniqueness validated within scope\n- [ ] Consistent `{ data }` / `{ error }` response shape",
           "status": "in_progress",
           "position": 2
         },
         {
-          "id": "l4D9kbmzgVDa",
-          "title": "As a developer, I want the batch build route to support team mode so that a single CC session manages multiple epics via sub-agents",
-          "description": "Modify the batch build API route (`app/api/projects/[projectId]/build/route.ts`). When `team=true` is passed, pre-create all git worktrees for the selected epics, then spawn ONE Claude Code session from the main repo root with `Task` in `--allowedTools`. Track as a single `agentSession` with `orchestrationMode: 'team'`. On completion, update all associated epics' statuses.",
-          "acceptance_criteria": "- [ ] Build route accepts `team: boolean` parameter in request body\n- [ ] When `team=true`, all selected epic worktrees are pre-created before CC spawn\n- [ ] Single CC session spawned from main repo root (not inside a worktree)\n- [ ] `Task` added to `--allowedTools` for team-mode sessions\n- [ ] Session created with `orchestrationMode: 'team'` in database\n- [ ] All selected epic IDs associated with the team session\n- [ ] On session completion, all associated epics' statuses are updated\n- [ ] When `team=false` or absent, existing solo-mode behavior preserved",
+          "id": "KvIPmH-qSabP",
+          "title": "As a developer, I want API routes for agent provider defaults so that I can set Claude Code or Codex as the default per agent type",
+          "description": "Create API routes for managing default provider per agent type. `GET /api/agent-config/providers` returns all global defaults. `PUT /api/agent-config/providers/[agentType]` sets the global default provider for an agent type. Project-scoped routes allow per-project overrides. Defaults to 'claude-code' when no configuration exists.",
+          "acceptance_criteria": "- [ ] `GET /api/agent-config/providers` returns provider defaults for all agent types\n- [ ] `PUT /api/agent-config/providers/[agentType]` sets global default provider ('claude-code' or 'codex')\n- [ ] `PUT /api/projects/[projectId]/agent-config/providers/[agentType]` sets project-scoped override\n- [ ] `GET /api/projects/[projectId]/agent-config/providers` returns merged defaults (project > global > 'claude-code')\n- [ ] Validates provider value is 'claude-code' or 'codex'\n- [ ] Consistent `{ data }` / `{ error }` response shape",
           "status": "in_progress",
           "position": 3
         },
         {
-          "id": "yDSC6MlbkIj5",
-          "title": "As a developer, I want the build route and action routes to accept a provider parameter so that I can choose between Claude Code and Codex",
-          "description": "Update the batch build route, send-to-dev route, and agent review route to accept an optional `provider` parameter ('claude-code' or 'codex'). Use the provider factory to dispatch to the correct backend. Store the provider in the created `agentSession` record. Default to 'claude-code' if not specified.",
-          "acceptance_criteria": "- [ ] Batch build route (`/api/projects/[projectId]/build`) accepts `provider` parameter\n- [ ] Send-to-dev route (`/api/projects/[projectId]/epics/[epicId]/build` or stories route) accepts `provider` parameter\n- [ ] Review route accepts `provider` parameter\n- [ ] Provider factory used to dispatch to correct backend\n- [ ] `provider` field stored in created `agentSession` records\n- [ ] Default to 'claude-code' when `provider` not specified\n- [ ] Team mode rejected with error if `provider` is 'codex' (Codex has no Task tool)",
+          "id": "tV0Dx3g8pDQ3",
+          "title": "As a developer, I want the prompt builder to use configurable prompts so that custom agent prompts are injected into all Claude Code sessions",
+          "description": "Refactor all prompt builder functions (`buildBuildPrompt`, `buildChatPrompt`, `buildSpecPrompt`, `buildTeamBuildPrompt`, `buildTicketBuildPrompt`, `buildReviewPrompt`) to load custom prompts from the database before composing. Resolution order: project-scoped override → global custom prompt → existing built-in default. Update `buildReviewPrompt` to accept custom review agent prompts alongside built-in review types.",
+          "acceptance_criteria": "- [ ] All prompt builders accept an optional custom system prompt parameter\n- [ ] New `resolveAgentPrompt(agentType, projectId?)` helper queries DB and returns the resolved prompt\n- [ ] Resolution order: project override → global custom → built-in default\n- [ ] `buildReviewPrompt` supports custom review agent types with their own system prompts\n- [ ] Build, chat, spec, team build, and ticket build prompt builders all use `resolveAgentPrompt`\n- [ ] Built-in default prompts extracted as constants for fallback\n- [ ] No behavioral change when no custom prompts are configured (backwards compatible)",
           "status": "in_progress",
           "position": 4
         },
         {
-          "id": "_GdYMJsZvaR8",
-          "title": "As a developer, I want the process manager generalized so that both CC and Codex sessions can be tracked and cancelled uniformly",
-          "description": "Refactor `lib/claude/process-manager.ts` to handle provider-agnostic session tracking. CC sessions are tracked by PID (existing behavior). Codex sessions are tracked by thread ID. Provide a unified start/cancel/status/listActive interface that works for both providers.",
-          "acceptance_criteria": "- [ ] Process manager accepts a `provider` type when registering a new session\n- [ ] CC sessions tracked by PID with SIGTERM→SIGKILL fallback (existing behavior preserved)\n- [ ] Codex sessions tracked by thread ID, cancellation via Codex SDK API\n- [ ] `listActive()`, `getStatus()`, `cancel()` work uniformly across both providers\n- [ ] Session metadata includes provider type for display purposes\n- [ ] No breaking changes to existing CC session management",
+          "id": "sVlPhptLQ9im",
+          "title": "As a developer, I want an Agent Configuration side panel so that I can manage agent prompts, review agents, and provider defaults from a dedicated UI",
+          "description": "Create an `AgentConfigPanel` component that slides in from the main sidebar. The panel has three tabs: Agent Prompts (list of agent types with expandable textarea editors, global/project scope toggle), Review Agents (list of built-in + custom agents with add/edit/delete), and Provider Defaults (per-agent dropdown to select CC or Codex). Add a sidebar icon/button to toggle the panel. When inside a project view, show project-scoped config with option to fall back to global.",
+          "acceptance_criteria": "- [ ] `AgentConfigPanel` component renders as a slide-in panel from the sidebar\n- [ ] Sidebar button/icon to toggle the panel open/closed\n- [ ] Agent Prompts tab lists all agent types with expandable prompt editors\n- [ ] Each prompt editor shows built-in default as placeholder, custom prompt as value\n- [ ] Scope toggle (Global / Project) when inside a project view\n- [ ] Review Agents tab lists built-in agents (name read-only) and custom agents (editable)\n- [ ] Add button to create a new custom review agent with name and prompt fields\n- [ ] Delete button on custom review agents with confirmation\n- [ ] Provider Defaults tab shows dropdown per agent type with Claude Code / Codex options\n- [ ] All changes saved via API with loading states and success/error feedback\n- [ ] Panel uses shadcn/ui components consistent with existing UI",
           "status": "in_progress",
           "position": 5
         },
         {
-          "id": "A5kOMTJrBGCQ",
-          "title": "As a developer, I want a Team mode checkbox in the build toolbar so that I can launch multi-epic builds as a coordinated team",
-          "description": "Add a 'Team mode' checkbox to the kanban build toolbar. The checkbox is visible when 2 or more epics are selected and the provider is Claude Code. When checked, the build request includes `team: true`. Add a tooltip explaining that team mode lets CC coordinate sub-agents. Disable the checkbox when fewer than 2 epics are selected or when Codex is the selected provider.",
-          "acceptance_criteria": "- [ ] 'Team mode' checkbox rendered in build toolbar next to the Build button\n- [ ] Checkbox only visible when 2+ epics are selected\n- [ ] Checkbox disabled with tooltip when provider is Codex\n- [ ] Checking the box passes `team: true` in the build API request\n- [ ] Tooltip explains team mode: 'Launch a single CC session that coordinates sub-agents for each epic'\n- [ ] Unchecked by default (solo mode is the default behavior)\n- [ ] Checkbox state resets when selection changes to fewer than 2 epics",
+          "id": "rAfHjRtONi2K",
+          "title": "As a developer, I want custom review agents to appear in the Agent Review dialog so that I can trigger specialized reviews on tickets",
+          "description": "Update the Agent Review dialog on the story detail page to dynamically load custom review agents from the API alongside the 3 built-in review types (Security, Code Review, Compliance). Custom agents are displayed as additional checkboxes with their name. Each selected custom agent dispatches a plan-mode agent with its custom system prompt. Agent output is posted as a comment with the custom agent's name as label.",
+          "acceptance_criteria": "- [ ] Agent Review dialog fetches custom review agents from API on open\n- [ ] Custom agents displayed as checkboxes alongside built-in review types\n- [ ] Disabled custom agents (isEnabled=false) are hidden from the dialog\n- [ ] Review API route (`POST .../review`) accepts custom agent IDs in addition to built-in type strings\n- [ ] Each selected custom agent dispatches a plan-mode session with its system prompt\n- [ ] Agent output posted as comment with custom agent name as label (e.g., 'UI Review')\n- [ ] Built-in review types continue to work unchanged",
           "status": "in_progress",
           "position": 6
         },
         {
-          "id": "LwGhUPmjI0EZ",
-          "title": "As a developer, I want a provider selector in the build toolbar, Send to Dev dialog, and Agent Review dialog so that I can choose between Claude Code and Codex",
-          "description": "Add a dropdown/toggle to select the AI provider in: (1) the kanban build toolbar, (2) the Send to Dev dialog, (3) the Agent Review dialog. The selector shows 'Claude Code' and 'Codex' options. Codex option is disabled with a tooltip if no API key is configured in settings. The selected provider is passed to the respective API routes.",
-          "acceptance_criteria": "- [ ] Provider dropdown in build toolbar with Claude Code and Codex options\n- [ ] Provider dropdown in Send to Dev dialog\n- [ ] Provider dropdown in Agent Review dialog\n- [ ] Codex option disabled with 'Configure API key in Settings' tooltip when no key set\n- [ ] Selected provider passed to respective API routes in request body\n- [ ] Claude Code is the default selection\n- [ ] Provider selection persists within the session (remembers last choice)",
+          "id": "SJwsUPN562iX",
+          "title": "As a developer, I want provider defaults to be used automatically in build, review, and chat flows so that I don't have to select the provider each time",
+          "description": "Update all action flows (build toolbar, send-to-dev, agent review, chat) to read the configured default provider for the relevant agent type before dispatching. The provider selector UI should pre-select the configured default instead of always defaulting to Claude Code. Manual selection still overrides the default for that session.",
+          "acceptance_criteria": "- [ ] Build toolbar pre-selects the configured default provider for 'build' agent type\n- [ ] Send-to-dev dialog pre-selects the default provider for 'ticket_build' agent type\n- [ ] Agent Review dialog uses the default provider for each review agent type\n- [ ] Chat panel pre-selects the default provider for 'chat' agent type\n- [ ] Manual provider selection overrides the default for that action\n- [ ] Falls back to 'claude-code' when no default is configured\n- [ ] Provider defaults resolved with project > global > 'claude-code' precedence",
           "status": "in_progress",
           "position": 7
-        },
-        {
-          "id": "o2iRrfD8O07k",
-          "title": "As a developer, I want a provider toggle in the chat header so that I can choose between Claude Code and Codex for brainstorming conversations",
-          "description": "Add a provider toggle (Claude Code / Codex) in the chat panel header. The toggle is enabled when creating a new conversation and becomes disabled/locked after the first message is sent. The selected provider is stored with the conversation and used for all subsequent messages in that thread.",
-          "acceptance_criteria": "- [ ] Provider toggle rendered in chat panel header\n- [ ] Toggle enabled before any messages are sent in the conversation\n- [ ] Toggle disabled/locked after the first message (provider immutable per conversation)\n- [ ] Selected provider stored in database with the conversation\n- [ ] All messages in the conversation use the locked provider\n- [ ] Visual indicator shows which provider is active (icon or label)\n- [ ] Codex option disabled if no API key configured",
-          "status": "in_progress",
-          "position": 8
-        },
-        {
-          "id": "gbE_KX-Pv2CK",
-          "title": "As a developer, I want a Codex API key field in Settings so that I can configure the Codex provider",
-          "description": "Add a 'Codex API Key' input field to the Settings page. The key is stored in the `settings` table with key `codex_api_key`. The field uses a password-type input with show/hide toggle. Validate that the key is non-empty on save. The key is read by the Codex provider when spawning sessions.",
-          "acceptance_criteria": "- [ ] 'Codex API Key' field added to Settings page\n- [ ] Password-type input with show/hide toggle\n- [ ] Key stored in `settings` table with key `codex_api_key`\n- [ ] Save button with loading state and success/error feedback\n- [ ] Non-empty validation on save\n- [ ] Existing settings (global prompt) unaffected\n- [ ] Codex provider reads key from settings table on session spawn",
-          "status": "in_progress",
-          "position": 9
         }
       ]
     }

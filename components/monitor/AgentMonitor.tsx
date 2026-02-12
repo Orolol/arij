@@ -9,6 +9,7 @@ interface ActiveSession {
   epicId: string | null;
   status: string;
   mode: string;
+  provider: string | null;
   startedAt: string | null;
 }
 
@@ -86,7 +87,12 @@ export function AgentMonitor({ projectId, sessions }: AgentMonitorProps) {
               <span className="text-muted-foreground">
                 #{session.id.slice(0, 6)}
               </span>
-              <span>{session.mode} mode</span>
+              <span className="inline-flex items-center gap-1">
+                <span className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide">
+                  {session.provider === "codex" ? "Codex" : "CC"}
+                </span>
+                {session.mode}
+              </span>
               <span className="text-muted-foreground font-mono">
                 {elapsed[session.id] || "0s"}
               </span>

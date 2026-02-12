@@ -2,14 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Eye, EyeOff } from "lucide-react";
 
 export default function SettingsPage() {
   const [globalPrompt, setGlobalPrompt] = useState("");
-  const [codexApiKey, setCodexApiKey] = useState("");
-  const [showKey, setShowKey] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -18,9 +14,6 @@ export default function SettingsPage() {
       .then((d) => {
         if (d.data?.global_prompt) {
           setGlobalPrompt(d.data.global_prompt);
-        }
-        if (d.data?.codex_api_key) {
-          setCodexApiKey(d.data.codex_api_key);
         }
       })
       .catch(() => {});
@@ -33,7 +26,6 @@ export default function SettingsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         global_prompt: globalPrompt,
-        codex_api_key: codexApiKey,
       }),
     });
     setSaving(false);
@@ -57,39 +49,6 @@ export default function SettingsPage() {
             rows={10}
             placeholder="Enter global instructions for Claude Code..."
           />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium mb-2">
-            Codex API Key
-          </label>
-          <p className="text-sm text-muted-foreground mb-2">
-            Your OpenAI API key for the Codex provider. Required to use Codex
-            as an alternative agent backend.
-          </p>
-          <div className="flex gap-2">
-            <div className="relative flex-1">
-              <Input
-                type={showKey ? "text" : "password"}
-                value={codexApiKey}
-                onChange={(e) => setCodexApiKey(e.target.value)}
-                placeholder="sk-..."
-                className="pr-10"
-              />
-              <button
-                type="button"
-                onClick={() => setShowKey(!showKey)}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
-                aria-label={showKey ? "Hide API key" : "Show API key"}
-              >
-                {showKey ? (
-                  <EyeOff className="h-4 w-4" />
-                ) : (
-                  <Eye className="h-4 w-4" />
-                )}
-              </button>
-            </div>
-          </div>
         </div>
 
         <Button onClick={handleSave} disabled={saving}>

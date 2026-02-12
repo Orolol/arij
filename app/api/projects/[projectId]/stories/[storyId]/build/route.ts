@@ -203,13 +203,13 @@ export async function POST(request: NextRequest, { params }: Params) {
     .where(eq(epics.id, epic.id))
     .run();
 
-  // Spawn Claude Code
+  // Spawn agent
   processManager.start(sessionId, {
     mode: "code",
     prompt,
     cwd: worktreePath,
     allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-  });
+  }, provider);
 
   // Background: wait for completion, update DB, post agent comment
   (async () => {
@@ -238,6 +238,19 @@ export async function POST(request: NextRequest, { params }: Params) {
       })
       .where(eq(agentSessions.id, sessionId))
       .run();
+
+    // On success: move story to review
+    if (result?.success) {
+      db.update(userStories)
+        .set({ status: "review" })
+        .where(
+          and(
+            eq(userStories.id, storyId),
+            eq(userStories.status, "in_progress")
+          )
+        )
+        .run();
+    }
 
     // Post agent output as comment
     const output = result?.result

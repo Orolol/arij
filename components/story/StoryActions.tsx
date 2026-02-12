@@ -38,6 +38,7 @@ interface StoryActionsProps {
   isRunning: boolean;
   activeSessions: AgentSession[];
   codexAvailable: boolean;
+  codexInstalled?: boolean;
   onSendToDev: (comment?: string, provider?: ProviderType) => Promise<void>;
   onSendToReview: (types: string[], provider?: ProviderType) => Promise<void>;
   onApprove: () => Promise<void>;
@@ -49,6 +50,7 @@ export function StoryActions({
   isRunning,
   activeSessions,
   codexAvailable,
+  codexInstalled,
   onSendToDev,
   onSendToReview,
   onApprove,
@@ -202,6 +204,7 @@ export function StoryActions({
               value={devProvider}
               onChange={setDevProvider}
               codexAvailable={codexAvailable}
+              codexInstalled={codexInstalled}
               className="w-40 h-8 text-xs"
             />
           </div>
@@ -261,6 +264,7 @@ export function StoryActions({
               value={reviewProvider}
               onChange={setReviewProvider}
               codexAvailable={codexAvailable}
+              codexInstalled={codexInstalled}
               className="w-40 h-8 text-xs"
             />
           </div>

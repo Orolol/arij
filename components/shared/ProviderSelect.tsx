@@ -20,6 +20,8 @@ interface ProviderSelectProps {
   value: ProviderType;
   onChange: (value: ProviderType) => void;
   codexAvailable: boolean;
+  /** Whether the codex binary is on PATH (even if not logged in). */
+  codexInstalled?: boolean;
   disabled?: boolean;
   className?: string;
 }
@@ -28,9 +30,15 @@ export function ProviderSelect({
   value,
   onChange,
   codexAvailable,
+  codexInstalled = false,
   disabled = false,
   className,
 }: ProviderSelectProps) {
+  const tooltipMessage =
+    codexInstalled && !codexAvailable
+      ? "Codex CLI not authenticated. Run: codex login"
+      : "Codex CLI not found. Install it with: npm i -g @openai/codex";
+
   return (
     <TooltipProvider>
       <Select
@@ -55,7 +63,7 @@ export function ProviderSelect({
                 </div>
               </TooltipTrigger>
               <TooltipContent>
-                Configure Codex API key in Settings
+                {tooltipMessage}
               </TooltipContent>
             </Tooltip>
           )}

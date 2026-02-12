@@ -27,7 +27,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
   } = useConversations(projectId);
 
   const { messages, loading, sending, pendingQuestions, streamStatus, sendMessage: rawSendMessage, answerQuestions } = useChat(projectId, activeId);
-  const { codexAvailable } = useCodexAvailable();
+  const { codexAvailable, codexInstalled } = useCodexAvailable();
   const [generating, setGenerating] = useState(false);
   const router = useRouter();
 
@@ -133,6 +133,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
             value={activeProvider}
             onChange={handleProviderChange}
             codexAvailable={codexAvailable}
+            codexInstalled={codexInstalled}
             disabled={hasMessages || sending}
             className="w-36 h-7 text-xs"
           />

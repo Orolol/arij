@@ -18,6 +18,7 @@ import {
   type ReviewType,
 } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import type { ProviderType } from "@/lib/providers";
 import fs from "fs";
 import path from "path";
 
@@ -39,7 +40,11 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
   const body = await request.json();
 
-  const { reviewTypes } = body as { reviewTypes: ReviewType[] };
+  const { reviewTypes, provider: providerParam } = body as {
+    reviewTypes: ReviewType[];
+    provider?: ProviderType;
+  };
+  const provider: ProviderType = providerParam || "claude-code";
 
   if (!reviewTypes || !Array.isArray(reviewTypes) || reviewTypes.length === 0) {
     return NextResponse.json(
@@ -147,6 +152,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         epicId,
         status: "running",
         mode: "plan",
+        provider,
         prompt,
         logsPath,
         branchName,
@@ -160,7 +166,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       mode: "plan",
       prompt,
       cwd: worktreePath,
-    });
+    }, provider);
 
     // Background: wait for completion, post review as epic comment
     const label = REVIEW_LABELS[reviewType];

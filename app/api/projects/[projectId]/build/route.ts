@@ -327,13 +327,13 @@ export async function POST(
       .where(eq(projects.id, projectId))
       .run();
 
-    // Spawn agent via process manager (uses Claude Code CLI)
+    // Spawn agent via process manager
     processManager.start(sessionId, {
       mode: "code",
       prompt,
       cwd: worktreePath,
       allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-    });
+    }, provider);
 
     // Background: wait for completion and update DB
     (async () => {
