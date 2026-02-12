@@ -163,7 +163,11 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   // Create PR on GitHub
   try {
-    const body = generatePrBody(epic, stories);
+    const storiesForPr = stories.map((s) => ({
+      title: s.title,
+      status: s.status ?? "todo",
+    }));
+    const body = generatePrBody(epic, storiesForPr);
     const prResult = await createPullRequest({
       owner,
       repo,

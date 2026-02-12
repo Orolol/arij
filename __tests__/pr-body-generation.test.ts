@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 
 // We import from the pull-requests module but need to mock the Octokit parts.
 // Since generatePrBody is a pure function, we can test it directly.
