@@ -4,6 +4,7 @@ import { agentSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { processManager } from "@/lib/claude/process-manager";
 import { isValidTransition, type SessionStatus } from "@/lib/sessions/status-machine";
+import { getSessionLastText } from "@/lib/sessions/last-text";
 import fs from "fs";
 
 export async function GET(
@@ -31,7 +32,12 @@ export async function GET(
     }
   }
 
-  return NextResponse.json({ data: { ...session, logs } });
+  // Extract last non-empty text from result or logs
+  const pmInfo = processManager.getStatus(sessionId);
+  const resultText = pmInfo?.result?.result ?? (logs?.result as string | undefined) ?? null;
+  const lastNonEmptyText = getSessionLastText(session.logsPath, resultText);
+
+  return NextResponse.json({ data: { ...session, logs, lastNonEmptyText } });
 }
 
 export async function DELETE(

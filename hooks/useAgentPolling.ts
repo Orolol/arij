@@ -2,13 +2,15 @@
 
 import { useState, useEffect, useCallback } from "react";
 
-interface ActiveSession {
+export interface ActiveSession {
   id: string;
   epicId: string | null;
   status: string;
   mode: string;
   provider: string | null;
   startedAt: string | null;
+  /** Last non-empty output text from the session, updated on each poll. */
+  lastNonEmptyText: string | null;
 }
 
 export function useAgentPolling(projectId: string, intervalMs = 3000) {

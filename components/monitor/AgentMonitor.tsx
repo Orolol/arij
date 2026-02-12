@@ -3,15 +3,7 @@
 import { useState, useEffect } from "react";
 import { Loader2, StopCircle, ChevronUp, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
-
-interface ActiveSession {
-  id: string;
-  epicId: string | null;
-  status: string;
-  mode: string;
-  provider: string | null;
-  startedAt: string | null;
-}
+import type { ActiveSession } from "@/hooks/useAgentPolling";
 
 interface AgentMonitorProps {
   projectId: string;
@@ -96,6 +88,14 @@ export function AgentMonitor({ projectId, sessions }: AgentMonitorProps) {
               <span className="text-muted-foreground font-mono">
                 {elapsed[session.id] || "0s"}
               </span>
+              {session.lastNonEmptyText && (
+                <span
+                  className="text-muted-foreground/70 truncate max-w-[280px] font-mono text-[10px]"
+                  title={session.lastNonEmptyText}
+                >
+                  {session.lastNonEmptyText}
+                </span>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
