@@ -1,10 +1,36 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState, type ReactNode } from "react";
-import { MessageSquare, PanelRightClose, PanelRightOpen, EyeOff } from "lucide-react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { useRouter } from "next/navigation";
+import {
+  MessageSquare,
+  PanelRightClose,
+  PanelRightOpen,
+  EyeOff,
+  Loader2,
+  Plus,
+  Sparkles,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { ProviderSelect, type ProviderType } from "@/components/shared/ProviderSelect";
+import { MessageList } from "@/components/chat/MessageList";
+import { MessageInput } from "@/components/chat/MessageInput";
+import { QuestionCards } from "@/components/chat/QuestionCards";
+import { useConversations } from "@/hooks/useConversations";
+import { useChat } from "@/hooks/useChat";
+import { useCodexAvailable } from "@/hooks/useCodexAvailable";
+import { isBrainstormConversationAgentType } from "@/lib/chat/conversation-agent";
 import { cn } from "@/lib/utils";
-import { ChatPanel } from "@/components/chat/ChatPanel";
 
 const DEFAULT_PANEL_RATIO = 0.4;
 const MIN_PANE_WIDTH = 300;
@@ -12,6 +38,19 @@ const DIVIDER_WIDTH = 6;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(Math.max(value, min), max);
+}
+
+function arraysEqual(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function truncateLabel(label: string) {
+  if (label.length <= 20) return label;
+  return `${label.slice(0, 20)}...`;
 }
 
 export type UnifiedPanelState = "collapsed" | "expanded" | "hidden";
@@ -30,15 +69,100 @@ interface UnifiedChatPanelProps {
 
 export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPanelProps>(
   function UnifiedChatPanel({ projectId, children }, ref) {
+    const router = useRouter();
     const containerRef = useRef<HTMLDivElement>(null);
     const [panelState, setPanelState] = useState<UnifiedPanelState>("collapsed");
     const [panelRatio, setPanelRatio] = useState(DEFAULT_PANEL_RATIO);
     const [isDragging, setIsDragging] = useState(false);
+    const [openConversationIds, setOpenConversationIds] = useState<string[]>([]);
+    const [generatingSpec, setGeneratingSpec] = useState(false);
+
+    const {
+      conversations,
+      activeId,
+      setActiveId,
+      createConversation,
+      updateConversation,
+      refresh: refreshConversations,
+    } = useConversations(projectId);
+
+    const {
+      messages,
+      loading,
+      sending,
+      pendingQuestions,
+      streamStatus,
+      sendMessage: rawSendMessage,
+      answerQuestions,
+    } = useChat(projectId, activeId);
+
+    const { codexAvailable, codexInstalled } = useCodexAvailable();
 
     const storageKey = useMemo(
       () => `arij.unified-chat-panel.ratio.${projectId}`,
       [projectId],
     );
+
+    const activeConversation = useMemo(
+      () => conversations.find((conversation) => conversation.id === activeId) || null,
+      [conversations, activeId],
+    );
+
+    const tabConversations = useMemo(
+      () =>
+        openConversationIds
+          .map((id) => conversations.find((conversation) => conversation.id === id) || null)
+          .filter((conversation): conversation is NonNullable<typeof conversation> => Boolean(conversation)),
+      [openConversationIds, conversations],
+    );
+
+    const activeProvider = (activeConversation?.provider || "claude-code") as ProviderType;
+    const hasMessages = messages.length > 0;
+    const isBrainstorm = isBrainstormConversationAgentType(activeConversation?.type);
+
+    const previousSending = useRef(sending);
+    useEffect(() => {
+      if (previousSending.current && !sending) {
+        const timer = setTimeout(() => refreshConversations(), 3000);
+        return () => clearTimeout(timer);
+      }
+      previousSending.current = sending;
+    }, [sending, refreshConversations]);
+
+    useEffect(() => {
+      setOpenConversationIds((previous) => {
+        const availableIds = new Set(conversations.map((conversation) => conversation.id));
+        let next = previous.filter((id) => availableIds.has(id));
+
+        if (next.length === 0 && conversations.length > 0) {
+          const preferredActiveId = activeId && availableIds.has(activeId) ? activeId : conversations[0].id;
+          next = [preferredActiveId];
+        }
+
+        if (activeId && availableIds.has(activeId) && !next.includes(activeId)) {
+          next = [...next, activeId];
+        }
+
+        if (arraysEqual(previous, next)) {
+          return previous;
+        }
+
+        return next;
+      });
+    }, [conversations, activeId]);
+
+    useEffect(() => {
+      if (!openConversationIds.length) return;
+
+      if (!activeId) {
+        setActiveId(openConversationIds[0]);
+        return;
+      }
+
+      if (!openConversationIds.includes(activeId)) {
+        setActiveId(openConversationIds[0]);
+      }
+    }, [activeId, openConversationIds, setActiveId]);
 
     const getContainerWidth = useCallback(() => {
       if (typeof window === "undefined") {
@@ -60,18 +184,59 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
 
     const panelWidthPx = computePanelWidth(panelRatio);
 
-    const openExpanded = useCallback(() => {
-      setPanelState("expanded");
+    const ensureTabIsOpen = useCallback((conversationId: string) => {
+      setOpenConversationIds((previous) => {
+        if (previous.includes(conversationId)) {
+          return previous;
+        }
+        return [...previous, conversationId];
+      });
     }, []);
+
+    const createNewConversationTab = useCallback(
+      async (options?: { type?: string; label?: string }) => {
+        const created = await createConversation({
+          type: options?.type || "brainstorm",
+          label: options?.label || "Brainstorm",
+        });
+
+        if (created) {
+          ensureTabIsOpen(created.id);
+          setActiveId(created.id);
+        }
+
+        return created;
+      },
+      [createConversation, ensureTabIsOpen, setActiveId],
+    );
+
+    const openChatConversation = useCallback(async () => {
+      setPanelState("expanded");
+
+      if (activeId) {
+        ensureTabIsOpen(activeId);
+        return;
+      }
+
+      if (conversations.length > 0) {
+        const fallbackId = conversations[0].id;
+        ensureTabIsOpen(fallbackId);
+        setActiveId(fallbackId);
+        return;
+      }
+
+      await createNewConversationTab({ type: "brainstorm", label: "Brainstorm" });
+    }, [activeId, conversations, ensureTabIsOpen, setActiveId, createNewConversationTab]);
 
     useImperativeHandle(
       ref,
       () => ({
         openChat() {
-          openExpanded();
+          void openChatConversation();
         },
         openNewEpic() {
-          openExpanded();
+          setPanelState("expanded");
+          void createNewConversationTab({ type: "epic_creation", label: "New Epic" });
         },
         collapse() {
           setPanelState("collapsed");
@@ -80,7 +245,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
           setPanelState("hidden");
         },
       }),
-      [openExpanded],
+      [openChatConversation, createNewConversationTab],
     );
 
     useEffect(() => {
@@ -144,8 +309,54 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       return () => window.removeEventListener("keydown", onEscape);
     }, []);
 
+    const sendMessage = useCallback(
+      async (content: string, attachmentIds: string[]) => {
+        if (!activeId) return;
+        await rawSendMessage(content, attachmentIds);
+      },
+      [activeId, rawSendMessage],
+    );
+
+    async function handleProviderChange(nextProvider: ProviderType) {
+      if (!activeId || hasMessages) {
+        return;
+      }
+      await updateConversation(activeId, { provider: nextProvider });
+    }
+
+    async function handleGenerateSpec() {
+      setGeneratingSpec(true);
+      try {
+        await fetch(`/api/projects/${projectId}/generate-spec`, {
+          method: "POST",
+        });
+        router.refresh();
+      } catch {
+        // ignore
+      }
+      setGeneratingSpec(false);
+    }
+
     function handleResetDivider() {
       setPanelRatio(DEFAULT_PANEL_RATIO);
+    }
+
+    function closeTab(conversationId: string) {
+      setOpenConversationIds((previous) => {
+        if (previous.length <= 1 || !previous.includes(conversationId)) {
+          return previous;
+        }
+
+        const next = previous.filter((id) => id !== conversationId);
+
+        if (activeId === conversationId) {
+          const closedIndex = previous.indexOf(conversationId);
+          const fallbackId = next[Math.max(0, closedIndex - 1)] || next[0] || null;
+          setActiveId(fallbackId);
+        }
+
+        return next;
+      });
     }
 
     if (panelState === "expanded") {
@@ -197,8 +408,95 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
                 <EyeOff className="h-4 w-4" />
               </Button>
             </div>
-            <div className="h-[calc(100%-2.5rem)]">
-              <ChatPanel projectId={projectId} />
+
+            <div className="flex h-[calc(100%-2.5rem)] flex-col">
+              <div className="border-b border-border flex items-center gap-0 overflow-x-auto" data-testid="chat-tab-bar">
+                {tabConversations.map((conversation) => {
+                  const isActive = conversation.id === activeId;
+                  return (
+                    <button
+                      key={conversation.id}
+                      type="button"
+                      data-testid={`conversation-tab-${conversation.id}`}
+                      onClick={() => setActiveId(conversation.id)}
+                      className={cn(
+                        "group flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors",
+                        isActive
+                          ? "border-primary text-foreground"
+                          : "border-transparent text-muted-foreground hover:text-foreground",
+                      )}
+                    >
+                      <MessageSquare className="h-3 w-3" />
+                      <span>{truncateLabel(conversation.label || "Conversation")}</span>
+                      {openConversationIds.length > 1 && (
+                        <span
+                          role="button"
+                          data-testid={`close-tab-${conversation.id}`}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            closeTab(conversation.id);
+                          }}
+                          className="ml-1 opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity"
+                        >
+                          <X className="h-3 w-3" />
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
+
+                <button
+                  type="button"
+                  data-testid="new-conversation-tab"
+                  onClick={() => void createNewConversationTab({ type: "brainstorm", label: "Brainstorm" })}
+                  className="flex items-center justify-center w-7 h-7 mx-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                  title="New conversation"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              <div className="p-3 border-b border-border flex items-center justify-between gap-2">
+                <h3 className="font-medium text-sm">{activeConversation?.label || "Chat"}</h3>
+                <div className="flex items-center gap-2">
+                  <ProviderSelect
+                    value={activeProvider}
+                    onChange={handleProviderChange}
+                    codexAvailable={codexAvailable}
+                    codexInstalled={codexInstalled}
+                    disabled={!activeConversation || hasMessages || sending}
+                    className="w-36 h-7 text-xs"
+                  />
+                  {isBrainstorm && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={handleGenerateSpec}
+                      disabled={generatingSpec}
+                      className="text-xs"
+                    >
+                      {generatingSpec ? (
+                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      ) : (
+                        <Sparkles className="h-3 w-3 mr-1" />
+                      )}
+                      Generate Spec & Plan
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex-1 overflow-auto">
+                <MessageList messages={messages} loading={loading} streamStatus={streamStatus} />
+                {pendingQuestions && (
+                  <div className="px-3 pb-3">
+                    <QuestionCards questions={pendingQuestions} onSubmit={answerQuestions} disabled={sending} />
+                  </div>
+                )}
+              </div>
+
+              <MessageInput projectId={projectId} onSend={sendMessage} disabled={sending || !activeConversation} />
             </div>
           </aside>
         </div>
@@ -212,7 +510,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
         {panelState === "collapsed" && (
           <button
             type="button"
-            onClick={() => setPanelState("expanded")}
+            onClick={() => void openChatConversation()}
             className="absolute inset-y-0 right-0 z-30 flex w-[max(56px,5vw)] items-center justify-center border-l border-border bg-muted/60 text-muted-foreground backdrop-blur transition-colors hover:bg-muted/80 hover:text-foreground"
             aria-label="Open chat panel"
             data-testid="collapsed-chat-strip"
