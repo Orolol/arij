@@ -5,6 +5,8 @@ import { eq, desc, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { spawnClaudeStream, spawnClaude } from "@/lib/claude/spawn";
 import { buildChatPrompt, buildTitleGenerationPrompt } from "@/lib/claude/prompt-builder";
+import { getProvider } from "@/lib/providers";
+import type { ProviderType } from "@/lib/providers";
 
 export async function POST(
   request: NextRequest,
@@ -70,6 +72,122 @@ export async function POST(
     globalPrompt
   );
 
+  // Determine provider from conversation
+  let provider: ProviderType = "claude-code";
+  if (conversationId) {
+    const conv = db.select().from(chatConversations).where(eq(chatConversations.id, conversationId)).get();
+    if (conv?.provider === "codex") {
+      provider = "codex";
+    }
+  }
+
+  const encoder = new TextEncoder();
+
+  /**
+   * Helper: save assistant message and generate title after stream completes.
+   */
+  function saveAssistantAndTitle(
+    controller: ReadableStreamDefaultController,
+    fullContent: string
+  ) {
+    const assistantMsgId = createId();
+    db.insert(chatMessages)
+      .values({
+        id: assistantMsgId,
+        projectId,
+        conversationId,
+        role: "assistant",
+        content: fullContent || "(empty response)",
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+
+    // Fire-and-forget title generation for first exchange
+    if (conversationId && fullContent) {
+      const msgCount = db
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(eq(chatMessages.conversationId, conversationId))
+        .all().length;
+
+      if (msgCount === 2) {
+        const conv = db.select().from(chatConversations).where(eq(chatConversations.id, conversationId)).get();
+        if (conv && (conv.label === "Brainstorm" || conv.label === "New Epic")) {
+          const titlePrompt = buildTitleGenerationPrompt(body.content, fullContent);
+          spawnClaude({ mode: "plan", prompt: titlePrompt, model: "haiku" }).promise
+            .then((titleResult) => {
+              if (titleResult.success && titleResult.result) {
+                let title = titleResult.result.trim();
+                try {
+                  const parsed = JSON.parse(title);
+                  if (parsed.result) title = parsed.result;
+                  else if (typeof parsed === "string") title = parsed;
+                } catch { /* use raw */ }
+                title = title.replace(/^["']|["']$/g, "").trim();
+                if (title && title.length <= 60) {
+                  db.update(chatConversations)
+                    .set({ label: title })
+                    .where(eq(chatConversations.id, conversationId))
+                    .run();
+                }
+              }
+            })
+            .catch(() => { /* ignore title gen errors */ });
+        }
+      }
+    }
+
+    controller.enqueue(
+      encoder.encode(
+        `data: ${JSON.stringify({ done: true, messageId: assistantMsgId })}\n\n`
+      )
+    );
+    controller.close();
+  }
+
+  // Branch on provider
+  if (provider === "codex") {
+    // Codex: non-streaming — run the full prompt, return result as single SSE event
+    const codexProvider = getProvider("codex");
+    const session = codexProvider.spawn({
+      sessionId: `chat-${createId()}`,
+      prompt,
+      cwd: project.gitRepoPath || process.cwd(),
+      mode: "plan",
+    });
+
+    const sseStream = new ReadableStream({
+      async start(controller) {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ status: "Codex processing..." })}\n\n`)
+        );
+
+        const result = await session.promise;
+        const fullContent = result.success
+          ? result.result || "(empty response)"
+          : `Error: ${result.error || "Codex request failed"}`;
+
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ delta: fullContent })}\n\n`)
+        );
+
+        saveAssistantAndTitle(controller, fullContent);
+      },
+      cancel() {
+        session.kill();
+      },
+    });
+
+    return new Response(sseStream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  // Claude Code: streaming via spawnClaudeStream
   const { stream: claudeStream, kill } = spawnClaudeStream({
     mode: "plan",
     prompt,
@@ -77,7 +195,6 @@ export async function POST(
     logIdentifier: conversationId || `chat-${projectId}`,
   });
 
-  const encoder = new TextEncoder();
   let fullContent = "";
 
   const sseStream = new ReadableStream({
@@ -108,61 +225,7 @@ export async function POST(
         console.error("[chat/stream] Stream error:", err);
       }
 
-      // Save assistant message to DB
-      const assistantMsgId = createId();
-      db.insert(chatMessages)
-        .values({
-          id: assistantMsgId,
-          projectId,
-          conversationId,
-          role: "assistant",
-          content: fullContent || "(empty response)",
-          createdAt: new Date().toISOString(),
-        })
-        .run();
-
-      // Fire-and-forget title generation for first exchange
-      if (conversationId && fullContent) {
-        const msgCount = db
-          .select({ id: chatMessages.id })
-          .from(chatMessages)
-          .where(eq(chatMessages.conversationId, conversationId))
-          .all().length;
-
-        if (msgCount === 2) {
-          const conv = db.select().from(chatConversations).where(eq(chatConversations.id, conversationId)).get();
-          if (conv && (conv.label === "Brainstorm" || conv.label === "New Epic")) {
-            const titlePrompt = buildTitleGenerationPrompt(body.content, fullContent);
-            spawnClaude({ mode: "plan", prompt: titlePrompt, model: "haiku" }).promise
-              .then((titleResult) => {
-                if (titleResult.success && titleResult.result) {
-                  // Parse the result - it's JSON from --output-format json
-                  let title = titleResult.result.trim();
-                  try {
-                    const parsed = JSON.parse(title);
-                    if (parsed.result) title = parsed.result;
-                    else if (typeof parsed === "string") title = parsed;
-                  } catch { /* use raw */ }
-                  title = title.replace(/^["']|["']$/g, "").trim();
-                  if (title && title.length <= 60) {
-                    db.update(chatConversations)
-                      .set({ label: title })
-                      .where(eq(chatConversations.id, conversationId))
-                      .run();
-                  }
-                }
-              })
-              .catch(() => { /* ignore title gen errors */ });
-          }
-        }
-      }
-
-      controller.enqueue(
-        encoder.encode(
-          `data: ${JSON.stringify({ done: true, messageId: assistantMsgId })}\n\n`
-        )
-      );
-      controller.close();
+      saveAssistantAndTitle(controller, fullContent);
     },
     cancel() {
       kill();

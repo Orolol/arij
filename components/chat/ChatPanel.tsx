@@ -2,9 +2,11 @@
 
 import { useChat } from "@/hooks/useChat";
 import { useConversations } from "@/hooks/useConversations";
+import { useCodexAvailable } from "@/hooks/useCodexAvailable";
 import { MessageList } from "./MessageList";
 import { MessageInput } from "./MessageInput";
 import { QuestionCards } from "./QuestionCards";
+import { ProviderSelect, type ProviderType } from "@/components/shared/ProviderSelect";
 import { Button } from "@/components/ui/button";
 import { Sparkles, Loader2, Plus, MessageSquare, X } from "lucide-react";
 import { useState, useCallback, useEffect, useRef } from "react";
@@ -25,6 +27,7 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
   } = useConversations(projectId);
 
   const { messages, loading, sending, pendingQuestions, streamStatus, sendMessage: rawSendMessage, answerQuestions } = useChat(projectId, activeId);
+  const { codexAvailable } = useCodexAvailable();
   const [generating, setGenerating] = useState(false);
   const router = useRouter();
 
@@ -48,6 +51,25 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
 
   const activeConversation = conversations.find((c) => c.id === activeId);
   const isBrainstorm = activeConversation?.type === "brainstorm";
+
+  // Provider is stored on the conversation. Locked after first message.
+  const activeProvider = (activeConversation?.provider || "claude-code") as ProviderType;
+  const hasMessages = messages.length > 0;
+
+  async function handleProviderChange(newProvider: ProviderType) {
+    if (!activeId || hasMessages) return;
+    // Update provider on the server
+    try {
+      await fetch(`/api/projects/${projectId}/conversations/${activeId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ provider: newProvider }),
+      });
+      refreshConversations();
+    } catch {
+      // ignore
+    }
+  }
 
   async function handleGenerateSpec() {
     setGenerating(true);
@@ -104,24 +126,33 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
       </div>
 
       {/* Header with actions */}
-      <div className="p-3 border-b border-border flex items-center justify-between">
+      <div className="p-3 border-b border-border flex items-center justify-between gap-2">
         <h3 className="font-medium text-sm">{activeConversation?.label || "Chat"}</h3>
-        {isBrainstorm && (
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={handleGenerateSpec}
-            disabled={generating}
-            className="text-xs"
-          >
-            {generating ? (
-              <Loader2 className="h-3 w-3 animate-spin mr-1" />
-            ) : (
-              <Sparkles className="h-3 w-3 mr-1" />
-            )}
-            Generate Spec & Plan
-          </Button>
-        )}
+        <div className="flex items-center gap-2">
+          <ProviderSelect
+            value={activeProvider}
+            onChange={handleProviderChange}
+            codexAvailable={codexAvailable}
+            disabled={hasMessages || sending}
+            className="w-36 h-7 text-xs"
+          />
+          {isBrainstorm && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handleGenerateSpec}
+              disabled={generating}
+              className="text-xs"
+            >
+              {generating ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              ) : (
+                <Sparkles className="h-3 w-3 mr-1" />
+              )}
+              Generate Spec & Plan
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="flex-1 overflow-auto">
