@@ -36,6 +36,13 @@
       "when": 1770936578767,
       "tag": "0004_fixed_spirit",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1770937218019,
+      "tag": "0005_glossy_spitfire",
+      "breakpoints": true
     }
   ]
 }
