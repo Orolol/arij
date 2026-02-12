@@ -121,7 +121,10 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       [openConversationIds, conversations],
     );
 
-    const { createEpic, isLoading: epicCreating } = useEpicCreate(projectId);
+    const { createEpic, isLoading: epicCreating } = useEpicCreate({
+      projectId,
+      conversationId: activeId,
+    });
 
     const activeProvider = (activeConversation?.provider || "claude-code") as ProviderType;
     const hasMessages = messages.length > 0;
@@ -357,8 +360,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
     }
 
     async function handleCreateEpic() {
-      if (!activeId) return;
-      const epicId = await createEpic(activeId);
+      const epicId = await createEpic();
       if (epicId) {
         onEpicCreated?.();
         router.refresh();
