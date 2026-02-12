@@ -270,6 +270,7 @@ export default function KanbanPage() {
                 selectedEpics={selectedEpics}
                 onToggleSelect={toggleEpicSelection}
                 refreshTrigger={refreshTrigger}
+                activeSessions={activeSessions}
               />
             </div>
 
