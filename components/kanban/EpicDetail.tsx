@@ -7,7 +7,6 @@ import {
   SheetTitle,
 } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -20,9 +19,9 @@ import { Separator } from "@/components/ui/separator";
 import { InlineEdit } from "./InlineEdit";
 import { useEpicDetail } from "@/hooks/useEpicDetail";
 import { PRIORITY_LABELS, KANBAN_COLUMNS, COLUMN_LABELS } from "@/lib/types/kanban";
-import { MarkdownContent } from "@/components/chat/MarkdownContent";
-import { Plus, Trash2, Check, Circle, Loader2, GitBranch, ChevronRight, GitMerge } from "lucide-react";
+import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge } from "lucide-react";
 import { useState } from "react";
+import Link from "next/link";
 
 interface EpicDetailProps {
   projectId: string;
@@ -44,7 +43,6 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
   } = useEpicDetail(projectId, epicId);
 
   const [newUSTitle, setNewUSTitle] = useState("");
-  const [expandedUS, setExpandedUS] = useState<Set<string>>(new Set());
   const [merging, setMerging] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
 
@@ -200,82 +198,44 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
                 </div>
 
                 <div className="space-y-1">
-                  {userStories.map((us) => {
-                    const hasDetails = us.description || us.acceptanceCriteria;
-                    const isExpanded = expandedUS.has(us.id);
-                    return (
-                      <div key={us.id} className="rounded hover:bg-accent/50 group">
-                        <div className="flex items-center gap-2 p-2">
-                          {hasDetails && (
-                            <button
-                              onClick={() =>
-                                setExpandedUS((prev) => {
-                                  const next = new Set(prev);
-                                  if (next.has(us.id)) next.delete(us.id);
-                                  else next.add(us.id);
-                                  return next;
-                                })
-                              }
-                              className="shrink-0"
-                            >
-                              <ChevronRight
-                                className={`h-3 w-3 text-muted-foreground transition-transform ${
-                                  isExpanded ? "rotate-90" : ""
-                                }`}
-                              />
-                            </button>
-                          )}
-                          <button
-                            onClick={() => {
-                              const next =
-                                us.status === "done"
-                                  ? "todo"
-                                  : us.status === "todo"
-                                    ? "in_progress"
-                                    : "done";
-                              updateUserStory(us.id, { status: next });
-                            }}
-                          >
-                            {statusIcon(us.status)}
-                          </button>
-                          <span
-                            className={`flex-1 text-sm ${
-                              us.status === "done"
-                                ? "line-through text-muted-foreground"
-                                : ""
-                            }`}
-                          >
-                            {us.title}
-                          </span>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                            onClick={() => deleteUserStory(us.id)}
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </Button>
-                        </div>
-                        {isExpanded && hasDetails && (
-                          <div className="pl-10 pr-2 pb-2 space-y-2 text-sm">
-                            {us.description && (
-                              <div>
-                                <MarkdownContent content={us.description} />
-                              </div>
-                            )}
-                            {us.acceptanceCriteria && (
-                              <div>
-                                <span className="text-xs font-medium text-muted-foreground">
-                                  Acceptance Criteria
-                                </span>
-                                <MarkdownContent content={us.acceptanceCriteria} />
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                  {userStories.map((us) => (
+                    <div
+                      key={us.id}
+                      className="flex items-center gap-2 p-2 rounded hover:bg-accent/50 group"
+                    >
+                      <button
+                        onClick={() => {
+                          const next =
+                            us.status === "done"
+                              ? "todo"
+                              : us.status === "todo"
+                                ? "in_progress"
+                                : "done";
+                          updateUserStory(us.id, { status: next });
+                        }}
+                      >
+                        {statusIcon(us.status)}
+                      </button>
+                      <Link
+                        href={`/projects/${projectId}/stories/${us.id}`}
+                        className={`flex-1 text-sm hover:underline ${
+                          us.status === "done"
+                            ? "line-through text-muted-foreground"
+                            : ""
+                        }`}
+                      >
+                        {us.title}
+                      </Link>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                        onClick={() => deleteUserStory(us.id)}
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ))}
                 </div>
 
                 <div className="flex gap-2 mt-2">
