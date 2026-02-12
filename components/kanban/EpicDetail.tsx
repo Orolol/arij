@@ -25,8 +25,8 @@ import { EpicActions } from "@/components/epic/EpicActions";
 import { UserStoryQuickActions } from "@/components/epic/UserStoryQuickActions";
 import { CommentThread } from "@/components/story/CommentThread";
 import { PRIORITY_LABELS, KANBAN_COLUMNS, COLUMN_LABELS } from "@/lib/types/kanban";
-import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge } from "lucide-react";
-import { useState } from "react";
+import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, Wrench } from "lucide-react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 
 interface EpicDetailProps {
@@ -47,6 +47,7 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
     updateUserStory,
     deleteUserStory,
     refresh,
+    setPolling,
   } = useEpicDetail(projectId, epicId);
 
   const {
@@ -61,12 +62,19 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
     isRunning,
     sendToDev,
     sendToReview,
+    resolveMerge,
     approve,
   } = useEpicAgent(projectId, epicId);
+
+  // Only poll epic detail when an agent is actively running
+  useEffect(() => {
+    setPolling(isRunning);
+  }, [isRunning, setPolling]);
 
   const [newUSTitle, setNewUSTitle] = useState("");
   const [merging, setMerging] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
+  const [resolvingMerge, setResolvingMerge] = useState(false);
 
   async function handleMerge() {
     if (!epicId) return;
@@ -87,6 +95,26 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
       setMergeError("Failed to merge");
     }
     setMerging(false);
+  }
+
+  async function handleResolveMerge() {
+    if (!epicId) return;
+    setResolvingMerge(true);
+    try {
+      const result = await resolveMerge();
+      if (result?.clean) {
+        // Merge was clean — no agent needed
+        setMergeError(null);
+        onMerged?.();
+        onClose();
+      } else {
+        // Agent spawned — clear error, polling will track it
+        setMergeError(null);
+      }
+    } catch (e) {
+      setMergeError(e instanceof Error ? e.message : "Failed to resolve merge");
+    }
+    setResolvingMerge(false);
   }
 
   async function handleApprove() {
@@ -125,9 +153,14 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
     <Sheet open={open} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="w-[520px] sm:max-w-[520px] overflow-y-auto">
         {loading || !epic ? (
-          <div className="py-8 text-center text-muted-foreground">
-            Loading...
-          </div>
+          <>
+            <SheetHeader>
+              <SheetTitle>Epic</SheetTitle>
+            </SheetHeader>
+            <div className="py-8 text-center text-muted-foreground">
+              Loading...
+            </div>
+          </>
         ) : (
           <>
             <SheetHeader>
@@ -231,7 +264,23 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
                     </Button>
                   )}
                   {mergeError && (
-                    <p className="text-xs text-destructive">{mergeError}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-xs text-destructive flex-1">{mergeError}</p>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleResolveMerge}
+                        disabled={resolvingMerge || isRunning}
+                        className="h-7 text-xs shrink-0"
+                      >
+                        {resolvingMerge ? (
+                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                        ) : (
+                          <Wrench className="h-3 w-3 mr-1" />
+                        )}
+                        Resolve with Agent
+                      </Button>
+                    </div>
                   )}
                 </div>
               )}

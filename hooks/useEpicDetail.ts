@@ -26,36 +26,61 @@ export function useEpicDetail(projectId: string, epicId: string | null) {
   const [epic, setEpic] = useState<EpicDetail | null>(null);
   const [userStories, setUserStories] = useState<UserStory[]>([]);
   const [loading, setLoading] = useState(false);
+  const [polling, setPolling] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const fetchData = useCallback(async () => {
+    if (!epicId) return;
+    try {
+      const [epicRes, usRes] = await Promise.all([
+        fetch(`/api/projects/${projectId}/epics`),
+        fetch(`/api/projects/${projectId}/user-stories?epicId=${epicId}`),
+      ]);
+
+      const epicData = await epicRes.json();
+      const usData = await usRes.json();
+
+      const foundEpic = (epicData.data || []).find(
+        (e: EpicDetail) => e.id === epicId
+      );
+      if (foundEpic) setEpic(foundEpic);
+      setUserStories(usData.data || []);
+    } catch {
+      // silently fail on poll
+    }
+  }, [projectId, epicId]);
+
+  // Initial load — shows loading spinner
   const loadData = useCallback(async () => {
     if (!epicId) return;
     setLoading(true);
-
-    const [epicRes, usRes] = await Promise.all([
-      fetch(`/api/projects/${projectId}/epics`),
-      fetch(`/api/projects/${projectId}/user-stories?epicId=${epicId}`),
-    ]);
-
-    const epicData = await epicRes.json();
-    const usData = await usRes.json();
-
-    const foundEpic = (epicData.data || []).find(
-      (e: EpicDetail) => e.id === epicId
-    );
-    if (foundEpic) setEpic(foundEpic);
-    setUserStories(usData.data || []);
+    await fetchData();
     setLoading(false);
-  }, [projectId, epicId]);
+  }, [epicId, fetchData]);
 
   useEffect(() => {
     loadData();
-    // Poll every 5s to keep US statuses fresh during agent runs
-    pollRef.current = setInterval(loadData, 5000);
+  }, [loadData]);
+
+  // Silent background poll — only when polling is enabled
+  useEffect(() => {
+    if (!polling || !epicId) {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+    pollRef.current = setInterval(fetchData, 5000);
     return () => {
       if (pollRef.current) clearInterval(pollRef.current);
     };
-  }, [loadData]);
+  }, [polling, epicId, fetchData]);
+
+  // refresh: silent one-shot fetch (no loading state)
+  const refresh = useCallback(async () => {
+    await fetchData();
+  }, [fetchData]);
 
   const updateEpic = useCallback(
     async (updates: Partial<EpicDetail>) => {
@@ -118,6 +143,7 @@ export function useEpicDetail(projectId: string, epicId: string | null) {
     addUserStory,
     updateUserStory,
     deleteUserStory,
-    refresh: loadData,
+    refresh,
+    setPolling,
   };
 }

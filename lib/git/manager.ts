@@ -131,6 +131,34 @@ export async function mergeWorktree(
 }
 
 /**
+ * Starts a merge of targetBranch into the worktree's current branch.
+ * If the merge succeeds cleanly, returns { conflicted: false }.
+ * If there are conflicts, leaves the worktree in a conflicted state
+ * (does NOT abort) so an agent can resolve them.
+ */
+export async function startMergeInWorktree(
+  worktreePath: string,
+  targetBranch: string
+): Promise<{ conflicted: boolean; output: string }> {
+  const git = getGit(worktreePath);
+
+  try {
+    // Fetch latest so the target branch ref is up to date
+    const result = await git.merge([targetBranch]);
+    return { conflicted: false, output: result.result || "Merge completed cleanly." };
+  } catch (e) {
+    const output = e instanceof Error ? e.message : "Merge failed with conflicts";
+    // Check if there are actually conflicted files
+    const status = await git.status();
+    if (status.conflicted.length > 0) {
+      return { conflicted: true, output };
+    }
+    // Not a conflict — some other merge error; re-throw
+    throw e;
+  }
+}
+
+/**
  * Lists all local branches in the repo.
  */
 export async function listBranches(repoPath: string): Promise<string[]> {

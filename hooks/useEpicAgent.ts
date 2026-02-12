@@ -105,6 +105,33 @@ export function useEpicAgent(projectId: string, epicId: string | null) {
     [projectId, epicId]
   );
 
+  const resolveMerge = useCallback(
+    async () => {
+      if (!epicId) return;
+      setDispatching(true);
+      try {
+        const res = await fetch(
+          `/api/projects/${projectId}/epics/${epicId}/resolve-merge`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+        const data = await res.json();
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        if (data.data?.sessionId) {
+          sessionIdsRef.current.add(data.data.sessionId);
+        }
+        return data.data;
+      } finally {
+        setDispatching(false);
+      }
+    },
+    [projectId, epicId]
+  );
+
   const approve = useCallback(async () => {
     if (!epicId) return;
     const res = await fetch(
@@ -129,6 +156,7 @@ export function useEpicAgent(projectId: string, epicId: string | null) {
     isRunning,
     sendToDev,
     sendToReview,
+    resolveMerge,
     approve,
   };
 }

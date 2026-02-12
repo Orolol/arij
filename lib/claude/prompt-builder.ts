@@ -666,7 +666,58 @@ Your response should be a well-formatted markdown report.
 }
 
 // ---------------------------------------------------------------------------
-// 10. Epic Review Prompt
+// 10. Merge Conflict Resolution Prompt
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the prompt for an agent that resolves git merge conflicts.
+ * The agent runs in code mode inside a worktree where `git merge` has
+ * already been started, leaving conflicted files on disk.
+ */
+export function buildMergeResolutionPrompt(
+  project: PromptProject,
+  epic: PromptEpic,
+  branchName: string,
+  conflictOutput: string,
+  globalPrompt?: string | null,
+): string {
+  const parts: string[] = [];
+
+  parts.push(globalSection(globalPrompt));
+  parts.push(`# Project: ${project.name}\n`);
+  parts.push(section("Project Specification", project.spec));
+
+  parts.push(`## Epic Context\n`);
+  parts.push(`### ${epic.title}\n`);
+  if (epic.description) {
+    parts.push(`${epic.description.trim()}\n`);
+  }
+
+  parts.push(`## Merge Conflict Resolution\n`);
+  parts.push(`Branch: \`${branchName}\`\n`);
+  parts.push(`### Git merge output\n`);
+  parts.push("```\n" + conflictOutput.trim() + "\n```\n");
+
+  parts.push(`## Instructions
+
+A \`git merge main\` was started in this worktree and resulted in conflicts. The conflicted files are on disk with standard conflict markers.
+
+Your task:
+
+1. List all conflicted files using \`git diff --name-only --diff-filter=U\`.
+2. For each conflicted file, read it and resolve the conflict markers (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`) by preserving the intent of both sides. If in doubt, prefer the feature branch changes but ensure main's changes are not lost.
+3. After resolving each file, run \`git add <file>\` to mark it resolved.
+4. Once all conflicts are resolved, run \`git commit --no-edit\` to finalize the merge commit with the default message.
+5. Verify with \`git status\` that the working tree is clean.
+
+Do NOT abort the merge. Do NOT create a new branch. Work only in this worktree.
+`);
+
+  return parts.filter(Boolean).join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// 11. Epic Review Prompt
 // ---------------------------------------------------------------------------
 
 /**
