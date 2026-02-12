@@ -1,4 +1,10 @@
-import { sqliteTable, text, integer, real } from "drizzle-orm/sqlite-core";
+import {
+  sqliteTable,
+  text,
+  integer,
+  real,
+  uniqueIndex,
+} from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
 export const projects = sqliteTable("projects", {
@@ -140,3 +146,61 @@ export const settings = sqliteTable("settings", {
   value: text("value").notNull(), // JSON
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
+
+// --- Agent Configuration Tables ---
+
+export const agentPrompts = sqliteTable(
+  "agent_prompts",
+  {
+    id: text("id").primaryKey(),
+    agentType: text("agent_type").notNull(), // build | review_security | review_code | review_compliance | chat | spec_generation | team_build | ticket_build
+    systemPrompt: text("system_prompt").notNull(),
+    scope: text("scope").notNull(), // 'global' | projectId
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("agent_prompts_type_scope_idx").on(
+      table.agentType,
+      table.scope
+    ),
+  ]
+);
+
+export const customReviewAgents = sqliteTable(
+  "custom_review_agents",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    systemPrompt: text("system_prompt").notNull(),
+    scope: text("scope").notNull(), // 'global' | projectId
+    position: integer("position").default(0),
+    isEnabled: integer("is_enabled").default(1),
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("custom_review_agents_name_scope_idx").on(
+      table.name,
+      table.scope
+    ),
+  ]
+);
+
+export const agentProviderDefaults = sqliteTable(
+  "agent_provider_defaults",
+  {
+    id: text("id").primaryKey(),
+    agentType: text("agent_type").notNull(), // build | review_security | review_code | review_compliance | chat | spec_generation | team_build | ticket_build
+    provider: text("provider").notNull(), // claude-code | codex
+    scope: text("scope").notNull(), // 'global' | projectId
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => [
+    uniqueIndex("agent_provider_defaults_type_scope_idx").on(
+      table.agentType,
+      table.scope
+    ),
+  ]
+);
