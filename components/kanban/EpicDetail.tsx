@@ -25,7 +25,10 @@ import { EpicActions } from "@/components/epic/EpicActions";
 import { UserStoryQuickActions } from "@/components/epic/UserStoryQuickActions";
 import { CommentThread } from "@/components/story/CommentThread";
 import { PRIORITY_LABELS, KANBAN_COLUMNS, COLUMN_LABELS } from "@/lib/types/kanban";
-import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, Wrench } from "lucide-react";
+import { useEpicPr } from "@/hooks/useEpicPr";
+import { useGitHubConfig } from "@/hooks/useGitHubConfig";
+import { PrBadge } from "@/components/github/PrBadge";
+import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, GitPullRequest, Wrench, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
 import Link from "next/link";
 
@@ -65,6 +68,16 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
     resolveMerge,
     approve,
   } = useEpicAgent(projectId, epicId);
+
+  const {
+    pr,
+    loading: prLoading,
+    error: prError,
+    createPr,
+    syncPr,
+  } = useEpicPr(projectId, epicId);
+
+  const { isConfigured: isGitHubConfigured } = useGitHubConfig(projectId);
 
   // Only poll epic detail when an agent is actively running
   useEffect(() => {
@@ -247,6 +260,54 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
                     <GitBranch className="h-3 w-3" />
                     {epic.branchName}
                   </div>
+
+                  {/* PR Section */}
+                  {isGitHubConfigured && (
+                    <div className="space-y-2">
+                      {pr ? (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <PrBadge
+                            status={pr.status}
+                            number={pr.number}
+                            url={pr.url}
+                          />
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={syncPr}
+                            disabled={prLoading}
+                            className="h-6 text-xs px-2"
+                          >
+                            {prLoading ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3 w-3" />
+                            )}
+                            <span className="ml-1">Sync</span>
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => createPr()}
+                          disabled={prLoading}
+                          className="h-7 text-xs"
+                        >
+                          {prLoading ? (
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                          ) : (
+                            <GitPullRequest className="h-3 w-3 mr-1" />
+                          )}
+                          Create PR
+                        </Button>
+                      )}
+                      {prError && (
+                        <p className="text-xs text-destructive">{prError}</p>
+                      )}
+                    </div>
+                  )}
+
                   {(epic.status === "review" || epic.status === "done") && (
                     <Button
                       size="sm"
