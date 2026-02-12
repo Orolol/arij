@@ -130,6 +130,9 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
     const hasMessages = messages.length > 0;
     const isBrainstorm = isBrainstormConversationAgentType(activeConversation?.type);
     const isEpicCreation = isEpicCreationConversationAgentType(activeConversation?.type);
+    const hasUserMessage = messages.some((message) => message.role === "user");
+    const hasAssistantMessage = messages.some((message) => message.role === "assistant");
+    const canCreateEpic = isEpicCreation && hasUserMessage && hasAssistantMessage;
     const hasActiveAgents = conversations.some(
       (conversation) => conversation.status === "generating",
     );
@@ -448,6 +451,11 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
                       key={conversation.id}
                       type="button"
                       data-testid={`conversation-tab-${conversation.id}`}
+                      data-agent-type={
+                        isEpicCreationConversationAgentType(conversation.type)
+                          ? "epic_creation"
+                          : "brainstorm"
+                      }
                       onClick={() => setActiveId(conversation.id)}
                       className={cn(
                         "group flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors",
@@ -525,7 +533,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
                       Generate Spec & Plan
                     </Button>
                   )}
-                  {isEpicCreation && messages.length >= 2 && (
+                  {canCreateEpic && (
                     <Button
                       type="button"
                       size="sm"
