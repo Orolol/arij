@@ -13,6 +13,7 @@ export const projects = sqliteTable("projects", {
   description: text("description"),
   status: text("status").default("ideation"), // ideation | specifying | building | done | archived
   gitRepoPath: text("git_repo_path"),
+  githubOwnerRepo: text("github_owner_repo"), // e.g. "owner/repo"
   spec: text("spec"),
   imported: integer("imported").default(0),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
@@ -138,6 +139,9 @@ export const releases = sqliteTable("releases", {
   changelog: text("changelog"), // markdown
   epicIds: text("epic_ids"), // JSON array of epic IDs
   gitTag: text("git_tag"),
+  githubReleaseId: integer("github_release_id"),
+  githubReleaseUrl: text("github_release_url"),
+  pushedAt: text("pushed_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -211,3 +215,21 @@ export type NewCustomReviewAgent = typeof customReviewAgents.$inferInsert;
 
 export type AgentProviderDefault = typeof agentProviderDefaults.$inferSelect;
 export type NewAgentProviderDefault = typeof agentProviderDefaults.$inferInsert;
+
+export const gitSyncLog = sqliteTable("git_sync_log", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  operation: text("operation").notNull(), // push | pull | fetch | pr_create | pr_sync | release_create | release_publish | tag_push
+  branch: text("branch"),
+  status: text("status").notNull(), // success | failure
+  detail: text("detail"), // JSON
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export type GitSyncLog = typeof gitSyncLog.$inferSelect;
+export type NewGitSyncLog = typeof gitSyncLog.$inferInsert;
+
+export type Release = typeof releases.$inferSelect;
+export type NewRelease = typeof releases.$inferInsert;
