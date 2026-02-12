@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { processManager } from "@/lib/claude/process-manager";
+import { isValidTransition, type SessionStatus } from "@/lib/sessions/status-machine";
 import fs from "fs";
 
 export async function GET(
@@ -49,9 +50,10 @@ export async function DELETE(
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
-  if (session.status !== "running") {
+  const currentStatus = session.status as SessionStatus;
+  if (!isValidTransition(currentStatus, "cancelled")) {
     return NextResponse.json(
-      { error: "Session is not running" },
+      { error: `Cannot cancel session in '${currentStatus}' state` },
       { status: 400 }
     );
   }
@@ -59,7 +61,7 @@ export async function DELETE(
   // Cancel in process manager
   processManager.cancel(sessionId);
 
-  // Update DB
+  // Update DB with validated transition
   const now = new Date().toISOString();
   db.update(agentSessions)
     .set({ status: "cancelled", completedAt: now, error: "Cancelled by user" })

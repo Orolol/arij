@@ -11,6 +11,7 @@ import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
+import { isValidTransition, type SessionStatus } from "@/lib/sessions/status-machine";
 import {
   buildBuildPrompt,
   buildTeamBuildPrompt,
@@ -209,14 +210,21 @@ export async function POST(
           // ignore
         }
 
-        db.update(agentSessions)
-          .set({
-            status: result?.success ? "completed" : "failed",
-            completedAt,
-            error: result?.error || null,
-          })
-          .where(eq(agentSessions.id, sessionId))
-          .run();
+        // Validate transition before updating DB
+        const currentSession = db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
+        const currentStatus = (currentSession?.status ?? "running") as SessionStatus;
+        const targetStatus: SessionStatus = result?.success ? "completed" : "failed";
+
+        if (isValidTransition(currentStatus, targetStatus)) {
+          db.update(agentSessions)
+            .set({
+              status: targetStatus,
+              completedAt,
+              error: result?.error || null,
+            })
+            .where(eq(agentSessions.id, sessionId))
+            .run();
+        }
 
         // Update all associated epics
         if (result?.success) {
@@ -350,14 +358,21 @@ export async function POST(
         // ignore
       }
 
-      db.update(agentSessions)
-        .set({
-          status: result?.success ? "completed" : "failed",
-          completedAt,
-          error: result?.error || null,
-        })
-        .where(eq(agentSessions.id, sessionId))
-        .run();
+      // Validate transition before updating DB
+      const currentSession = db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
+      const currentStatus = (currentSession?.status ?? "running") as SessionStatus;
+      const targetStatus: SessionStatus = result?.success ? "completed" : "failed";
+
+      if (isValidTransition(currentStatus, targetStatus)) {
+        db.update(agentSessions)
+          .set({
+            status: targetStatus,
+            completedAt,
+            error: result?.error || null,
+          })
+          .where(eq(agentSessions.id, sessionId))
+          .run();
+      }
 
       // Move epic + US to review if successful
       if (result?.success) {
