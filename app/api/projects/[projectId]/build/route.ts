@@ -8,7 +8,7 @@ import {
   agentSessions,
   settings,
 } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
@@ -134,6 +134,17 @@ export async function POST(
       .where(eq(epics.id, epicId))
       .run();
 
+    // Sync US statuses: non-done -> in_progress
+    db.update(userStories)
+      .set({ status: "in_progress" })
+      .where(
+        and(
+          eq(userStories.epicId, epicId),
+          notInArray(userStories.status, ["done"])
+        )
+      )
+      .run();
+
     // Update project status to building
     db.update(projects)
       .set({ status: "building", updatedAt: now })
@@ -177,8 +188,18 @@ export async function POST(
         .where(eq(agentSessions.id, sessionId))
         .run();
 
-      // Move epic to review if successful
+      // Move epic + US to review if successful
       if (result?.success) {
+        db.update(userStories)
+          .set({ status: "review" })
+          .where(
+            and(
+              eq(userStories.epicId, epicId),
+              eq(userStories.status, "in_progress")
+            )
+          )
+          .run();
+
         db.update(epics)
           .set({ status: "review", updatedAt: completedAt })
           .where(eq(epics.id, epicId))

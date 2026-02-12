@@ -99,9 +99,10 @@ export const agentSessions = sqliteTable("agent_sessions", {
 
 export const ticketComments = sqliteTable("ticket_comments", {
   id: text("id").primaryKey(),
-  userStoryId: text("user_story_id")
-    .notNull()
-    .references(() => userStories.id, { onDelete: "cascade" }),
+  userStoryId: text("user_story_id").references(() => userStories.id, {
+    onDelete: "cascade",
+  }),
+  epicId: text("epic_id").references(() => epics.id, { onDelete: "cascade" }),
   author: text("author").notNull(), // user | agent
   content: text("content").notNull(),
   agentSessionId: text("agent_session_id").references(() => agentSessions.id),
