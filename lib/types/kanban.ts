@@ -41,6 +41,9 @@ export interface KanbanEpic {
   branchName: string | null;
   confidence: number | null;
   evidence: string | null;
+  prNumber: number | null;
+  prUrl: string | null;
+  prStatus: string | null;
   createdAt: string;
   updatedAt: string;
   usCount: number;

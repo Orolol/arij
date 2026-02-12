@@ -15,6 +15,7 @@ export const projects = sqliteTable("projects", {
   gitRepoPath: text("git_repo_path"),
   spec: text("spec"),
   imported: integer("imported").default(0),
+  githubOwnerRepo: text("github_owner_repo"), // "owner/repo" for GitHub API calls
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -43,6 +44,9 @@ export const epics = sqliteTable("epics", {
   branchName: text("branch_name"),
   confidence: real("confidence"),
   evidence: text("evidence"),
+  prNumber: integer("pr_number"),
+  prUrl: text("pr_url"),
+  prStatus: text("pr_status"), // open | draft | closed | merged
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -202,6 +206,42 @@ export const agentProviderDefaults = sqliteTable(
     ),
   }),
 );
+
+export const pullRequests = sqliteTable("pull_requests", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  epicId: text("epic_id").references(() => epics.id),
+  prNumber: integer("pr_number").notNull(),
+  title: text("title").notNull(),
+  body: text("body"),
+  htmlUrl: text("html_url").notNull(),
+  status: text("status").notNull(), // open | draft | closed | merged
+  headBranch: text("head_branch").notNull(),
+  baseBranch: text("base_branch").notNull(),
+  githubId: integer("github_id"),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const gitSyncLog = sqliteTable("git_sync_log", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  operation: text("operation").notNull(), // push | pull | fetch | pr_create | pr_sync | release_create | release_publish
+  branch: text("branch"),
+  status: text("status").notNull(), // success | failure
+  detail: text("detail"), // JSON
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export type PullRequest = typeof pullRequests.$inferSelect;
+export type NewPullRequest = typeof pullRequests.$inferInsert;
+
+export type GitSyncLogEntry = typeof gitSyncLog.$inferSelect;
+export type NewGitSyncLogEntry = typeof gitSyncLog.$inferInsert;
 
 export type AgentPrompt = typeof agentPrompts.$inferSelect;
 export type NewAgentPrompt = typeof agentPrompts.$inferInsert;
