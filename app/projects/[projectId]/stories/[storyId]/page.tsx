@@ -4,6 +4,7 @@ import { useParams } from "next/navigation";
 import { useStoryDetail } from "@/hooks/useStoryDetail";
 import { useComments } from "@/hooks/useComments";
 import { useTicketAgent } from "@/hooks/useTicketAgent";
+import { useCodexAvailable } from "@/hooks/useCodexAvailable";
 import { StoryDetailPanel } from "@/components/story/StoryDetailPanel";
 import { CommentThread } from "@/components/story/CommentThread";
 import { StoryActions } from "@/components/story/StoryActions";
@@ -36,6 +37,8 @@ export default function StoryDetailPage() {
     sendToReview,
     approve,
   } = useTicketAgent(projectId, storyId);
+
+  const { codexAvailable } = useCodexAvailable();
 
   if (storyLoading) {
     return (
@@ -81,12 +84,13 @@ export default function StoryDetailPage() {
           dispatching={dispatching}
           isRunning={isRunning}
           activeSessions={activeSessions}
-          onSendToDev={async (comment) => {
-            await sendToDev(comment);
+          codexAvailable={codexAvailable}
+          onSendToDev={async (comment, provider) => {
+            await sendToDev(comment, provider);
             refreshStory();
           }}
-          onSendToReview={async (types) => {
-            await sendToReview(types);
+          onSendToReview={async (types, provider) => {
+            await sendToReview(types, provider);
           }}
           onApprove={async () => {
             await approve();

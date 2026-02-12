@@ -7,6 +7,8 @@ import { EpicDetail } from "@/components/kanban/EpicDetail";
 import { CreateEpicSheet } from "@/components/kanban/CreateEpicSheet";
 import { AgentMonitor } from "@/components/monitor/AgentMonitor";
 import { useAgentPolling } from "@/hooks/useAgentPolling";
+import { useCodexAvailable } from "@/hooks/useCodexAvailable";
+import { ProviderSelect, type ProviderType } from "@/components/shared/ProviderSelect";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -15,7 +17,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users } from "lucide-react";
 
 interface Toast {
   id: string;
@@ -31,12 +39,22 @@ export default function KanbanPage() {
   const [buildMode, setBuildMode] = useState<"parallel" | "sequential">(
     "parallel"
   );
+  const [teamMode, setTeamMode] = useState(false);
+  const [provider, setProvider] = useState<ProviderType>("claude-code");
   const [building, setBuilding] = useState(false);
   const [showCreateEpic, setShowCreateEpic] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const { activeSessions } = useAgentPolling(projectId);
+  const { codexAvailable } = useCodexAvailable();
   const prevSessionIds = useRef<Set<string>>(new Set());
+
+  // Reset team mode when selection drops below 2 or provider changes to codex
+  useEffect(() => {
+    if (selectedEpics.size < 2 || provider === "codex") {
+      setTeamMode(false);
+    }
+  }, [selectedEpics.size, provider]);
 
   // Detect session completions for notifications + board refresh
   useEffect(() => {
@@ -45,7 +63,6 @@ export default function KanbanPage() {
     for (const prevId of prevSessionIds.current) {
       if (!currentIds.has(prevId)) {
         hasCompleted = true;
-        // Session disappeared — fetch its status
         fetch(`/api/projects/${projectId}/sessions/${prevId}`)
           .then((r) => r.json())
           .then((d) => {
@@ -64,7 +81,6 @@ export default function KanbanPage() {
           .catch(() => {});
       }
     }
-    // Refresh the board when any session completes or fails
     if (hasCompleted) {
       setRefreshTrigger((t) => t + 1);
     }
@@ -102,6 +118,8 @@ export default function KanbanPage() {
         body: JSON.stringify({
           epicIds: Array.from(selectedEpics),
           mode: buildMode,
+          team: teamMode,
+          provider,
         }),
       });
 
@@ -109,9 +127,12 @@ export default function KanbanPage() {
       if (data.error) {
         addToast("error", data.error);
       } else {
+        const modeLabel = teamMode ? "team" : data.data.count > 1 ? "" : "";
         addToast(
           "success",
-          `Launched ${data.data.count} build session${data.data.count > 1 ? "s" : ""}`
+          teamMode
+            ? `Launched team build session coordinating ${selectedEpics.size} epics`
+            : `Launched ${data.data.count} build session${data.data.count > 1 ? "s" : ""}`
         );
         setSelectedEpics(new Set());
         setRefreshTrigger((t) => t + 1);
@@ -122,6 +143,8 @@ export default function KanbanPage() {
 
     setBuilding(false);
   }
+
+  const canTeamMode = selectedEpics.size >= 2 && provider === "claude-code";
 
   return (
     <div className="flex flex-col h-full">
@@ -140,11 +163,18 @@ export default function KanbanPage() {
 
       {/* Build toolbar */}
       {selectedEpics.size > 0 && (
-        <div className="border-b border-border px-4 py-2 bg-muted/30 flex items-center gap-3">
+        <div className="border-b border-border px-4 py-2 bg-muted/30 flex items-center gap-3 flex-wrap">
           <span className="text-sm">
             {selectedEpics.size} epic{selectedEpics.size > 1 ? "s" : ""}{" "}
             selected
           </span>
+
+          <ProviderSelect
+            value={provider}
+            onChange={setProvider}
+            codexAvailable={codexAvailable}
+          />
+
           <Select
             value={buildMode}
             onValueChange={(v) =>
@@ -159,6 +189,37 @@ export default function KanbanPage() {
               <SelectItem value="sequential">Sequential</SelectItem>
             </SelectContent>
           </Select>
+
+          {/* Team mode checkbox — visible when 2+ epics selected */}
+          {selectedEpics.size >= 2 && (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <label
+                    className={`flex items-center gap-1.5 text-xs cursor-pointer ${
+                      !canTeamMode ? "opacity-50 cursor-not-allowed" : ""
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={teamMode}
+                      onChange={(e) => setTeamMode(e.target.checked)}
+                      disabled={!canTeamMode}
+                      className="h-3.5 w-3.5 rounded border-border"
+                    />
+                    <Users className="h-3 w-3" />
+                    Team mode
+                  </label>
+                </TooltipTrigger>
+                <TooltipContent>
+                  {provider === "codex"
+                    ? "Team mode is only available with Claude Code"
+                    : "Launch a single CC session that coordinates sub-agents for each epic"}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+
           <Button
             size="sm"
             onClick={handleBuild}
@@ -167,10 +228,12 @@ export default function KanbanPage() {
           >
             {building ? (
               <Loader2 className="h-3 w-3 animate-spin mr-1" />
+            ) : teamMode ? (
+              <Users className="h-3 w-3 mr-1" />
             ) : (
               <Hammer className="h-3 w-3 mr-1" />
             )}
-            Build with Claude Code
+            {teamMode ? "Build as Team" : `Build with ${provider === "codex" ? "Codex" : "Claude Code"}`}
           </Button>
           <Button
             size="sm"

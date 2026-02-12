@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   Loader2,
 } from "lucide-react";
+import { ProviderSelect, type ProviderType } from "@/components/shared/ProviderSelect";
 
 interface Story {
   id: string;
@@ -36,8 +37,9 @@ interface StoryActionsProps {
   dispatching: boolean;
   isRunning: boolean;
   activeSessions: AgentSession[];
-  onSendToDev: (comment?: string) => Promise<void>;
-  onSendToReview: (types: string[]) => Promise<void>;
+  codexAvailable: boolean;
+  onSendToDev: (comment?: string, provider?: ProviderType) => Promise<void>;
+  onSendToReview: (types: string[], provider?: ProviderType) => Promise<void>;
   onApprove: () => Promise<void>;
 }
 
@@ -46,6 +48,7 @@ export function StoryActions({
   dispatching,
   isRunning,
   activeSessions,
+  codexAvailable,
   onSendToDev,
   onSendToReview,
   onApprove,
@@ -53,6 +56,8 @@ export function StoryActions({
   const [sendToDevOpen, setSendToDevOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [devComment, setDevComment] = useState("");
+  const [devProvider, setDevProvider] = useState<ProviderType>("claude-code");
+  const [reviewProvider, setReviewProvider] = useState<ProviderType>("claude-code");
   const [reviewTypes, setReviewTypes] = useState<Set<string>>(new Set());
   const [approving, setApproving] = useState(false);
 
@@ -65,7 +70,7 @@ export function StoryActions({
   // Send to Dev (from todo/in_progress — optional comment)
   async function handleSendToDev() {
     try {
-      await onSendToDev(devComment.trim() || undefined);
+      await onSendToDev(devComment.trim() || undefined, devProvider);
       setSendToDevOpen(false);
       setDevComment("");
     } catch {
@@ -77,7 +82,7 @@ export function StoryActions({
   async function handleSendToDevFromReview() {
     if (!devComment.trim()) return;
     try {
-      await onSendToDev(devComment.trim());
+      await onSendToDev(devComment.trim(), devProvider);
       setSendToDevOpen(false);
       setDevComment("");
     } catch {
@@ -101,7 +106,7 @@ export function StoryActions({
   async function handleReview() {
     if (reviewTypes.size === 0) return;
     try {
-      await onSendToReview(Array.from(reviewTypes));
+      await onSendToReview(Array.from(reviewTypes), reviewProvider);
       setReviewOpen(false);
       setReviewTypes(new Set());
     } catch {
@@ -191,6 +196,15 @@ export function StoryActions({
                 : "Optionally add a comment for the agent before dispatching."}
             </DialogDescription>
           </DialogHeader>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm text-muted-foreground">Provider:</span>
+            <ProviderSelect
+              value={devProvider}
+              onChange={setDevProvider}
+              codexAvailable={codexAvailable}
+              className="w-40 h-8 text-xs"
+            />
+          </div>
           <Textarea
             value={devComment}
             onChange={(e) => setDevComment(e.target.value)}
@@ -241,6 +255,15 @@ export function StoryActions({
               separate agent.
             </DialogDescription>
           </DialogHeader>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm text-muted-foreground">Provider:</span>
+            <ProviderSelect
+              value={reviewProvider}
+              onChange={setReviewProvider}
+              codexAvailable={codexAvailable}
+              className="w-40 h-8 text-xs"
+            />
+          </div>
           <div className="space-y-3">
             <label className="flex items-start gap-3 p-3 rounded-lg border border-border hover:bg-accent/50 cursor-pointer">
               <input
