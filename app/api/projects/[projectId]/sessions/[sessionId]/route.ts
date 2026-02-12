@@ -4,6 +4,12 @@ import { agentSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { processManager } from "@/lib/claude/process-manager";
 import fs from "fs";
+import {
+  getSessionStatusForApi,
+  isSessionLifecycleConflictError,
+  isSessionNotFoundError,
+  markSessionCancelled,
+} from "@/lib/agent-sessions/lifecycle";
 
 export async function GET(
   _request: NextRequest,
@@ -30,7 +36,13 @@ export async function GET(
     }
   }
 
-  return NextResponse.json({ data: { ...session, logs } });
+  return NextResponse.json({
+    data: {
+      ...session,
+      status: getSessionStatusForApi(session.status),
+      logs,
+    },
+  });
 }
 
 export async function DELETE(
@@ -39,32 +51,27 @@ export async function DELETE(
 ) {
   const { sessionId } = await params;
 
-  const session = db
-    .select()
-    .from(agentSessions)
-    .where(eq(agentSessions.id, sessionId))
-    .get();
-
-  if (!session) {
-    return NextResponse.json({ error: "Session not found" }, { status: 404 });
-  }
-
-  if (session.status !== "running") {
-    return NextResponse.json(
-      { error: "Session is not running" },
-      { status: 400 }
-    );
-  }
-
-  // Cancel in process manager
   processManager.cancel(sessionId);
-
-  // Update DB
   const now = new Date().toISOString();
-  db.update(agentSessions)
-    .set({ status: "cancelled", completedAt: now, error: "Cancelled by user" })
-    .where(eq(agentSessions.id, sessionId))
-    .run();
+
+  try {
+    markSessionCancelled(sessionId, "Cancelled by user", now);
+  } catch (error) {
+    if (isSessionNotFoundError(error)) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+    if (isSessionLifecycleConflictError(error)) {
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: error.code,
+          details: error.details,
+        },
+        { status: 409 }
+      );
+    }
+    throw error;
+  }
 
   return NextResponse.json({ data: { cancelled: true } });
 }

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { getSessionStatusForApi } from "@/lib/agent-sessions/lifecycle";
 
 export async function GET(
   _request: NextRequest,
@@ -20,5 +21,10 @@ export async function GET(
     )
     .all();
 
-  return NextResponse.json({ data: active });
+  const normalized = active.map((session) => ({
+    ...session,
+    status: getSessionStatusForApi(session.status),
+  }));
+
+  return NextResponse.json({ data: normalized });
 }

@@ -102,7 +102,7 @@ export const agentSessions = sqliteTable("agent_sessions", {
     .references(() => projects.id, { onDelete: "cascade" }),
   epicId: text("epic_id").references(() => epics.id),
   userStoryId: text("user_story_id").references(() => userStories.id),
-  status: text("status").default("pending"), // pending | running | completed | failed | cancelled
+  status: text("status").default("queued"), // queued | running | completed | failed | cancelled
   mode: text("mode").default("code"), // plan | code
   orchestrationMode: text("orchestration_mode").default("solo"), // solo | team
   provider: text("provider").default("claude-code"), // claude-code | codex
@@ -111,6 +111,7 @@ export const agentSessions = sqliteTable("agent_sessions", {
   branchName: text("branch_name"),
   worktreePath: text("worktree_path"),
   startedAt: text("started_at"),
+  endedAt: text("ended_at"),
   completedAt: text("completed_at"),
   error: text("error"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),

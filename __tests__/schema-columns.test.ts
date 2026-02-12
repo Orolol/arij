@@ -40,6 +40,7 @@ describe("Schema: existing columns preserved", () => {
     expect(cols.branchName).toBeDefined();
     expect(cols.worktreePath).toBeDefined();
     expect(cols.startedAt).toBeDefined();
+    expect(cols.endedAt).toBeDefined();
     expect(cols.completedAt).toBeDefined();
     expect(cols.error).toBeDefined();
     expect(cols.createdAt).toBeDefined();
