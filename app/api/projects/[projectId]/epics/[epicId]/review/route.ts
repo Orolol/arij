@@ -7,17 +7,20 @@ import {
   documents,
   agentSessions,
   ticketComments,
-  settings,
+  customReviewAgents,
 } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import {
   buildEpicReviewPrompt,
+  buildCustomEpicReviewPrompt,
   type ReviewType,
 } from "@/lib/claude/prompt-builder";
+import { resolveFullPrompt } from "@/lib/claude/prompt-resolver";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import type { AgentType } from "@/lib/types/agent-config";
 import fs from "fs";
 import path from "path";
 
@@ -35,15 +38,30 @@ const REVIEW_LABELS: Record<ReviewType, string> = {
   compliance: "Compliance & Accessibility Review",
 };
 
+const REVIEW_TYPE_TO_AGENT_TYPE: Record<ReviewType, AgentType> = {
+  security: "review_security",
+  code_review: "review_code",
+  compliance: "review_compliance",
+};
+
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
   const body = await request.json();
 
-  const { reviewTypes } = body as { reviewTypes: ReviewType[] };
+  const {
+    reviewTypes = [],
+    customAgentIds = [],
+  } = body as {
+    reviewTypes?: ReviewType[];
+    customAgentIds?: string[];
+  };
 
-  if (!reviewTypes || !Array.isArray(reviewTypes) || reviewTypes.length === 0) {
+  if (
+    (!reviewTypes || reviewTypes.length === 0) &&
+    (!customAgentIds || customAgentIds.length === 0)
+  ) {
     return NextResponse.json(
-      { error: "reviewTypes array is required with at least one type" },
+      { error: "At least one reviewType or customAgentId is required" },
       { status: 400 }
     );
   }
@@ -108,13 +126,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     .orderBy(userStories.position)
     .all();
 
-  const settingsRow = db
-    .select()
-    .from(settings)
-    .where(eq(settings.key, "global_prompt"))
-    .get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
-
   // Ensure worktree exists
   const { worktreePath, branchName } = await createWorktree(
     gitRepoPath,
@@ -124,16 +135,8 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const sessionsCreated: string[] = [];
 
-  for (const reviewType of reviewTypes) {
-    const prompt = buildEpicReviewPrompt(
-      project,
-      docs,
-      epic,
-      us,
-      reviewType,
-      globalPrompt
-    );
-
+  // Helper: dispatch a review session
+  function dispatchReviewSession(prompt: string, label: string) {
     const sessionId = createId();
     const now = new Date().toISOString();
     const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
@@ -162,8 +165,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       cwd: worktreePath,
     });
 
-    // Background: wait for completion, post review as epic comment
-    const label = REVIEW_LABELS[reviewType];
     ((sid, lbl) => {
       (async () => {
         let info = processManager.getStatus(sid);
@@ -208,6 +209,50 @@ export async function POST(request: NextRequest, { params }: Params) {
     })(sessionId, label);
 
     sessionsCreated.push(sessionId);
+  }
+
+  // Dispatch built-in review types
+  for (const reviewType of reviewTypes) {
+    const agentType = REVIEW_TYPE_TO_AGENT_TYPE[reviewType];
+    const globalPrompt = resolveFullPrompt(agentType, projectId);
+
+    const prompt = buildEpicReviewPrompt(
+      project,
+      docs,
+      epic,
+      us,
+      reviewType,
+      globalPrompt
+    );
+
+    dispatchReviewSession(prompt, REVIEW_LABELS[reviewType]);
+  }
+
+  // Dispatch custom review agents
+  if (customAgentIds.length > 0) {
+    const customAgentRows = db
+      .select()
+      .from(customReviewAgents)
+      .where(inArray(customReviewAgents.id, customAgentIds))
+      .all();
+
+    for (const agent of customAgentRows) {
+      if (agent.isEnabled === 0) continue;
+
+      const globalPrompt = resolveFullPrompt("review_code", projectId);
+
+      const prompt = buildCustomEpicReviewPrompt(
+        project,
+        docs,
+        epic,
+        us,
+        agent.name,
+        agent.systemPrompt,
+        globalPrompt
+      );
+
+      dispatchReviewSession(prompt, agent.name);
+    }
   }
 
   return NextResponse.json({

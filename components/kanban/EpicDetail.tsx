@@ -127,8 +127,8 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
     refresh();
   }
 
-  async function handleSendToReview(types: string[]) {
-    await sendToReview(types);
+  async function handleSendToReview(types: string[], customAgentIds?: string[]) {
+    await sendToReview(types, customAgentIds);
     refresh();
   }
 
@@ -177,6 +177,7 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
               {/* Epic Actions Bar */}
               <EpicActions
                 epic={epic}
+                projectId={projectId}
                 dispatching={dispatching}
                 isRunning={isRunning}
                 activeSessions={activeSessions}

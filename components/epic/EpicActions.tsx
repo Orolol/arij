@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Separator } from "@/components/ui/separator";
 import {
   Dialog,
   DialogContent,
@@ -31,18 +32,27 @@ interface AgentSession {
   mode: string;
 }
 
+interface CustomReviewAgentInfo {
+  id: string;
+  name: string;
+  scope: string;
+  isEnabled: number | null;
+}
+
 interface EpicActionsProps {
   epic: EpicActions_Epic;
+  projectId: string;
   dispatching: boolean;
   isRunning: boolean;
   activeSessions: AgentSession[];
   onSendToDev: (comment?: string) => Promise<unknown>;
-  onSendToReview: (types: string[]) => Promise<unknown>;
+  onSendToReview: (types: string[], customAgentIds?: string[]) => Promise<unknown>;
   onApprove: () => Promise<unknown>;
 }
 
 export function EpicActions({
   epic,
+  projectId,
   dispatching,
   isRunning,
   activeSessions,
@@ -54,6 +64,8 @@ export function EpicActions({
   const [reviewOpen, setReviewOpen] = useState(false);
   const [devComment, setDevComment] = useState("");
   const [reviewTypes, setReviewTypes] = useState<Set<string>>(new Set());
+  const [customAgentIds, setCustomAgentIds] = useState<Set<string>>(new Set());
+  const [customAgents, setCustomAgents] = useState<CustomReviewAgentInfo[]>([]);
   const [approving, setApproving] = useState(false);
 
   const status = epic.status;
@@ -61,6 +73,21 @@ export function EpicActions({
   const canSendToDevFromReview = status === "review";
   const canReview = status === "review";
   const canApprove = status === "review";
+
+  // Fetch custom review agents when dialog opens
+  useEffect(() => {
+    if (!reviewOpen) return;
+    fetch(`/api/projects/${projectId}/agent-config/review-agents`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.data) {
+          setCustomAgents(
+            data.data.filter((a: CustomReviewAgentInfo) => a.isEnabled === 1)
+          );
+        }
+      })
+      .catch(() => {});
+  }, [reviewOpen, projectId]);
 
   async function handleSendToDev() {
     try {
@@ -95,16 +122,34 @@ export function EpicActions({
     });
   }
 
+  function toggleCustomAgent(agentId: string) {
+    setCustomAgentIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(agentId)) {
+        next.delete(agentId);
+      } else {
+        next.add(agentId);
+      }
+      return next;
+    });
+  }
+
   async function handleReview() {
-    if (reviewTypes.size === 0) return;
+    if (reviewTypes.size === 0 && customAgentIds.size === 0) return;
     try {
-      await onSendToReview(Array.from(reviewTypes));
+      await onSendToReview(
+        Array.from(reviewTypes),
+        Array.from(customAgentIds)
+      );
       setReviewOpen(false);
       setReviewTypes(new Set());
+      setCustomAgentIds(new Set());
     } catch {
       // error handled by parent
     }
   }
+
+  const totalReviewCount = reviewTypes.size + customAgentIds.size;
 
   async function handleApprove() {
     setApproving(true);
@@ -146,6 +191,7 @@ export function EpicActions({
           variant="outline"
           onClick={() => {
             setReviewTypes(new Set());
+            setCustomAgentIds(new Set());
             setReviewOpen(true);
           }}
           disabled={dispatching || isRunning}
@@ -272,6 +318,33 @@ export function EpicActions({
                 </p>
               </div>
             </label>
+
+            {/* Custom review agents */}
+            {customAgents.length > 0 && (
+              <>
+                <Separator />
+                <p className="text-xs text-muted-foreground font-medium">Custom Review Agents</p>
+                {customAgents.map((agent) => (
+                  <label
+                    key={agent.id}
+                    className="flex items-start gap-3 p-3 rounded-lg border border-border hover:bg-accent/50 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={customAgentIds.has(agent.id)}
+                      onChange={() => toggleCustomAgent(agent.id)}
+                      className="mt-0.5 h-4 w-4 rounded border-border"
+                    />
+                    <div>
+                      <p className="text-sm font-medium">{agent.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {agent.scope === "global" ? "Global" : "Project"} custom agent
+                      </p>
+                    </div>
+                  </label>
+                ))}
+              </>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setReviewOpen(false)}>
@@ -279,14 +352,14 @@ export function EpicActions({
             </Button>
             <Button
               onClick={handleReview}
-              disabled={dispatching || reviewTypes.size === 0}
+              disabled={dispatching || totalReviewCount === 0}
             >
               {dispatching ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-1" />
               ) : (
                 <Search className="h-4 w-4 mr-1" />
               )}
-              Run Review ({reviewTypes.size})
+              Run Review ({totalReviewCount})
             </Button>
           </DialogFooter>
         </DialogContent>

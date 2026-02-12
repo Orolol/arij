@@ -76,7 +76,7 @@ export function useEpicAgent(projectId: string, epicId: string | null) {
   );
 
   const sendToReview = useCallback(
-    async (reviewTypes: string[]) => {
+    async (reviewTypes: string[], customAgentIds?: string[]) => {
       if (!epicId) return;
       setDispatching(true);
       try {
@@ -85,7 +85,7 @@ export function useEpicAgent(projectId: string, epicId: string | null) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ reviewTypes }),
+            body: JSON.stringify({ reviewTypes, customAgentIds }),
           }
         );
         const data = await res.json();

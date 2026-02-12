@@ -24,6 +24,7 @@ vi.mock("@/components/shared/ProviderSelect", () => ({
 
 const baseProps = {
   story: { id: "s1", title: "Test Story", status: "todo" },
+  projectId: "proj1",
   dispatching: false,
   isRunning: false,
   activeSessions: [],
@@ -135,7 +136,7 @@ describe("StoryActions", () => {
     // Click run review
     fireEvent.click(screen.getByText("Run Review (1)"));
 
-    expect(onSendToReview).toHaveBeenCalledWith(["security"], "claude-code");
+    expect(onSendToReview).toHaveBeenCalledWith(["security"], [], "claude-code");
   });
 
   it("requires mandatory comment when sending to dev from review status", () => {

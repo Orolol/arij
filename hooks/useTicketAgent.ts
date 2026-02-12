@@ -77,7 +77,7 @@ export function useTicketAgent(projectId: string, storyId: string) {
   );
 
   const sendToReview = useCallback(
-    async (reviewTypes: string[], provider?: string) => {
+    async (reviewTypes: string[], customAgentIds?: string[], provider?: string) => {
       setDispatching(true);
       try {
         const res = await fetch(
@@ -85,7 +85,7 @@ export function useTicketAgent(projectId: string, storyId: string) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ reviewTypes, provider }),
+            body: JSON.stringify({ reviewTypes, customAgentIds, provider }),
           }
         );
         const data = await res.json();

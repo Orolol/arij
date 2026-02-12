@@ -81,6 +81,7 @@ export default function StoryDetailPage() {
         <div className="flex-1" />
         <StoryActions
           story={story}
+          projectId={projectId}
           dispatching={dispatching}
           isRunning={isRunning}
           activeSessions={activeSessions}
@@ -89,8 +90,8 @@ export default function StoryDetailPage() {
             await sendToDev(comment, provider);
             refreshStory();
           }}
-          onSendToReview={async (types, provider) => {
-            await sendToReview(types, provider);
+          onSendToReview={async (types, customAgentIds, provider) => {
+            await sendToReview(types, customAgentIds, provider);
           }}
           onApprove={async () => {
             await approve();
