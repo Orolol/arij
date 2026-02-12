@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { detectGitHubRemote } from "@/lib/git/remote";
+import { writeGitSyncLog } from "@/lib/github/sync-log";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -15,6 +16,13 @@ export async function GET(_request: Request, { params }: Params) {
   }
 
   if (!project.gitRepoPath) {
+    writeGitSyncLog({
+      projectId,
+      operation: "detect",
+      status: "failed",
+      detail: { reason: "missing_git_repo_path" },
+    });
+
     return NextResponse.json(
       { error: "Project has no git repository path configured." },
       { status: 400 }
@@ -24,8 +32,27 @@ export async function GET(_request: Request, { params }: Params) {
   try {
     const detected = await detectGitHubRemote(project.gitRepoPath);
     if (!detected) {
+      writeGitSyncLog({
+        projectId,
+        operation: "detect",
+        status: "success",
+        detail: { detected: false },
+      });
+
       return NextResponse.json({ data: { detected: false } });
     }
+
+    writeGitSyncLog({
+      projectId,
+      operation: "detect",
+      status: "success",
+      detail: {
+        detected: true,
+        ownerRepo: detected.ownerRepo,
+        remoteName: detected.remoteName,
+        remoteUrl: detected.remoteUrl,
+      },
+    });
 
     return NextResponse.json({
       data: {
@@ -38,6 +65,15 @@ export async function GET(_request: Request, { params }: Params) {
       },
     });
   } catch (error) {
+    writeGitSyncLog({
+      projectId,
+      operation: "detect",
+      status: "failed",
+      detail: {
+        error: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
+
     return NextResponse.json(
       {
         error:

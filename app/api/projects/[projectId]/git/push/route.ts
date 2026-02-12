@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { getCurrentGitBranch, pushGitBranch } from "@/lib/git/remote";
+import { writeGitSyncLog } from "@/lib/github/sync-log";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -14,6 +15,14 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
   if (!project.gitRepoPath) {
+    writeGitSyncLog({
+      projectId,
+      operation: "push",
+      status: "failed",
+      branch: null,
+      detail: { reason: "missing_git_repo_path" },
+    });
+
     return NextResponse.json(
       { error: "Project has no git repository path configured." },
       { status: 400 }
@@ -33,6 +42,21 @@ export async function POST(request: NextRequest, { params }: Params) {
       remote,
       setUpstream
     );
+    const summary = {
+      pushed: result.pushed.length,
+      created: result.created.length,
+      deleted: result.deleted.length,
+      failures: result.failed ? 1 : 0,
+    };
+
+    writeGitSyncLog({
+      projectId,
+      operation: "push",
+      status: "success",
+      branch,
+      detail: { remote, setUpstream, ...summary },
+    });
+
     return NextResponse.json({
       data: {
         action: "push",
@@ -40,15 +64,22 @@ export async function POST(request: NextRequest, { params }: Params) {
         remote,
         branch,
         setUpstream,
-        summary: {
-          pushed: result.pushed.length,
-          created: result.created.length,
-          deleted: result.deleted.length,
-          failures: result.failed ? 1 : 0,
-        },
+        summary,
       },
     });
   } catch (error) {
+    writeGitSyncLog({
+      projectId,
+      operation: "push",
+      status: "failed",
+      branch,
+      detail: {
+        remote,
+        setUpstream,
+        error: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
+
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to push branch.",

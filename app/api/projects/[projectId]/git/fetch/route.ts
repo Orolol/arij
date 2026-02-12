@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { fetchGitRemote } from "@/lib/git/remote";
+import { writeGitSyncLog } from "@/lib/github/sync-log";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -14,6 +15,14 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
   if (!project.gitRepoPath) {
+    writeGitSyncLog({
+      projectId,
+      operation: "fetch",
+      status: "failed",
+      branch: null,
+      detail: { reason: "missing_git_repo_path" },
+    });
+
     return NextResponse.json(
       { error: "Project has no git repository path configured." },
       { status: 400 }
@@ -26,21 +35,42 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   try {
     const result = await fetchGitRemote(project.gitRepoPath, remote);
+    const summary = {
+      branches: result.branches.length,
+      tags: result.tags.length,
+      updates: result.updated.length,
+      deleted: result.deleted.length,
+    };
+
+    writeGitSyncLog({
+      projectId,
+      operation: "fetch",
+      status: "success",
+      branch,
+      detail: { remote, ...summary },
+    });
+
     return NextResponse.json({
       data: {
         action: "fetch",
         projectId,
         remote,
         branch,
-        summary: {
-          branches: result.branches.length,
-          tags: result.tags.length,
-          updates: result.updated.length,
-          deleted: result.deleted.length,
-        },
+        summary,
       },
     });
   } catch (error) {
+    writeGitSyncLog({
+      projectId,
+      operation: "fetch",
+      status: "failed",
+      branch,
+      detail: {
+        remote,
+        error: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
+
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Failed to fetch remote.",

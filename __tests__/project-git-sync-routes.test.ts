@@ -9,6 +9,7 @@ const mockPullGitBranchFfOnly = vi.hoisted(() => vi.fn());
 const mockPushGitBranch = vi.hoisted(() => vi.fn());
 const mockGetBranchSyncStatus = vi.hoisted(() => vi.fn());
 const mockGetCurrentGitBranch = vi.hoisted(() => vi.fn());
+const mockWriteGitSyncLog = vi.hoisted(() => vi.fn());
 const MockFastForwardOnlyPullError = vi.hoisted(
   () =>
     class FastForwardOnlyPullError extends Error {
@@ -50,6 +51,10 @@ vi.mock("@/lib/git/remote", () => ({
   FastForwardOnlyPullError: MockFastForwardOnlyPullError,
 }));
 
+vi.mock("@/lib/github/sync-log", () => ({
+  writeGitSyncLog: mockWriteGitSyncLog,
+}));
+
 function mockRequest(body: Record<string, unknown>) {
   return {
     json: () => Promise.resolve(body),
@@ -65,6 +70,7 @@ describe("Project git sync routes", () => {
     mockPushGitBranch.mockReset();
     mockGetBranchSyncStatus.mockReset();
     mockGetCurrentGitBranch.mockReset();
+    mockWriteGitSyncLog.mockReset();
   });
 
   it("POST fetch returns structured project and branch context", async () => {
@@ -90,6 +96,14 @@ describe("Project git sync routes", () => {
     expect(json.data.projectId).toBe("proj-1");
     expect(json.data.remote).toBe("origin");
     expect(json.data.branch).toBe("feature/one");
+    expect(mockWriteGitSyncLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "proj-1",
+        operation: "fetch",
+        status: "success",
+        branch: "feature/one",
+      })
+    );
   });
 
   it("POST pull returns 409 and guidance when ff-only pull is not possible", async () => {
@@ -114,6 +128,14 @@ describe("Project git sync routes", () => {
       expect.objectContaining({
         action: "pull",
         projectId: "proj-1",
+        branch: "feature/one",
+      })
+    );
+    expect(mockWriteGitSyncLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "proj-1",
+        operation: "pull",
+        status: "failed",
         branch: "feature/one",
       })
     );
@@ -143,6 +165,14 @@ describe("Project git sync routes", () => {
         projectId: "proj-1",
         branch: "feature/one",
         remote: "origin",
+      })
+    );
+    expect(mockWriteGitSyncLog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "proj-1",
+        operation: "push",
+        status: "success",
+        branch: "feature/one",
       })
     );
   });

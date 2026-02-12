@@ -7,6 +7,7 @@ import {
   getCurrentGitBranch,
   pullGitBranchFfOnly,
 } from "@/lib/git/remote";
+import { writeGitSyncLog } from "@/lib/github/sync-log";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -18,6 +19,14 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
   if (!project.gitRepoPath) {
+    writeGitSyncLog({
+      projectId,
+      operation: "pull",
+      status: "failed",
+      branch: null,
+      detail: { reason: "missing_git_repo_path" },
+    });
+
     return NextResponse.json(
       { error: "Project has no git repository path configured." },
       { status: 400 }
@@ -31,6 +40,18 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   try {
     const result = await pullGitBranchFfOnly(project.gitRepoPath, branch, remote);
+    writeGitSyncLog({
+      projectId,
+      operation: "pull",
+      status: "success",
+      branch,
+      detail: {
+        remote,
+        ffOnly: true,
+        summary: result.summary,
+      },
+    });
+
     return NextResponse.json({
       data: {
         action: "pull",
@@ -43,6 +64,19 @@ export async function POST(request: NextRequest, { params }: Params) {
     });
   } catch (error) {
     if (error instanceof FastForwardOnlyPullError) {
+      writeGitSyncLog({
+        projectId,
+        operation: "pull",
+        status: "failed",
+        branch,
+        detail: {
+          remote,
+          ffOnly: true,
+          code: "ff_only_conflict",
+          error: error.message,
+        },
+      });
+
       return NextResponse.json(
         {
           error: error.message,
@@ -57,6 +91,18 @@ export async function POST(request: NextRequest, { params }: Params) {
         { status: 409 }
       );
     }
+
+    writeGitSyncLog({
+      projectId,
+      operation: "pull",
+      status: "failed",
+      branch,
+      detail: {
+        remote,
+        ffOnly: true,
+        error: error instanceof Error ? error.message : "unknown_error",
+      },
+    });
 
     return NextResponse.json(
       {

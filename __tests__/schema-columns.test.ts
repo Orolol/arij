@@ -33,6 +33,15 @@ describe("Schema: existing columns preserved", () => {
     expect(col.name).toBe("github_owner_repo");
   });
 
+  it("gitSyncLog has operation/status/detail columns", () => {
+    const cols = schema.gitSyncLog;
+    expect(cols.projectId).toBeDefined();
+    expect(cols.operation.name).toBe("operation");
+    expect(cols.status.name).toBe("status");
+    expect(cols.detail.name).toBe("detail");
+    expect(cols.branch.name).toBe("branch");
+  });
+
   it("agentSessions still has all original columns", () => {
     const cols = schema.agentSessions;
     expect(cols.id).toBeDefined();
