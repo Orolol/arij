@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback } from "react";
 interface ActiveSession {
   id: string;
   epicId: string | null;
+  userStoryId: string | null;
   status: string;
   mode: string;
   provider: string | null;
