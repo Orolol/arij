@@ -12,7 +12,12 @@ import { eq } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
-import { buildBuildPrompt } from "@/lib/claude/prompt-builder";
+import {
+  buildBuildPrompt,
+  buildTeamBuildPrompt,
+  type TeamEpic,
+} from "@/lib/claude/prompt-builder";
+import type { ProviderType } from "@/lib/providers";
 import fs from "fs";
 import path from "path";
 import { tryExportArjiJson } from "@/lib/sync/export";
@@ -23,14 +28,29 @@ export async function POST(
 ) {
   const { projectId } = await params;
   const body = await request.json();
-  const { epicIds, mode = "parallel" } = body as {
+  const {
+    epicIds,
+    mode = "parallel",
+    team = false,
+    provider = "claude-code",
+  } = body as {
     epicIds: string[];
     mode?: "sequential" | "parallel";
+    team?: boolean;
+    provider?: ProviderType;
   };
 
   if (!epicIds || !Array.isArray(epicIds) || epicIds.length === 0) {
     return NextResponse.json(
       { error: "epicIds array is required" },
+      { status: 400 }
+    );
+  }
+
+  // Team mode is Claude Code exclusive — Codex has no Task tool
+  if (team && provider === "codex") {
+    return NextResponse.json(
+      { error: "Team mode is only available with Claude Code. Codex does not support sub-agent delegation." },
       { status: 400 }
     );
   }
@@ -78,6 +98,160 @@ export async function POST(
   const sessionsCreated: string[] = [];
   const projectRef = project;
 
+  // -----------------------------------------------------------------------
+  // TEAM MODE — single CC session managing multiple epics via Task tool
+  // -----------------------------------------------------------------------
+  if (team) {
+    try {
+      // Pre-create all worktrees
+      const teamEpics: TeamEpic[] = [];
+      const epicRecords: Array<{ id: string; branchName: string }> = [];
+
+      for (const epicId of epicIds) {
+        const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
+        if (!epic) continue;
+
+        const us = db
+          .select()
+          .from(userStories)
+          .where(eq(userStories.epicId, epicId))
+          .orderBy(userStories.position)
+          .all();
+
+        const { worktreePath, branchName } = await createWorktree(
+          gitRepoPath,
+          epic.id,
+          epic.title
+        );
+
+        teamEpics.push({
+          title: epic.title,
+          description: epic.description,
+          worktreePath,
+          userStories: us,
+        });
+
+        epicRecords.push({ id: epicId, branchName });
+
+        // Move epic to in_progress
+        const now = new Date().toISOString();
+        db.update(epics)
+          .set({ status: "in_progress", branchName, updatedAt: now })
+          .where(eq(epics.id, epicId))
+          .run();
+      }
+
+      // Build team prompt
+      const prompt = buildTeamBuildPrompt(
+        projectRef,
+        docs,
+        teamEpics,
+        globalPrompt
+      );
+
+      // Create single team session
+      const sessionId = createId();
+      const now = new Date().toISOString();
+      const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
+      fs.mkdirSync(logsDir, { recursive: true });
+      const logsPath = path.join(logsDir, "logs.json");
+
+      db.insert(agentSessions)
+        .values({
+          id: sessionId,
+          projectId,
+          status: "running",
+          mode: "code",
+          orchestrationMode: "team",
+          provider: "claude-code",
+          prompt,
+          logsPath,
+          startedAt: now,
+          createdAt: now,
+        })
+        .run();
+
+      // Update project status
+      db.update(projects)
+        .set({ status: "building", updatedAt: now })
+        .where(eq(projects.id, projectId))
+        .run();
+
+      // Spawn single CC session from main repo root with Task in allowedTools
+      processManager.start(sessionId, {
+        mode: "code",
+        prompt,
+        cwd: gitRepoPath,
+        allowedTools: [
+          "Edit",
+          "Write",
+          "Bash",
+          "Read",
+          "Glob",
+          "Grep",
+          "Task",
+        ],
+      });
+
+      // Background: wait for completion, update all epic statuses
+      const allEpicIds = epicRecords.map((e) => e.id);
+      (async () => {
+        let info = processManager.getStatus(sessionId);
+        while (info && info.status === "running") {
+          await new Promise((r) => setTimeout(r, 2000));
+          info = processManager.getStatus(sessionId);
+        }
+
+        const completedAt = new Date().toISOString();
+        const result = info?.result;
+
+        try {
+          fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
+        } catch {
+          // ignore
+        }
+
+        db.update(agentSessions)
+          .set({
+            status: result?.success ? "completed" : "failed",
+            completedAt,
+            error: result?.error || null,
+          })
+          .where(eq(agentSessions.id, sessionId))
+          .run();
+
+        // Update all associated epics
+        if (result?.success) {
+          for (const eid of allEpicIds) {
+            db.update(epics)
+              .set({ status: "review", updatedAt: completedAt })
+              .where(eq(epics.id, eid))
+              .run();
+          }
+        }
+      })();
+
+      sessionsCreated.push(sessionId);
+      tryExportArjiJson(projectId);
+
+      return NextResponse.json({
+        data: {
+          sessions: sessionsCreated,
+          count: sessionsCreated.length,
+          orchestrationMode: "team",
+        },
+      });
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "Team build launch failed" },
+        { status: 500 }
+      );
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // SOLO MODE — one session per epic (existing behavior)
+  // -----------------------------------------------------------------------
   async function launchEpic(epicId: string) {
     const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
     if (!epic) return;
@@ -119,6 +293,8 @@ export async function POST(
         epicId,
         status: "running",
         mode: "code",
+        orchestrationMode: "solo",
+        provider,
         prompt,
         logsPath,
         branchName,
@@ -140,8 +316,8 @@ export async function POST(
       .where(eq(projects.id, projectId))
       .run();
 
-    // Spawn Claude Code
-    const sessionInfo = processManager.start(sessionId, {
+    // Spawn agent via process manager (uses Claude Code CLI)
+    processManager.start(sessionId, {
       mode: "code",
       prompt,
       cwd: worktreePath,
@@ -150,7 +326,6 @@ export async function POST(
 
     // Background: wait for completion and update DB
     (async () => {
-      // Poll until done
       let info = processManager.getStatus(sessionId);
       while (info && info.status === "running") {
         await new Promise((r) => setTimeout(r, 2000));
@@ -160,14 +335,12 @@ export async function POST(
       const completedAt = new Date().toISOString();
       const result = info?.result;
 
-      // Write logs
       try {
         fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
       } catch {
         // ignore
       }
 
-      // Update session in DB
       db.update(agentSessions)
         .set({
           status: result?.success ? "completed" : "failed",
@@ -177,7 +350,6 @@ export async function POST(
         .where(eq(agentSessions.id, sessionId))
         .run();
 
-      // Move epic to review if successful
       if (result?.success) {
         db.update(epics)
           .set({ status: "review", updatedAt: completedAt })
@@ -203,6 +375,7 @@ export async function POST(
       data: {
         sessions: sessionsCreated,
         count: sessionsCreated.length,
+        orchestrationMode: "solo",
       },
     });
   } catch (e) {
