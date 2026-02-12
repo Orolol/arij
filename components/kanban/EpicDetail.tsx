@@ -25,6 +25,8 @@ import { EpicActions } from "@/components/epic/EpicActions";
 import { UserStoryQuickActions } from "@/components/epic/UserStoryQuickActions";
 import { CommentThread } from "@/components/story/CommentThread";
 import { PRIORITY_LABELS, KANBAN_COLUMNS, COLUMN_LABELS } from "@/lib/types/kanban";
+import { EpicPrControls } from "./EpicPrControls";
+import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, Wrench } from "lucide-react";
 import { useState, useEffect } from "react";
 import Link from "next/link";
@@ -65,6 +67,8 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
     resolveMerge,
     approve,
   } = useEpicAgent(projectId, epicId);
+
+  const githubConfig = useGitHubConfig(projectId);
 
   // Only poll epic detail when an agent is actively running
   useEffect(() => {
@@ -247,6 +251,24 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
                     <GitBranch className="h-3 w-3" />
                     {epic.branchName}
                   </div>
+                  {githubConfig.configured && (
+                    <EpicPrControls
+                      projectId={projectId}
+                      epicId={epic.id}
+                      prNumber={epic.prNumber}
+                      prUrl={epic.prUrl}
+                      prStatus={epic.prStatus}
+                      branchName={epic.branchName}
+                      isRunning={isRunning}
+                      onPrUpdate={(pr) => {
+                        updateEpic({
+                          prNumber: pr.prNumber,
+                          prUrl: pr.prUrl,
+                          prStatus: pr.prStatus,
+                        } as never);
+                      }}
+                    />
+                  )}
                   {(epic.status === "review" || epic.status === "done") && (
                     <Button
                       size="sm"

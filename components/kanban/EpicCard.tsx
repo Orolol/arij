@@ -9,7 +9,7 @@ import {
   PRIORITY_COLORS,
   type KanbanEpic,
 } from "@/lib/types/kanban";
-import { Square, CheckSquare } from "lucide-react";
+import { Square, CheckSquare, GitPullRequest } from "lucide-react";
 
 interface EpicCardProps {
   epic: KanbanEpic;
@@ -78,6 +78,26 @@ export function EpicCard({ epic, isOverlay, onClick, selected, onToggleSelect }:
         <span className="text-xs text-muted-foreground">
           {epic.usDone}/{epic.usCount} US
         </span>
+        {epic.prNumber && (
+          <a
+            href={epic.prUrl || "#"}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className={`flex items-center gap-1 text-xs font-mono hover:opacity-80 transition-opacity ${
+              epic.prStatus === "merged"
+                ? "text-purple-500"
+                : epic.prStatus === "closed"
+                  ? "text-red-500"
+                  : epic.prStatus === "draft"
+                    ? "text-muted-foreground"
+                    : "text-green-500"
+            }`}
+          >
+            <GitPullRequest className="h-3 w-3" />
+            #{epic.prNumber}
+          </a>
+        )}
       </div>
     </Card>
   );
