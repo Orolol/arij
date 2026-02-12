@@ -1,12 +1,13 @@
 import { NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { chatMessages, chatAttachments, chatConversations, projects, documents, settings } from "@/lib/db/schema";
+import { chatMessages, chatAttachments, chatConversations, projects, documents } from "@/lib/db/schema";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { spawnClaudeStream, spawnClaude } from "@/lib/claude/spawn";
 import { buildChatPrompt, buildTitleGenerationPrompt } from "@/lib/claude/prompt-builder";
 import { getProvider } from "@/lib/providers";
 import type { ProviderType } from "@/lib/providers";
+import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 
 export async function POST(
   request: NextRequest,
@@ -72,14 +73,13 @@ export async function POST(
     .all()
     .reverse();
 
-  const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+  const chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
 
   const prompt = buildChatPrompt(
     project,
     docs,
     recentMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-    globalPrompt
+    chatSystemPrompt
   );
 
   // Determine provider from conversation

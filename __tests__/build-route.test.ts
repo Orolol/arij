@@ -16,8 +16,7 @@ vi.mock("@/lib/db", () => {
     get: vi.fn(() => {
       getCallCount++;
       // Call 1: project lookup → return project
-      // Call 2: settings lookup → return global_prompt setting
-      // Call 3+: epic/story lookups → return epic-like object
+      // Call 2+: epic/story lookups → return epic-like object
       if (getCallCount === 1) {
         return {
           id: "proj-1",
@@ -25,9 +24,6 @@ vi.mock("@/lib/db", () => {
           gitRepoPath: "/repos/test",
           status: "building",
         };
-      }
-      if (getCallCount === 2) {
-        return { key: "global_prompt", value: JSON.stringify("Be concise") };
       }
       // Remaining get() calls return epic-like objects
       return {
@@ -56,7 +52,6 @@ vi.mock("@/lib/db/schema", () => ({
   userStories: { epicId: "epicId", position: "position" },
   documents: { projectId: "projectId" },
   agentSessions: { id: "id", epicId: "epicId", mode: "mode", status: "status" },
-  settings: { key: "key" },
   ticketComments: { userStoryId: "userStoryId", createdAt: "createdAt" },
 }));
 
@@ -89,6 +84,10 @@ vi.mock("@/lib/claude/process-manager", () => ({
 vi.mock("@/lib/claude/prompt-builder", () => ({
   buildBuildPrompt: vi.fn().mockReturnValue("solo prompt"),
   buildTeamBuildPrompt: vi.fn().mockReturnValue("team prompt"),
+}));
+
+vi.mock("@/lib/agent-config/prompts", () => ({
+  resolveAgentPrompt: vi.fn().mockResolvedValue("resolved system prompt"),
 }));
 
 vi.mock("@/lib/sync/export", () => ({

@@ -6,7 +6,6 @@ import {
   userStories,
   documents,
   agentSessions,
-  settings,
 } from "@/lib/db/schema";
 import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
@@ -17,6 +16,7 @@ import {
   buildTeamBuildPrompt,
   type TeamEpic,
 } from "@/lib/claude/prompt-builder";
+import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import type { ProviderType } from "@/lib/providers";
 import fs from "fs";
 import path from "path";
@@ -87,13 +87,11 @@ export async function POST(
     .from(documents)
     .where(eq(documents.projectId, projectId))
     .all();
-
-  const settingsRow = db
-    .select()
-    .from(settings)
-    .where(eq(settings.key, "global_prompt"))
-    .get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+  const buildSystemPrompt = await resolveAgentPrompt("build", projectId);
+  const teamBuildSystemPrompt = await resolveAgentPrompt(
+    "team_build",
+    projectId
+  );
 
   const sessionsCreated: string[] = [];
   const projectRef = project;
@@ -146,7 +144,7 @@ export async function POST(
         projectRef,
         docs,
         teamEpics,
-        globalPrompt
+        teamBuildSystemPrompt
       );
 
       // Create single team session
@@ -276,7 +274,7 @@ export async function POST(
       docs,
       epic,
       us,
-      globalPrompt
+      buildSystemPrompt
     );
 
     // Create session in DB

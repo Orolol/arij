@@ -11,6 +11,14 @@ export const AGENT_TYPES = [
 
 export type AgentType = (typeof AGENT_TYPES)[number];
 
+export const BUILTIN_REVIEW_TYPES = [
+  "security",
+  "code_review",
+  "compliance",
+] as const;
+
+export type BuiltinReviewType = (typeof BUILTIN_REVIEW_TYPES)[number];
+
 export const AGENT_TYPE_LABELS: Record<AgentType, string> = {
   build: "Build",
   review_security: "Review: Security",
@@ -25,6 +33,12 @@ export const AGENT_TYPE_LABELS: Record<AgentType, string> = {
 export function isAgentType(value: string): value is AgentType {
   return AGENT_TYPES.includes(value as AgentType);
 }
+
+export const REVIEW_TYPE_TO_AGENT_TYPE: Record<BuiltinReviewType, AgentType> = {
+  security: "review_security",
+  code_review: "review_code",
+  compliance: "review_compliance",
+};
 
 export const BUILTIN_AGENT_PROMPTS: Record<AgentType, string> = {
   build: "",

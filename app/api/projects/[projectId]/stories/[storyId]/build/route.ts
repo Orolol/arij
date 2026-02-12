@@ -7,13 +7,13 @@ import {
   documents,
   agentSessions,
   ticketComments,
-  settings,
 } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import { buildTicketBuildPrompt } from "@/lib/claude/prompt-builder";
+import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import type { ProviderType } from "@/lib/providers";
 import fs from "fs";
@@ -138,12 +138,10 @@ export async function POST(request: NextRequest, { params }: Params) {
     .orderBy(ticketComments.createdAt)
     .all();
 
-  const settingsRow = db
-    .select()
-    .from(settings)
-    .where(eq(settings.key, "global_prompt"))
-    .get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+  const ticketBuildSystemPrompt = await resolveAgentPrompt(
+    "ticket_build",
+    projectId
+  );
 
   // Create worktree (reuses existing)
   const { worktreePath, branchName } = await createWorktree(
@@ -163,7 +161,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       content: c.content,
       createdAt: c.createdAt ?? "",
     })),
-    globalPrompt
+    ticketBuildSystemPrompt
   );
 
   // Create session

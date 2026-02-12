@@ -7,7 +7,6 @@ import {
   documents,
   agentSessions,
   ticketComments,
-  settings,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
@@ -21,6 +20,8 @@ import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import type { ProviderType } from "@/lib/providers";
 import fs from "fs";
 import path from "path";
+import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import { REVIEW_TYPE_TO_AGENT_TYPE } from "@/lib/agent-config/constants";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -113,13 +114,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     .orderBy(userStories.position)
     .all();
 
-  const settingsRow = db
-    .select()
-    .from(settings)
-    .where(eq(settings.key, "global_prompt"))
-    .get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
-
   // Ensure worktree exists
   const { worktreePath, branchName } = await createWorktree(
     gitRepoPath,
@@ -130,13 +124,17 @@ export async function POST(request: NextRequest, { params }: Params) {
   const sessionsCreated: string[] = [];
 
   for (const reviewType of reviewTypes) {
+    const reviewSystemPrompt = await resolveAgentPrompt(
+      REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
+      projectId
+    );
     const prompt = buildEpicReviewPrompt(
       project,
       docs,
       epic,
       us,
       reviewType,
-      globalPrompt
+      reviewSystemPrompt
     );
 
     const sessionId = createId();
