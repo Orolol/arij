@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import type { QuestionData } from "@/lib/claude/spawn";
 
 interface ChatMessage {
   id: string;
@@ -11,22 +12,29 @@ interface ChatMessage {
   createdAt: string;
 }
 
-export function useChat(projectId: string) {
+export function useChat(projectId: string, conversationId: string | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
+  const [pendingQuestions, setPendingQuestions] = useState<QuestionData[] | null>(null);
+  const [streamStatus, setStreamStatus] = useState<string | null>(null);
 
   const loadMessages = useCallback(async () => {
+    if (!conversationId) {
+      setMessages([]);
+      return;
+    }
     setLoading(true);
     try {
-      const res = await fetch(`/api/projects/${projectId}/chat`);
+      const url = `/api/projects/${projectId}/chat?conversationId=${conversationId}`;
+      const res = await fetch(url);
       const data = await res.json();
       setMessages(data.data || []);
     } catch {
       // ignore
     }
     setLoading(false);
-  }, [projectId]);
+  }, [projectId, conversationId]);
 
   useEffect(() => {
     loadMessages();
@@ -35,36 +43,112 @@ export function useChat(projectId: string) {
   const sendMessage = useCallback(
     async (content: string) => {
       setSending(true);
-      // Optimistically add user message
-      const tempId = `temp-${Date.now()}`;
+      setPendingQuestions(null);
+      setStreamStatus(null);
+
+      // Optimistically add user message + empty assistant placeholder
+      const userTempId = `temp-user-${Date.now()}`;
+      const assistantTempId = `temp-assistant-${Date.now()}`;
+
       setMessages((prev) => [
         ...prev,
         {
-          id: tempId,
+          id: userTempId,
           projectId,
           role: "user",
           content,
           createdAt: new Date().toISOString(),
         },
+        {
+          id: assistantTempId,
+          projectId,
+          role: "assistant",
+          content: "",
+          createdAt: new Date().toISOString(),
+        },
       ]);
 
       try {
-        const res = await fetch(`/api/projects/${projectId}/chat`, {
+        const res = await fetch(`/api/projects/${projectId}/chat/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content }),
+          body: JSON.stringify({ content, conversationId }),
         });
-        const data = await res.json();
-        // Reload all messages to get the assistant response
-        await loadMessages();
+
+        if (!res.ok || !res.body) {
+          throw new Error("Stream request failed");
+        }
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const payload = line.slice(6);
+            try {
+              const event = JSON.parse(payload);
+              if (event.status) {
+                setStreamStatus(event.status);
+              }
+              if (event.delta) {
+                setStreamStatus(null);
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === assistantTempId
+                      ? { ...m, content: m.content + event.delta }
+                      : m
+                  )
+                );
+              }
+              if (event.questions) {
+                setPendingQuestions(event.questions);
+              }
+              if (event.done) {
+                // Reload to sync real IDs from DB
+                await loadMessages();
+              }
+            } catch {
+              // ignore malformed event
+            }
+          }
+        }
       } catch {
-        // Remove optimistic message on error
-        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+        // Remove optimistic messages on error
+        setMessages((prev) =>
+          prev.filter((m) => m.id !== userTempId && m.id !== assistantTempId)
+        );
       }
       setSending(false);
+      setStreamStatus(null);
     },
-    [projectId, loadMessages]
+    [projectId, conversationId, loadMessages]
   );
 
-  return { messages, loading, sending, sendMessage, refresh: loadMessages };
+  const answerQuestions = useCallback(
+    (formatted: string) => {
+      sendMessage(formatted);
+    },
+    [sendMessage],
+  );
+
+  return {
+    messages,
+    setMessages,
+    loading,
+    sending,
+    pendingQuestions,
+    streamStatus,
+    sendMessage,
+    answerQuestions,
+    refresh: loadMessages,
+  };
 }

@@ -9,7 +9,7 @@ import {
   PRIORITY_COLORS,
   type KanbanEpic,
 } from "@/lib/types/kanban";
-import { GitBranch, Square, CheckSquare } from "lucide-react";
+import { Square, CheckSquare } from "lucide-react";
 
 interface EpicCardProps {
   epic: KanbanEpic;
@@ -43,7 +43,7 @@ export function EpicCard({ epic, isOverlay, onClick, selected, onToggleSelect }:
       {...attributes}
       {...listeners}
       onClick={onClick}
-      className={`p-3 cursor-pointer hover:bg-accent/50 transition-colors ${
+      className={`p-2 gap-0 rounded-md shadow-none cursor-pointer hover:bg-accent/50 transition-colors ${
         isOverlay ? "shadow-lg" : ""
       } ${isDragging ? "shadow-md" : ""} ${
         selected ? "ring-2 ring-primary" : ""
@@ -74,16 +74,10 @@ export function EpicCard({ epic, isOverlay, onClick, selected, onToggleSelect }:
           {PRIORITY_LABELS[epic.priority] || "Low"}
         </Badge>
       </div>
-      <div className="flex items-center gap-3 mt-2">
+      <div className="flex items-center gap-3 mt-1">
         <span className="text-xs text-muted-foreground">
           {epic.usDone}/{epic.usCount} US
         </span>
-        {epic.branchName && (
-          <span className="flex items-center gap-1 text-xs text-muted-foreground font-mono truncate">
-            <GitBranch className="h-3 w-3 shrink-0" />
-            {epic.branchName}
-          </span>
-        )}
       </div>
     </Card>
   );

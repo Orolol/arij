@@ -54,11 +54,24 @@ export const userStories = sqliteTable("user_stories", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const chatConversations = sqliteTable("chat_conversations", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  type: text("type").notNull().default("brainstorm"), // brainstorm | epic
+  label: text("label").notNull().default("Brainstorm"),
+  status: text("status").default("active"), // active | generating | generated | error
+  epicId: text("epic_id").references(() => epics.id),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
 export const chatMessages = sqliteTable("chat_messages", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
+  conversationId: text("conversation_id").references(() => chatConversations.id, { onDelete: "cascade" }),
   role: text("role").notNull(), // user | assistant
   content: text("content").notNull(),
   metadata: text("metadata"), // JSON

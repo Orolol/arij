@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatMessages, projects, documents, settings } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { buildChatPrompt } from "@/lib/claude/prompt-builder";
@@ -12,11 +12,17 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
+  const conversationId = request.nextUrl.searchParams.get("conversationId");
+
+  const conditions = [eq(chatMessages.projectId, projectId)];
+  if (conversationId) {
+    conditions.push(eq(chatMessages.conversationId, conversationId));
+  }
 
   const messages = db
     .select()
     .from(chatMessages)
-    .where(eq(chatMessages.projectId, projectId))
+    .where(and(...conditions))
     .orderBy(chatMessages.createdAt)
     .all();
 
@@ -34,12 +40,15 @@ export async function POST(
     return NextResponse.json({ error: "content is required" }, { status: 400 });
   }
 
+  const conversationId = body.conversationId || null;
+
   // Save user message
   const userMsgId = createId();
   db.insert(chatMessages)
     .values({
       id: userMsgId,
       projectId,
+      conversationId,
       role: "user",
       content: body.content,
       createdAt: new Date().toISOString(),
@@ -99,6 +108,7 @@ export async function POST(
         .values({
           id: errorMsgId,
           projectId,
+          conversationId,
           role: "assistant",
           content: `Error: ${result.error || "Claude Code failed"}`,
           createdAt: new Date().toISOString(),
@@ -115,6 +125,7 @@ export async function POST(
       .values({
         id: assistantMsgId,
         projectId,
+        conversationId,
         role: "assistant",
         content: parsed.content,
         metadata: JSON.stringify(parsed.metadata || {}),
@@ -129,6 +140,7 @@ export async function POST(
       .values({
         id: errorMsgId,
         projectId,
+        conversationId,
         role: "assistant",
         content: `Error: ${e instanceof Error ? e.message : "Unknown error"}`,
         createdAt: new Date().toISOString(),

@@ -300,7 +300,7 @@ You are helping define a new epic for this project. Based on the conversation so
 
 /**
  * Builds the prompt for generating a single epic with user stories from
- * the refinement conversation. Returns structured JSON.
+ * the refinement conversation. Claude writes the result into arji.json.
  */
 export function buildEpicCreationPrompt(
   project: PromptProject,
@@ -319,22 +319,35 @@ export function buildEpicCreationPrompt(
 
   parts.push(`## Task: Generate Epic with User Stories
 
-Based on the conversation above, generate a single epic with user stories.
+Based on the conversation above, generate a single epic with user stories and add it to the project's \`arji.json\` file.
 
-## Output Format (JSON)
+## Steps
 
-Return a single JSON object with the following structure:
+1. Read the existing \`./arji.json\` file in the current directory.
+2. Create a new epic object and append it to the \`epics\` array.
+3. Write the updated \`arji.json\` using the Write tool.
+
+## Epic Format
+
+Each epic in the \`epics\` array has this structure:
 
 \`\`\`json
 {
+  "id": "a_unique_12char_id",
   "title": "Epic title",
-  "description": "Detailed description of the epic",
+  "description": "Detailed description including the implementation plan",
   "priority": 1,
+  "status": "backlog",
+  "position": 0,
+  "branchName": null,
   "user_stories": [
     {
+      "id": "another_12char_id",
       "title": "As a [role], I want [feature] so that [benefit]",
       "description": "Detailed description",
-      "acceptance_criteria": "- [ ] Criterion 1\\n- [ ] Criterion 2"
+      "acceptance_criteria": "- [ ] Criterion 1\\n- [ ] Criterion 2",
+      "status": "todo",
+      "position": 0
     }
   ]
 }
@@ -342,23 +355,41 @@ Return a single JSON object with the following structure:
 
 ## Rules
 
+- Generate a unique 12-character alphanumeric ID for the epic and each user story (e.g. "aB3xK9mR2pLq").
+- Set the epic's \`position\` to be one higher than the highest existing position in the epics array (or 0 if empty).
+- Include a detailed implementation plan in the epic's \`description\` field.
 - Generate 2-8 user stories that cover the epic scope.
 - User stories must follow the "As a [role], I want [feature] so that [benefit]" format.
 - Acceptance criteria must be a markdown checklist.
 - Priority values: 0 = low, 1 = medium, 2 = high, 3 = critical.
 - Be specific and actionable — avoid vague descriptions.
 - Incorporate relevant details from the project spec and reference documents.
-
-## CRITICAL OUTPUT RULES
-
-Your final response MUST be ONLY the raw JSON object. No markdown, no explanation, no summary, no code fences. Just the JSON starting with \`{\` and ending with \`}\`. Do not wrap it in \`\`\`json code blocks. Do not add any text before or after the JSON. The very first character of your response must be \`{\` and the very last must be \`}\`.
+- Do NOT modify or remove any existing epics in the array.
+- Preserve the exact structure and content of the rest of the file.
 `);
 
   return parts.filter(Boolean).join("\n");
 }
 
+/**
+ * Builds a lightweight prompt for generating a 2-4 word conversation title.
+ */
+export function buildTitleGenerationPrompt(
+  firstUserMessage: string,
+  firstAssistantResponse: string,
+): string {
+  const trimmedResponse = firstAssistantResponse.slice(0, 500);
+  return [
+    "Generate a concise 2-4 word title for this conversation. Return ONLY the title text, nothing else.",
+    "",
+    `User: ${firstUserMessage}`,
+    "",
+    `Assistant: ${trimmedResponse}`,
+  ].join("\n");
+}
+
 // ---------------------------------------------------------------------------
-// 6. Build Prompt
+// 7. Build Prompt
 // ---------------------------------------------------------------------------
 
 /**

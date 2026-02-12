@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, documents, settings } from "@/lib/db/schema";
+import { projects, documents, settings, chatMessages } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { createId } from "@/lib/utils/nanoid";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { buildEpicRefinementPrompt } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
@@ -16,6 +17,8 @@ export async function POST(
   if (!body.messages || !Array.isArray(body.messages) || body.messages.length === 0) {
     return NextResponse.json({ error: "messages array is required" }, { status: 400 });
   }
+
+  const conversationId: string | null = body.conversationId || null;
 
   const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
   if (!project) {
@@ -56,6 +59,34 @@ export async function POST(
     }
 
     const parsed = parseClaudeOutput(result.result || "");
+
+    // Persist user + assistant messages when conversationId is provided
+    if (conversationId) {
+      const now = new Date().toISOString();
+      const lastUserMsg = body.messages[body.messages.length - 1];
+      if (lastUserMsg && lastUserMsg.role === "user") {
+        db.insert(chatMessages)
+          .values({
+            id: createId(),
+            projectId,
+            conversationId,
+            role: "user",
+            content: lastUserMsg.content,
+            createdAt: now,
+          })
+          .run();
+      }
+      db.insert(chatMessages)
+        .values({
+          id: createId(),
+          projectId,
+          conversationId,
+          role: "assistant",
+          content: parsed.content,
+          createdAt: now,
+        })
+        .run();
+    }
 
     return NextResponse.json({ data: { content: parsed.content } });
   } catch (e) {

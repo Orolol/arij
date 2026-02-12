@@ -25,9 +25,9 @@ export const PRIORITY_LABELS: Record<number, string> = {
 
 export const PRIORITY_COLORS: Record<number, string> = {
   0: "bg-muted text-muted-foreground",
-  1: "bg-blue-500/10 text-blue-500",
-  2: "bg-yellow-500/10 text-yellow-500",
-  3: "bg-red-500/10 text-red-500",
+  1: "bg-priority-blue/10 text-priority-blue",
+  2: "bg-priority-yellow/10 text-priority-yellow",
+  3: "bg-priority-red/10 text-priority-red",
 };
 
 export interface KanbanEpic {

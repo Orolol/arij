@@ -1,0 +1,465 @@
+{
+  "version": 1,
+  "lastSyncedAt": "2026-02-11T16:05:38.801Z",
+  "project": {
+    "name": "Arij",
+    "description": "A local, AI-first project orchestrator that provides a web interface for managing multi-project workflows with Claude Code as the execution engine. It covers the full project lifecycle: ideation, specification, kanban-based planning, automated code generation via Claude Code CLI, real-time agent monitoring, and release management.",
+    "status": "building",
+    "spec": "# Arij\n\nA local, AI-first project orchestrator that provides a web interface for managing multi-project workflows with Claude Code as the execution engine. It covers the full project lifecycle: ideation, specification, kanban-based planning, automated code generation via Claude Code CLI, real-time agent monitoring, and release management.\n\n## Stack\nNext.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind CSS v4, shadcn/ui, SQLite via better-sqlite3, Drizzle ORM, dnd-kit (kanban drag-and-drop), Claude Code CLI (child_process spawn), simple-git (worktrees/branches), mammoth (DOCX→MD), pdf-parse (PDF→MD), unified/remark/rehype (Markdown processing), nanoid (ID generation)\n\n## Architecture\nFull-stack Next.js 16 application with App Router. Frontend uses React 19 with shadcn/ui components and dnd-kit for the kanban board. Backend is Next.js API routes that interact with a local SQLite database via Drizzle ORM. Claude Code integration spawns the `claude` CLI as child processes (plan mode for brainstorming/spec generation, code mode for epic implementation). Git worktrees provide isolated branches per epic. File converters transform uploaded documents (PDF, DOCX) to Markdown for context injection. Real-time monitoring uses polling. All data is local-first with no cloud dependencies."
+  },
+  "epics": [
+    {
+      "id": "YSRcTJ44AneP",
+      "title": "Project Import (Existing Codebase Analysis)",
+      "description": "Import an existing project by pointing to a local directory. Claude Code analyzes the codebase and generates epics/user stories with confidence scores. User can preview and edit before importing.",
+      "priority": 0,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "yAaGXj_KBH8M",
+          "title": "Select project folder for import",
+          "description": "As a developer, I want to provide the path to an existing project folder, so that Arij can analyze it.",
+          "acceptance_criteria": "- [x] Path input field with folder icon\n- [x] Analyze button disabled when path is empty\n- [x] Loading state during analysis\n- [ ] Path validation (directory exists)\n- [ ] Tests",
+          "status": "done",
+          "position": 0
+        },
+        {
+          "id": "iRH3rRSBFGYG",
+          "title": "Analyze existing codebase with Claude Code",
+          "description": "As a developer, I want Claude Code to scan my codebase and identify epics, user stories, and their statuses, so that I can start from an accurate project state.",
+          "acceptance_criteria": "- [x] Claude Code spawned in analyze mode with restricted tools\n- [x] Structured prompt requesting JSON output with project info, epics, US\n- [x] Confidence scores and evidence for each status assessment\n- [x] Robust JSON parsing with fallbacks\n- [ ] Tests for import API and JSON parsing",
+          "status": "done",
+          "position": 1
+        },
+        {
+          "id": "iMmVruLmWAfL",
+          "title": "Preview and edit imported data before saving",
+          "description": "As a developer, I want to review and adjust the detected epics and user stories before they are saved, so that the import is accurate.",
+          "acceptance_criteria": "- [x] Editable project name and description\n- [x] Epic list with inline editing and delete\n- [x] User stories displayed within epics\n- [x] Status badges with color coding\n- [x] Confidence percentage display\n- [x] Validate & Import button creates project + epics + US in DB\n- [ ] Tests",
+          "status": "done",
+          "position": 2
+        }
+      ]
+    },
+    {
+      "id": "DVL31NKpWZhv",
+      "title": "Tests & Preview Integration (V2)",
+      "description": "Automatic test detection/execution and dev server preview within Arij, as planned for V2.",
+      "priority": 0,
+      "status": "done",
+      "position": 1,
+      "branchName": "feature/epic-DVL31NKpWZhv-tests-preview-integration-v2",
+      "user_stories": [
+        {
+          "id": "0Xk-p03r6zqv",
+          "title": "Run project tests from Arij",
+          "description": "As a developer, I want to run my project's tests from within Arij, so that I can verify Claude Code's work.",
+          "acceptance_criteria": "- [ ] Framework detection (Next.js, Vite, etc.)\n- [ ] 'Run Tests' button\n- [ ] Test output display\n- [ ] Test report in epic view",
+          "status": "todo",
+          "position": 0
+        },
+        {
+          "id": "mb3hX75mkkl4",
+          "title": "Preview project in iframe",
+          "description": "As a developer, I want to preview my project's dev server in an iframe within Arij, so that I can see results without switching context.",
+          "acceptance_criteria": "- [ ] Launch dev server\n- [ ] Iframe preview display\n- [ ] URL configuration",
+          "status": "todo",
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": "m1U434qC2Boc",
+      "title": "NPM Package & CLI Distribution",
+      "description": "Publish Arij as an npm package with a CLI entry point so users can run it with `npx arij`.",
+      "priority": 0,
+      "status": "done",
+      "position": 2,
+      "branchName": "feature/epic-m1U434qC2Boc-npm-package-cli-distribution",
+      "user_stories": [
+        {
+          "id": "Ai7_V7zy7r04",
+          "title": "Create CLI entry point",
+          "description": "As a developer, I want to run `npx arij` to start the application, so that setup is minimal.",
+          "acceptance_criteria": "- [ ] bin field added to package.json\n- [ ] CLI entry script created\n- [ ] Package name set to 'arij'\n- [ ] Start command launches Next.js server",
+          "status": "todo",
+          "position": 0
+        }
+      ]
+    },
+    {
+      "id": "J5WxV8FyAPyI",
+      "title": "Testing Infrastructure",
+      "description": "Unit tests with Vitest and E2E tests with Playwright as specified in the tech stack.",
+      "priority": 0,
+      "status": "done",
+      "position": 3,
+      "branchName": "feature/epic-J5WxV8FyAPyI-testing-infrastructure",
+      "user_stories": [
+        {
+          "id": "qGYsi8LKxkHZ",
+          "title": "Set up Vitest for unit testing",
+          "description": "As a developer, I want Vitest configured for unit testing, so that I can write and run tests for utilities, API routes, and hooks.",
+          "acceptance_criteria": "- [ ] Vitest installed and configured\n- [ ] vitest.config.ts created\n- [ ] Test script added to package.json\n- [ ] Sample tests for critical utilities",
+          "status": "todo",
+          "position": 0
+        },
+        {
+          "id": "7qYF_L69Hs3F",
+          "title": "Set up Playwright for E2E testing",
+          "description": "As a developer, I want Playwright configured for end-to-end testing, so that I can test user workflows in the browser.",
+          "acceptance_criteria": "- [ ] Playwright installed and configured\n- [ ] playwright.config.ts created\n- [ ] E2E test scripts added\n- [ ] Sample E2E test for core workflow",
+          "status": "todo",
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": "anWPGL-4rDVV",
+      "title": "Project CRUD & Dashboard",
+      "description": "Multi-project dashboard with project creation, listing, filtering, and detail views. Core project management lifecycle including archiving.",
+      "priority": 0,
+      "status": "done",
+      "position": 4,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "8xlDEcZPsfH6",
+          "title": "Create a new project",
+          "description": "As a developer, I want to create a new project with a name, optional description, and optional git repo path, so that I can start organizing my work.",
+          "acceptance_criteria": "- [x] Form with required name, optional description, optional git repo path\n- [x] Validation prevents empty name submission\n- [x] Project created in DB with nanoid ID and 'ideation' status\n- [x] Redirect to project detail page on success\n- [ ] Unit tests for project creation API",
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "5tMjbabUT_Mm",
+          "title": "View all projects on dashboard",
+          "description": "As a developer, I want to see all my projects on a dashboard with progress indicators, so that I can track multi-project status at a glance.",
+          "acceptance_criteria": "- [x] Grid layout with responsive columns (1-4)\n- [x] Each card shows name, description, progress bar, active agents, last activity\n- [x] Filter by All / Active / Archived\n- [x] Empty state with action buttons\n- [ ] Unit tests for project listing API\n- [ ] E2E test for dashboard rendering",
+          "status": "in_progress",
+          "position": 1
+        },
+        {
+          "id": "kyJDoGPywjxL",
+          "title": "Edit and delete projects",
+          "description": "As a developer, I want to edit project details or delete a project, so that I can keep my workspace organized.",
+          "acceptance_criteria": "- [x] PATCH endpoint updates name, description, status, gitRepoPath, spec\n- [x] DELETE endpoint removes project\n- [x] 404 handling for missing projects\n- [ ] Unit tests for update/delete API",
+          "status": "in_progress",
+          "position": 2
+        }
+      ]
+    },
+    {
+      "id": "__rfC0iItR57",
+      "title": "Database & ORM Layer",
+      "description": "SQLite database with Drizzle ORM schema, migrations, and connection management.",
+      "priority": 0,
+      "status": "done",
+      "position": 5,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "aNoG1zbZOso4",
+          "title": "Define database schema",
+          "description": "As a developer, I want a well-structured database schema covering all project entities, so that the application can persist and query data efficiently.",
+          "acceptance_criteria": "- [x] 8 tables: projects, documents, epics, userStories, chatMessages, agentSessions, releases, settings\n- [x] Proper field types and defaults\n- [x] Cascade deletes where appropriate\n- [x] Position fields for ordering\n- [x] Drizzle config for migrations\n- [ ] Generated migration files\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 0
+        }
+      ]
+    },
+    {
+      "id": "un2LSjEzDKbi",
+      "title": "Spec Generation & Editing",
+      "description": "Generate project specifications with epics and user stories using Claude Code in plan mode. Edit specs in a Markdown editor with preview.",
+      "priority": 0,
+      "status": "done",
+      "position": 6,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "bZI8Lig13xUr",
+          "title": "Generate spec and plan from project context",
+          "description": "As a developer, I want to generate a structured project spec with epics and user stories using Claude Code, so that I can quickly plan my project.",
+          "acceptance_criteria": "- [x] 'Generate Spec & Plan' button in chat panel\n- [x] Claude Code spawned in plan mode with structured prompt\n- [x] JSON output parsed to extract spec, epics, and user stories\n- [x] Epics and user stories bulk-inserted into database\n- [x] Project status updated to 'specifying'\n- [x] Fallback to plain text spec if JSON parsing fails\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "bTiCaF8MLiFO",
+          "title": "Edit project spec in Markdown editor",
+          "description": "As a developer, I want to manually edit the generated spec in a Markdown editor, so that I can refine it to my needs.",
+          "acceptance_criteria": "- [x] Tab interface for Edit and Preview modes\n- [x] Textarea editor with monospace font\n- [x] Save button with loading state\n- [x] API persistence\n- [ ] Rendered Markdown preview (currently raw text)\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": "TcGGgWl7yq1k",
+      "title": "Claude Code Build Integration",
+      "description": "Launch Claude Code in code mode to implement epics. Create git worktrees and branches per epic, compose structured prompts, manage build sessions.",
+      "priority": 0,
+      "status": "done",
+      "position": 7,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "LETd_BbbQbGZ",
+          "title": "Launch Claude Code build for selected epics",
+          "description": "As a developer, I want to click 'Build with Claude Code' to launch code generation for selected epics, so that Claude implements my specs.",
+          "acceptance_criteria": "- [x] Build button triggers API call with selected epic IDs\n- [x] Parallel and sequential build mode options\n- [x] Git worktree + branch created per epic\n- [x] Claude Code spawned in code mode with structured prompt\n- [x] Epic status moves to 'In Progress' automatically\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "7CVTqiL5DcWa",
+          "title": "Compose structured build prompts",
+          "description": "As a developer, I want Claude Code to receive a prompt containing my project spec, documents, and epic details, so that it has full context for implementation.",
+          "acceptance_criteria": "- [x] Global prompt from settings injected\n- [x] Project spec included\n- [x] All project documents included as markdown\n- [x] Target epic title, description, and user stories with acceptance criteria\n- [x] Build instructions appended\n- [ ] Tests for prompt composition",
+          "status": "in_progress",
+          "position": 1
+        },
+        {
+          "id": "BxgrSnE99UZ6",
+          "title": "Manage concurrent build sessions",
+          "description": "As a developer, I want the system to track running Claude Code processes and allow me to cancel them, so that I have control over active builds.",
+          "acceptance_criteria": "- [x] Singleton process manager tracks all sessions\n- [x] Start, cancel, status, listActive, listAll operations\n- [x] Graceful kill with SIGTERM→SIGKILL fallback (5s timeout)\n- [x] Session status updates (running → completed/failed/cancelled)\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 2
+        }
+      ]
+    },
+    {
+      "id": "1ANaYzbYy4Xj",
+      "title": "Kanban Board",
+      "description": "Drag-and-drop kanban board for managing epics across workflow columns (Backlog, To Do, In Progress, Review, Done) with epic detail editing.",
+      "priority": 0,
+      "status": "done",
+      "position": 8,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "oO9VnSxwN3pG",
+          "title": "Display epics in kanban columns",
+          "description": "As a developer, I want to see my epics organized in kanban columns by status, so that I can visualize my project workflow.",
+          "acceptance_criteria": "- [x] Five columns: Backlog, To Do, In Progress, Review, Done\n- [x] Epic cards show title, priority badge, US count, branch name\n- [x] Cards sorted by position within columns\n- [x] Loading skeleton during data fetch\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "1w9TLLUR9S14",
+          "title": "Drag and drop epics between columns",
+          "description": "As a developer, I want to drag epics between kanban columns to update their status, so that I can manage workflow progression.",
+          "acceptance_criteria": "- [x] Drag-and-drop between columns updates status\n- [x] Drag-and-drop within column reorders position\n- [x] DragOverlay provides visual feedback\n- [x] Optimistic UI with rollback on API failure\n- [x] Batch reorder API with transactions\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 1
+        },
+        {
+          "id": "50tCjSKywSlz",
+          "title": "View and edit epic details",
+          "description": "As a developer, I want to click an epic card to view and edit its details including user stories, so that I can manage epic content.",
+          "acceptance_criteria": "- [x] Side sheet opens on epic click\n- [x] Inline editing for title and description\n- [x] Priority and status dropdowns\n- [x] User story list with add, update status, delete\n- [x] Branch name display\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 2
+        },
+        {
+          "id": "zE6-qmZ163NL",
+          "title": "Select multiple epics for batch operations",
+          "description": "As a developer, I want to select multiple epics with checkboxes, so that I can launch Claude Code builds for them.",
+          "acceptance_criteria": "- [x] Checkbox on each epic card\n- [x] Selection state tracked in parent\n- [x] Build toolbar shows selected count\n- [x] 'Build with Claude Code' button enabled when epics selected\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 3
+        }
+      ]
+    },
+    {
+      "id": "ognzLUuGz8i1",
+      "title": "Release Management",
+      "description": "Create releases by selecting completed epics, generate changelogs via Claude Code, create git tags, and maintain release history.",
+      "priority": 0,
+      "status": "review",
+      "position": 0,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "bC_0JITQ00nE",
+          "title": "Create a release with selected epics",
+          "description": "As a developer, I want to create a release by selecting completed epics and specifying a version, so that I can track what's included in each release.",
+          "acceptance_criteria": "- [x] Release creation dialog with version and title\n- [x] Epic selection (filters to done/review status)\n- [x] Release persisted with epic IDs\n- [x] Release list display\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "LIFZfCn2Axyj",
+          "title": "Generate changelog automatically",
+          "description": "As a developer, I want to auto-generate a changelog using Claude Code based on the selected epics, so that I save time writing release notes.",
+          "acceptance_criteria": "- [x] Toggle to enable changelog generation\n- [x] Claude Code plan mode generates changelog\n- [x] Fallback auto-generated changelog if Claude fails\n- [x] Changelog displayed on release card\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 1
+        },
+        {
+          "id": "FDhf8-mkKJkc",
+          "title": "Create git tags for releases",
+          "description": "As a developer, I want a git tag to be created when I make a release, so that the release is tracked in version control.",
+          "acceptance_criteria": "- [x] Git tag created with version string\n- [x] Tag name stored in DB\n- [x] Tag displayed on release card\n- [x] Graceful handling if git repo not configured\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 2
+        }
+      ]
+    },
+    {
+      "id": "3rp9-gbb7cfz",
+      "title": "Session Management & Monitoring",
+      "description": "Track and monitor Claude Code agent sessions with real-time status updates, detailed logs, and session lifecycle management.",
+      "priority": 0,
+      "status": "review",
+      "position": 1,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "BYL5TOjUIFwx",
+          "title": "View session list with status indicators",
+          "description": "As a developer, I want to see a list of all build sessions with their status, duration, and mode, so that I can track build history.",
+          "acceptance_criteria": "- [x] Session cards with status icons and color coding\n- [x] Duration calculation\n- [x] Mode display (plan/code)\n- [x] Branch name display\n- [x] Error message truncation\n- [x] Running session count\n- [x] Link to session detail\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "q4-TyysTWrzJ",
+          "title": "View detailed session information and logs",
+          "description": "As a developer, I want to view the full details of a build session including the prompt sent, response received, and raw logs, so that I can debug issues.",
+          "acceptance_criteria": "- [x] Three-tab interface: Response, Prompt, Raw Logs\n- [x] Status badge and metadata display\n- [x] Auto-polling while session is running\n- [x] Cancel button for running sessions\n- [x] Export logs as JSON\n- [x] Filesystem log loading\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 1
+        },
+        {
+          "id": "jetnd9g8sYMR",
+          "title": "Monitor active agents in real-time",
+          "description": "As a developer, I want to see active Claude Code agents with elapsed time in a monitor bar, so that I know what's running.",
+          "acceptance_criteria": "- [x] Collapsible panel showing active sessions\n- [x] Per-session elapsed time updating every second\n- [x] Stop/Cancel button per session\n- [x] Green indicator animation\n- [x] Auto-hide when no active sessions\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 2
+        }
+      ]
+    },
+    {
+      "id": "yL14rOBoI3fZ",
+      "title": "Markdown Rendering",
+      "description": "Render Markdown content as styled HTML in the document viewer and spec preview components.",
+      "priority": 0,
+      "status": "review",
+      "position": 2,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "B_sWTw0mpHkG",
+          "title": "Render Markdown in document viewer",
+          "description": "As a developer, I want uploaded documents to be displayed as rendered Markdown with proper formatting, so that I can easily read the content.",
+          "acceptance_criteria": "- [x] Markdown-to-HTML utility exists (lib/utils/markdown.ts)\n- [x] Dependencies installed (remark, rehype, sanitize)\n- [ ] DocumentViewer uses rendered HTML instead of raw text\n- [ ] Prose styling applied\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "I7lbxAt-6Trx",
+          "title": "Render Markdown in spec preview",
+          "description": "As a developer, I want the spec preview to show rendered Markdown, so that I can see formatted output while editing.",
+          "acceptance_criteria": "- [x] Markdown-to-HTML utility exists\n- [ ] SpecPreview uses rendered HTML instead of raw text\n- [ ] Prose styling applied\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": "IjbLmp9N0qU-",
+      "title": "Document Upload & Conversion",
+      "description": "Upload project documents (PDF, DOCX, Markdown, plain text), convert them to Markdown, and store them as project context for Claude Code sessions.",
+      "priority": 0,
+      "status": "review",
+      "position": 3,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "9cbHZFqclxTk",
+          "title": "Upload documents via drag-and-drop",
+          "description": "As a developer, I want to drag and drop files into a project to upload them, so that I can easily add context documents.",
+          "acceptance_criteria": "- [x] Drag-and-drop zone with visual feedback\n- [x] File input accepts .pdf, .docx, .md, .txt\n- [x] Upload progress indicator\n- [x] Multiple file support\n- [x] API stores file with converted markdown\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "dyuBAeiObrec",
+          "title": "Convert uploaded files to Markdown",
+          "description": "As a developer, I want uploaded PDF and DOCX files to be automatically converted to Markdown, so that they can be used as context for Claude Code.",
+          "acceptance_criteria": "- [x] PDF to Markdown conversion\n- [x] DOCX to Markdown conversion\n- [x] Markdown and plain text passthrough\n- [ ] Image OCR support (.png, .jpg)\n- [ ] Tests for converter functions",
+          "status": "in_progress",
+          "position": 1
+        },
+        {
+          "id": "qdMIhdibizXd",
+          "title": "View uploaded documents",
+          "description": "As a developer, I want to view the converted Markdown content of uploaded documents, so that I can verify the conversion quality.",
+          "acceptance_criteria": "- [x] Document list sidebar\n- [x] Document selection with visual highlight\n- [x] Document content display\n- [ ] Rendered Markdown display (currently shows raw text)\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 2
+        }
+      ]
+    },
+    {
+      "id": "NWtIoTzlcPpQ",
+      "title": "Chat Brainstorm with Claude Code",
+      "description": "Chat panel integrated into project views, using Claude Code in plan mode for brainstorming, ideation, and project refinement.",
+      "priority": 0,
+      "status": "review",
+      "position": 4,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "0Kl4bAdI5RBv",
+          "title": "Send and receive chat messages",
+          "description": "As a developer, I want to chat with Claude Code about my project ideas, so that I can brainstorm and refine my project vision.",
+          "acceptance_criteria": "- [x] Message input with enter-to-send\n- [x] Optimistic UI (message appears immediately)\n- [x] Claude Code responds in plan mode\n- [x] Message history persisted in DB\n- [x] Rollback on error\n- [ ] Streaming responses (currently waits for full response)\n- [ ] Tests",
+          "status": "done",
+          "position": 0
+        },
+        {
+          "id": "Tz-cRi3I6_Ly",
+          "title": "Context-aware chat with project documents",
+          "description": "As a developer, I want the chat to include my project description, uploaded documents, and existing spec as context, so that Claude Code gives relevant answers.",
+          "acceptance_criteria": "- [x] Project description injected\n- [x] All documents injected as markdown\n- [x] Existing spec injected\n- [x] Recent chat history (20 messages) included\n- [ ] Tests for prompt building",
+          "status": "in_progress",
+          "position": 1
+        },
+        {
+          "id": "C6rSffy2_itP",
+          "title": "Toggle chat panel in project view",
+          "description": "As a developer, I want to show/hide the chat panel while working on my project, so that I can focus on the kanban or chat as needed.",
+          "acceptance_criteria": "- [x] Toggle button in project header\n- [x] Chat panel appears on right side\n- [x] Panel collapses when toggled off\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 2
+        }
+      ]
+    },
+    {
+      "id": "Qvsj_DScOK1L",
+      "title": "Global Settings",
+      "description": "Application-wide settings including a global prompt injected into all Claude Code sessions.",
+      "priority": 0,
+      "status": "review",
+      "position": 5,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "cGD9iFYWODU8",
+          "title": "Configure global prompt for Claude Code",
+          "description": "As a developer, I want to set a global prompt that is injected into all Claude Code sessions, so that I can customize AI behavior across all projects.",
+          "acceptance_criteria": "- [x] Settings page with global prompt textarea\n- [x] Save button with loading state\n- [x] Persisted in DB settings table\n- [x] Injected into all Claude Code prompts\n- [ ] Tests",
+          "status": "in_progress",
+          "position": 0
+        }
+      ]
+    }
+  ]
+}

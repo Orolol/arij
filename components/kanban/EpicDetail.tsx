@@ -79,7 +79,7 @@ export function EpicDetail({ projectId, epicId, open, onClose }: EpicDetailProps
               </SheetTitle>
             </SheetHeader>
 
-            <div className="mt-6 space-y-4">
+            <div className="px-4 pb-4 space-y-4">
               <div>
                 <label className="text-xs text-muted-foreground block mb-1">
                   Description

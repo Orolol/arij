@@ -2,9 +2,9 @@
 
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
-import { ArrowLeft, Kanban, FileText, Files, Activity, Tag } from "lucide-react";
+import { ArrowLeft, Kanban, FileText, Files, Activity, Tag, MessageSquare } from "lucide-react";
 import { ChatPanel } from "@/components/chat/ChatPanel";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 
 export default function ProjectLayout({
@@ -17,6 +17,16 @@ export default function ProjectLayout({
   const projectId = params.projectId as string;
   const [projectName, setProjectName] = useState("...");
   const [chatOpen, setChatOpen] = useState(false);
+  const [conversationCount, setConversationCount] = useState(0);
+
+  const fetchConversationCount = useCallback(() => {
+    fetch(`/api/projects/${projectId}/conversations`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.data) setConversationCount(d.data.length);
+      })
+      .catch(() => {});
+  }, [projectId]);
 
   useEffect(() => {
     fetch(`/api/projects/${projectId}`)
@@ -25,7 +35,15 @@ export default function ProjectLayout({
         if (d.data) setProjectName(d.data.name);
       })
       .catch(() => {});
-  }, [projectId]);
+    fetchConversationCount();
+  }, [projectId, fetchConversationCount]);
+
+  // Refresh count when chat panel toggles
+  useEffect(() => {
+    if (!chatOpen) {
+      fetchConversationCount();
+    }
+  }, [chatOpen, fetchConversationCount]);
 
   const navItems = [
     { href: `/projects/${projectId}`, label: "Kanban", icon: Kanban },
@@ -80,13 +98,19 @@ export default function ProjectLayout({
           <button
             onClick={() => setChatOpen(!chatOpen)}
             className={cn(
-              "px-3 py-1.5 rounded-md text-sm transition-colors",
+              "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors",
               chatOpen
                 ? "bg-primary text-primary-foreground"
                 : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
             )}
           >
+            <MessageSquare className="h-4 w-4" />
             Chat
+            {!chatOpen && conversationCount > 0 && (
+              <span className="min-w-5 h-5 px-1.5 rounded-full bg-primary text-primary-foreground text-xs font-medium flex items-center justify-center">
+                {conversationCount}
+              </span>
+            )}
           </button>
         </div>
       </header>

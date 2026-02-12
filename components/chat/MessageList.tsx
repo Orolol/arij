@@ -1,8 +1,8 @@
 "use client";
 
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { useEffect, useRef } from "react";
 import { User, Bot } from "lucide-react";
+import { MarkdownContent } from "./MarkdownContent";
 
 interface Message {
   id: string;
@@ -14,9 +14,10 @@ interface Message {
 interface MessageListProps {
   messages: Message[];
   loading: boolean;
+  streamStatus?: string | null;
 }
 
-export function MessageList({ messages, loading }: MessageListProps) {
+export function MessageList({ messages, loading, streamStatus }: MessageListProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -54,7 +55,13 @@ export function MessageList({ messages, loading }: MessageListProps) {
               </div>
             )}
           </div>
-          <div className="flex-1 text-sm whitespace-pre-wrap">{msg.content}</div>
+          <div className="flex-1 text-sm">
+            {msg.content ? (
+              <MarkdownContent content={msg.content} />
+            ) : (
+              <span className="animate-pulse text-muted-foreground">{streamStatus || "..."}</span>
+            )}
+          </div>
         </div>
       ))}
       <div ref={bottomRef} />

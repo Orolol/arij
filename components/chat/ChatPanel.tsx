@@ -1,11 +1,13 @@
 "use client";
 
 import { useChat } from "@/hooks/useChat";
+import { useConversations } from "@/hooks/useConversations";
 import { MessageList } from "./MessageList";
 import { MessageInput } from "./MessageInput";
+import { QuestionCards } from "./QuestionCards";
 import { Button } from "@/components/ui/button";
-import { Sparkles, Loader2 } from "lucide-react";
-import { useState } from "react";
+import { Sparkles, Loader2, Plus, MessageSquare, X } from "lucide-react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 
 interface ChatPanelProps {
@@ -13,9 +15,39 @@ interface ChatPanelProps {
 }
 
 export function ChatPanel({ projectId }: ChatPanelProps) {
-  const { messages, loading, sending, sendMessage } = useChat(projectId);
+  const {
+    conversations,
+    activeId,
+    setActiveId,
+    createConversation,
+    deleteConversation,
+    refresh: refreshConversations,
+  } = useConversations(projectId);
+
+  const { messages, loading, sending, pendingQuestions, streamStatus, sendMessage: rawSendMessage, answerQuestions } = useChat(projectId, activeId);
   const [generating, setGenerating] = useState(false);
   const router = useRouter();
+
+  // Refresh conversation labels after send completes (picks up AI-generated titles)
+  const prevSending = useRef(sending);
+  useEffect(() => {
+    if (prevSending.current && !sending) {
+      // Sending just finished — delay refresh to let title gen complete
+      const timer = setTimeout(() => refreshConversations(), 3000);
+      return () => clearTimeout(timer);
+    }
+    prevSending.current = sending;
+  }, [sending, refreshConversations]);
+
+  const sendMessage = useCallback(
+    async (content: string) => {
+      await rawSendMessage(content);
+    },
+    [rawSendMessage]
+  );
+
+  const activeConversation = conversations.find((c) => c.id === activeId);
+  const isBrainstorm = activeConversation?.type === "brainstorm";
 
   async function handleGenerateSpec() {
     setGenerating(true);
@@ -30,27 +62,79 @@ export function ChatPanel({ projectId }: ChatPanelProps) {
     setGenerating(false);
   }
 
+  async function handleNewConversation() {
+    await createConversation("brainstorm", "Brainstorm");
+  }
+
   return (
     <div className="flex flex-col h-full">
-      <div className="p-3 border-b border-border flex items-center justify-between">
-        <h3 className="font-medium text-sm">Chat</h3>
-        <Button
-          size="sm"
-          variant="outline"
-          onClick={handleGenerateSpec}
-          disabled={generating}
-          className="text-xs"
+      {/* Tab strip */}
+      <div className="border-b border-border flex items-center gap-0 overflow-x-auto">
+        {conversations.map((conv) => (
+          <button
+            key={conv.id}
+            onClick={() => setActiveId(conv.id)}
+            className={`group flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors ${
+              conv.id === activeId
+                ? "border-primary text-foreground"
+                : "border-transparent text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <MessageSquare className="h-3 w-3" />
+            {conv.label}
+            <span
+              role="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteConversation(conv.id);
+              }}
+              className="ml-1 opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity"
+            >
+              <X className="h-3 w-3" />
+            </span>
+          </button>
+        ))}
+        <button
+          onClick={handleNewConversation}
+          className="flex items-center justify-center w-7 h-7 mx-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
+          title="New conversation"
         >
-          {generating ? (
-            <Loader2 className="h-3 w-3 animate-spin mr-1" />
-          ) : (
-            <Sparkles className="h-3 w-3 mr-1" />
-          )}
-          Generate Spec & Plan
-        </Button>
+          <Plus className="h-3.5 w-3.5" />
+        </button>
       </div>
+
+      {/* Header with actions */}
+      <div className="p-3 border-b border-border flex items-center justify-between">
+        <h3 className="font-medium text-sm">{activeConversation?.label || "Chat"}</h3>
+        {isBrainstorm && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleGenerateSpec}
+            disabled={generating}
+            className="text-xs"
+          >
+            {generating ? (
+              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+            ) : (
+              <Sparkles className="h-3 w-3 mr-1" />
+            )}
+            Generate Spec & Plan
+          </Button>
+        )}
+      </div>
+
       <div className="flex-1 overflow-auto">
-        <MessageList messages={messages} loading={loading} />
+        <MessageList messages={messages} loading={loading} streamStatus={streamStatus} />
+        {pendingQuestions && (
+          <div className="px-3 pb-3">
+            <QuestionCards
+              questions={pendingQuestions}
+              onSubmit={answerQuestions}
+              disabled={sending}
+            />
+          </div>
+        )}
       </div>
       <MessageInput onSend={sendMessage} disabled={sending} />
     </div>

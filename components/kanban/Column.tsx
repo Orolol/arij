@@ -5,7 +5,6 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { EpicCard } from "./EpicCard";
 import { COLUMN_LABELS, type KanbanStatus, type KanbanEpic } from "@/lib/types/kanban";
 
@@ -33,7 +32,7 @@ export function Column({ status, epics, onEpicClick, selectedEpics, onToggleSele
           {epics.length}
         </span>
       </div>
-      <ScrollArea className="flex-1 px-2 pb-2">
+      <div className="flex-1 overflow-y-auto px-2 pb-2">
         <SortableContext
           items={epics.map((e) => e.id)}
           strategy={verticalListSortingStrategy}
@@ -54,7 +53,7 @@ export function Column({ status, epics, onEpicClick, selectedEpics, onToggleSele
             ))}
           </div>
         </SortableContext>
-      </ScrollArea>
+      </div>
     </div>
   );
 }

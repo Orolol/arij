@@ -122,7 +122,11 @@ export function Board({ projectId, onEpicClick, selectedEpics, onToggleSelect, r
         ))}
       </div>
       <DragOverlay>
-        {activeEpic && <EpicCard epic={activeEpic} isOverlay />}
+        {activeEpic && (
+          <div className="w-[272px]">
+            <EpicCard epic={activeEpic} isOverlay />
+          </div>
+        )}
       </DragOverlay>
     </DndContext>
   );

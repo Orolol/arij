@@ -1,23 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, documents, epics, userStories, settings } from "@/lib/db/schema";
+import { projects, documents, epics, userStories, settings, chatConversations } from "@/lib/db/schema";
 import { eq, and, sql } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { buildEpicCreationPrompt } from "@/lib/claude/prompt-builder";
-import { extractJsonFromOutput } from "@/lib/claude/json-parser";
-import { tryExportArjiJson } from "@/lib/sync/export";
-
-interface EpicCreationResult {
-  title: string;
-  description?: string;
-  priority?: number;
-  user_stories?: Array<{
-    title: string;
-    description?: string;
-    acceptance_criteria?: string;
-  }>;
-}
+import { readArjiJson } from "@/lib/sync/arji-json";
+import { exportArjiJson, tryExportArjiJson } from "@/lib/sync/export";
 
 export async function POST(
   request: NextRequest,
@@ -33,6 +22,18 @@ export async function POST(
   const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
   if (!project) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+
+  if (!project.gitRepoPath) {
+    return NextResponse.json({ error: "Project has no git repo path configured" }, { status: 400 });
+  }
+
+  // Update conversation status to "generating" if conversationId provided
+  if (body.conversationId) {
+    db.update(chatConversations)
+      .set({ status: "generating" })
+      .where(eq(chatConversations.id, body.conversationId))
+      .run();
   }
 
   const docs = db.select().from(documents).where(eq(documents.projectId, projectId)).all();
@@ -51,86 +52,159 @@ export async function POST(
   );
 
   try {
-    console.log("[epic-create] Spawning Claude CLI, cwd:", project.gitRepoPath || "(none)");
+    // 1. Snapshot current epic IDs before Claude runs
+    const existingEpicIds = new Set(
+      db.select({ id: epics.id })
+        .from(epics)
+        .where(eq(epics.projectId, projectId))
+        .all()
+        .map((e) => e.id)
+    );
+
+    // 2. Export current arji.json so Claude sees up-to-date data
+    await exportArjiJson(projectId);
+
+    // 3. Spawn Claude in analyze mode (can read + write files)
+    console.log("[epic-create] Spawning Claude CLI in analyze mode, cwd:", project.gitRepoPath);
 
     const { promise } = spawnClaude({
-      mode: "plan",
+      mode: "analyze",
       prompt,
-      cwd: project.gitRepoPath || undefined,
+      cwd: project.gitRepoPath,
     });
 
     const result = await promise;
 
     if (!result.success) {
+      // Update conversation status to "error"
+      if (body.conversationId) {
+        db.update(chatConversations)
+          .set({ status: "error" })
+          .where(eq(chatConversations.id, body.conversationId))
+          .run();
+      }
       return NextResponse.json(
         { error: result.error || "Claude Code failed" },
         { status: 500 },
       );
     }
 
-    const epicData = extractJsonFromOutput<EpicCreationResult>(result.result || "");
-
-    if (!epicData || !epicData.title) {
+    // 4. Read the updated arji.json
+    const arjiData = await readArjiJson(project.gitRepoPath);
+    if (!arjiData) {
+      if (body.conversationId) {
+        db.update(chatConversations)
+          .set({ status: "error" })
+          .where(eq(chatConversations.id, body.conversationId))
+          .run();
+      }
       return NextResponse.json(
-        { error: "Failed to parse epic data from Claude response" },
+        { error: "arji.json not found after Claude run" },
         { status: 500 },
       );
     }
 
-    // Compute max position for backlog epics
-    const maxPos = db
-      .select({ max: sql<number>`COALESCE(MAX(position), -1)` })
-      .from(epics)
-      .where(and(eq(epics.projectId, projectId), eq(epics.status, "backlog")))
-      .get();
+    // 5. Find new epics: IDs in arji.json that were NOT in the "before" snapshot
+    const newEpics = arjiData.epics.filter((e) => !existingEpicIds.has(e.id));
 
-    const epicId = createId();
-    const now = new Date().toISOString();
-
-    db.insert(epics)
-      .values({
-        id: epicId,
-        projectId,
-        title: epicData.title,
-        description: epicData.description || null,
-        priority: epicData.priority ?? 1,
-        status: "backlog",
-        position: (maxPos?.max ?? -1) + 1,
-        createdAt: now,
-        updatedAt: now,
-      })
-      .run();
-
-    let userStoriesCreated = 0;
-
-    if (epicData.user_stories) {
-      for (let j = 0; j < epicData.user_stories.length; j++) {
-        const usData = epicData.user_stories[j];
-        db.insert(userStories)
-          .values({
-            id: createId(),
-            epicId,
-            title: usData.title,
-            description: usData.description || null,
-            acceptanceCriteria: usData.acceptance_criteria || null,
-            status: "todo",
-            position: j,
-            createdAt: now,
-          })
+    if (newEpics.length === 0) {
+      if (body.conversationId) {
+        db.update(chatConversations)
+          .set({ status: "error" })
+          .where(eq(chatConversations.id, body.conversationId))
           .run();
-        userStoriesCreated++;
+      }
+      return NextResponse.json(
+        { error: "Claude did not add any new epics to arji.json" },
+        { status: 500 },
+      );
+    }
+
+    const now = new Date().toISOString();
+    let firstEpicId: string | null = null;
+    let firstEpicTitle = "";
+    let totalStoriesCreated = 0;
+
+    // 6. Insert only the new epic(s) + their user stories into DB
+    // Replace Claude-generated IDs with proper nanoid(12) IDs
+    for (const epicData of newEpics) {
+      const epicId = createId();
+      if (!firstEpicId) {
+        firstEpicId = epicId;
+        firstEpicTitle = epicData.title;
+      }
+
+      // Compute max position for backlog epics
+      const maxPos = db
+        .select({ max: sql<number>`COALESCE(MAX(position), -1)` })
+        .from(epics)
+        .where(and(eq(epics.projectId, projectId), eq(epics.status, "backlog")))
+        .get();
+
+      db.insert(epics)
+        .values({
+          id: epicId,
+          projectId,
+          title: epicData.title,
+          description: epicData.description || null,
+          priority: epicData.priority ?? 1,
+          status: "backlog",
+          position: (maxPos?.max ?? -1) + 1,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+
+      if (epicData.user_stories) {
+        for (let j = 0; j < epicData.user_stories.length; j++) {
+          const usData = epicData.user_stories[j];
+          db.insert(userStories)
+            .values({
+              id: createId(),
+              epicId,
+              title: usData.title,
+              description: usData.description || null,
+              acceptanceCriteria: usData.acceptance_criteria || null,
+              status: "todo",
+              position: j,
+              createdAt: now,
+            })
+            .run();
+          totalStoriesCreated++;
+        }
       }
     }
 
+    // 7. Update conversation label, epicId, and status
+    if (body.conversationId && firstEpicId) {
+      db.update(chatConversations)
+        .set({
+          label: `Epic: ${firstEpicTitle}`,
+          epicId: firstEpicId,
+          status: "generated",
+        })
+        .where(eq(chatConversations.id, body.conversationId))
+        .run();
+    }
+
+    // 8. Re-export arji.json to keep DB and file in sync (IDs were replaced)
     tryExportArjiJson(projectId);
+
     return NextResponse.json({
       data: {
-        epicId,
-        title: epicData.title,
-        userStoriesCreated,
+        epicId: firstEpicId,
+        title: firstEpicTitle,
+        userStoriesCreated: totalStoriesCreated,
       },
     });
   } catch (e) {
+    // Update conversation status to "error"
+    if (body.conversationId) {
+      db.update(chatConversations)
+        .set({ status: "error" })
+        .where(eq(chatConversations.id, body.conversationId))
+        .run();
+    }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Unknown error" },
       { status: 500 },
