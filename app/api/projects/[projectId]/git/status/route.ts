@@ -1,0 +1,86 @@
+import { NextRequest, NextResponse } from "next/server";
+import { db } from "@/lib/db";
+import { projects, settings } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
+import { fetchRemote, getBranchStatus } from "@/lib/git/remote";
+import { logSyncOperation } from "@/lib/github/sync-log";
+
+export async function POST(
+  request: NextRequest,
+  { params }: { params: Promise<{ projectId: string }> }
+) {
+  const { projectId } = await params;
+  const body = await request.json();
+  const { branch } = body as { branch?: string };
+
+  if (!branch || typeof branch !== "string") {
+    return NextResponse.json(
+      { error: "missing_branch", message: "A branch name is required." },
+      { status: 400 }
+    );
+  }
+
+  const project = db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .get();
+
+  if (!project) {
+    return NextResponse.json(
+      { error: "not_found", message: "Project not found." },
+      { status: 404 }
+    );
+  }
+
+  if (!project.gitRepoPath) {
+    return NextResponse.json(
+      { error: "not_configured", message: "No git repository path configured for this project." },
+      { status: 400 }
+    );
+  }
+
+  const pat = db
+    .select()
+    .from(settings)
+    .where(eq(settings.key, "github_pat"))
+    .get();
+
+  if (!pat) {
+    return NextResponse.json(
+      { error: "not_configured", message: "GitHub PAT not configured. Set it in Settings." },
+      { status: 400 }
+    );
+  }
+
+  try {
+    // Fetch first to get up-to-date status
+    await fetchRemote(project.gitRepoPath);
+
+    logSyncOperation({
+      projectId,
+      operation: "fetch",
+      branch,
+      status: "success",
+    });
+
+    const status = await getBranchStatus(project.gitRepoPath, branch);
+
+    return NextResponse.json({ data: status });
+  } catch (e) {
+    const detail = e instanceof Error ? e.message : "Status check failed";
+
+    logSyncOperation({
+      projectId,
+      operation: "fetch",
+      branch,
+      status: "failure",
+      detail,
+    });
+
+    return NextResponse.json(
+      { error: "status_failed", message: detail },
+      { status: 500 }
+    );
+  }
+}
