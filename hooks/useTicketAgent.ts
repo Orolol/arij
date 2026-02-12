@@ -50,7 +50,7 @@ export function useTicketAgent(projectId: string, storyId: string) {
   }, [pollSessions]);
 
   const sendToDev = useCallback(
-    async (comment?: string) => {
+    async (comment?: string, provider?: string) => {
       setDispatching(true);
       try {
         const res = await fetch(
@@ -58,7 +58,7 @@ export function useTicketAgent(projectId: string, storyId: string) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ comment }),
+            body: JSON.stringify({ comment, provider }),
           }
         );
         const data = await res.json();
@@ -77,7 +77,7 @@ export function useTicketAgent(projectId: string, storyId: string) {
   );
 
   const sendToReview = useCallback(
-    async (reviewTypes: string[]) => {
+    async (reviewTypes: string[], provider?: string) => {
       setDispatching(true);
       try {
         const res = await fetch(
@@ -85,7 +85,7 @@ export function useTicketAgent(projectId: string, storyId: string) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ reviewTypes }),
+            body: JSON.stringify({ reviewTypes, provider }),
           }
         );
         const data = await res.json();

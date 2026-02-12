@@ -71,6 +71,7 @@ export async function POST(
       type: body.type || "brainstorm",
       label: body.label || "Brainstorm",
       epicId: body.epicId || null,
+      provider: body.provider || "claude-code",
       createdAt: now,
     })
     .run();

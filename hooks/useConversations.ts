@@ -8,6 +8,7 @@ interface Conversation {
   type: "brainstorm" | "epic";
   label: string;
   epicId: string | null;
+  provider: string;
   createdAt: string;
 }
 
