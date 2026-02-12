@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, documents, chatMessages, epics, userStories, settings } from "@/lib/db/schema";
+import { projects, documents, chatMessages, epics, userStories } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { buildSpecGenerationPrompt } from "@/lib/claude/prompt-builder";
 import { extractJsonFromOutput, parseClaudeOutput } from "@/lib/claude/json-parser";
 import { tryExportArjiJson } from "@/lib/sync/export";
+import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 
 export async function POST(
   _request: NextRequest,
@@ -29,14 +30,16 @@ export async function POST(
     .all()
     .reverse();
 
-  const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+  const specSystemPrompt = await resolveAgentPrompt(
+    "spec_generation",
+    projectId
+  );
 
   const prompt = buildSpecGenerationPrompt(
     project,
     docs,
     chatHistory.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-    globalPrompt
+    specSystemPrompt
   );
 
   try {

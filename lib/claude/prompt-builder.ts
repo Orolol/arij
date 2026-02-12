@@ -3,7 +3,7 @@
  *
  * Each builder assembles a structured markdown prompt from project data,
  * documents, epics/user stories, and the global system prompt configured
- * in settings.
+ * in the agent configuration.
  */
 
 // ---------------------------------------------------------------------------
@@ -46,9 +46,9 @@ function section(heading: string, content: string | null | undefined): string {
   return `## ${heading}\n\n${content.trim()}\n`;
 }
 
-function globalSection(globalPrompt: string | null | undefined): string {
-  if (!globalPrompt || globalPrompt.trim().length === 0) return "";
-  return `# Global Instructions\n\n${globalPrompt.trim()}\n\n`;
+function systemSection(systemPrompt: string | null | undefined): string {
+  if (!systemPrompt || systemPrompt.trim().length === 0) return "";
+  return `# System Instructions\n\n${systemPrompt.trim()}\n\n`;
 }
 
 function documentsSection(documents: PromptDocument[]): string {
@@ -84,11 +84,11 @@ export function buildChatPrompt(
   project: PromptProject,
   documents: PromptDocument[],
   messages: PromptMessage[],
-  globalPrompt?: string | null,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
 
   parts.push(`# Project: ${project.name}\n`);
 
@@ -120,11 +120,11 @@ export function buildSpecGenerationPrompt(
   project: PromptProject,
   documents: PromptDocument[],
   chatHistory: PromptMessage[],
-  globalPrompt?: string | null,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
 
   parts.push(`# Project: ${project.name}\n`);
 
@@ -181,6 +181,15 @@ Your final response MUST be ONLY the raw JSON object. No markdown, no explanatio
   return parts.filter(Boolean).join("\n");
 }
 
+export function buildSpecPrompt(
+  project: PromptProject,
+  documents: PromptDocument[],
+  chatHistory: PromptMessage[],
+  systemPrompt?: string | null,
+): string {
+  return buildSpecGenerationPrompt(project, documents, chatHistory, systemPrompt);
+}
+
 // ---------------------------------------------------------------------------
 // 3. Import Prompt
 // ---------------------------------------------------------------------------
@@ -191,11 +200,11 @@ Your final response MUST be ONLY the raw JSON object. No markdown, no explanatio
  * and writes the structured JSON assessment to `arji.json` at the project root.
  */
 export function buildImportPrompt(
-  globalPrompt?: string | null,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
 
   parts.push(`# Task: Analyze Existing Project
 
@@ -269,11 +278,11 @@ export function buildEpicRefinementPrompt(
   project: PromptProject,
   documents: PromptDocument[],
   messages: PromptMessage[],
-  globalPrompt?: string | null,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
   parts.push(`# Project: ${project.name}\n`);
   parts.push(section("Project Description", project.description));
   parts.push(section("Project Specification", project.spec));
@@ -306,11 +315,11 @@ export function buildEpicCreationPrompt(
   project: PromptProject,
   documents: PromptDocument[],
   messages: PromptMessage[],
-  globalPrompt?: string | null,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
   parts.push(`# Project: ${project.name}\n`);
   parts.push(section("Project Description", project.description));
   parts.push(section("Project Specification", project.spec));
@@ -415,11 +424,11 @@ export function buildTeamBuildPrompt(
   project: PromptProject,
   documents: PromptDocument[],
   teamEpics: TeamEpic[],
-  globalPrompt?: string | null,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
   parts.push(`# Project: ${project.name}\n`);
   parts.push(section("Project Specification", project.spec));
   parts.push(documentsSection(documents));
@@ -505,11 +514,11 @@ export function buildBuildPrompt(
   documents: PromptDocument[],
   epic: PromptEpic,
   userStories: PromptUserStory[],
-  globalPrompt?: string | null,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
 
   parts.push(`# Project: ${project.name}\n`);
 
@@ -589,11 +598,11 @@ export function buildTicketBuildPrompt(
   epic: PromptEpic,
   story: PromptUserStory,
   comments: PromptComment[],
-  globalPrompt?: string | null,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
   parts.push(`# Project: ${project.name}\n`);
   parts.push(section("Project Specification", project.spec));
   parts.push(documentsSection(documents));
@@ -643,6 +652,11 @@ Implement this ticket following the specification and acceptance criteria above.
 // ---------------------------------------------------------------------------
 
 export type ReviewType = "security" | "code_review" | "compliance";
+
+export interface CustomReviewAgentPrompt {
+  name: string;
+  systemPrompt: string;
+}
 
 const REVIEW_CHECKLISTS: Record<ReviewType, string> = {
   security: `## Security Audit Checklist
@@ -721,12 +735,12 @@ export function buildReviewPrompt(
   documents: PromptDocument[],
   epic: PromptEpic,
   story: PromptUserStory,
-  reviewType: ReviewType,
-  globalPrompt?: string | null,
+  reviewType: ReviewType | CustomReviewAgentPrompt,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
   parts.push(`# Project: ${project.name}\n`);
   parts.push(section("Project Specification", project.spec));
   parts.push(documentsSection(documents));
@@ -749,10 +763,24 @@ export function buildReviewPrompt(
     parts.push(`${story.acceptanceCriteria.trim()}\n`);
   }
 
-  // Review checklist
-  parts.push(REVIEW_CHECKLISTS[reviewType]);
+  const isCustomReview = typeof reviewType !== "string";
 
-  parts.push(`\n## Instructions
+  if (isCustomReview) {
+    parts.push(`## Custom Review Agent Instructions\n\n${reviewType.systemPrompt.trim()}\n`);
+    parts.push(`\n## Instructions
+
+You are performing a **${reviewType.name}** review on the code changes for the ticket described above.
+
+1. Read the relevant source files in the current working directory.
+2. Follow the custom review instructions above exactly.
+3. Produce a structured markdown report with findings and recommendations.
+4. If no issues are found, state "No issues found."
+`);
+  } else {
+    // Built-in review checklist
+    parts.push(REVIEW_CHECKLISTS[reviewType]);
+
+    parts.push(`\n## Instructions
 
 You are performing a **${reviewType.replace("_", " ")}** on the code changes for the ticket described above.
 
@@ -764,6 +792,7 @@ You are performing a **${reviewType.replace("_", " ")}** on the code changes for
 
 Your response should be a well-formatted markdown report.
 `);
+  }
 
   return parts.filter(Boolean).join("\n");
 }
@@ -782,11 +811,11 @@ export function buildMergeResolutionPrompt(
   epic: PromptEpic,
   branchName: string,
   conflictOutput: string,
-  globalPrompt?: string | null,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
   parts.push(`# Project: ${project.name}\n`);
   parts.push(section("Project Specification", project.spec));
 
@@ -833,11 +862,11 @@ export function buildEpicReviewPrompt(
   epic: PromptEpic,
   userStories: PromptUserStory[],
   reviewType: ReviewType,
-  globalPrompt?: string | null,
+  systemPrompt?: string | null,
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(systemPrompt));
   parts.push(`# Project: ${project.name}\n`);
   parts.push(section("Project Specification", project.spec));
   parts.push(documentsSection(documents));
