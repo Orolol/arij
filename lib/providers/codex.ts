@@ -17,7 +17,7 @@ export class CodexProvider implements AgentProvider {
   readonly type = "codex" as const;
 
   spawn(options: ProviderSpawnOptions): ProviderSession {
-    const { sessionId, prompt, cwd, mode, model, logIdentifier } = options;
+    const { sessionId, prompt, cwd, mode, model, onChunk, logIdentifier } = options;
 
     const spawned = spawnCodex({
       mode,
@@ -25,6 +25,27 @@ export class CodexProvider implements AgentProvider {
       cwd,
       model,
       logIdentifier,
+      onRawChunk: ({ source, index, text, emittedAt }) =>
+        onChunk?.({
+          streamType: "raw",
+          text,
+          chunkKey: `${source}:${index}`,
+          emittedAt,
+        }),
+      onOutputChunk: ({ text, emittedAt }) =>
+        onChunk?.({
+          streamType: "output",
+          text,
+          chunkKey: "final-output",
+          emittedAt,
+        }),
+      onResponseChunk: ({ text, emittedAt }) =>
+        onChunk?.({
+          streamType: "response",
+          text,
+          chunkKey: "final-response",
+          emittedAt,
+        }),
     });
 
     return {

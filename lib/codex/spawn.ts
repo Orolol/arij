@@ -16,6 +16,14 @@ export interface CodexOptions {
   prompt: string;
   cwd?: string;
   model?: string;
+  onRawChunk?: (chunk: {
+    source: "stdout" | "stderr";
+    index: number;
+    text: string;
+    emittedAt: string;
+  }) => void;
+  onOutputChunk?: (chunk: { text: string; emittedAt: string }) => void;
+  onResponseChunk?: (chunk: { text: string; emittedAt: string }) => void;
   /** Optional identifier for NDJSON session logging (same format as Claude Code). */
   logIdentifier?: string;
 }
@@ -31,7 +39,16 @@ export interface CodexOptions {
  * by the process manager.
  */
 export function spawnCodex(options: CodexOptions): SpawnedClaude {
-  const { mode, prompt, cwd, model, logIdentifier } = options;
+  const {
+    mode,
+    prompt,
+    cwd,
+    model,
+    onRawChunk,
+    onOutputChunk,
+    onResponseChunk,
+    logIdentifier,
+  } = options;
 
   // Temp file for -o (reliable output capture)
   const outputFile = path.join(
@@ -96,6 +113,8 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
     const startTime = Date.now();
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
+    let stdoutChunkIndex = 0;
+    let stderrChunkIndex = 0;
 
     child = nodeSpawn("codex", args, {
       cwd: effectiveCwd,
@@ -105,6 +124,13 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
+      stdoutChunkIndex += 1;
+      onRawChunk?.({
+        source: "stdout",
+        index: stdoutChunkIndex,
+        text: chunk.toString("utf-8"),
+        emittedAt: new Date().toISOString(),
+      });
       if (logCtx) {
         try { appendStreamEvent(logCtx, chunk.toString("utf-8")); } catch { /* best-effort */ }
       }
@@ -112,6 +138,13 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
 
     child.stderr?.on("data", (chunk: Buffer) => {
       stderrChunks.push(chunk);
+      stderrChunkIndex += 1;
+      onRawChunk?.({
+        source: "stderr",
+        index: stderrChunkIndex,
+        text: chunk.toString("utf-8"),
+        emittedAt: new Date().toISOString(),
+      });
       if (logCtx) {
         try { appendStderrEvent(logCtx, chunk.toString("utf-8")); } catch { /* best-effort */ }
       }
@@ -152,6 +185,20 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
 
       // Best output: -o file > stdout
       const result = fileOutput || stdout.trim();
+
+      if (fileOutput) {
+        onOutputChunk?.({
+          text: fileOutput,
+          emittedAt: new Date().toISOString(),
+        });
+      }
+
+      if (result) {
+        onResponseChunk?.({
+          text: result,
+          emittedAt: new Date().toISOString(),
+        });
+      }
 
       console.log(
         "[spawn] codex exited, code:",

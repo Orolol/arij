@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { agentSessions, epics, userStories } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import { getSessionStatusForApi } from "@/lib/agent-sessions/lifecycle";
 import { activityRegistry } from "@/lib/activity-registry";
 
 export interface UnifiedActivity {
