@@ -18,6 +18,7 @@ interface ColumnProps {
   epics: KanbanEpic[];
   onEpicClick: (epicId: string) => void;
   selectedEpics?: Set<string>;
+  autoIncludedEpics?: Set<string>;
   onToggleSelect?: (epicId: string) => void;
   runningEpicIds?: Set<string>;
   activeAgentActivities?: Record<string, KanbanEpicAgentActivity>;
@@ -30,6 +31,7 @@ export function Column({
   epics,
   onEpicClick,
   selectedEpics,
+  autoIncludedEpics,
   onToggleSelect,
   runningEpicIds,
   activeAgentActivities,
@@ -62,7 +64,8 @@ export function Column({
                 key={epic.id}
                 epic={epic}
                 onClick={() => onEpicClick(epic.id)}
-                selected={selectedEpics?.has(epic.id)}
+                selected={selectedEpics?.has(epic.id) || autoIncludedEpics?.has(epic.id)}
+                autoIncluded={autoIncludedEpics?.has(epic.id)}
                 isRunning={runningEpicIds?.has(epic.id) || false}
                 activeAgentActivity={activeAgentActivities?.[epic.id]}
                 onLinkedAgentHoverChange={onLinkedAgentHoverChange}

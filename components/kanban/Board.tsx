@@ -29,6 +29,7 @@ interface BoardProps {
   projectId: string;
   onEpicClick: (epicId: string) => void;
   selectedEpics?: Set<string>;
+  autoIncludedEpics?: Set<string>;
   onToggleSelect?: (epicId: string) => void;
   refreshTrigger?: number;
   runningEpicIds?: Set<string>;
@@ -45,6 +46,7 @@ export function Board({
   projectId,
   onEpicClick,
   selectedEpics,
+  autoIncludedEpics,
   onToggleSelect,
   refreshTrigger,
   runningEpicIds,
@@ -218,6 +220,7 @@ export function Board({
             epics={board.columns[status]}
             onEpicClick={handleEpicClick}
             selectedEpics={selectedEpics}
+            autoIncludedEpics={autoIncludedEpics}
             onToggleSelect={onToggleSelect}
             runningEpicIds={runningEpicIds}
             activeAgentActivities={activeAgentActivities}

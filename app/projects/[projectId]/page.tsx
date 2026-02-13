@@ -8,6 +8,7 @@ import { UnifiedChatPanel, type UnifiedChatPanelHandle } from "@/components/chat
 import { AgentMonitor } from "@/components/monitor/AgentMonitor";
 import { useAgentPolling } from "@/hooks/useAgentPolling";
 import { useCodexAvailable } from "@/hooks/useCodexAvailable";
+import { useBatchSelection } from "@/hooks/useBatchSelection";
 import { ProviderSelect, type ProviderType } from "@/components/shared/ProviderSelect";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,7 +24,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug } from "lucide-react";
+import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug, Search, GitMerge, Lock } from "lucide-react";
 import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
 import type { KanbanEpicAgentActivity } from "@/lib/types/kanban";
 
@@ -41,13 +42,15 @@ export default function KanbanPage() {
   const searchParams = useSearchParams();
   const projectId = params.projectId as string;
   const [selectedEpicId, setSelectedEpicId] = useState<string | null>(null);
-  const [selectedEpics, setSelectedEpics] = useState<Set<string>>(new Set());
+  const batch = useBatchSelection(projectId);
   const [buildMode, setBuildMode] = useState<"parallel" | "sequential">(
     "parallel"
   );
   const [teamMode, setTeamMode] = useState(false);
   const [provider, setProvider] = useState<ProviderType>("claude-code");
   const [building, setBuilding] = useState(false);
+  const [reviewing, setReviewing] = useState(false);
+  const [batchMerging, setBatchMerging] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [bugDialogOpen, setBugDialogOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
@@ -146,10 +149,10 @@ export default function KanbanPage() {
 
   // Reset team mode when selection drops below 2 or provider changes to codex
   useEffect(() => {
-    if (selectedEpics.size < 2 || provider === "codex") {
+    if (batch.allSelected.size < 2 || provider === "codex") {
       setTeamMode(false);
     }
-  }, [selectedEpics.size, provider]);
+  }, [batch.allSelected.size, provider]);
 
   // Detect session completions for notifications + board refresh
   useEffect(() => {
@@ -182,20 +185,8 @@ export default function KanbanPage() {
     prevSessionIds.current = currentIds;
   }, [activities, projectId]);
 
-  function toggleEpicSelection(epicId: string) {
-    setSelectedEpics((prev) => {
-      const next = new Set(prev);
-      if (next.has(epicId)) {
-        next.delete(epicId);
-      } else {
-        next.add(epicId);
-      }
-      return next;
-    });
-  }
-
   async function handleBuild() {
-    if (selectedEpics.size === 0) return;
+    if (batch.allSelected.size === 0) return;
     setBuilding(true);
 
     try {
@@ -203,7 +194,7 @@ export default function KanbanPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          epicIds: Array.from(selectedEpics),
+          epicIds: Array.from(batch.allSelected),
           mode: buildMode,
           team: teamMode,
           provider,
@@ -230,10 +221,10 @@ export default function KanbanPage() {
         addToast(
           "success",
           teamMode
-            ? `Launched team build session coordinating ${selectedEpics.size} epics`
+            ? `Launched team build session coordinating ${batch.allSelected.size} epics`
             : `Launched ${data.data.count} build session${data.data.count > 1 ? "s" : ""}`
         );
-        setSelectedEpics(new Set());
+        batch.clear();
         setRefreshTrigger((t) => t + 1);
       }
     } catch {
@@ -243,7 +234,76 @@ export default function KanbanPage() {
     setBuilding(false);
   }
 
-  const canTeamMode = selectedEpics.size >= 2 && provider === "claude-code";
+  async function handleBatchReview() {
+    if (batch.allSelected.size === 0) return;
+    setReviewing(true);
+
+    let launched = 0;
+    for (const epicId of batch.allSelected) {
+      try {
+        const res = await fetch(
+          `/api/projects/${projectId}/epics/${epicId}/review`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              reviewTypes: ["code_review"],
+              provider,
+            }),
+          }
+        );
+        if (res.ok) launched++;
+      } catch {
+        // continue with other epics
+      }
+    }
+
+    if (launched > 0) {
+      addToast("success", `Launched review for ${launched} epic${launched > 1 ? "s" : ""}`);
+      batch.clear();
+      setRefreshTrigger((t) => t + 1);
+    } else {
+      addToast("error", "Failed to launch any reviews");
+    }
+    setReviewing(false);
+  }
+
+  async function handleBatchMerge() {
+    if (batch.allSelected.size === 0) return;
+    setBatchMerging(true);
+
+    let merged = 0;
+    let failed = 0;
+    for (const epicId of batch.allSelected) {
+      try {
+        const res = await fetch(
+          `/api/projects/${projectId}/epics/${epicId}/merge`,
+          { method: "POST" }
+        );
+        if (res.ok) {
+          merged++;
+        } else {
+          failed++;
+        }
+      } catch {
+        failed++;
+      }
+    }
+
+    if (merged > 0) {
+      addToast("success", `Merged ${merged} epic${merged > 1 ? "s" : ""}`);
+    }
+    if (failed > 0) {
+      addToast("error", `${failed} merge${failed > 1 ? "s" : ""} failed`);
+    }
+    batch.clear();
+    setRefreshTrigger((t) => t + 1);
+    setBatchMerging(false);
+  }
+
+  const totalSelected = batch.allSelected.size;
+  const autoCount = batch.autoIncluded.size;
+  const canTeamMode = totalSelected >= 2 && provider === "claude-code";
 
   return (
     <div className="flex flex-col h-full">
@@ -285,12 +345,17 @@ export default function KanbanPage() {
               </Button>
             </div>
 
-            {/* Build toolbar */}
-            {selectedEpics.size > 0 && (
+            {/* Batch action toolbar */}
+            {totalSelected > 0 && (
               <div className="border-b border-border px-4 py-2 bg-muted/30 flex items-center gap-3 flex-wrap">
                 <span className="text-sm">
-                  {selectedEpics.size} epic{selectedEpics.size > 1 ? "s" : ""}{" "}
-                  selected
+                  {batch.userSelected.size} epic{batch.userSelected.size > 1 ? "s" : ""} selected
+                  {autoCount > 0 && (
+                    <span className="text-amber-500 ml-1">
+                      <Lock className="h-3 w-3 inline mr-0.5" />
+                      +{autoCount} required
+                    </span>
+                  )}
                 </span>
 
                 <ProviderSelect
@@ -316,7 +381,7 @@ export default function KanbanPage() {
                 </Select>
 
                 {/* Team mode checkbox — visible when 2+ epics selected */}
-                {selectedEpics.size >= 2 && (
+                {totalSelected >= 2 && (
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -358,12 +423,49 @@ export default function KanbanPage() {
                   ) : (
                     <Hammer className="h-3 w-3 mr-1" />
                   )}
-                  {teamMode ? "Build as Team" : `Build with ${provider === "codex" ? "Codex" : "Claude Code"}`}
+                  {teamMode ? "Build as Team" : "Build all"}
                 </Button>
+
+                {/* Review all — appears when multiple selected */}
+                {totalSelected >= 2 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleBatchReview}
+                    disabled={reviewing}
+                    className="h-7 text-xs"
+                  >
+                    {reviewing ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <Search className="h-3 w-3 mr-1" />
+                    )}
+                    Review all
+                  </Button>
+                )}
+
+                {/* Merge all — appears when multiple selected */}
+                {totalSelected >= 2 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleBatchMerge}
+                    disabled={batchMerging}
+                    className="h-7 text-xs"
+                  >
+                    {batchMerging ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                    ) : (
+                      <GitMerge className="h-3 w-3 mr-1" />
+                    )}
+                    Merge all
+                  </Button>
+                )}
+
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={() => setSelectedEpics(new Set())}
+                  onClick={batch.clear}
                   className="h-7 text-xs"
                 >
                   Clear
@@ -375,8 +477,9 @@ export default function KanbanPage() {
               <Board
                 projectId={projectId}
                 onEpicClick={(id) => setSelectedEpicId(id)}
-                selectedEpics={selectedEpics}
-                onToggleSelect={toggleEpicSelection}
+                selectedEpics={batch.allSelected}
+                autoIncludedEpics={batch.autoIncluded}
+                onToggleSelect={batch.toggle}
                 refreshTrigger={refreshTrigger}
                 runningEpicIds={runningEpicIds}
                 activeAgentActivities={activeAgentActivities}
