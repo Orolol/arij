@@ -236,4 +236,119 @@ describe("DAG Scheduler", () => {
       expect(result.get("d")).toBe("done");
     });
   });
+
+  describe("failure propagation", () => {
+    it("records failure reason with blocker ID in failureReasons map", async () => {
+      // b depends on a
+      mockGraph.set("b", new Set(["a"]));
+      const plan = buildExecutionPlan("proj1", ["a", "b"]);
+
+      const launchFn = async (epicId: string): Promise<LayerResult> => {
+        if (epicId === "a") {
+          return { epicId, sessionId: "s-a", success: false, error: "compile error" };
+        }
+        return { epicId, sessionId: `s-${epicId}`, success: true };
+      };
+
+      await executeDagPlan("proj1", plan, launchFn);
+
+      expect(plan.failureReasons.get("a")).toBe("compile error");
+      expect(plan.failureReasons.get("b")).toContain("a");
+      expect(plan.failureReasons.get("b")).toContain("Blocked by failed prerequisite");
+    });
+
+    it("propagates failure through transitive chain", async () => {
+      // c depends on b, b depends on a
+      mockGraph.set("b", new Set(["a"]));
+      mockGraph.set("c", new Set(["b"]));
+      const plan = buildExecutionPlan("proj1", ["a", "b", "c"]);
+
+      const launchFn = async (epicId: string): Promise<LayerResult> => {
+        if (epicId === "a") {
+          return { epicId, sessionId: "s-a", success: false, error: "test failure" };
+        }
+        return { epicId, sessionId: `s-${epicId}`, success: true };
+      };
+
+      await executeDagPlan("proj1", plan, launchFn);
+
+      // b is directly blocked by a
+      expect(plan.failureReasons.get("b")).toContain("a");
+      // c is blocked by b (which is skipped)
+      expect(plan.failureReasons.get("c")).toContain("b");
+      expect(plan.ticketStatus.get("b")).toBe("skipped");
+      expect(plan.ticketStatus.get("c")).toBe("skipped");
+    });
+
+    it("does not block tickets with no dependency on the failed ticket", async () => {
+      // b depends on a, c and d are independent
+      mockGraph.set("b", new Set(["a"]));
+      const plan = buildExecutionPlan("proj1", ["a", "b", "c", "d"]);
+
+      const launchFn = async (epicId: string): Promise<LayerResult> => {
+        if (epicId === "a") {
+          return { epicId, sessionId: "s-a", success: false, error: "oops" };
+        }
+        return { epicId, sessionId: `s-${epicId}`, success: true };
+      };
+
+      await executeDagPlan("proj1", plan, launchFn);
+
+      expect(plan.ticketStatus.get("a")).toBe("failed");
+      expect(plan.ticketStatus.get("b")).toBe("skipped");
+      expect(plan.ticketStatus.get("c")).toBe("done");
+      expect(plan.ticketStatus.get("d")).toBe("done");
+      // c and d should not have failure reasons
+      expect(plan.failureReasons.has("c")).toBe(false);
+      expect(plan.failureReasons.has("d")).toBe(false);
+    });
+
+    it("skips diamond tip when one branch fails", async () => {
+      // d depends on b and c; b depends on a; c is independent
+      mockGraph.set("b", new Set(["a"]));
+      mockGraph.set("d", new Set(["b", "c"]));
+      const plan = buildExecutionPlan("proj1", ["a", "b", "c", "d"]);
+
+      const launchFn = async (epicId: string): Promise<LayerResult> => {
+        if (epicId === "a") {
+          return { epicId, sessionId: "s-a", success: false, error: "fail" };
+        }
+        return { epicId, sessionId: `s-${epicId}`, success: true };
+      };
+
+      await executeDagPlan("proj1", plan, launchFn);
+
+      expect(plan.ticketStatus.get("a")).toBe("failed");
+      expect(plan.ticketStatus.get("b")).toBe("skipped");
+      expect(plan.ticketStatus.get("c")).toBe("done");
+      // d depends on both b (skipped) and c (done) — should be skipped
+      expect(plan.ticketStatus.get("d")).toBe("skipped");
+      expect(plan.failureReasons.get("d")).toContain("b");
+    });
+
+    it("passes failure reason in onStatusChange callback", async () => {
+      mockGraph.set("b", new Set(["a"]));
+      const plan = buildExecutionPlan("proj1", ["a", "b"]);
+      const callbacks: Array<{ epicId: string; status: string; error?: string }> = [];
+
+      const launchFn = async (epicId: string): Promise<LayerResult> => {
+        if (epicId === "a") {
+          return { epicId, sessionId: "s-a", success: false, error: "build broke" };
+        }
+        return { epicId, sessionId: `s-${epicId}`, success: true };
+      };
+
+      await executeDagPlan("proj1", plan, launchFn, (epicId, status, error) => {
+        callbacks.push({ epicId, status, error });
+      });
+
+      // a: running → failed
+      expect(callbacks).toContainEqual({ epicId: "a", status: "running", error: undefined });
+      expect(callbacks).toContainEqual({ epicId: "a", status: "failed", error: "build broke" });
+      // b: skipped with reason
+      const bSkipped = callbacks.find((c) => c.epicId === "b" && c.status === "skipped");
+      expect(bSkipped).toBeTruthy();
+      expect(bSkipped!.error).toContain("a");
+    });
+  });
 });
