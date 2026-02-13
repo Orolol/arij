@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentProviderDefaults, projects } from "@/lib/db/schema";
+import { agentProviderDefaults, namedAgents, projects } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 import {
   isAgentProvider,
@@ -30,12 +30,23 @@ export async function PUT(request: NextRequest, { params }: Params) {
   }
 
   const body = await request.json().catch(() => ({}));
-  const provider = typeof body.provider === "string" ? body.provider : "";
-  if (!isAgentProvider(provider)) {
-    return NextResponse.json(
-      { error: "provider must be 'claude-code' or 'codex'" },
-      { status: 400 }
-    );
+  const namedAgentId = typeof body.namedAgentId === "string" ? body.namedAgentId : null;
+
+  let provider: string;
+  if (namedAgentId) {
+    const agent = db.select().from(namedAgents).where(eq(namedAgents.id, namedAgentId)).get();
+    if (!agent) {
+      return NextResponse.json({ error: "Named agent not found" }, { status: 404 });
+    }
+    provider = agent.provider;
+  } else {
+    provider = typeof body.provider === "string" ? body.provider : "";
+    if (!isAgentProvider(provider)) {
+      return NextResponse.json(
+        { error: "provider must be 'claude-code', 'codex', or 'gemini-cli'" },
+        { status: 400 }
+      );
+    }
   }
 
   const now = new Date().toISOString();
@@ -52,7 +63,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   if (existing) {
     db.update(agentProviderDefaults)
-      .set({ provider, updatedAt: now })
+      .set({ provider, namedAgentId, updatedAt: now })
       .where(eq(agentProviderDefaults.id, existing.id))
       .run();
   } else {
@@ -61,6 +72,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
         id: createId(),
         agentType,
         provider,
+        namedAgentId,
         scope: projectId,
         createdAt: now,
         updatedAt: now,

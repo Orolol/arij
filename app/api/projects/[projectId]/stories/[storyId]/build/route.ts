@@ -13,8 +13,8 @@ import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import { buildTicketBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import { resolveAgent } from "@/lib/agent-config/providers";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
-import type { ProviderType } from "@/lib/providers";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
@@ -33,7 +33,7 @@ type Params = { params: Promise<{ projectId: string; storyId: string }> };
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
   const body = await request.json().catch(() => ({}));
-  const provider: ProviderType = body.provider || "claude-code";
+  const { provider, model } = resolveAgent("ticket_build", projectId);
 
   // Validate story exists
   const story = db
@@ -203,6 +203,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     mode: "code",
     prompt,
     cwd: worktreePath,
+    model,
     allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
   }, provider);
 

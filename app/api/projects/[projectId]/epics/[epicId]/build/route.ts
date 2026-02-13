@@ -13,8 +13,8 @@ import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import { buildBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import { resolveAgent } from "@/lib/agent-config/providers";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
-import type { ProviderType } from "@/lib/providers";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
@@ -33,7 +33,7 @@ type Params = { params: Promise<{ projectId: string; epicId: string }> };
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
   const body = await request.json().catch(() => ({}));
-  const provider: ProviderType = body.provider || "claude-code";
+  const { provider, model } = resolveAgent("build", projectId);
 
   // Validate epic exists
   const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
@@ -186,6 +186,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     mode: "code",
     prompt,
     cwd: worktreePath,
+    model,
     allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
   }, provider);
 

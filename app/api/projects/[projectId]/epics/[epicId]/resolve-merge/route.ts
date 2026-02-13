@@ -17,7 +17,7 @@ import {
 import { processManager } from "@/lib/claude/process-manager";
 import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
-import type { ProviderType } from "@/lib/providers";
+import { resolveAgent } from "@/lib/agent-config/providers";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import {
   createAgentAlreadyRunningPayload,
@@ -37,7 +37,7 @@ type Params = { params: Promise<{ projectId: string; epicId: string }> };
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
   const body = await request.json().catch(() => ({}));
-  const provider: ProviderType = body.provider || "claude-code";
+  const { provider, model } = resolveAgent("build", projectId);
 
   // Validate project
   const project = db
@@ -176,6 +176,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     mode: "code",
     prompt,
     cwd: worktreePath,
+    model,
     allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
   }, provider);
 

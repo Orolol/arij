@@ -17,10 +17,10 @@ import {
 } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import { checkSessionLock } from "@/lib/session-lock";
-import type { ProviderType } from "@/lib/providers";
 import fs from "fs";
 import path from "path";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import { resolveAgent } from "@/lib/agent-config/providers";
 import { REVIEW_TYPE_TO_AGENT_TYPE } from "@/lib/agent-config/constants";
 import {
   createAgentAlreadyRunningPayload,
@@ -53,11 +53,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
   const body = await request.json();
 
-  const { reviewTypes, provider: providerParam } = body as {
+  const { reviewTypes } = body as {
     reviewTypes: ReviewType[];
-    provider?: ProviderType;
   };
-  const provider: ProviderType = providerParam || "claude-code";
 
   if (
     !reviewTypes ||
@@ -169,10 +167,10 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   // Dispatch one agent per review type
   for (const [idx, reviewType] of reviewTypes.entries()) {
-    const reviewSystemPrompt = await resolveAgentPrompt(
-      REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
-      projectId
-    );
+    const agentType = REVIEW_TYPE_TO_AGENT_TYPE[reviewType];
+    const { provider, model } = resolveAgent(agentType, projectId);
+
+    const reviewSystemPrompt = await resolveAgentPrompt(agentType, projectId);
     const prompt = buildReviewPrompt(
       project,
       docs,
@@ -230,6 +228,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       mode: agentMode,
       prompt,
       cwd: worktreePath,
+      model,
     }, provider);
 
     // Background: wait for completion, post review comment

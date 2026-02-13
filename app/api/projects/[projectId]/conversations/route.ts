@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { chatConversations, chatMessages } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
-import { resolveAgentProvider } from "@/lib/agent-config/providers";
+import { resolveAgent } from "@/lib/agent-config/providers";
 import { normalizeConversationAgentType } from "@/lib/chat/conversation-agent";
 import {
   normalizeLegacyConversationStatus,
@@ -44,7 +44,7 @@ export async function GET(
   if (conversations.length === 0) {
     const id = createId();
     const now = new Date().toISOString();
-    const defaultProvider = await resolveAgentProvider("chat", projectId);
+    const { provider: defaultProvider } = resolveAgent("chat", projectId);
 
     db.insert(chatConversations)
       .values({
@@ -92,7 +92,7 @@ export async function POST(
   // Resolve default provider from agent-config if not explicitly provided
   let provider = body.provider;
   if (!provider) {
-    provider = await resolveAgentProvider("chat", projectId);
+    provider = resolveAgent("chat", projectId).provider;
   }
 
   db.insert(chatConversations)

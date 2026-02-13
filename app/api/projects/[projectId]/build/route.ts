@@ -16,6 +16,7 @@ import {
   type TeamEpic,
 } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import { resolveAgent } from "@/lib/agent-config/providers";
 import type { ProviderType } from "@/lib/providers";
 import fs from "fs";
 import path from "path";
@@ -76,10 +77,13 @@ export async function POST(
     }
   }
 
-  // Team mode is Claude Code exclusive — Codex has no Task tool
-  if (team && provider === "codex") {
+  // Resolve agent for solo mode (team mode is hardcoded to claude-code)
+  const resolved = resolveAgent("build", projectId);
+
+  // Team mode is Claude Code exclusive — Codex/Gemini have no Task tool
+  if (team && resolved.provider !== "claude-code") {
     return NextResponse.json(
-      { error: "Team mode is only available with Claude Code. Codex does not support sub-agent delegation." },
+      { error: "Team mode is only available with Claude Code. Other providers do not support sub-agent delegation." },
       { status: 400 }
     );
   }
@@ -336,7 +340,7 @@ export async function POST(
       epicId,
       mode: "code",
       orchestrationMode: "solo",
-      provider,
+      provider: resolved.provider,
       prompt,
       logsPath,
       branchName,
@@ -373,8 +377,9 @@ export async function POST(
       mode: "code",
       prompt,
       cwd: worktreePath,
+      model: resolved.model,
       allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-    }, provider);
+    }, resolved.provider);
 
     // Background: wait for completion and update DB
     (async () => {
