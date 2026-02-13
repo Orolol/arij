@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -156,7 +156,8 @@ export default function ReleasesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   // GitHub config
-  const githubConfig = useGitHubConfig(projectId);
+  const { isConfigured: hasGitHub, loading: ghLoading } =
+    useGitHubConfig(projectId);
 
   // Create release form
   const [version, setVersion] = useState("");
@@ -167,11 +168,7 @@ export default function ReleasesPage() {
   const [pushToGitHub, setPushToGitHub] = useState(false);
   const [creating, setCreating] = useState(false);
 
-  useEffect(() => {
-    loadData();
-  }, [projectId]);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     const [releasesRes, epicsRes] = await Promise.all([
       fetch(`/api/projects/${projectId}/releases`),
       fetch(`/api/projects/${projectId}/epics`),
@@ -187,7 +184,11 @@ export default function ReleasesPage() {
       )
     );
     setLoading(false);
-  }
+  }, [projectId]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   async function handleCreateRelease() {
     if (!version.trim() || selectedEpicIds.size === 0) return;
@@ -201,7 +202,7 @@ export default function ReleasesPage() {
         title: title.trim() || undefined,
         epicIds: Array.from(selectedEpicIds),
         generateChangelog: true,
-        pushToGitHub: githubConfig.configured ? pushToGitHub : false,
+        pushToGitHub: hasGitHub && pushToGitHub,
       }),
     });
 
@@ -293,7 +294,7 @@ export default function ReleasesPage() {
                 )}
               </div>
 
-              {githubConfig.configured && (
+              {!ghLoading && hasGitHub && (
                 <div className="flex items-center space-x-2">
                   <Checkbox
                     id="push-to-github"
@@ -339,7 +340,7 @@ export default function ReleasesPage() {
               key={release.id}
               release={release}
               projectId={projectId}
-              githubConfigured={githubConfig.configured}
+              githubConfigured={hasGitHub}
               onPublished={loadData}
             />
           ))}

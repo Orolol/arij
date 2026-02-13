@@ -11,9 +11,9 @@ import { createId } from "@/lib/utils/nanoid";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import simpleGit from "simple-git";
-import { createOctokit, parseOwnerRepo, getGitHubToken } from "@/lib/github/client";
 import { createDraftRelease } from "@/lib/github/releases";
 import { logSyncOperation } from "@/lib/github/sync-log";
+import { activityRegistry } from "@/lib/activity-registry";
 
 export async function GET(
   _request: NextRequest,
@@ -83,7 +83,19 @@ export async function POST(
 
   let changelog = "";
 
+  let releaseActivityId: string | null = null;
+
   if (generateChangelog) {
+    releaseActivityId = `release-${createId()}`;
+    activityRegistry.register({
+      id: releaseActivityId,
+      projectId,
+      type: "release",
+      label: `Generating Changelog: v${version}`,
+      provider: "claude-code",
+      startedAt: new Date().toISOString(),
+    });
+
     // Generate changelog via CC plan mode
     const settingsRow = db
       .select()
@@ -125,6 +137,8 @@ ${epicSummaries}
       }
     } catch {
       // Fall back to auto-generated changelog
+    } finally {
+      if (releaseActivityId) activityRegistry.unregister(releaseActivityId);
     }
   }
 
@@ -150,60 +164,62 @@ ${epicSummaries}
   let githubReleaseId: number | null = null;
   let githubReleaseUrl: string | null = null;
   let pushedAt: string | null = null;
+  const githubErrors: string[] = [];
 
-  if (pushToGitHub && gitTag && project.gitRepoPath && project.githubOwnerRepo) {
-    const token = getGitHubToken();
-    if (!token) {
-      return NextResponse.json(
-        { error: "GitHub PAT not configured. Set it in Settings." },
-        { status: 400 }
-      );
-    }
+  if (pushToGitHub && gitTag && project.githubOwnerRepo && project.gitRepoPath) {
+    const [owner, repo] = project.githubOwnerRepo.split("/");
 
-    const git = simpleGit(project.gitRepoPath);
-    const { owner, repo } = parseOwnerRepo(project.githubOwnerRepo);
-
-    // Push the tag to origin
+    // Push tag to remote
     try {
+      const git = simpleGit(project.gitRepoPath);
       await git.push("origin", gitTag);
-      logSyncOperation(projectId, "tag_push", null, "success", {
-        tag: gitTag,
+      logSyncOperation({
+        projectId,
+        operation: "tag_push",
+        status: "success",
+        detail: { tag: gitTag },
       });
-    } catch (e) {
-      const errMsg = e instanceof Error ? e.message : "Tag push failed";
-      logSyncOperation(projectId, "tag_push", null, "failure", {
-        tag: gitTag,
-        error: errMsg,
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      githubErrors.push(`Tag push failed: ${errorMsg}`);
+      logSyncOperation({
+        projectId,
+        operation: "tag_push",
+        status: "failure",
+        detail: { tag: gitTag, error: errorMsg },
       });
-      // Continue without GitHub release if tag push fails
     }
 
-    // Create draft release on GitHub
+    // Create draft GitHub release
     try {
-      const octokit = createOctokit();
-      const ghRelease = await createDraftRelease(
-        octokit,
+      const releaseTitle = title
+        ? `v${version} — ${title}`
+        : `v${version}`;
+      const ghRelease = await createDraftRelease({
         owner,
         repo,
-        gitTag,
-        title || `Release ${version}`,
-        changelog
-      );
+        tag: gitTag,
+        title: releaseTitle,
+        body: changelog,
+      });
       githubReleaseId = ghRelease.id;
-      githubReleaseUrl = ghRelease.htmlUrl;
+      githubReleaseUrl = ghRelease.url;
       pushedAt = new Date().toISOString();
-
-      logSyncOperation(projectId, "release_create", null, "success", {
-        releaseId: ghRelease.id,
-        url: ghRelease.htmlUrl,
-        draft: true,
+      logSyncOperation({
+        projectId,
+        operation: "release",
+        status: "success",
+        detail: { releaseId: ghRelease.id, tag: gitTag, draft: true },
       });
-    } catch (e) {
-      const errMsg = e instanceof Error ? e.message : "Draft release creation failed";
-      logSyncOperation(projectId, "release_create", null, "failure", {
-        error: errMsg,
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      githubErrors.push(`GitHub release creation failed: ${errorMsg}`);
+      logSyncOperation({
+        projectId,
+        operation: "release",
+        status: "failure",
+        detail: { tag: gitTag, error: errorMsg },
       });
-      // Continue — the local release is still saved
     }
   }
 
@@ -226,5 +242,11 @@ ${epicSummaries}
     .run();
 
   const release = db.select().from(releases).where(eq(releases.id, id)).get();
-  return NextResponse.json({ data: release }, { status: 201 });
+
+  const responseData: Record<string, unknown> = { data: release };
+  if (githubErrors.length > 0) {
+    responseData.githubErrors = githubErrors;
+  }
+
+  return NextResponse.json(responseData, { status: 201 });
 }

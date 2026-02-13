@@ -18,16 +18,23 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { InlineEdit } from "./InlineEdit";
+import { GitSyncBadge } from "./GitSyncBadge";
 import { useEpicDetail } from "@/hooks/useEpicDetail";
 import { useEpicComments } from "@/hooks/useEpicComments";
 import { useEpicAgent } from "@/hooks/useEpicAgent";
+import { useGitHubConfig } from "@/hooks/useGitHubConfig";
+import { useGitStatus } from "@/hooks/useGitStatus";
 import { EpicActions } from "@/components/epic/EpicActions";
 import { UserStoryQuickActions } from "@/components/epic/UserStoryQuickActions";
 import { CommentThread } from "@/components/story/CommentThread";
+import { Badge } from "@/components/ui/badge";
 import { PRIORITY_LABELS, KANBAN_COLUMNS, COLUMN_LABELS } from "@/lib/types/kanban";
-import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, Wrench } from "lucide-react";
+import { useEpicPr } from "@/hooks/useEpicPr";
+import { PrBadge } from "@/components/github/PrBadge";
+import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, GitPullRequest, Wrench, ArrowUp, ArrowDown, Upload, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { isAgentAlreadyRunningError } from "@/lib/agents/client-error";
 
 interface EpicDetailProps {
   projectId: string;
@@ -35,9 +42,17 @@ interface EpicDetailProps {
   open: boolean;
   onClose: () => void;
   onMerged?: () => void;
+  onAgentConflict?: (args: { message: string; sessionUrl?: string }) => void;
 }
 
-export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicDetailProps) {
+export function EpicDetail({
+  projectId,
+  epicId,
+  open,
+  onClose,
+  onMerged,
+  onAgentConflict,
+}: EpicDetailProps) {
   const {
     epic,
     userStories,
@@ -57,7 +72,7 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
   } = useEpicComments(projectId, epicId);
 
   const {
-    activeSessions,
+    activeSession,
     dispatching,
     isRunning,
     sendToDev,
@@ -65,6 +80,25 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
     resolveMerge,
     approve,
   } = useEpicAgent(projectId, epicId);
+
+  const {
+    pr,
+    loading: prLoading,
+    error: prError,
+    createPr,
+    syncPr,
+  } = useEpicPr(projectId, epicId);
+
+  const { isConfigured: githubConfigured } = useGitHubConfig(projectId);
+  const {
+    ahead,
+    behind,
+    loading: gitStatusLoading,
+    error: gitStatusError,
+    refresh: refreshGitStatus,
+    push: pushToRemote,
+    pushing,
+  } = useGitStatus(projectId, epic?.branchName ?? null, githubConfigured);
 
   // Only poll epic detail when an agent is actively running
   useEffect(() => {
@@ -112,6 +146,12 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
         setMergeError(null);
       }
     } catch (e) {
+      if (isAgentAlreadyRunningError(e)) {
+        onAgentConflict?.({
+          message: e.message,
+          sessionUrl: e.sessionUrl || `/projects/${projectId}/sessions/${e.activeSessionId}`,
+        });
+      }
       setMergeError(e instanceof Error ? e.message : "Failed to resolve merge");
     }
     setResolvingMerge(false);
@@ -179,10 +219,27 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
                 epic={epic}
                 dispatching={dispatching}
                 isRunning={isRunning}
-                activeSessions={activeSessions}
+                activeSessionId={activeSession?.id || null}
                 onSendToDev={handleSendToDev}
                 onSendToReview={handleSendToReview}
                 onApprove={handleApprove}
+                onActionError={(error) => {
+                  if (isAgentAlreadyRunningError(error)) {
+                    onAgentConflict?.({
+                      message: error.message,
+                      sessionUrl:
+                        error.sessionUrl ||
+                        `/projects/${projectId}/sessions/${error.activeSessionId}`,
+                    });
+                    return;
+                  }
+                  onAgentConflict?.({
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : "Failed to run agent action",
+                  });
+                }}
               />
 
               <div>
@@ -245,8 +302,117 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-mono">
                     <GitBranch className="h-3 w-3" />
-                    {epic.branchName}
+                    <span className="flex-1 truncate">{epic.branchName}</span>
+                    {githubConfigured && (
+                      <GitSyncBadge
+                        projectId={projectId}
+                        branchName={epic.branchName}
+                        disabled={isRunning}
+                      />
+                    )}
                   </div>
+
+                  {/* Git sync status — only shown when GitHub is configured */}
+                  {githubConfigured && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {gitStatusLoading ? (
+                        <Badge variant="outline" className="gap-1 text-xs">
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                          Checking...
+                        </Badge>
+                      ) : (
+                        <>
+                          <Badge variant="outline" className="gap-1 text-xs">
+                            <ArrowUp className="h-3 w-3" />
+                            {ahead}
+                          </Badge>
+                          <Badge variant="outline" className="gap-1 text-xs">
+                            <ArrowDown className="h-3 w-3" />
+                            {behind}
+                          </Badge>
+                        </>
+                      )}
+
+                      {gitStatusError && (
+                        <span className="text-xs text-destructive">{gitStatusError}</span>
+                      )}
+
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={refreshGitStatus}
+                        disabled={gitStatusLoading}
+                        className="h-6 w-6 p-0"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${gitStatusLoading ? "animate-spin" : ""}`} />
+                      </Button>
+
+                      {ahead > 0 && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={pushToRemote}
+                          disabled={pushing || gitStatusLoading}
+                          className="h-7 text-xs"
+                        >
+                          {pushing ? (
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                          ) : (
+                            <Upload className="h-3 w-3 mr-1" />
+                          )}
+                          Push
+                        </Button>
+                      )}
+                    </div>
+                  )}
+
+                  {/* PR Section */}
+                  {githubConfigured && (
+                    <div className="space-y-2">
+                      {pr ? (
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <PrBadge
+                            status={pr.status}
+                            number={pr.number}
+                            url={pr.url}
+                          />
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={syncPr}
+                            disabled={prLoading}
+                            className="h-6 text-xs px-2"
+                          >
+                            {prLoading ? (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            ) : (
+                              <RefreshCw className="h-3 w-3" />
+                            )}
+                            <span className="ml-1">Sync</span>
+                          </Button>
+                        </div>
+                      ) : (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => createPr()}
+                          disabled={prLoading}
+                          className="h-7 text-xs"
+                        >
+                          {prLoading ? (
+                            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                          ) : (
+                            <GitPullRequest className="h-3 w-3 mr-1" />
+                          )}
+                          Create PR
+                        </Button>
+                      )}
+                      {prError && (
+                        <p className="text-xs text-destructive">{prError}</p>
+                      )}
+                    </div>
+                  )}
+
                   {(epic.status === "review" || epic.status === "done") && (
                     <Button
                       size="sm"
@@ -329,6 +495,8 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged }: EpicD
                           projectId={projectId}
                           story={us}
                           onRefresh={refresh}
+                          isLocked={dispatching || isRunning}
+                          lockReason="Another agent is already running for this epic."
                         />
                         <Button
                           variant="ghost"

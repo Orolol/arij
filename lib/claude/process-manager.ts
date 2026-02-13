@@ -1,16 +1,17 @@
 import { spawnClaude, type ClaudeOptions, type ClaudeResult } from "./spawn";
 import { getProvider, type ProviderType, type ProviderSession } from "@/lib/providers";
+import {
+  type SessionStatus,
+  isValidTransition,
+  isTerminalStatus,
+} from "@/lib/sessions/status-machine";
+import { appendSessionChunk } from "@/lib/agent-sessions/chunks";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
-export type SessionStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled";
+export type { SessionStatus } from "@/lib/sessions/status-machine";
 
 export interface TrackedSession {
   sessionId: string;
@@ -77,6 +78,22 @@ class ClaudeProcessManager {
         mode: options.mode,
         allowedTools: options.allowedTools,
         model: options.model,
+        onChunk: (chunk) => {
+          try {
+            appendSessionChunk({
+              sessionId,
+              streamType: chunk.streamType,
+              content: chunk.text,
+              chunkKey: chunk.chunkKey ?? null,
+              createdAt: chunk.emittedAt,
+            });
+          } catch (error) {
+            console.error(
+              `[process-manager] Failed to persist Codex chunk for session ${sessionId}`,
+              error
+            );
+          }
+        },
       });
       kill = session.kill;
       promise = session.promise;
@@ -106,10 +123,11 @@ class ClaudeProcessManager {
         const tracked = this.sessions.get(sessionId);
         if (!tracked) return;
 
-        // Only update if the session is still in a "running" state
-        // (it may have been cancelled in the meantime)
-        if (tracked.status === "running") {
-          tracked.status = result.success ? "completed" : "failed";
+        const targetStatus: SessionStatus = result.success ? "completed" : "failed";
+
+        // Only transition if the move is valid (e.g. not already cancelled)
+        if (isValidTransition(tracked.status, targetStatus)) {
+          tracked.status = targetStatus;
           tracked.completedAt = new Date();
           tracked.result = result;
         }
@@ -118,7 +136,7 @@ class ClaudeProcessManager {
         const tracked = this.sessions.get(sessionId);
         if (!tracked) return;
 
-        if (tracked.status === "running") {
+        if (isValidTransition(tracked.status, "failed")) {
           tracked.status = "failed";
           tracked.completedAt = new Date();
           tracked.result = {
@@ -142,7 +160,7 @@ class ClaudeProcessManager {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
 
-    if (session.status !== "running") {
+    if (!isValidTransition(session.status, "cancelled")) {
       return false;
     }
 
@@ -203,7 +221,8 @@ class ClaudeProcessManager {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
 
-    if (session.status === "running") {
+    // Only terminal sessions can be removed
+    if (!isTerminalStatus(session.status)) {
       return false;
     }
 

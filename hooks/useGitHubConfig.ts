@@ -1,25 +1,28 @@
+"use client";
+
 import { useEffect, useState } from "react";
 
-interface GitHubConfig {
-  configured: boolean;
-  ownerRepo: string | null;
-  tokenSet: boolean;
-  loading: boolean;
-}
-
 /**
- * Fetches the project's GitHub configuration (ownerRepo) and whether
- * a GitHub PAT is stored in settings.
+ * Checks if a project has GitHub integration configured.
+ *
+ * Returns:
+ * - `isConfigured`: true if the project has `githubOwnerRepo` set and a PAT is stored
+ * - `ownerRepo`: the "owner/repo" string, or null
+ * - `tokenSet`: whether a GitHub PAT is stored in settings
+ * - `loading`: true while the check is in progress
  */
-export function useGitHubConfig(projectId: string): GitHubConfig {
-  const [config, setConfig] = useState<GitHubConfig>({
-    configured: false,
-    ownerRepo: null,
-    tokenSet: false,
-    loading: true,
-  });
+export function useGitHubConfig(projectId: string | undefined) {
+  const [isConfigured, setIsConfigured] = useState(false);
+  const [ownerRepo, setOwnerRepo] = useState<string | null>(null);
+  const [tokenSet, setTokenSet] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!projectId) {
+      setLoading(false);
+      return;
+    }
+
     let cancelled = false;
 
     async function load() {
@@ -34,21 +37,22 @@ export function useGitHubConfig(projectId: string): GitHubConfig {
 
         if (cancelled) return;
 
-        const ownerRepo = projectData.data?.githubOwnerRepo || null;
-        const tokenSet =
+        const repo = projectData.data?.githubOwnerRepo ?? null;
+        const hasToken =
           typeof settingsData.data?.github_pat === "string" &&
           settingsData.data.github_pat.length > 0;
 
-        setConfig({
-          configured: Boolean(ownerRepo && tokenSet),
-          ownerRepo,
-          tokenSet,
-          loading: false,
-        });
+        setOwnerRepo(repo);
+        setTokenSet(hasToken);
+        setIsConfigured(Boolean(repo && hasToken));
       } catch {
         if (!cancelled) {
-          setConfig((prev) => ({ ...prev, loading: false }));
+          setOwnerRepo(null);
+          setTokenSet(false);
+          setIsConfigured(false);
         }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
 
@@ -58,5 +62,5 @@ export function useGitHubConfig(projectId: string): GitHubConfig {
     };
   }, [projectId]);
 
-  return config;
+  return { isConfigured, ownerRepo, tokenSet, loading };
 }

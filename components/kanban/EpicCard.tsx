@@ -9,17 +9,25 @@ import {
   PRIORITY_COLORS,
   type KanbanEpic,
 } from "@/lib/types/kanban";
-import { Square, CheckSquare } from "lucide-react";
+import { Square, CheckSquare, GitPullRequest, Loader2 } from "lucide-react";
 
 interface EpicCardProps {
   epic: KanbanEpic;
   isOverlay?: boolean;
+  isRunning?: boolean;
   onClick?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
 }
 
-export function EpicCard({ epic, isOverlay, onClick, selected, onToggleSelect }: EpicCardProps) {
+export function EpicCard({
+  epic,
+  isOverlay,
+  isRunning = false,
+  onClick,
+  selected,
+  onToggleSelect,
+}: EpicCardProps) {
   const {
     attributes,
     listeners,
@@ -66,6 +74,12 @@ export function EpicCard({ epic, isOverlay, onClick, selected, onToggleSelect }:
               )}
             </button>
           )}
+          {isRunning && (
+            <span
+              className="shrink-0 mt-1.5 h-2 w-2 rounded-full bg-yellow-500 animate-pulse"
+              title="Agent running"
+            />
+          )}
           <h4 className="text-sm font-medium leading-tight truncate">{epic.title}</h4>
         </div>
         <Badge
@@ -74,10 +88,32 @@ export function EpicCard({ epic, isOverlay, onClick, selected, onToggleSelect }:
           {PRIORITY_LABELS[epic.priority] || "Low"}
         </Badge>
       </div>
-      <div className="flex items-center gap-3 mt-1">
+      <div className="flex items-center justify-between mt-1">
         <span className="text-xs text-muted-foreground">
           {epic.usDone}/{epic.usCount} US
         </span>
+        {epic.prNumber && epic.prUrl && (
+          <a
+            href={epic.prUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+          >
+            <GitPullRequest className="h-3 w-3" />
+            <span>#{epic.prNumber}</span>
+          </a>
+        )}
+        {isRunning && (
+          <span
+            className="inline-flex items-center gap-1 text-xs text-yellow-600"
+            data-testid={`epic-running-${epic.id}`}
+            aria-label="Epic has active agent work"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Running
+          </span>
+        )}
       </div>
     </Card>
   );

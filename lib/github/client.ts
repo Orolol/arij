@@ -1,29 +1,51 @@
 import { Octokit } from "@octokit/rest";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 
-const GITHUB_TOKEN_KEY = "github_pat";
+export const GITHUB_PAT_SETTING_KEY = "github_pat";
 
-/**
- * Retrieves the GitHub PAT from the settings table.
- * Returns null if not configured.
- */
-export function getGitHubToken(): string | null {
+function normalizeToken(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (
+    value &&
+    typeof value === "object" &&
+    "token" in (value as Record<string, unknown>)
+  ) {
+    const nested = (value as Record<string, unknown>).token;
+    if (typeof nested === "string") {
+      return nested.trim();
+    }
+  }
+  return "";
+}
+
+export function getGitHubTokenFromSettings(): string | null {
   const row = db
     .select()
     .from(settings)
-    .where(eq(settings.key, GITHUB_TOKEN_KEY))
+    .where(eq(settings.key, GITHUB_PAT_SETTING_KEY))
     .get();
 
   if (!row) return null;
 
   try {
-    const value = JSON.parse(row.value);
-    return typeof value === "string" && value.length > 0 ? value : null;
+    const parsed = JSON.parse(row.value);
+    const token = normalizeToken(parsed);
+    return token.length > 0 ? token : null;
   } catch {
-    return null;
+    const token = normalizeToken(row.value);
+    return token.length > 0 ? token : null;
   }
+}
+
+/** Alias for backward compat with feature-branch callers */
+export const getGitHubToken = getGitHubTokenFromSettings;
+
+export function createGitHubClient(token: string): Octokit {
+  return new Octokit({ auth: token.trim() });
 }
 
 /**
@@ -31,11 +53,11 @@ export function getGitHubToken(): string | null {
  * Throws if no token is configured.
  */
 export function createOctokit(): Octokit {
-  const token = getGitHubToken();
+  const token = getGitHubTokenFromSettings();
   if (!token) {
     throw new Error("GitHub PAT not configured. Set it in Settings.");
   }
-  return new Octokit({ auth: token });
+  return createGitHubClient(token);
 }
 
 /**
@@ -55,16 +77,49 @@ export function parseOwnerRepo(ownerRepo: string): {
   return { owner: parts[0], repo: parts[1] };
 }
 
-/**
- * Validates that the stored token can authenticate with the GitHub API.
- * Returns the authenticated username on success, null on failure.
- */
-export async function validateToken(): Promise<string | null> {
+export async function validateGitHubToken(token: string): Promise<{
+  valid: boolean;
+  login?: string;
+  error?: string;
+}> {
+  const cleanToken = token.trim();
+  if (!cleanToken) {
+    return {
+      valid: false,
+      error: "GitHub token is required for validation.",
+    };
+  }
+
   try {
-    const octokit = createOctokit();
-    const { data } = await octokit.users.getAuthenticated();
-    return data.login;
-  } catch {
-    return null;
+    const octokit = createGitHubClient(cleanToken);
+    const response = await octokit.rest.users.getAuthenticated();
+
+    return {
+      valid: true,
+      login: response.data.login,
+    };
+  } catch (error) {
+    if (typeof error === "object" && error && "status" in error) {
+      const status = (error as { status?: number }).status;
+      if (status === 401) {
+        return {
+          valid: false,
+          error: "GitHub rejected the token. Verify it and try again.",
+        };
+      }
+      if (status === 403) {
+        return {
+          valid: false,
+          error:
+            "GitHub denied access for this token. Check token scopes and account access.",
+        };
+      }
+    }
+
+    return {
+      valid: false,
+      error:
+        "Could not reach GitHub to validate this token. Check your network and try again.",
+    };
   }
 }

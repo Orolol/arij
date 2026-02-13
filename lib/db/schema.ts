@@ -3,6 +3,7 @@ import {
   text,
   integer,
   real,
+  index,
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
@@ -13,7 +14,7 @@ export const projects = sqliteTable("projects", {
   description: text("description"),
   status: text("status").default("ideation"), // ideation | specifying | building | done | archived
   gitRepoPath: text("git_repo_path"),
-  githubOwnerRepo: text("github_owner_repo"), // e.g. "owner/repo"
+  githubOwnerRepo: text("github_owner_repo"),
   spec: text("spec"),
   imported: integer("imported").default(0),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
@@ -42,6 +43,9 @@ export const epics = sqliteTable("epics", {
   status: text("status").default("backlog"), // backlog | todo | in_progress | review | done
   position: integer("position").default(0),
   branchName: text("branch_name"),
+  prNumber: integer("pr_number"),
+  prUrl: text("pr_url"),
+  prStatus: text("pr_status"), // draft | open | closed | merged
   confidence: real("confidence"),
   evidence: text("evidence"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
@@ -103,7 +107,7 @@ export const agentSessions = sqliteTable("agent_sessions", {
     .references(() => projects.id, { onDelete: "cascade" }),
   epicId: text("epic_id").references(() => epics.id),
   userStoryId: text("user_story_id").references(() => userStories.id),
-  status: text("status").default("pending"), // pending | running | completed | failed | cancelled
+  status: text("status").default("queued"), // queued | running | completed | failed | cancelled
   mode: text("mode").default("code"), // plan | code
   orchestrationMode: text("orchestration_mode").default("solo"), // solo | team
   provider: text("provider").default("claude-code"), // claude-code | codex
@@ -112,10 +116,47 @@ export const agentSessions = sqliteTable("agent_sessions", {
   branchName: text("branch_name"),
   worktreePath: text("worktree_path"),
   startedAt: text("started_at"),
+  endedAt: text("ended_at"),
   completedAt: text("completed_at"),
+  lastNonEmptyText: text("last_non_empty_text"),
   error: text("error"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const agentSessionSequences = sqliteTable("agent_session_sequences", {
+  sessionId: text("session_id")
+    .primaryKey()
+    .notNull()
+    .references(() => agentSessions.id, { onDelete: "cascade" }),
+  nextSequence: integer("next_sequence").notNull().default(1),
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const agentSessionChunks = sqliteTable(
+  "agent_session_chunks",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    streamType: text("stream_type").notNull(), // raw | output | response
+    sequence: integer("sequence").notNull(),
+    chunkKey: text("chunk_key"),
+    content: text("content").notNull(),
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    sessionSequenceUnique: uniqueIndex(
+      "agent_session_chunks_session_sequence_unique"
+    ).on(table.sessionId, table.sequence),
+    sessionStreamKeyUnique: uniqueIndex(
+      "agent_session_chunks_session_stream_key_unique"
+    ).on(table.sessionId, table.streamType, table.chunkKey),
+    sessionStreamSequenceIdx: index(
+      "agent_session_chunks_session_stream_sequence_idx"
+    ).on(table.sessionId, table.streamType, table.sequence),
+  })
+);
 
 export const ticketComments = sqliteTable("ticket_comments", {
   id: text("id").primaryKey(),
@@ -143,6 +184,22 @@ export const releases = sqliteTable("releases", {
   githubReleaseUrl: text("github_release_url"),
   pushedAt: text("pushed_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const pullRequests = sqliteTable("pull_requests", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  epicId: text("epic_id").references(() => epics.id, { onDelete: "set null" }),
+  number: integer("number").notNull(),
+  url: text("url").notNull(),
+  title: text("title").notNull(),
+  status: text("status").notNull().default("open"), // draft | open | closed | merged
+  headBranch: text("head_branch").notNull(),
+  baseBranch: text("base_branch").notNull().default("main"),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
 export const settings = sqliteTable("settings", {
@@ -207,6 +264,21 @@ export const agentProviderDefaults = sqliteTable(
   }),
 );
 
+export const gitSyncLog = sqliteTable("git_sync_log", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  operation: text("operation").notNull(), // push | pull | fetch | detect | tag_push | pr_create | pr_sync | release
+  branch: text("branch"),
+  status: text("status").notNull(), // success | failure
+  detail: text("detail"), // JSON payload for error info
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export type GitSyncLog = typeof gitSyncLog.$inferSelect;
+export type NewGitSyncLog = typeof gitSyncLog.$inferInsert;
+
 export type AgentPrompt = typeof agentPrompts.$inferSelect;
 export type NewAgentPrompt = typeof agentPrompts.$inferInsert;
 
@@ -216,20 +288,8 @@ export type NewCustomReviewAgent = typeof customReviewAgents.$inferInsert;
 export type AgentProviderDefault = typeof agentProviderDefaults.$inferSelect;
 export type NewAgentProviderDefault = typeof agentProviderDefaults.$inferInsert;
 
-export const gitSyncLog = sqliteTable("git_sync_log", {
-  id: text("id").primaryKey(),
-  projectId: text("project_id")
-    .notNull()
-    .references(() => projects.id, { onDelete: "cascade" }),
-  operation: text("operation").notNull(), // push | pull | fetch | pr_create | pr_sync | release_create | release_publish | tag_push
-  branch: text("branch"),
-  status: text("status").notNull(), // success | failure
-  detail: text("detail"), // JSON
-  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
-});
-
-export type GitSyncLog = typeof gitSyncLog.$inferSelect;
-export type NewGitSyncLog = typeof gitSyncLog.$inferInsert;
+export type PullRequest = typeof pullRequests.$inferSelect;
+export type NewPullRequest = typeof pullRequests.$inferInsert;
 
 export type Release = typeof releases.$inferSelect;
 export type NewRelease = typeof releases.$inferInsert;
