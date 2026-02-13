@@ -12,6 +12,8 @@ export interface BatchExecutionPlan {
   layers: string[][];
   /** Per-ticket execution state */
   ticketStatus: Map<string, TicketExecutionStatus>;
+  /** Per-ticket failure/skip reason (only for failed/skipped tickets) */
+  failureReasons: Map<string, string>;
 }
 
 export interface LayerResult {
@@ -31,10 +33,11 @@ export function buildExecutionPlan(
 ): BatchExecutionPlan {
   const layers = topologicalSort(projectId, ticketIds);
   const ticketStatus = new Map<string, TicketExecutionStatus>();
+  const failureReasons = new Map<string, string>();
   for (const id of ticketIds) {
     ticketStatus.set(id, "pending");
   }
-  return { layers, ticketStatus };
+  return { layers, ticketStatus, failureReasons };
 }
 
 /**
@@ -61,7 +64,7 @@ export async function executeDagPlan(
     error?: string
   ) => void
 ): Promise<Map<string, TicketExecutionStatus>> {
-  const { layers, ticketStatus } = plan;
+  const { layers, ticketStatus, failureReasons } = plan;
 
   function setStatus(
     epicId: string,
@@ -69,30 +72,37 @@ export async function executeDagPlan(
     error?: string
   ) {
     ticketStatus.set(epicId, status);
+    if (error && (status === "failed" || status === "skipped")) {
+      failureReasons.set(epicId, error);
+    }
     onStatusChange?.(epicId, status, error);
   }
 
   // Load dependency graph to know prerequisites
   const graph = loadProjectGraph(projectId);
 
-  // For each ticket, check if any prerequisite has failed/skipped
-  function hasFailedPrerequisite(ticketId: string): boolean {
+  /**
+   * Find the first failed/skipped prerequisite for a ticket.
+   * Returns the ID of the blocker or null if none.
+   */
+  function findFailedPrerequisite(ticketId: string): string | null {
     const deps = graph.get(ticketId);
-    if (!deps) return false;
+    if (!deps) return null;
     for (const dep of deps) {
       const status = ticketStatus.get(dep);
       if (status === "failed" || status === "skipped") {
-        return true;
+        return dep;
       }
     }
-    return false;
+    return null;
   }
 
   for (const layer of layers) {
     const launchable: string[] = [];
     for (const epicId of layer) {
-      if (hasFailedPrerequisite(epicId)) {
-        setStatus(epicId, "skipped", "Prerequisite failed");
+      const blocker = findFailedPrerequisite(epicId);
+      if (blocker) {
+        setStatus(epicId, "skipped", `Blocked by failed prerequisite: ${blocker}`);
       } else {
         launchable.push(epicId);
       }
