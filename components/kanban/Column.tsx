@@ -6,7 +6,12 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { EpicCard } from "./EpicCard";
-import { COLUMN_LABELS, type KanbanStatus, type KanbanEpic } from "@/lib/types/kanban";
+import {
+  COLUMN_LABELS,
+  type KanbanStatus,
+  type KanbanEpic,
+  type KanbanEpicAgentActivity,
+} from "@/lib/types/kanban";
 
 interface ColumnProps {
   status: KanbanStatus;
@@ -15,6 +20,7 @@ interface ColumnProps {
   selectedEpics?: Set<string>;
   onToggleSelect?: (epicId: string) => void;
   runningEpicIds?: Set<string>;
+  activeAgentActivities?: Record<string, KanbanEpicAgentActivity>;
 }
 
 export function Column({
@@ -24,6 +30,7 @@ export function Column({
   selectedEpics,
   onToggleSelect,
   runningEpicIds,
+  activeAgentActivities,
 }: ColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
 
@@ -53,6 +60,7 @@ export function Column({
                 onClick={() => onEpicClick(epic.id)}
                 selected={selectedEpics?.has(epic.id)}
                 isRunning={runningEpicIds?.has(epic.id) || false}
+                activeAgentActivity={activeAgentActivities?.[epic.id]}
                 onToggleSelect={
                   onToggleSelect
                     ? () => onToggleSelect(epic.id)

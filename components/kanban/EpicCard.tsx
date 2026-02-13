@@ -8,22 +8,43 @@ import {
   PRIORITY_LABELS,
   PRIORITY_COLORS,
   type KanbanEpic,
+  type KanbanAgentActionType,
+  type KanbanEpicAgentActivity,
 } from "@/lib/types/kanban";
-import { Square, CheckSquare, GitPullRequest, Loader2, Bug } from "lucide-react";
+import {
+  Square,
+  CheckSquare,
+  GitPullRequest,
+  Hammer,
+  Search,
+  GitMerge,
+  Bug,
+  type LucideIcon,
+} from "lucide-react";
 
 interface EpicCardProps {
   epic: KanbanEpic;
   isOverlay?: boolean;
   isRunning?: boolean;
+  activeAgentActivity?: KanbanEpicAgentActivity;
   onClick?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
 }
 
+const ACTIVITY_ICON_BY_TYPE: Record<
+  KanbanAgentActionType,
+  { Icon: LucideIcon; label: string }
+> = {
+  build: { Icon: Hammer, label: "Build" },
+  review: { Icon: Search, label: "Review" },
+  merge: { Icon: GitMerge, label: "Merge" },
+};
+
 export function EpicCard({
   epic,
   isOverlay,
-  isRunning = false,
+  activeAgentActivity,
   onClick,
   selected,
   onToggleSelect,
@@ -43,6 +64,13 @@ export function EpicCard({
     opacity: isDragging ? 0.5 : 1,
     rotate: isOverlay ? "2deg" : undefined,
   };
+
+  const activityConfig = activeAgentActivity
+    ? ACTIVITY_ICON_BY_TYPE[activeAgentActivity.actionType]
+    : null;
+  const activityTooltip = activityConfig
+    ? `${activityConfig.label} active: ${activeAgentActivity.agentName}`
+    : null;
 
   return (
     <Card
@@ -74,11 +102,15 @@ export function EpicCard({
               )}
             </button>
           )}
-          {isRunning && (
+          {activityConfig && (
             <span
-              className="shrink-0 mt-1.5 h-2 w-2 rounded-full bg-yellow-500 animate-pulse"
-              title="Agent running"
-            />
+              className="shrink-0 mt-0.5 inline-flex items-center justify-center rounded-sm bg-yellow-500/10 text-yellow-600 p-0.5"
+              title={activityTooltip ?? undefined}
+              aria-label={activityTooltip ?? undefined}
+              data-testid={`epic-activity-${epic.id}`}
+            >
+              <activityConfig.Icon className="h-3.5 w-3.5" />
+            </span>
           )}
           <h4 className="text-sm font-medium leading-tight truncate">{epic.title}</h4>
         </div>
@@ -109,16 +141,6 @@ export function EpicCard({
             <GitPullRequest className="h-3 w-3" />
             <span>#{epic.prNumber}</span>
           </a>
-        )}
-        {isRunning && (
-          <span
-            className="inline-flex items-center gap-1 text-xs text-yellow-600"
-            data-testid={`epic-running-${epic.id}`}
-            aria-label="Epic has active agent work"
-          >
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Running
-          </span>
         )}
       </div>
     </Card>

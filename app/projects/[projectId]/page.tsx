@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug } from "lucide-react";
 import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
+import type { KanbanEpicAgentActivity } from "@/lib/types/kanban";
 
 interface Toast {
   id: string;
@@ -52,11 +53,38 @@ export default function KanbanPage() {
   const { codexAvailable, codexInstalled } = useCodexAvailable();
   const prevSessionIds = useRef<Set<string>>(new Set());
   const panelRef = useRef<UnifiedChatPanelHandle>(null);
+  const activeAgentActivities = useMemo<Record<string, KanbanEpicAgentActivity>>(
+    () => {
+      const map: Record<string, KanbanEpicAgentActivity> = {};
+
+      for (const activity of activities) {
+        if (!activity.epicId) continue;
+        if (!["build", "review", "merge"].includes(activity.type)) continue;
+
+        map[activity.epicId] = {
+          sessionId: activity.id,
+          actionType: activity.type as KanbanEpicAgentActivity["actionType"],
+          agentName:
+            activity.provider === "codex"
+              ? `Codex agent ${activity.id.slice(0, 6)}`
+              : `Claude Code agent ${activity.id.slice(0, 6)}`,
+        };
+      }
+
+      return map;
+    },
+    [activities]
+  );
   const runningEpicIds = useMemo(
     () =>
       new Set(
         activities
-          .filter((session) => session.status === "running" && session.epicId)
+          .filter(
+            (session) =>
+              session.status === "running" &&
+              session.epicId &&
+              ["build", "review", "merge"].includes(session.type)
+          )
           .map((session) => session.epicId as string)
       ),
     [activities]
@@ -318,6 +346,7 @@ export default function KanbanPage() {
                 onToggleSelect={toggleEpicSelection}
                 refreshTrigger={refreshTrigger}
                 runningEpicIds={runningEpicIds}
+                activeAgentActivities={activeAgentActivities}
               />
             </div>
 

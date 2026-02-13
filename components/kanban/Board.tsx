@@ -16,7 +16,12 @@ import {
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { Column } from "./Column";
 import { EpicCard } from "./EpicCard";
-import { KANBAN_COLUMNS, type KanbanStatus, type KanbanEpic } from "@/lib/types/kanban";
+import {
+  KANBAN_COLUMNS,
+  type KanbanStatus,
+  type KanbanEpic,
+  type KanbanEpicAgentActivity,
+} from "@/lib/types/kanban";
 import { useKanban } from "@/hooks/useKanban";
 import { BoardSkeleton } from "./BoardSkeleton";
 
@@ -27,6 +32,7 @@ interface BoardProps {
   onToggleSelect?: (epicId: string) => void;
   refreshTrigger?: number;
   runningEpicIds?: Set<string>;
+  activeAgentActivities?: Record<string, KanbanEpicAgentActivity>;
 }
 
 export function Board({
@@ -36,6 +42,7 @@ export function Board({
   onToggleSelect,
   refreshTrigger,
   runningEpicIds,
+  activeAgentActivities,
 }: BoardProps) {
   const { board, loading, moveEpic, refresh } = useKanban(projectId);
 
@@ -127,6 +134,7 @@ export function Board({
             selectedEpics={selectedEpics}
             onToggleSelect={onToggleSelect}
             runningEpicIds={runningEpicIds}
+            activeAgentActivities={activeAgentActivities}
           />
         ))}
       </div>
@@ -137,6 +145,7 @@ export function Board({
               epic={activeEpic}
               isOverlay
               isRunning={runningEpicIds?.has(activeEpic.id) || false}
+              activeAgentActivity={activeAgentActivities?.[activeEpic.id]}
             />
           </div>
         )}

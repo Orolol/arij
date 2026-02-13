@@ -56,6 +56,14 @@ export interface KanbanEpic {
   usDone: number;
 }
 
+export type KanbanAgentActionType = "build" | "review" | "merge";
+
+export interface KanbanEpicAgentActivity {
+  sessionId: string;
+  actionType: KanbanAgentActionType;
+  agentName: string;
+}
+
 export interface BoardState {
   columns: Record<KanbanStatus, KanbanEpic[]>;
 }
