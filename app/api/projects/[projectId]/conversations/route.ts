@@ -4,6 +4,26 @@ import { chatConversations, chatMessages } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveAgentProvider } from "@/lib/agent-config/providers";
+import { normalizeConversationAgentType } from "@/lib/chat/conversation-agent";
+import {
+  normalizeLegacyConversationStatus,
+  sortConversationsForLegacyParity,
+} from "@/lib/chat/parity-contract";
+
+function normalizeConversationsForParity<T extends {
+  id: string;
+  type: string;
+  status: string | null;
+  createdAt: string;
+}>(conversations: T[]): T[] {
+  return sortConversationsForLegacyParity(
+    conversations.map((conversation) => ({
+      ...conversation,
+      type: normalizeConversationAgentType(conversation.type),
+      status: normalizeLegacyConversationStatus(conversation.status),
+    })),
+  );
+}
 
 export async function GET(
   request: NextRequest,
@@ -54,7 +74,7 @@ export async function GET(
       .all();
   }
 
-  return NextResponse.json({ data: conversations });
+  return NextResponse.json({ data: normalizeConversationsForParity(conversations) });
 }
 
 export async function POST(
