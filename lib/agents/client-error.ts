@@ -1,7 +1,7 @@
 import {
   AGENT_ALREADY_RUNNING_CODE,
   isAgentAlreadyRunningPayload,
-} from "@/lib/agents/concurrency";
+} from "@/lib/agents/concurrency-shared";
 
 export interface AgentRequestError extends Error {
   code?: string;

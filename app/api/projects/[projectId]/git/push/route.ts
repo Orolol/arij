@@ -44,9 +44,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
     const summary = {
       pushed: result.pushed.length,
-      created: result.created.length,
-      deleted: result.deleted.length,
-      failures: result.failed ? 1 : 0,
+      update: result.update ? 1 : 0,
     };
 
     writeGitSyncLog({

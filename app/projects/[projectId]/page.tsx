@@ -53,11 +53,11 @@ export default function KanbanPage() {
   const runningEpicIds = useMemo(
     () =>
       new Set(
-        activeSessions
+        activities
           .filter((session) => session.status === "running" && session.epicId)
           .map((session) => session.epicId as string)
       ),
-    [activeSessions]
+    [activities]
   );
 
   function addToast(

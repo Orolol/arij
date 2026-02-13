@@ -3,7 +3,17 @@ import { and, desc, eq, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 
-export const AGENT_ALREADY_RUNNING_CODE = "AGENT_ALREADY_RUNNING" as const;
+export {
+  AGENT_ALREADY_RUNNING_CODE,
+  isAgentAlreadyRunningPayload,
+} from "@/lib/agents/concurrency-shared";
+export type {
+  ActiveAgentSessionSummary,
+  AgentAlreadyRunningPayload,
+} from "@/lib/agents/concurrency-shared";
+
+import type { ActiveAgentSessionSummary, AgentAlreadyRunningPayload } from "@/lib/agents/concurrency-shared";
+import { AGENT_ALREADY_RUNNING_CODE } from "@/lib/agents/concurrency-shared";
 
 export type AgentTaskTarget =
   | {
@@ -17,49 +27,6 @@ export type AgentTaskTarget =
       storyId: string;
       epicId?: string | null;
     };
-
-export interface ActiveAgentSessionSummary {
-  id: string;
-  projectId: string;
-  epicId: string | null;
-  userStoryId: string | null;
-  mode: string | null;
-  provider: string | null;
-  startedAt: string | null;
-}
-
-export interface AgentAlreadyRunningPayload {
-  error: string;
-  code: typeof AGENT_ALREADY_RUNNING_CODE;
-  data: {
-    activeSessionId: string;
-    activeSession: ActiveAgentSessionSummary;
-    sessionUrl: string;
-    target:
-      | {
-          scope: "epic";
-          projectId: string;
-          epicId: string;
-        }
-      | {
-          scope: "story";
-          projectId: string;
-          storyId: string;
-          epicId?: string;
-        };
-  };
-}
-
-export function isAgentAlreadyRunningPayload(
-  value: unknown
-): value is AgentAlreadyRunningPayload {
-  if (!value || typeof value !== "object") return false;
-  const v = value as { code?: unknown; data?: { activeSessionId?: unknown } };
-  return (
-    v.code === AGENT_ALREADY_RUNNING_CODE &&
-    typeof v.data?.activeSessionId === "string"
-  );
-}
 
 function findRunningSessionForTarget(
   target: AgentTaskTarget

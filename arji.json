@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "lastSyncedAt": "2026-02-12T22:46:30.080Z",
+  "lastSyncedAt": "2026-02-13T08:30:59.604Z",
   "project": {
     "name": "Arij",
     "description": "A local, AI-first project orchestrator that provides a web interface for managing multi-project workflows with Claude Code as the execution engine. It covers the full project lifecycle: ideation, specification, kanban-based planning, automated code generation via Claude Code CLI, real-time agent monitoring, and release management.",
-    "status": "building",
-    "spec": "# Arij Specification and Implementation Plan\\n\\n## 1. Project Overview\\nArij is a local AI-first project orchestrator with a web UI for ideation, specification, kanban planning, agent execution, and release management. The platform already has strong local git workflows (worktrees, branching, merges, tags) but needs deeper remote GitHub integration and stronger agent monitoring UX.\\n\\n## 2. Objectives for This Iteration\\n1. Add full GitHub lifecycle support from inside Arij: remote sync, PR creation, and release publication.\\n2. Preserve local-only workflows as a first-class path when GitHub is not configured.\\n3. Improve agent execution safety with clear busy states and server-side duplicate-run protection.\\n4. Improve Codex session tracking reliability and make Sessions logs readable at production log volume.\\n5. Merge New Epic and Chat into one unified workspace with a resizable split layout.\\n\\n## 3. Scope\\n### In scope\\n- GitHub PAT validation and project-level repository connection.\\n- Remote git actions: fetch, pull, push branch, push tag, ahead or behind status.\\n- PR creation and status sync linked to epics.\\n- Draft and publish GitHub releases linked to release objects.\\n- Agent busy indicators and action lockouts for conflicting runs.\\n- Codex session linkage fixes, last non-empty output extraction, and sessions log viewer improvements.\\n- Unified chat panel for normal chat and epic creation tabs.\\n\\n### Out of scope\\n- Multi-user permission system.\\n- Cloud secret manager migration.\\n- CI or CD orchestration beyond GitHub PR and release metadata.\\n- Replacing existing provider stack; this iteration hardens existing Claude Code and Codex paths.\\n\\n## 4. Constraints and Assumptions\\n- Local-first single-user application; SQLite and local filesystem are primary stores.\\n- Existing Next.js App Router, React, and TypeScript architecture must be preserved.\\n- Existing local merge, build, and review flows must remain functional with zero GitHub configuration.\\n- GitHub PAT can be stored in settings for now, but read APIs must redact token values.\\n- All critical guards must exist server-side, not only in UI.\\n\\n## 5. Technical Stack Recommendations\\n- Keep `simple-git` for local repository operations.\\n- Add `@octokit/rest` for GitHub API actions (token validation, PRs, releases).\\n- Continue Drizzle plus SQLite for schema evolution and audit logging.\\n- Keep polling-based monitoring but expose lightweight derived fields for UI, including `lastNonEmptyText`.\\n- Use reusable hooks to centralize feature gating and sync state: `useGitHubConfig`, `useGitStatus`, `useEpicPr`.\\n\\n## 6. Architecture\\n### 6.1 Backend modules\\n- `lib/git/remote.ts`: fetch, pull ff-only, push branch, push tag, ahead or behind, remote parsing.\\n- `lib/github/client.ts`: PAT fetch, Octokit factory, token validation.\\n- `lib/github/pull-requests.ts`: PR body generation and status retrieval.\\n- `lib/github/releases.ts`: create draft release and publish release.\\n- `lib/github/sync-log.ts`: normalized operation logging.\\n\\n### 6.2 Data model changes\\n- `projects`: add `githubOwnerRepo`.\\n- New table `gitSyncLog` for push, pull, fetch, PR, and release audit entries.\\n- `epics`: add `prNumber`, `prUrl`, `prStatus`.\\n- New table `pullRequests` for persisted PR metadata.\\n- `releases`: add `githubReleaseId`, `githubReleaseUrl`, `pushedAt`.\\n- Session tracking tables: add or derive fields for stable response linkage and `lastNonEmptyText`.\\n\\n### 6.3 API surface\\n- Settings: GitHub token validation endpoint and redacted settings read.\\n- Project git endpoints: detect remote, push, fetch, pull, status.\\n- Epic PR endpoint: create PR and sync status.\\n- Release publish endpoint: publish existing draft GitHub release.\\n- Session endpoints: return readable, bounded log payloads and last non-empty output summary.\\n\\n### 6.4 Frontend architecture\\n- Add GitHub configuration UI in settings and project connect banner.\\n- Add sync and PR badges to Epic Detail and PR link cue on Epic Card.\\n- Update Releases page with push-to-GitHub option, draft badges, publish action, and external links.\\n- Replace modal New Epic flow with unified right-side chat panel containing tabbed conversations.\\n- Use fixed-height, scrollable viewers for raw logs, responses, and output.\\n\\n## 7. Key Design Decisions\\n1. Use `simple-git` for git transport and Octokit only for GitHub API calls.\\n2. Enforce opt-in per project via `githubOwnerRepo`; hide GitHub UI when not configured.\\n3. Default GitHub releases to draft for human validation before publish.\\n4. Journal every remote operation in `gitSyncLog` for debugging and auditability.\\n5. Extract `lastNonEmptyText` on the server side to avoid expensive client log parsing.\\n6. Block duplicate agent launches both in UI and API using task-level locks.\\n\\n## 8. Non-functional Requirements\\n- Reliability: duplicate run attempts must return deterministic conflict responses.\\n- Readability: no log view may overflow its container; all long payloads must be scrollable.\\n- Performance: status polling must not trigger heavy full-log parsing on each tick.\\n- Security: PAT is never returned unredacted from read APIs.\\n- Backward compatibility: local-only projects keep previous behavior.\\n\\n## 9. Implementation Plan\\n### Phase 1\\nGitHub foundation: dependency install, schema updates, token validation, remote detection, push or pull or fetch or status endpoints, sync logging, and feature gate hook.\\n\\n### Phase 2\\nAgent safety and sync feedback: badges, disabled actions, and server conflict guards for running agent tasks.\\n\\n### Phase 3\\nPR workflow: schema, service layer, create and sync endpoint, Epic Detail and Epic Card integration.\\n\\n### Phase 4\\nRelease workflow: push tag, draft release creation, publish endpoint, and releases UI updates.\\n\\n### Phase 5\\nCodex session hardening and sessions viewer: fix linkage and order, expose `lastNonEmptyText`, and add scrollable log renderers.\\n\\n### Phase 6\\nUnified chat workspace: fused New Epic and Chat tabs, right-collapsed panel, resizable split, per-tab agent type defaults, and activity icons.\\n\\n## 10. Verification Strategy\\n1. Configure and validate PAT, then verify settings read is redacted.\\n2. Detect origin remote and connect project repository in one click.\\n3. Push and pull an epic branch and verify ahead or behind counters update.\\n4. Attempt duplicate agent starts on same task and verify API returns conflict with UI lockout.\\n5. Create PR from epic, verify body content includes epic plus stories and badge updates.\\n6. Create release with push-to-GitHub enabled and verify draft release link is stored.\\n7. Publish draft release from Arij and verify remote status changes.\\n8. Open Sessions tab with large logs and verify no overflow, with independent scroll viewers.\\n9. Verify running session row shows elapsed time plus last non-empty output snippet.\\n10. Verify New Epic action opens unified chat panel with a new epic-creation tab and preserved agent type selection."
+    "status": "specifying",
+    "spec": ""
   },
   "epics": [
     {
@@ -40,6 +40,92 @@
           "acceptance_criteria": "- [x] Editable project name and description\n- [x] Epic list with inline editing and delete\n- [x] User stories displayed within epics\n- [x] Status badges with color coding\n- [x] Confidence percentage display\n- [x] Validate & Import button creates project + epics + US in DB\n- [ ] Tests",
           "status": "done",
           "position": 2
+        }
+      ]
+    },
+    {
+      "id": "3yyClgy0zxHo",
+      "title": "Codex Session Tracking Hardening",
+      "description": "Stabilize Codex session lifecycle, event ordering, and derived activity summary so monitoring and lock logic are reliable. This epic is foundational for action blocking and sessions UI improvements.",
+      "priority": 3,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "lme9sddL6uFm",
+          "title": "As a project maintainer, I want strict session lifecycle transitions so that running and terminal states are always trustworthy",
+          "description": "Implement a server-side lifecycle guard used by all session update paths to prevent invalid status changes and timestamp regressions.",
+          "acceptance_criteria": "- [ ] Session transitions are limited to `queued -> running -> completed|failed|cancelled`\n- [ ] Invalid transitions return HTTP 409 with a machine-readable error code\n- [ ] `startedAt` and `endedAt` are set once and are not overwritten by later events\n- [ ] Session list/detail endpoints return the same terminal status for a session once it is completed",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "JIROShSTCAC0",
+          "title": "As a project maintainer, I want ordered Codex chunk persistence so that logs and outputs are always readable in sequence",
+          "description": "Persist response, raw log, and output chunks with deterministic per-session sequence metadata and fetch ordering guarantees.",
+          "acceptance_criteria": "- [ ] Every chunk written for Codex contains `sessionId`, `streamType`, `sequence`, and timestamp metadata\n- [ ] Sequence numbers are monotonic per session even under concurrent writes\n- [ ] Reads for response/raw/output are sorted by `sequence` ascending\n- [ ] Duplicate chunk inserts with the same unique key are handled idempotently",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "cKvtDq-q0BRk",
+          "title": "As a project maintainer, I want a derived `lastNonEmptyText` so that users can quickly understand active agent progress",
+          "description": "Compute and store the last non-empty text from Codex output/response at write time and expose it in sessions APIs.",
+          "acceptance_criteria": "- [ ] The backend derives `lastNonEmptyText` from the last non-empty trimmed line of Codex output/response events\n- [ ] Whitespace-only chunks do not overwrite an existing `lastNonEmptyText`\n- [ ] `lastNonEmptyText` is exposed in session list and session detail API payloads\n- [ ] Running session rows render elapsed time and `lastNonEmptyText` together",
+          "status": "review",
+          "position": 2
+        },
+        {
+          "id": "t8BlUPFVaSRn",
+          "title": "As an operator, I want migration and backfill coverage so that older sessions remain usable after schema changes",
+          "description": "Add migrations and backfill logic for newly introduced session fields and ensure backward-compatible reads.",
+          "acceptance_criteria": "- [ ] Database migration adds required fields and indexes without dropping existing session data\n- [ ] A backfill job populates `lastNonEmptyText` for recent historical sessions when source logs exist\n- [ ] Null-safe handling is in place for older sessions that cannot be backfilled",
+          "status": "review",
+          "position": 3
+        }
+      ]
+    },
+    {
+      "id": "D8bDg9BwJDoj",
+      "title": "GitHub Remote Foundation and Configuration",
+      "description": "Build the minimum GitHub integration layer that enables authenticated API usage and reliable remote git sync while preserving local-only behavior. This epic introduces project-level repository binding, token handling, remote operation endpoints, and operation journaling.",
+      "priority": 3,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "NoXZGLbI1O1E",
+          "title": "As a workspace admin, I want to configure and validate a GitHub PAT so that Arij can call GitHub APIs securely",
+          "description": "Add a GitHub section in settings with PAT input, token validation, and persistence in settings storage. Ensure token values are never returned unredacted in read APIs.",
+          "acceptance_criteria": "- [ ] Settings page exposes GitHub PAT input with Validate and Save actions\\n- [ ] POST validate endpoint verifies token against GitHub and returns validity plus account login\\n- [ ] GET settings redacts PAT values while preserving indication that a token exists\\n- [ ] Validation and save failures show actionable error messages",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "Wj_wjBAE-8nB",
+          "title": "As a project owner, I want GitHub remote auto-detection so that I can connect owner and repo in one click",
+          "description": "Detect owner and repo from git origin URL for projects with a local repository. Show a connect banner and patch project metadata when accepted.",
+          "acceptance_criteria": "- [ ] Detect endpoint parses SSH and HTTPS remote formats into owner and repo\\n- [ ] Banner appears only when project has gitRepoPath and missing githubOwnerRepo\\n- [ ] Connect action stores githubOwnerRepo on project\\n- [ ] Dismiss action hides the banner without mutating repository metadata",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "ovCeDQ0UO5qR",
+          "title": "As a developer, I want push, pull, fetch, and branch status endpoints so that I can sync local branches safely",
+          "description": "Implement git sync APIs using simple-git with explicit error handling and ff-only pull behavior. Return ahead or behind counters for branch-level status.",
+          "acceptance_criteria": "- [ ] Endpoints exist for push, pull, fetch, and status and return structured data payloads\\n- [ ] Pull uses ff-only semantics and returns explicit conflict guidance when not possible\\n- [ ] Status endpoint returns ahead and behind values for requested branch\\n- [ ] All sync actions include project and branch context in API responses",
+          "status": "review",
+          "position": 2
+        },
+        {
+          "id": "jGZU8SuIiOVF",
+          "title": "As an operator, I want every remote operation logged so that sync failures are auditable and debuggable",
+          "description": "Create a dedicated git sync log table and utility to capture operation type, status, branch, and details for all GitHub-related operations.",
+          "acceptance_criteria": "- [ ] `gitSyncLog` table exists with operation, status, detail, and timestamps\\n- [ ] Push, pull, fetch, and detect workflows write success and failure entries\\n- [ ] Log entries include projectId and optional branch context\\n- [ ] Failure logs include machine-readable detail payloads",
+          "status": "review",
+          "position": 3
         }
       ]
     },
@@ -99,6 +185,41 @@
           "acceptance_criteria": "- [ ] 'Chat' button in project toolbar expands the unified panel\n- [ ] 'Chat' focuses the last active brainstorm tab or creates a new one if none exists\n- [ ] 'New Epic' button expands the panel and creates a new tab with 'Epic Creation' pre-selected\n- [ ] Old standalone chat panel component removed\n- [ ] Old epic creation modal/route replaced by the new panel flow\n- [ ] Panel can be collapsed back via a close/collapse button or clicking outside\n- [ ] Keyboard shortcut (e.g. Escape) collapses the panel",
           "status": "review",
           "position": 5
+        }
+      ]
+    },
+    {
+      "id": "YthO7n3qW2Bm",
+      "title": "Agent Concurrency Guards and Work Feedback",
+      "description": "Prevent launching overlapping agents on the same task and expose clear lock/running feedback across board, detail views, and chat tabs.",
+      "priority": 3,
+      "status": "done",
+      "position": 1,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "so4RZBYfyrwY",
+          "title": "As a product user, I want backend checks that block starting another agent on the same task so that duplicate work cannot run in parallel",
+          "description": "Add task-level conflict checks to all agent launch endpoints, not only build, and return consistent conflict payloads.",
+          "acceptance_criteria": "- [ ] All agent launch endpoints check for an active running session on the same target task before dispatch\n- [ ] Conflicts return HTTP 409 with code `AGENT_ALREADY_RUNNING` and include active session id metadata\n- [ ] Concurrent double-submit attempts create at most one active session\n- [ ] Locks are released automatically when sessions enter terminal states",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "vEjvtFcFMAm_",
+          "title": "As a product user, I want locked actions greyed out so that I do not accidentally trigger forbidden operations",
+          "description": "Wire lock state to action buttons on epic and story surfaces with non-interactive disabled behavior.",
+          "acceptance_criteria": "- [ ] Agent-triggering buttons on locked epic/story targets are visually greyed and disabled\n- [ ] Disabled controls are non-interactive via mouse and keyboard\n- [ ] A tooltip or helper text explains that another agent is already running on this task\n- [ ] Local loading states and lock states are merged so UI cannot flicker enabled/disabled incorrectly",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "WnRgNGr2vr-e",
+          "title": "As a product user, I want running indicators in cards and tabs so that I can see active work instantly",
+          "description": "Show real-time running status in kanban cards and unified chat tabs and provide navigation to active sessions from conflicts.",
+          "acceptance_criteria": "- [ ] Kanban epic cards display a running indicator when any session is active for that epic\n- [ ] Unified chat tabs show a running icon while their linked session is active\n- [ ] Indicator state updates within one polling interval after session start/stop\n- [ ] Conflict toast includes a link or shortcut to open the active session",
+          "status": "review",
+          "position": 2
         }
       ]
     },
@@ -990,132 +1111,11 @@
       ]
     },
     {
-      "id": "3yyClgy0zxHo",
-      "title": "Codex Session Tracking Hardening",
-      "description": "Stabilize Codex session lifecycle, event ordering, and derived activity summary so monitoring and lock logic are reliable. This epic is foundational for action blocking and sessions UI improvements.",
-      "priority": 3,
-      "status": "in_progress",
-      "position": 0,
-      "branchName": "feature/epic-3yyClgy0zxHo-codex-session-tracking-hardening",
-      "user_stories": [
-        {
-          "id": "lme9sddL6uFm",
-          "title": "As a project maintainer, I want strict session lifecycle transitions so that running and terminal states are always trustworthy",
-          "description": "Implement a server-side lifecycle guard used by all session update paths to prevent invalid status changes and timestamp regressions.",
-          "acceptance_criteria": "- [ ] Session transitions are limited to `queued -> running -> completed|failed|cancelled`\n- [ ] Invalid transitions return HTTP 409 with a machine-readable error code\n- [ ] `startedAt` and `endedAt` are set once and are not overwritten by later events\n- [ ] Session list/detail endpoints return the same terminal status for a session once it is completed",
-          "status": "in_progress",
-          "position": 0
-        },
-        {
-          "id": "JIROShSTCAC0",
-          "title": "As a project maintainer, I want ordered Codex chunk persistence so that logs and outputs are always readable in sequence",
-          "description": "Persist response, raw log, and output chunks with deterministic per-session sequence metadata and fetch ordering guarantees.",
-          "acceptance_criteria": "- [ ] Every chunk written for Codex contains `sessionId`, `streamType`, `sequence`, and timestamp metadata\n- [ ] Sequence numbers are monotonic per session even under concurrent writes\n- [ ] Reads for response/raw/output are sorted by `sequence` ascending\n- [ ] Duplicate chunk inserts with the same unique key are handled idempotently",
-          "status": "in_progress",
-          "position": 1
-        },
-        {
-          "id": "cKvtDq-q0BRk",
-          "title": "As a project maintainer, I want a derived `lastNonEmptyText` so that users can quickly understand active agent progress",
-          "description": "Compute and store the last non-empty text from Codex output/response at write time and expose it in sessions APIs.",
-          "acceptance_criteria": "- [ ] The backend derives `lastNonEmptyText` from the last non-empty trimmed line of Codex output/response events\n- [ ] Whitespace-only chunks do not overwrite an existing `lastNonEmptyText`\n- [ ] `lastNonEmptyText` is exposed in session list and session detail API payloads\n- [ ] Running session rows render elapsed time and `lastNonEmptyText` together",
-          "status": "in_progress",
-          "position": 2
-        },
-        {
-          "id": "t8BlUPFVaSRn",
-          "title": "As an operator, I want migration and backfill coverage so that older sessions remain usable after schema changes",
-          "description": "Add migrations and backfill logic for newly introduced session fields and ensure backward-compatible reads.",
-          "acceptance_criteria": "- [ ] Database migration adds required fields and indexes without dropping existing session data\n- [ ] A backfill job populates `lastNonEmptyText` for recent historical sessions when source logs exist\n- [ ] Null-safe handling is in place for older sessions that cannot be backfilled",
-          "status": "in_progress",
-          "position": 3
-        }
-      ]
-    },
-    {
-      "id": "D8bDg9BwJDoj",
-      "title": "GitHub Remote Foundation and Configuration",
-      "description": "Build the minimum GitHub integration layer that enables authenticated API usage and reliable remote git sync while preserving local-only behavior. This epic introduces project-level repository binding, token handling, remote operation endpoints, and operation journaling.",
-      "priority": 3,
-      "status": "in_progress",
-      "position": 0,
-      "branchName": "feature/epic-D8bDg9BwJDoj-github-remote-foundation-and-configurati",
-      "user_stories": [
-        {
-          "id": "NoXZGLbI1O1E",
-          "title": "As a workspace admin, I want to configure and validate a GitHub PAT so that Arij can call GitHub APIs securely",
-          "description": "Add a GitHub section in settings with PAT input, token validation, and persistence in settings storage. Ensure token values are never returned unredacted in read APIs.",
-          "acceptance_criteria": "- [ ] Settings page exposes GitHub PAT input with Validate and Save actions\\n- [ ] POST validate endpoint verifies token against GitHub and returns validity plus account login\\n- [ ] GET settings redacts PAT values while preserving indication that a token exists\\n- [ ] Validation and save failures show actionable error messages",
-          "status": "in_progress",
-          "position": 0
-        },
-        {
-          "id": "Wj_wjBAE-8nB",
-          "title": "As a project owner, I want GitHub remote auto-detection so that I can connect owner and repo in one click",
-          "description": "Detect owner and repo from git origin URL for projects with a local repository. Show a connect banner and patch project metadata when accepted.",
-          "acceptance_criteria": "- [ ] Detect endpoint parses SSH and HTTPS remote formats into owner and repo\\n- [ ] Banner appears only when project has gitRepoPath and missing githubOwnerRepo\\n- [ ] Connect action stores githubOwnerRepo on project\\n- [ ] Dismiss action hides the banner without mutating repository metadata",
-          "status": "in_progress",
-          "position": 1
-        },
-        {
-          "id": "ovCeDQ0UO5qR",
-          "title": "As a developer, I want push, pull, fetch, and branch status endpoints so that I can sync local branches safely",
-          "description": "Implement git sync APIs using simple-git with explicit error handling and ff-only pull behavior. Return ahead or behind counters for branch-level status.",
-          "acceptance_criteria": "- [ ] Endpoints exist for push, pull, fetch, and status and return structured data payloads\\n- [ ] Pull uses ff-only semantics and returns explicit conflict guidance when not possible\\n- [ ] Status endpoint returns ahead and behind values for requested branch\\n- [ ] All sync actions include project and branch context in API responses",
-          "status": "in_progress",
-          "position": 2
-        },
-        {
-          "id": "jGZU8SuIiOVF",
-          "title": "As an operator, I want every remote operation logged so that sync failures are auditable and debuggable",
-          "description": "Create a dedicated git sync log table and utility to capture operation type, status, branch, and details for all GitHub-related operations.",
-          "acceptance_criteria": "- [ ] `gitSyncLog` table exists with operation, status, detail, and timestamps\\n- [ ] Push, pull, fetch, and detect workflows write success and failure entries\\n- [ ] Log entries include projectId and optional branch context\\n- [ ] Failure logs include machine-readable detail payloads",
-          "status": "in_progress",
-          "position": 3
-        }
-      ]
-    },
-    {
-      "id": "YthO7n3qW2Bm",
-      "title": "Agent Concurrency Guards and Work Feedback",
-      "description": "Prevent launching overlapping agents on the same task and expose clear lock/running feedback across board, detail views, and chat tabs.",
-      "priority": 3,
-      "status": "in_progress",
-      "position": 1,
-      "branchName": "feature/epic-YthO7n3qW2Bm-agent-concurrency-guards-and-work-feedba",
-      "user_stories": [
-        {
-          "id": "so4RZBYfyrwY",
-          "title": "As a product user, I want backend checks that block starting another agent on the same task so that duplicate work cannot run in parallel",
-          "description": "Add task-level conflict checks to all agent launch endpoints, not only build, and return consistent conflict payloads.",
-          "acceptance_criteria": "- [ ] All agent launch endpoints check for an active running session on the same target task before dispatch\n- [ ] Conflicts return HTTP 409 with code `AGENT_ALREADY_RUNNING` and include active session id metadata\n- [ ] Concurrent double-submit attempts create at most one active session\n- [ ] Locks are released automatically when sessions enter terminal states",
-          "status": "in_progress",
-          "position": 0
-        },
-        {
-          "id": "vEjvtFcFMAm_",
-          "title": "As a product user, I want locked actions greyed out so that I do not accidentally trigger forbidden operations",
-          "description": "Wire lock state to action buttons on epic and story surfaces with non-interactive disabled behavior.",
-          "acceptance_criteria": "- [ ] Agent-triggering buttons on locked epic/story targets are visually greyed and disabled\n- [ ] Disabled controls are non-interactive via mouse and keyboard\n- [ ] A tooltip or helper text explains that another agent is already running on this task\n- [ ] Local loading states and lock states are merged so UI cannot flicker enabled/disabled incorrectly",
-          "status": "in_progress",
-          "position": 1
-        },
-        {
-          "id": "WnRgNGr2vr-e",
-          "title": "As a product user, I want running indicators in cards and tabs so that I can see active work instantly",
-          "description": "Show real-time running status in kanban cards and unified chat tabs and provide navigation to active sessions from conflicts.",
-          "acceptance_criteria": "- [ ] Kanban epic cards display a running indicator when any session is active for that epic\n- [ ] Unified chat tabs show a running icon while their linked session is active\n- [ ] Indicator state updates within one polling interval after session start/stop\n- [ ] Conflict toast includes a link or shortcut to open the active session",
-          "status": "in_progress",
-          "position": 2
-        }
-      ]
-    },
-    {
       "id": "eBiIVHhxzP4z",
       "title": "Git Sync Feedback and Agent Concurrency Guardrails",
       "description": "Provide clear in-product feedback for active agent work and prevent duplicate execution on the same epic or story. This epic combines UI lockouts with strict backend conflict checks.",
       "priority": 3,
-      "status": "in_progress",
+      "status": "review",
       "position": 1,
       "branchName": "feature/epic-eBiIVHhxzP4z-git-sync-feedback-and-agent-concurrency-",
       "user_stories": [
@@ -1158,7 +1158,7 @@
       "title": "GitHub Remote Foundation",
       "description": "Introduce project-level GitHub configuration, token validation, remote detection, core remote git routes, and audit logging while preserving local-only workflows.",
       "priority": 3,
-      "status": "in_progress",
+      "status": "review",
       "position": 2,
       "branchName": "feature/epic-joNsPcIP6FFP-github-remote-foundation",
       "user_stories": [
@@ -1201,7 +1201,7 @@
       "title": "Pull Request Workflow from Epics",
       "description": "Enable one-click push and PR creation from epic context, persist PR metadata, and synchronize status back into Arij UI. This epic extends git sync into full review workflow support.",
       "priority": 2,
-      "status": "in_progress",
+      "status": "review",
       "position": 2,
       "branchName": "feature/epic-waYcvnu1h03w-pull-request-workflow-from-epics",
       "user_stories": [
@@ -1244,7 +1244,7 @@
       "title": "Unified Chat and Epic Creation Split Workspace",
       "description": "Fuse New Epic into the chat system and move to a right-docked, resizable split layout where board and chat coexist. Preserve strong context controls including agent type per tab.",
       "priority": 2,
-      "status": "in_progress",
+      "status": "review",
       "position": 3,
       "branchName": "feature/epic-LiSlsRifJqo--unified-chat-and-epic-creation-split-wor",
       "user_stories": [
@@ -1287,7 +1287,7 @@
       "title": "GitHub Release Lifecycle",
       "description": "Extend release creation flow to support tag push and GitHub draft release creation, then allow publishing drafts directly from Arij. Keep explicit user control with draft-first strategy.",
       "priority": 2,
-      "status": "in_progress",
+      "status": "review",
       "position": 3,
       "branchName": "feature/epic-7FFiclGUqPE--github-release-lifecycle",
       "user_stories": [
@@ -1330,7 +1330,7 @@
       "title": "Sessions Tab Readability and Activity Summary UX",
       "description": "Make the Sessions tab readable under real-world payload sizes and surface concise live progress text for running sessions.",
       "priority": 2,
-      "status": "in_progress",
+      "status": "review",
       "position": 4,
       "branchName": "feature/epic-o6pppVoehWCp-sessions-tab-readability-and-activity-su",
       "user_stories": [
@@ -1365,7 +1365,7 @@
       "title": "Codex Session Tracking Hardening and Sessions Viewer Upgrade",
       "description": "Fix Codex telemetry correctness and improve sessions UI readability for long logs. Provide server-derived status text and contained scrollable viewers for responses, raw logs, and output.",
       "priority": 2,
-      "status": "in_progress",
+      "status": "review",
       "position": 4,
       "branchName": "feature/epic-wHh9OkV7DiqR-codex-session-tracking-hardening-and-ses",
       "user_stories": [
@@ -1408,7 +1408,7 @@
       "title": "Git Sync UX in Epic Detail",
       "description": "Expose branch ahead/behind state and push controls directly in epic detail, gated by project GitHub configuration.",
       "priority": 2,
-      "status": "in_progress",
+      "status": "review",
       "position": 5,
       "branchName": "feature/epic-U36Sur6N5moa-git-sync-ux-in-epic-detail",
       "user_stories": [
@@ -1443,7 +1443,7 @@
       "title": "Unified Chat and Epic Creation Workspace",
       "description": "Fuse New Epic creation and chat into a single right-side workspace that can be partially collapsed, expanded on demand, and resized against the kanban board. Ensure each new chat tab preserves explicit agent type selection.",
       "priority": 1,
-      "status": "in_progress",
+      "status": "review",
       "position": 5,
       "branchName": "feature/epic-uU4p42bLNWzo-unified-chat-and-epic-creation-workspace",
       "user_stories": [
@@ -1494,7 +1494,7 @@
       "title": "Pull Request Workflow from Epics",
       "description": "Enable push-and-create PR flow from epic context with generated PR descriptions and synchronized PR status.",
       "priority": 2,
-      "status": "in_progress",
+      "status": "review",
       "position": 6,
       "branchName": "feature/epic-HMaIVdFQ0UQL-pull-request-workflow-from-epics",
       "user_stories": [
@@ -1537,7 +1537,7 @@
       "title": "Release Workflow with GitHub Draft and Publish",
       "description": "Extend releases to support pushing tags, creating draft GitHub releases, and publishing from Arij UI.",
       "priority": 2,
-      "status": "in_progress",
+      "status": "review",
       "position": 7,
       "branchName": "feature/epic-fCWp3o1-jVCK-release-workflow-with-github-draft-and-p",
       "user_stories": [

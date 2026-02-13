@@ -17,7 +17,7 @@ type TerminalStatus = Extract<
   "completed" | "failed" | "cancelled"
 >;
 
-const TERMINAL_STATUSES = new Set<TerminalStatus>([
+const TERMINAL_STATUSES: Set<string> = new Set([
   "completed",
   "failed",
   "cancelled",
