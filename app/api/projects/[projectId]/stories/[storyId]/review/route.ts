@@ -22,6 +22,10 @@ import path from "path";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { REVIEW_TYPE_TO_AGENT_TYPE } from "@/lib/agent-config/constants";
 import {
+  createAgentAlreadyRunningPayload,
+  getRunningSessionForTarget,
+} from "@/lib/agents/concurrency";
+import {
   createQueuedSession,
   isSessionLifecycleConflictError,
   markSessionRunning,
@@ -152,7 +156,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const sessionsCreated: string[] = [];
 
   // Dispatch one agent per review type
-  for (const reviewType of reviewTypes) {
+  for (const [idx, reviewType] of reviewTypes.entries()) {
     const reviewSystemPrompt = await resolveAgentPrompt(
       REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
       projectId
@@ -171,6 +175,26 @@ export async function POST(request: NextRequest, { params }: Params) {
     const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
     fs.mkdirSync(logsDir, { recursive: true });
     const logsPath = path.join(logsDir, "logs.json");
+
+    // For the first review, check concurrency guard
+    if (idx === 0) {
+      const conflict = getRunningSessionForTarget({
+        scope: "story",
+        projectId,
+        storyId,
+        epicId: epic.id,
+      });
+      if (conflict) {
+        return NextResponse.json(
+          createAgentAlreadyRunningPayload(
+            { scope: "story", projectId, storyId, epicId: epic.id },
+            conflict,
+            "Another agent is already running for this story."
+          ),
+          { status: 409 }
+        );
+      }
+    }
 
     createQueuedSession({
       id: sessionId,

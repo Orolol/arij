@@ -5,7 +5,6 @@ import {
   epics,
   userStories,
   documents,
-  agentSessions,
   ticketComments,
 } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -16,6 +15,10 @@ import { buildTicketBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import type { ProviderType } from "@/lib/providers";
+import {
+  createAgentAlreadyRunningPayload,
+  getRunningSessionForTarget,
+} from "@/lib/agents/concurrency";
 import fs from "fs";
 import path from "path";
 import {
@@ -26,25 +29,6 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
-
-/**
- * Concurrency guard: checks if there is already a running code-mode session
- * for the same epic. Prevents parallel code-mode builds on the same worktree.
- */
-function hasRunningBuildForEpic(epicId: string): boolean {
-  const running = db
-    .select()
-    .from(agentSessions)
-    .where(
-      and(
-        eq(agentSessions.epicId, epicId),
-        eq(agentSessions.mode, "code"),
-        eq(agentSessions.status, "running")
-      )
-    )
-    .all();
-  return running.length > 0;
-}
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
@@ -79,14 +63,6 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   if (!epic) {
     return NextResponse.json({ error: "Parent epic not found" }, { status: 404 });
-  }
-
-  // Concurrency guard
-  if (hasRunningBuildForEpic(epic.id)) {
-    return NextResponse.json(
-      { error: "Another build is already running for this epic. Wait for it to complete." },
-      { status: 409 }
-    );
   }
 
   // Get project
@@ -176,6 +152,24 @@ export async function POST(request: NextRequest, { params }: Params) {
   const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
   fs.mkdirSync(logsDir, { recursive: true });
   const logsPath = path.join(logsDir, "logs.json");
+
+  // Check concurrency guard
+  const conflict = getRunningSessionForTarget({
+    scope: "story",
+    projectId,
+    storyId,
+    epicId: epic.id,
+  });
+  if (conflict) {
+    return NextResponse.json(
+      createAgentAlreadyRunningPayload(
+        { scope: "story", projectId, storyId, epicId: epic.id },
+        conflict,
+        "Another agent is already running for this story."
+      ),
+      { status: 409 }
+    );
+  }
 
   createQueuedSession({
     id: sessionId,

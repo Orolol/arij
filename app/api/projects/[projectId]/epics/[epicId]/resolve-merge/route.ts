@@ -3,12 +3,10 @@ import { db } from "@/lib/db";
 import {
   projects,
   epics,
-  agentSessions,
   ticketComments,
   settings,
-  documents,
 } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import {
   createWorktree,
@@ -21,6 +19,10 @@ import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import type { ProviderType } from "@/lib/providers";
 import { tryExportArjiJson } from "@/lib/sync/export";
+import {
+  createAgentAlreadyRunningPayload,
+  getRunningSessionForTarget,
+} from "@/lib/agents/concurrency";
 import fs from "fs";
 import path from "path";
 import {
@@ -31,20 +33,6 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
-
-function hasRunningSessionForEpic(epicId: string): boolean {
-  const running = db
-    .select()
-    .from(agentSessions)
-    .where(
-      and(
-        eq(agentSessions.epicId, epicId),
-        eq(agentSessions.status, "running")
-      )
-    )
-    .all();
-  return running.length > 0;
-}
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
@@ -82,14 +70,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json(
       { error: "Epic has no branch" },
       { status: 400 }
-    );
-  }
-
-  // Concurrency guard
-  if (hasRunningSessionForEpic(epicId)) {
-    return NextResponse.json(
-      { error: "An agent session is already running for this epic." },
-      { status: 409 }
     );
   }
 
@@ -138,13 +118,6 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   // Conflicts exist — spawn an agent to resolve them
 
-  // Load context for prompt
-  const docs = db
-    .select()
-    .from(documents)
-    .where(eq(documents.projectId, projectId))
-    .all();
-
   const settingsRow = db
     .select()
     .from(settings)
@@ -166,6 +139,23 @@ export async function POST(request: NextRequest, { params }: Params) {
   const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
   fs.mkdirSync(logsDir, { recursive: true });
   const logsPath = path.join(logsDir, "logs.json");
+
+  // Check concurrency guard
+  const conflict = getRunningSessionForTarget({
+    scope: "epic",
+    projectId,
+    epicId,
+  });
+  if (conflict) {
+    return NextResponse.json(
+      createAgentAlreadyRunningPayload(
+        { scope: "epic", projectId, epicId },
+        conflict,
+        "Another agent is already running for this epic."
+      ),
+      { status: 409 }
+    );
+  }
 
   createQueuedSession({
     id: sessionId,

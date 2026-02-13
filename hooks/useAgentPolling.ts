@@ -4,8 +4,12 @@ import { useState, useEffect, useCallback } from "react";
 
 export interface UnifiedActivity {
   id: string;
+  epicId?: string | null;
+  userStoryId?: string | null;
   type: "build" | "review" | "merge" | "chat" | "spec_generation" | "release";
   label: string;
+  status: string;
+  mode: string;
   provider: string;
   startedAt: string;
   source: "db" | "registry";

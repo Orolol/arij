@@ -5,7 +5,6 @@ import {
   epics,
   userStories,
   documents,
-  agentSessions,
   ticketComments,
 } from "@/lib/db/schema";
 import { eq, and, notInArray } from "drizzle-orm";
@@ -16,6 +15,10 @@ import { buildBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import type { ProviderType } from "@/lib/providers";
+import {
+  createAgentAlreadyRunningPayload,
+  getRunningSessionForTarget,
+} from "@/lib/agents/concurrency";
 import fs from "fs";
 import path from "path";
 import {
@@ -26,21 +29,6 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
-
-function hasRunningBuildForEpic(epicId: string): boolean {
-  const running = db
-    .select()
-    .from(agentSessions)
-    .where(
-      and(
-        eq(agentSessions.epicId, epicId),
-        eq(agentSessions.mode, "code"),
-        eq(agentSessions.status, "running")
-      )
-    )
-    .all();
-  return running.length > 0;
-}
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
@@ -58,14 +46,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     return NextResponse.json(
       { error: "Epic must be in backlog, todo, in_progress, or review status to build" },
       { status: 400 }
-    );
-  }
-
-  // Concurrency guard
-  if (hasRunningBuildForEpic(epicId)) {
-    return NextResponse.json(
-      { error: "Another build is already running for this epic. Wait for it to complete." },
-      { status: 409 }
     );
   }
 
@@ -139,6 +119,23 @@ export async function POST(request: NextRequest, { params }: Params) {
   const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
   fs.mkdirSync(logsDir, { recursive: true });
   const logsPath = path.join(logsDir, "logs.json");
+
+  // Check concurrency guard
+  const conflict = getRunningSessionForTarget({
+    scope: "epic",
+    projectId,
+    epicId,
+  });
+  if (conflict) {
+    return NextResponse.json(
+      createAgentAlreadyRunningPayload(
+        { scope: "epic", projectId, epicId },
+        conflict,
+        "Another agent is already running for this epic."
+      ),
+      { status: 409 }
+    );
+  }
 
   createQueuedSession({
     id: sessionId,

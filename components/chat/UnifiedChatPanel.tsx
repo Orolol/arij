@@ -552,10 +552,10 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
                       )}
                       <span>{truncateLabel(conversation.label || "Conversation")}</span>
                       {conversation.status === "generating" && (
-                        <span
+                        <Loader2
                           data-testid={`active-indicator-${conversation.id}`}
-                          className="h-2 w-2 rounded-full bg-primary animate-pulse"
-                          aria-label="Agent active"
+                          className="h-3 w-3 animate-spin text-primary"
+                          aria-label="Agent running"
                         />
                       )}
                       {openConversationIds.length > 1 && (
