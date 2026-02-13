@@ -134,62 +134,11 @@ function mapNamedAgentsById(namedAgentIds: Array<string | null | undefined>): Ma
   return byId;
 }
 
-export async function resolveAgent(
-  agentType: AgentType,
-  projectId?: string,
-  providerOverride?: string
-): Promise<ResolvedAgentConfig> {
-  if (providerOverride && isKnownProvider(providerOverride)) {
-    return {
-      agentType,
-      provider: providerOverride,
-      source: "override",
-      scope: projectId || "global",
-      namedAgentId: null,
-    };
-  }
-
-  const { row, source, scope } = resolveDefaultRow(agentType, projectId);
-
-  if (row?.namedAgentId) {
-    const namedAgentMap = mapNamedAgentsById([row.namedAgentId]);
-    const assigned = namedAgentMap.get(row.namedAgentId);
-    if (assigned) {
-      return {
-        agentType,
-        provider: assigned.provider,
-        model: assigned.model,
-        source,
-        scope,
-        namedAgentId: assigned.id,
-      };
-    }
-  }
-
-  if (row?.provider) {
-    return {
-      agentType,
-      provider: normalizeProvider(row.provider),
-      source,
-      scope,
-      namedAgentId: row.namedAgentId ?? null,
-    };
-  }
-
-  return {
-    agentType,
-    provider: FALLBACK_PROVIDER,
-    source: "builtin",
-    scope: "global",
-    namedAgentId: null,
-  };
-}
-
-export async function resolveAgentProvider(
+export function resolveAgentProvider(
   agentType: AgentType,
   projectId?: string
-): Promise<AgentProvider> {
-  const resolved = await resolveAgent(agentType, projectId);
+): AgentProvider {
+  const resolved = resolveAgent(agentType, projectId);
   return resolved.provider;
 }
 
@@ -342,7 +291,13 @@ export interface ResolvedAgent {
 export function resolveAgent(
   agentType: AgentType,
   projectId?: string,
+  providerOverride?: string,
 ): ResolvedAgent {
+  // Explicit provider override — skip DB lookup
+  if (providerOverride && isKnownProvider(providerOverride)) {
+    return { provider: providerOverride };
+  }
+
   // Try project-scoped default first
   if (projectId) {
     const row = db
