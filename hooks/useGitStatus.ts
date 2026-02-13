@@ -34,11 +34,9 @@ export function useGitStatus(
     setError(null);
 
     try {
-      const res = await fetch(`/api/projects/${projectId}/git/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branch: branchName }),
-      });
+      const res = await fetch(
+        `/api/projects/${projectId}/git/status?branch=${encodeURIComponent(branchName)}`
+      );
 
       const data = await res.json();
 

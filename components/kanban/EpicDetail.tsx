@@ -18,6 +18,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { InlineEdit } from "./InlineEdit";
+import { GitSyncBadge } from "./GitSyncBadge";
 import { useEpicDetail } from "@/hooks/useEpicDetail";
 import { useEpicComments } from "@/hooks/useEpicComments";
 import { useEpicAgent } from "@/hooks/useEpicAgent";
@@ -291,7 +292,14 @@ export function EpicDetail({
                 <div className="space-y-2">
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-mono">
                     <GitBranch className="h-3 w-3" />
-                    {epic.branchName}
+                    <span className="flex-1 truncate">{epic.branchName}</span>
+                    {githubConfigured && (
+                      <GitSyncBadge
+                        projectId={projectId}
+                        branchName={epic.branchName}
+                        disabled={isRunning}
+                      />
+                    )}
                   </div>
 
                   {/* Git sync status — only shown when GitHub is configured */}
