@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import { forwardRef, useImperativeHandle } from "react";
+import { forwardRef, useImperativeHandle, useState, useCallback } from "react";
 
 // Mock next/navigation
 vi.mock("next/navigation", () => ({
@@ -17,7 +17,43 @@ vi.mock("@/hooks/useAgentPolling", () => ({
 
 let mockCodexAvailable = false;
 vi.mock("@/hooks/useCodexAvailable", () => ({
-  useCodexAvailable: () => ({ codexAvailable: mockCodexAvailable, loading: false }),
+  useCodexAvailable: () => ({ codexAvailable: mockCodexAvailable, codexInstalled: false, loading: false }),
+}));
+
+// Mock useBatchSelection using React state so toggle/clear trigger re-renders
+vi.mock("@/hooks/useBatchSelection", () => ({
+  useBatchSelection: () => {
+    const [userSelected, setUserSelected] = useState<Set<string>>(new Set());
+    const [autoIncluded] = useState<Set<string>>(new Set());
+    const allSelected = new Set([...userSelected, ...autoIncluded]);
+
+    const toggle = useCallback((epicId: string) => {
+      setUserSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(epicId)) {
+          next.delete(epicId);
+        } else {
+          next.add(epicId);
+        }
+        return next;
+      });
+    }, []);
+
+    const clear = useCallback(() => {
+      setUserSelected(new Set());
+    }, []);
+
+    return {
+      allSelected,
+      userSelected,
+      autoIncluded,
+      loading: false,
+      toggle,
+      clear,
+      isAutoIncluded: (id: string) => autoIncluded.has(id),
+      isUserSelected: (id: string) => userSelected.has(id),
+    };
+  },
 }));
 
 // Mock child components to simplify rendering
@@ -168,10 +204,10 @@ describe("Kanban Build Toolbar", () => {
     expect(screen.getByText("Build as Team")).toBeInTheDocument();
   });
 
-  it("build button shows provider name when team mode disabled", () => {
+  it("build button shows 'Build all' when team mode disabled", () => {
     render(<KanbanPage />);
     fireEvent.click(screen.getByTestId("toggle-epic1"));
-    expect(screen.getByText("Build with Claude Code")).toBeInTheDocument();
+    expect(screen.getByText("Build all")).toBeInTheDocument();
   });
 
   it("sends team and provider in build request", async () => {
