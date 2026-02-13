@@ -9,7 +9,7 @@ import {
   PRIORITY_COLORS,
   type KanbanEpic,
 } from "@/lib/types/kanban";
-import { Square, CheckSquare, GitPullRequest, Loader2 } from "lucide-react";
+import { Square, CheckSquare, GitPullRequest, Loader2, Bug } from "lucide-react";
 
 interface EpicCardProps {
   epic: KanbanEpic;
@@ -55,7 +55,7 @@ export function EpicCard({
         isOverlay ? "shadow-lg" : ""
       } ${isDragging ? "shadow-md" : ""} ${
         selected ? "ring-2 ring-primary" : ""
-      }`}
+      } ${epic.type === "bug" ? "border-l-2 border-l-red-500" : ""}`}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
         <div className="flex items-start gap-2 flex-1 min-w-0">
@@ -87,6 +87,12 @@ export function EpicCard({
         >
           {PRIORITY_LABELS[epic.priority] || "Low"}
         </Badge>
+        {epic.type === "bug" && (
+          <Badge className="text-xs shrink-0 bg-red-500/10 text-red-400">
+            <Bug className="h-3 w-3 mr-0.5" />
+            Bug
+          </Badge>
+        )}
       </div>
       <div className="flex items-center justify-between mt-1">
         <span className="text-xs text-muted-foreground">
