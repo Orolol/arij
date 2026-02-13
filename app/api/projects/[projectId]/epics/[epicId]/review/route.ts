@@ -5,7 +5,6 @@ import {
   epics,
   userStories,
   documents,
-  agentSessions,
   ticketComments,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -24,8 +23,14 @@ import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { REVIEW_TYPE_TO_AGENT_TYPE } from "@/lib/agent-config/constants";
 import {
   createAgentAlreadyRunningPayload,
-  insertRunningSessionWithGuard,
+  getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import {
+  createQueuedSession,
+  isSessionLifecycleConflictError,
+  markSessionRunning,
+  markSessionTerminal,
+} from "@/lib/agent-sessions/lifecycle";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -147,66 +152,44 @@ export async function POST(request: NextRequest, { params }: Params) {
     fs.mkdirSync(logsDir, { recursive: true });
     const logsPath = path.join(logsDir, "logs.json");
 
-    const sessionValues = {
+    // For the first review, check concurrency guard
+    if (idx === 0) {
+      const conflict = getRunningSessionForTarget({
+        scope: "epic",
+        projectId,
+        epicId,
+      });
+      if (conflict) {
+        return NextResponse.json(
+          createAgentAlreadyRunningPayload(
+            { scope: "epic", projectId, epicId },
+            conflict,
+            "Another agent is already running for this epic."
+          ),
+          { status: 409 }
+        );
+      }
+    }
+
+    createQueuedSession({
       id: sessionId,
       projectId,
       epicId,
-      status: "running",
       mode: "plan",
       provider,
       prompt,
       logsPath,
       branchName,
       worktreePath,
-      startedAt: now,
       createdAt: now,
-    } as const;
+    });
 
-    if (idx === 0) {
-      const insertResult = insertRunningSessionWithGuard(
-        { scope: "epic", projectId, epicId },
-        sessionValues
-      );
-      if (!insertResult.inserted) {
-        return NextResponse.json(
-          createAgentAlreadyRunningPayload(
-            { scope: "epic", projectId, epicId },
-            insertResult.conflict,
-            "Another agent is already running for this epic."
-          ),
-          { status: 409 }
-        );
-      }
-    } else {
-      db.insert(agentSessions).values(sessionValues).run();
-    }
-
-    try {
-      processManager.start(
-        sessionId,
-        {
-          mode: "plan",
-          prompt,
-          cwd: worktreePath,
-        },
-        provider
-      );
-    } catch (error) {
-      const failedAt = new Date().toISOString();
-      db.update(agentSessions)
-        .set({
-          status: "failed",
-          completedAt: failedAt,
-          error: error instanceof Error ? error.message : "Failed to start agent session",
-        })
-        .where(eq(agentSessions.id, sessionId))
-        .run();
-
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : "Failed to start agent session" },
-        { status: 500 }
-      );
-    }
+    markSessionRunning(sessionId, now);
+    processManager.start(sessionId, {
+      mode: "plan",
+      prompt,
+      cwd: worktreePath,
+    }, provider);
 
     // Background: wait for completion, post review as epic comment
     const label = REVIEW_LABELS[reviewType];
@@ -227,14 +210,20 @@ export async function POST(request: NextRequest, { params }: Params) {
           // ignore
         }
 
-        db.update(agentSessions)
-          .set({
-            status: result?.success ? "completed" : "failed",
-            completedAt,
-            error: result?.error || null,
-          })
-          .where(eq(agentSessions.id, sid))
-          .run();
+        try {
+          markSessionTerminal(
+            sid,
+            {
+              success: !!result?.success,
+              error: result?.error || null,
+            },
+            completedAt
+          );
+        } catch (error) {
+          if (!isSessionLifecycleConflictError(error)) {
+            console.error("[epic review] Failed to finalize session", error);
+          }
+        }
 
         const output = result?.result
           ? parseClaudeOutput(result.result).content

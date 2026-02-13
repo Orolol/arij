@@ -5,7 +5,6 @@ import {
   epics,
   userStories,
   documents,
-  agentSessions,
 } from "@/lib/db/schema";
 import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
@@ -26,6 +25,12 @@ import {
   getRunningSessionForTarget,
   insertRunningSessionWithGuard,
 } from "@/lib/agents/concurrency";
+import {
+  createQueuedSession,
+  isSessionLifecycleConflictError,
+  markSessionRunning,
+  markSessionTerminal,
+} from "@/lib/agent-sessions/lifecycle";
 
 export async function POST(
   request: NextRequest,
@@ -178,20 +183,16 @@ export async function POST(
       fs.mkdirSync(logsDir, { recursive: true });
       const logsPath = path.join(logsDir, "logs.json");
 
-      db.insert(agentSessions)
-        .values({
-          id: sessionId,
-          projectId,
-          status: "running",
-          mode: "code",
-          orchestrationMode: "team",
-          provider: "claude-code",
-          prompt,
-          logsPath,
-          startedAt: now,
-          createdAt: now,
-        })
-        .run();
+      createQueuedSession({
+        id: sessionId,
+        projectId,
+        mode: "code",
+        orchestrationMode: "team",
+        provider: "claude-code",
+        prompt,
+        logsPath,
+        createdAt: now,
+      });
 
       // Update project status
       db.update(projects)
@@ -200,33 +201,21 @@ export async function POST(
         .run();
 
       // Spawn single CC session from main repo root with Task in allowedTools
-      try {
-        processManager.start(sessionId, {
-          mode: "code",
-          prompt,
-          cwd: gitRepoPath,
-          allowedTools: [
-            "Edit",
-            "Write",
-            "Bash",
-            "Read",
-            "Glob",
-            "Grep",
-            "Task",
-          ],
-        });
-      } catch (error) {
-        const failedAt = new Date().toISOString();
-        db.update(agentSessions)
-          .set({
-            status: "failed",
-            completedAt: failedAt,
-            error: error instanceof Error ? error.message : "Failed to start agent session",
-          })
-          .where(eq(agentSessions.id, sessionId))
-          .run();
-        throw error;
-      }
+      markSessionRunning(sessionId, now);
+      processManager.start(sessionId, {
+        mode: "code",
+        prompt,
+        cwd: gitRepoPath,
+        allowedTools: [
+          "Edit",
+          "Write",
+          "Bash",
+          "Read",
+          "Glob",
+          "Grep",
+          "Task",
+        ],
+      });
 
       // Background: wait for completion, update all epic statuses
       const allEpicIds = epicRecords.map((e) => e.id);
@@ -246,14 +235,20 @@ export async function POST(
           // ignore
         }
 
-        db.update(agentSessions)
-          .set({
-            status: result?.success ? "completed" : "failed",
-            completedAt,
-            error: result?.error || null,
-          })
-          .where(eq(agentSessions.id, sessionId))
-          .run();
+        try {
+          markSessionTerminal(
+            sessionId,
+            {
+              success: !!result?.success,
+              error: result?.error || null,
+            },
+            completedAt
+          );
+        } catch (error) {
+          if (!isSessionLifecycleConflictError(error)) {
+            console.error("[build/team] Failed to finalize session", error);
+          }
+        }
 
         // Update all associated epics
         if (result?.success) {
@@ -321,32 +316,33 @@ export async function POST(
     fs.mkdirSync(logsDir, { recursive: true });
     const logsPath = path.join(logsDir, "logs.json");
 
-    const insertResult = insertRunningSessionWithGuard(
-      { scope: "epic", projectId, epicId },
-      {
-        id: sessionId,
-        projectId,
-        epicId,
-        status: "running",
-        mode: "code",
-        orchestrationMode: "solo",
-        provider,
-        prompt,
-        logsPath,
-        branchName,
-        worktreePath,
-        startedAt: now,
-        createdAt: now,
-      }
-    );
-
-    if (!insertResult.inserted) {
+    // Check concurrency guard first
+    const conflict = getRunningSessionForTarget({
+      scope: "epic",
+      projectId,
+      epicId,
+    });
+    if (conflict) {
       throw createAgentAlreadyRunningPayload(
         { scope: "epic", projectId, epicId },
-        insertResult.conflict,
+        conflict,
         "Another agent is already running for this epic."
       );
     }
+
+    createQueuedSession({
+      id: sessionId,
+      projectId,
+      epicId,
+      mode: "code",
+      orchestrationMode: "solo",
+      provider,
+      prompt,
+      logsPath,
+      branchName,
+      worktreePath,
+      createdAt: now,
+    });
 
     // Move epic to in_progress
     db.update(epics)
@@ -372,29 +368,13 @@ export async function POST(
       .run();
 
     // Spawn agent via process manager
-    try {
-      processManager.start(
-        sessionId,
-        {
-          mode: "code",
-          prompt,
-          cwd: worktreePath,
-          allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-        },
-        provider
-      );
-    } catch (error) {
-      const failedAt = new Date().toISOString();
-      db.update(agentSessions)
-        .set({
-          status: "failed",
-          completedAt: failedAt,
-          error: error instanceof Error ? error.message : "Failed to start agent session",
-        })
-        .where(eq(agentSessions.id, sessionId))
-        .run();
-      throw error;
-    }
+    markSessionRunning(sessionId, now);
+    processManager.start(sessionId, {
+      mode: "code",
+      prompt,
+      cwd: worktreePath,
+      allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+    }, provider);
 
     // Background: wait for completion and update DB
     (async () => {
@@ -413,14 +393,20 @@ export async function POST(
         // ignore
       }
 
-      db.update(agentSessions)
-        .set({
-          status: result?.success ? "completed" : "failed",
-          completedAt,
-          error: result?.error || null,
-        })
-        .where(eq(agentSessions.id, sessionId))
-        .run();
+      try {
+        markSessionTerminal(
+          sessionId,
+          {
+            success: !!result?.success,
+            error: result?.error || null,
+          },
+          completedAt
+        );
+      } catch (error) {
+        if (!isSessionLifecycleConflictError(error)) {
+          console.error("[build/solo] Failed to finalize session", error);
+        }
+      }
 
       // Move epic + US to review if successful
       if (result?.success) {

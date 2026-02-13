@@ -3,7 +3,6 @@ import { db } from "@/lib/db";
 import {
   projects,
   epics,
-  agentSessions,
   ticketComments,
   settings,
 } from "@/lib/db/schema";
@@ -22,10 +21,16 @@ import type { ProviderType } from "@/lib/providers";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import {
   createAgentAlreadyRunningPayload,
-  insertRunningSessionWithGuard,
+  getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
 import fs from "fs";
 import path from "path";
+import {
+  createQueuedSession,
+  isSessionLifecycleConflictError,
+  markSessionRunning,
+  markSessionTerminal,
+} from "@/lib/agent-sessions/lifecycle";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -135,63 +140,44 @@ export async function POST(request: NextRequest, { params }: Params) {
   fs.mkdirSync(logsDir, { recursive: true });
   const logsPath = path.join(logsDir, "logs.json");
 
-  const insertResult = insertRunningSessionWithGuard(
-    { scope: "epic", projectId, epicId },
-    {
-      id: sessionId,
-      projectId,
-      epicId,
-      status: "running",
-      mode: "code",
-      provider,
-      prompt,
-      logsPath,
-      branchName,
-      worktreePath,
-      startedAt: now,
-      createdAt: now,
-    }
-  );
-
-  if (!insertResult.inserted) {
+  // Check concurrency guard
+  const conflict = getRunningSessionForTarget({
+    scope: "epic",
+    projectId,
+    epicId,
+  });
+  if (conflict) {
     return NextResponse.json(
       createAgentAlreadyRunningPayload(
         { scope: "epic", projectId, epicId },
-        insertResult.conflict,
+        conflict,
         "Another agent is already running for this epic."
       ),
       { status: 409 }
     );
   }
 
-  // Spawn agent in the worktree
-  try {
-    processManager.start(
-      sessionId,
-      {
-        mode: "code",
-        prompt,
-        cwd: worktreePath,
-        allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-      },
-      provider
-    );
-  } catch (error) {
-    const failedAt = new Date().toISOString();
-    db.update(agentSessions)
-      .set({
-        status: "failed",
-        completedAt: failedAt,
-        error: error instanceof Error ? error.message : "Failed to start agent session",
-      })
-      .where(eq(agentSessions.id, sessionId))
-      .run();
+  createQueuedSession({
+    id: sessionId,
+    projectId,
+    epicId,
+    mode: "code",
+    provider,
+    prompt,
+    logsPath,
+    branchName,
+    worktreePath,
+    createdAt: now,
+  });
 
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to start agent session" },
-      { status: 500 }
-    );
-  }
+  // Spawn agent in the worktree
+  markSessionRunning(sessionId, now);
+  processManager.start(sessionId, {
+    mode: "code",
+    prompt,
+    cwd: worktreePath,
+    allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+  }, provider);
 
   // Background completion handler
   (async () => {
@@ -210,14 +196,20 @@ export async function POST(request: NextRequest, { params }: Params) {
       // ignore
     }
 
-    db.update(agentSessions)
-      .set({
-        status: result?.success ? "completed" : "failed",
-        completedAt,
-        error: result?.error || null,
-      })
-      .where(eq(agentSessions.id, sessionId))
-      .run();
+    try {
+      markSessionTerminal(
+        sessionId,
+        {
+          success: !!result?.success,
+          error: result?.error || null,
+        },
+        completedAt
+      );
+    } catch (error) {
+      if (!isSessionLifecycleConflictError(error)) {
+        console.error("[resolve merge] Failed to finalize session", error);
+      }
+    }
 
     // On success: attempt the final merge into main
     if (result?.success) {

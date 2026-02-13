@@ -5,7 +5,6 @@ import {
   epics,
   userStories,
   documents,
-  agentSessions,
   ticketComments,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -24,8 +23,14 @@ import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { REVIEW_TYPE_TO_AGENT_TYPE } from "@/lib/agent-config/constants";
 import {
   createAgentAlreadyRunningPayload,
-  insertRunningSessionWithGuard,
+  getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import {
+  createQueuedSession,
+  isSessionLifecycleConflictError,
+  markSessionRunning,
+  markSessionTerminal,
+} from "@/lib/agent-sessions/lifecycle";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
@@ -171,68 +176,47 @@ export async function POST(request: NextRequest, { params }: Params) {
     fs.mkdirSync(logsDir, { recursive: true });
     const logsPath = path.join(logsDir, "logs.json");
 
-    const sessionValues = {
+    // For the first review, check concurrency guard
+    if (idx === 0) {
+      const conflict = getRunningSessionForTarget({
+        scope: "story",
+        projectId,
+        storyId,
+        epicId: epic.id,
+      });
+      if (conflict) {
+        return NextResponse.json(
+          createAgentAlreadyRunningPayload(
+            { scope: "story", projectId, storyId, epicId: epic.id },
+            conflict,
+            "Another agent is already running for this story."
+          ),
+          { status: 409 }
+        );
+      }
+    }
+
+    createQueuedSession({
       id: sessionId,
       projectId,
       epicId: epic.id,
       userStoryId: storyId,
-      status: "running",
       mode: "plan",
       provider,
       prompt,
       logsPath,
       branchName,
       worktreePath,
-      startedAt: now,
       createdAt: now,
-    } as const;
-
-    if (idx === 0) {
-      const insertResult = insertRunningSessionWithGuard(
-        { scope: "story", projectId, storyId, epicId: epic.id },
-        sessionValues
-      );
-      if (!insertResult.inserted) {
-        return NextResponse.json(
-          createAgentAlreadyRunningPayload(
-            { scope: "story", projectId, storyId, epicId: epic.id },
-            insertResult.conflict,
-            "Another agent is already running for this story."
-          ),
-          { status: 409 }
-        );
-      }
-    } else {
-      db.insert(agentSessions).values(sessionValues).run();
-    }
+    });
 
     // Spawn agent in plan mode (read-only)
-    try {
-      processManager.start(
-        sessionId,
-        {
-          mode: "plan",
-          prompt,
-          cwd: worktreePath,
-        },
-        provider
-      );
-    } catch (error) {
-      const failedAt = new Date().toISOString();
-      db.update(agentSessions)
-        .set({
-          status: "failed",
-          completedAt: failedAt,
-          error: error instanceof Error ? error.message : "Failed to start agent session",
-        })
-        .where(eq(agentSessions.id, sessionId))
-        .run();
-
-      return NextResponse.json(
-        { error: error instanceof Error ? error.message : "Failed to start agent session" },
-        { status: 500 }
-      );
-    }
+    markSessionRunning(sessionId, now);
+    processManager.start(sessionId, {
+      mode: "plan",
+      prompt,
+      cwd: worktreePath,
+    }, provider);
 
     // Background: wait for completion, post review comment
     const label = REVIEW_LABELS[reviewType];
@@ -255,14 +239,20 @@ export async function POST(request: NextRequest, { params }: Params) {
         }
 
         // Update session
-        db.update(agentSessions)
-          .set({
-            status: result?.success ? "completed" : "failed",
-            completedAt,
-            error: result?.error || null,
-          })
-          .where(eq(agentSessions.id, sid))
-          .run();
+        try {
+          markSessionTerminal(
+            sid,
+            {
+              success: !!result?.success,
+              error: result?.error || null,
+            },
+            completedAt
+          );
+        } catch (error) {
+          if (!isSessionLifecycleConflictError(error)) {
+            console.error("[story review] Failed to finalize session", error);
+          }
+        }
 
         // Post review as comment with label
         const output = result?.result
