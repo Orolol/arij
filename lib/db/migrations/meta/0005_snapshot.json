@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "279fbf7f-edcb-4dd4-aded-0b1426cdfa7b",
+  "id": "98ede757-5842-4b54-8446-f340b081c424",
   "prevId": "6685d4e7-7159-471c-9431-dd642e834ced",
   "tables": {
     "agent_prompts": {
@@ -1159,6 +1159,27 @@
         },
         "git_tag": {
           "name": "git_tag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "github_release_id": {
+          "name": "github_release_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "github_release_url": {
+          "name": "github_release_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pushed_at": {
+          "name": "pushed_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
