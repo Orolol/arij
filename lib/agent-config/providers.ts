@@ -8,6 +8,9 @@ export type ProviderSource = "builtin" | "global" | "project";
 export interface ResolvedAgentProvider {
   agentType: AgentType;
   provider: AgentProvider;
+  namedAgentId: string | null;
+  namedAgentName: string | null;
+  namedAgentModel: string | null;
   source: ProviderSource;
   scope: string;
 }
@@ -57,17 +60,50 @@ export async function resolveAgentProvider(
   return FALLBACK_PROVIDER;
 }
 
+interface ProviderRow {
+  agentType: string;
+  provider: string;
+  namedAgentId: string | null;
+  scope: string;
+}
+
+interface MappedRow {
+  provider: AgentProvider;
+  namedAgentId: string | null;
+  scope: string;
+}
+
 function mapProviderRowsByType(
-  rows: Array<{ agentType: string; provider: string; scope: string }>
-): Map<string, { provider: AgentProvider; scope: string }> {
-  const map = new Map<string, { provider: AgentProvider; scope: string }>();
+  rows: ProviderRow[]
+): Map<string, MappedRow> {
+  const map = new Map<string, MappedRow>();
   for (const row of rows) {
     map.set(row.agentType, {
       provider: normalizeProvider(row.provider),
+      namedAgentId: row.namedAgentId,
       scope: row.scope,
     });
   }
   return map;
+}
+
+function resolveNamedAgentInfo(namedAgentId: string | null): {
+  namedAgentId: string | null;
+  namedAgentName: string | null;
+  namedAgentModel: string | null;
+} {
+  if (!namedAgentId) {
+    return { namedAgentId: null, namedAgentName: null, namedAgentModel: null };
+  }
+  const agent = db
+    .select({ name: namedAgents.name, model: namedAgents.model })
+    .from(namedAgents)
+    .where(eq(namedAgents.id, namedAgentId))
+    .get();
+  if (!agent) {
+    return { namedAgentId: null, namedAgentName: null, namedAgentModel: null };
+  }
+  return { namedAgentId, namedAgentName: agent.name, namedAgentModel: agent.model };
 }
 
 export async function listGlobalAgentProviders(): Promise<ResolvedAgentProvider[]> {
@@ -75,6 +111,7 @@ export async function listGlobalAgentProviders(): Promise<ResolvedAgentProvider[
     .select({
       agentType: agentProviderDefaults.agentType,
       provider: agentProviderDefaults.provider,
+      namedAgentId: agentProviderDefaults.namedAgentId,
       scope: agentProviderDefaults.scope,
     })
     .from(agentProviderDefaults)
@@ -89,6 +126,7 @@ export async function listGlobalAgentProviders(): Promise<ResolvedAgentProvider[
       return {
         agentType,
         provider: row.provider,
+        ...resolveNamedAgentInfo(row.namedAgentId),
         source: "global" as const,
         scope: "global",
       };
@@ -97,6 +135,9 @@ export async function listGlobalAgentProviders(): Promise<ResolvedAgentProvider[
     return {
       agentType,
       provider: FALLBACK_PROVIDER,
+      namedAgentId: null,
+      namedAgentName: null,
+      namedAgentModel: null,
       source: "builtin" as const,
       scope: "global",
     };
@@ -110,6 +151,7 @@ export async function listMergedProjectAgentProviders(
     .select({
       agentType: agentProviderDefaults.agentType,
       provider: agentProviderDefaults.provider,
+      namedAgentId: agentProviderDefaults.namedAgentId,
       scope: agentProviderDefaults.scope,
     })
     .from(agentProviderDefaults)
@@ -120,6 +162,7 @@ export async function listMergedProjectAgentProviders(
     .select({
       agentType: agentProviderDefaults.agentType,
       provider: agentProviderDefaults.provider,
+      namedAgentId: agentProviderDefaults.namedAgentId,
       scope: agentProviderDefaults.scope,
     })
     .from(agentProviderDefaults)
@@ -135,6 +178,7 @@ export async function listMergedProjectAgentProviders(
       return {
         agentType,
         provider: projectRow.provider,
+        ...resolveNamedAgentInfo(projectRow.namedAgentId),
         source: "project" as const,
         scope: projectId,
       };
@@ -145,6 +189,7 @@ export async function listMergedProjectAgentProviders(
       return {
         agentType,
         provider: globalRow.provider,
+        ...resolveNamedAgentInfo(globalRow.namedAgentId),
         source: "global" as const,
         scope: "global",
       };
@@ -153,6 +198,9 @@ export async function listMergedProjectAgentProviders(
     return {
       agentType,
       provider: FALLBACK_PROVIDER,
+      namedAgentId: null,
+      namedAgentName: null,
+      namedAgentModel: null,
       source: "builtin" as const,
       scope: "global",
     };
