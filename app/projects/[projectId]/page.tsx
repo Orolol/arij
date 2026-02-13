@@ -24,7 +24,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug, Search, GitMerge, Lock } from "lucide-react";
+import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug, Search, GitMerge, Lock, Bot } from "lucide-react";
 import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
 import type { KanbanEpicAgentActivity } from "@/lib/types/kanban";
 
@@ -47,6 +47,7 @@ export default function KanbanPage() {
     "parallel"
   );
   const [teamMode, setTeamMode] = useState(false);
+  const [autoMergeAgent, setAutoMergeAgent] = useState(false);
   const [provider, setProvider] = useState<ProviderType>("claude-code");
   const [building, setBuilding] = useState(false);
   const [reviewing, setReviewing] = useState(false);
@@ -274,14 +275,24 @@ export default function KanbanPage() {
 
     let merged = 0;
     let failed = 0;
+    let agentLaunched = 0;
     for (const epicId of batch.allSelected) {
       try {
         const res = await fetch(
           `/api/projects/${projectId}/epics/${epicId}/merge`,
-          { method: "POST" }
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ autoAgent: autoMergeAgent }),
+          }
         );
         if (res.ok) {
-          merged++;
+          const data = await res.json();
+          if (data.data?.autoAgent) {
+            agentLaunched++;
+          } else {
+            merged++;
+          }
         } else {
           failed++;
         }
@@ -292,6 +303,12 @@ export default function KanbanPage() {
 
     if (merged > 0) {
       addToast("success", `Merged ${merged} epic${merged > 1 ? "s" : ""}`);
+    }
+    if (agentLaunched > 0) {
+      addToast(
+        "success",
+        `Launched merge-fix agent for ${agentLaunched} epic${agentLaunched > 1 ? "s" : ""}`
+      );
     }
     if (failed > 0) {
       addToast("error", `${failed} merge${failed > 1 ? "s" : ""} failed`);
@@ -446,20 +463,42 @@ export default function KanbanPage() {
 
                 {/* Merge all — appears when multiple selected */}
                 {totalSelected >= 2 && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleBatchMerge}
-                    disabled={batchMerging}
-                    className="h-7 text-xs"
-                  >
-                    {batchMerging ? (
-                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                    ) : (
-                      <GitMerge className="h-3 w-3 mr-1" />
-                    )}
-                    Merge all
-                  </Button>
+                  <>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={autoMergeAgent}
+                              onChange={(e) => setAutoMergeAgent(e.target.checked)}
+                              className="h-3.5 w-3.5 rounded border-border"
+                              data-testid="auto-merge-agent-checkbox"
+                            />
+                            <Bot className="h-3 w-3" />
+                            Auto-fix
+                          </label>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          When a merge fails, automatically launch an agent to resolve conflicts
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleBatchMerge}
+                      disabled={batchMerging}
+                      className="h-7 text-xs"
+                    >
+                      {batchMerging ? (
+                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                      ) : (
+                        <GitMerge className="h-3 w-3 mr-1" />
+                      )}
+                      Merge all
+                    </Button>
+                  </>
                 )}
 
                 <Button

@@ -178,8 +178,12 @@ describe("Kanban Build Toolbar", () => {
     render(<KanbanPage />);
     fireEvent.click(screen.getByTestId("toggle-epic1"));
     fireEvent.click(screen.getByTestId("toggle-epic2"));
-    const checkbox = screen.getByRole("checkbox");
-    expect(checkbox).not.toBeDisabled();
+    const checkboxes = screen.getAllByRole("checkbox");
+    const teamCheckbox = checkboxes.find(
+      (cb) => cb.closest("label")?.textContent?.includes("Team mode")
+    );
+    expect(teamCheckbox).toBeTruthy();
+    expect(teamCheckbox).not.toBeDisabled();
   });
 
   it("team mode checkbox is disabled with codex provider", () => {
@@ -190,8 +194,12 @@ describe("Kanban Build Toolbar", () => {
     // Switch to codex
     const select = screen.getByTestId("build-provider-select");
     fireEvent.change(select, { target: { value: "codex" } });
-    const checkbox = screen.getByRole("checkbox");
-    expect(checkbox).toBeDisabled();
+    const checkboxes = screen.getAllByRole("checkbox");
+    const teamCheckbox = checkboxes.find(
+      (cb) => cb.closest("label")?.textContent?.includes("Team mode")
+    );
+    expect(teamCheckbox).toBeTruthy();
+    expect(teamCheckbox).toBeDisabled();
   });
 
   it("build button shows 'Build as Team' when team mode enabled", () => {
@@ -199,8 +207,11 @@ describe("Kanban Build Toolbar", () => {
     fireEvent.click(screen.getByTestId("toggle-epic1"));
     fireEvent.click(screen.getByTestId("toggle-epic2"));
     // Enable team mode
-    const checkbox = screen.getByRole("checkbox");
-    fireEvent.click(checkbox);
+    const checkboxes = screen.getAllByRole("checkbox");
+    const teamCheckbox = checkboxes.find(
+      (cb) => cb.closest("label")?.textContent?.includes("Team mode")
+    )!;
+    fireEvent.click(teamCheckbox);
     expect(screen.getByText("Build as Team")).toBeInTheDocument();
   });
 
@@ -221,8 +232,11 @@ describe("Kanban Build Toolbar", () => {
     fireEvent.click(screen.getByTestId("toggle-epic2"));
 
     // Enable team mode
-    const checkbox = screen.getByRole("checkbox");
-    fireEvent.click(checkbox);
+    const checkboxes = screen.getAllByRole("checkbox");
+    const teamCheckbox = checkboxes.find(
+      (cb) => cb.closest("label")?.textContent?.includes("Team mode")
+    )!;
+    fireEvent.click(teamCheckbox);
 
     // Click build
     fireEvent.click(screen.getByText("Build as Team"));
@@ -255,5 +269,46 @@ describe("Kanban Build Toolbar", () => {
 
     fireEvent.click(screen.getByText("Clear"));
     expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+  });
+
+  it("shows auto-fix checkbox when 2+ epics selected", () => {
+    render(<KanbanPage />);
+    fireEvent.click(screen.getByTestId("toggle-epic1"));
+    fireEvent.click(screen.getByTestId("toggle-epic2"));
+    expect(screen.getByText("Auto-fix")).toBeInTheDocument();
+    expect(screen.getByTestId("auto-merge-agent-checkbox")).toBeInTheDocument();
+  });
+
+  it("does not show auto-fix checkbox with < 2 epics", () => {
+    render(<KanbanPage />);
+    fireEvent.click(screen.getByTestId("toggle-epic1"));
+    expect(screen.queryByText("Auto-fix")).not.toBeInTheDocument();
+  });
+
+  it("sends autoAgent in merge request when auto-fix is enabled", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: { merged: true } }),
+    });
+    global.fetch = mockFetch;
+
+    render(<KanbanPage />);
+    fireEvent.click(screen.getByTestId("toggle-epic1"));
+    fireEvent.click(screen.getByTestId("toggle-epic2"));
+
+    // Enable auto-fix
+    fireEvent.click(screen.getByTestId("auto-merge-agent-checkbox"));
+
+    // Click Merge all
+    fireEvent.click(screen.getByText("Merge all"));
+
+    await waitFor(() => {
+      const mergeCalls = mockFetch.mock.calls.filter(
+        (c: unknown[]) => typeof c[0] === "string" && c[0].includes("/merge")
+      );
+      expect(mergeCalls.length).toBeGreaterThan(0);
+      const body = JSON.parse(mergeCalls[0][1].body);
+      expect(body.autoAgent).toBe(true);
+    });
   });
 });
