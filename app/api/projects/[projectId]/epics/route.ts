@@ -28,6 +28,9 @@ export async function GET(
       evidence: epics.evidence,
       createdAt: epics.createdAt,
       updatedAt: epics.updatedAt,
+      type: epics.type,
+      linkedEpicId: epics.linkedEpicId,
+      images: epics.images,
       usCount: sql<number>`(SELECT COUNT(*) FROM user_stories WHERE user_stories.epic_id = "epics"."id")`,
       usDone: sql<number>`(SELECT COUNT(*) FROM user_stories WHERE user_stories.epic_id = "epics"."id" AND user_stories.status = 'done')`,
     })
@@ -99,6 +102,9 @@ export async function POST(
       evidence: body.evidence || null,
       createdAt: now,
       updatedAt: now,
+      type: body.type || "feature",
+      linkedEpicId: body.linkedEpicId || null,
+      images: body.images ? JSON.stringify(body.images) : null,
     })
     .run();
 
