@@ -27,6 +27,7 @@ interface EpicCardProps {
   isOverlay?: boolean;
   isRunning?: boolean;
   activeAgentActivity?: KanbanEpicAgentActivity;
+  onLinkedAgentHoverChange?: (activityId: string | null) => void;
   onClick?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
@@ -45,6 +46,7 @@ export function EpicCard({
   epic,
   isOverlay,
   activeAgentActivity,
+  onLinkedAgentHoverChange,
   onClick,
   selected,
   onToggleSelect,
@@ -68,6 +70,7 @@ export function EpicCard({
   const activityConfig = activeAgentActivity
     ? ACTIVITY_ICON_BY_TYPE[activeAgentActivity.actionType]
     : null;
+  const linkedActivityId = activeAgentActivity?.sessionId ?? null;
   const activityTooltip = activityConfig
     ? `${activityConfig.label} active: ${activeAgentActivity.agentName}`
     : null;
@@ -79,6 +82,21 @@ export function EpicCard({
       {...attributes}
       {...listeners}
       onClick={onClick}
+      onMouseEnter={() => {
+        if (!linkedActivityId) return;
+        onLinkedAgentHoverChange?.(linkedActivityId);
+      }}
+      onMouseLeave={() => onLinkedAgentHoverChange?.(null)}
+      onFocusCapture={() => {
+        if (!linkedActivityId) return;
+        onLinkedAgentHoverChange?.(linkedActivityId);
+      }}
+      onBlurCapture={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          return;
+        }
+        onLinkedAgentHoverChange?.(null);
+      }}
       className={`p-2 gap-0 rounded-md shadow-none cursor-pointer hover:bg-accent/50 transition-colors ${
         isOverlay ? "shadow-lg" : ""
       } ${isDragging ? "shadow-md" : ""} ${

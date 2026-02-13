@@ -49,6 +49,7 @@ export default function KanbanPage() {
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [bugDialogOpen, setBugDialogOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [highlightedActivityId, setHighlightedActivityId] = useState<string | null>(null);
   const { activities } = useAgentPolling(projectId);
   const { codexAvailable, codexInstalled } = useCodexAvailable();
   const prevSessionIds = useRef<Set<string>>(new Set());
@@ -89,6 +90,13 @@ export default function KanbanPage() {
       ),
     [activities]
   );
+
+  useEffect(() => {
+    if (!highlightedActivityId) return;
+    if (!activities.some((activity) => activity.id === highlightedActivityId)) {
+      setHighlightedActivityId(null);
+    }
+  }, [activities, highlightedActivityId]);
 
   function addToast(
     type: "success" | "error",
@@ -347,11 +355,16 @@ export default function KanbanPage() {
                 refreshTrigger={refreshTrigger}
                 runningEpicIds={runningEpicIds}
                 activeAgentActivities={activeAgentActivities}
+                onLinkedAgentHoverChange={setHighlightedActivityId}
               />
             </div>
 
             {/* Agent monitor bar */}
-            <AgentMonitor projectId={projectId} activities={activities} />
+            <AgentMonitor
+              projectId={projectId}
+              activities={activities}
+              highlightedActivityId={highlightedActivityId}
+            />
           </div>
         </UnifiedChatPanel>
       </div>

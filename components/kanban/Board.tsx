@@ -33,6 +33,7 @@ interface BoardProps {
   refreshTrigger?: number;
   runningEpicIds?: Set<string>;
   activeAgentActivities?: Record<string, KanbanEpicAgentActivity>;
+  onLinkedAgentHoverChange?: (activityId: string | null) => void;
 }
 
 export function Board({
@@ -43,6 +44,7 @@ export function Board({
   refreshTrigger,
   runningEpicIds,
   activeAgentActivities,
+  onLinkedAgentHoverChange,
 }: BoardProps) {
   const { board, loading, moveEpic, refresh } = useKanban(projectId);
 
@@ -135,6 +137,7 @@ export function Board({
             onToggleSelect={onToggleSelect}
             runningEpicIds={runningEpicIds}
             activeAgentActivities={activeAgentActivities}
+            onLinkedAgentHoverChange={onLinkedAgentHoverChange}
           />
         ))}
       </div>
@@ -146,6 +149,7 @@ export function Board({
               isOverlay
               isRunning={runningEpicIds?.has(activeEpic.id) || false}
               activeAgentActivity={activeAgentActivities?.[activeEpic.id]}
+              onLinkedAgentHoverChange={onLinkedAgentHoverChange}
             />
           </div>
         )}
