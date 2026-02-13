@@ -1,4 +1,12 @@
-import { getOctokit } from "@/lib/github/client";
+import { getGitHubTokenFromSettings, createGitHubClient } from "@/lib/github/client";
+
+function getOctokit() {
+  const token = getGitHubTokenFromSettings();
+  if (!token) {
+    throw new Error("GitHub PAT not configured. Set it in project settings.");
+  }
+  return createGitHubClient(token);
+}
 
 /**
  * Creates a draft GitHub release for a tag.
@@ -11,7 +19,7 @@ export async function createDraftRelease(params: {
   body: string;
 }): Promise<{ id: number; url: string }> {
   const octokit = getOctokit();
-  const { data } = await octokit.repos.createRelease({
+  const { data } = await octokit.rest.repos.createRelease({
     owner: params.owner,
     repo: params.repo,
     tag_name: params.tag,
@@ -31,7 +39,7 @@ export async function publishRelease(params: {
   releaseId: number;
 }): Promise<{ url: string }> {
   const octokit = getOctokit();
-  const { data } = await octokit.repos.updateRelease({
+  const { data } = await octokit.rest.repos.updateRelease({
     owner: params.owner,
     repo: params.repo,
     release_id: params.releaseId,

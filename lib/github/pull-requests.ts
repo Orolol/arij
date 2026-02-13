@@ -1,4 +1,4 @@
-import { getOctokit } from "@/lib/github/client";
+import { getGitHubTokenFromSettings, createGitHubClient } from "@/lib/github/client";
 
 interface EpicForPr {
   title: string;
@@ -66,7 +66,11 @@ interface PullRequestResult {
 export async function createPullRequest(
   params: CreatePullRequestParams
 ): Promise<PullRequestResult> {
-  const octokit = getOctokit();
+  const token = getGitHubTokenFromSettings();
+  if (!token) {
+    throw new Error("GitHub PAT not configured. Set it in Settings.");
+  }
+  const octokit = createGitHubClient(token);
 
   const { data } = await octokit.pulls.create({
     owner: params.owner,
@@ -96,7 +100,11 @@ export async function fetchPrStatus(
   repo: string,
   prNumber: number
 ): Promise<{ status: "draft" | "open" | "closed" | "merged"; title: string }> {
-  const octokit = getOctokit();
+  const token = getGitHubTokenFromSettings();
+  if (!token) {
+    throw new Error("GitHub PAT not configured. Set it in Settings.");
+  }
+  const octokit = createGitHubClient(token);
 
   const { data } = await octokit.pulls.get({
     owner,

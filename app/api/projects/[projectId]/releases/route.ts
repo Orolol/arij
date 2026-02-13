@@ -11,9 +11,8 @@ import { createId } from "@/lib/utils/nanoid";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import simpleGit from "simple-git";
-import { pushTag } from "@/lib/git/remote";
 import { createDraftRelease } from "@/lib/github/releases";
-import { logSyncOperation } from "@/lib/github/sync-log";
+import { writeGitSyncLog } from "@/lib/github/sync-log";
 import { activityRegistry } from "@/lib/activity-registry";
 
 export async function GET(
@@ -172,21 +171,22 @@ ${epicSummaries}
 
     // Push tag to remote
     try {
-      await pushTag(project.gitRepoPath, gitTag);
-      logSyncOperation({
+      const git = simpleGit(project.gitRepoPath);
+      await git.push("origin", gitTag);
+      writeGitSyncLog({
         projectId,
-        operation: "tag",
+        operation: "push",
         status: "success",
-        detail: JSON.stringify({ tag: gitTag, action: "push" }),
+        detail: { tag: gitTag, action: "push" },
       });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       githubErrors.push(`Tag push failed: ${errorMsg}`);
-      logSyncOperation({
+      writeGitSyncLog({
         projectId,
-        operation: "tag",
-        status: "failure",
-        detail: JSON.stringify({ tag: gitTag, error: errorMsg }),
+        operation: "push",
+        status: "failed",
+        detail: { tag: gitTag, error: errorMsg },
       });
     }
 
@@ -205,24 +205,20 @@ ${epicSummaries}
       githubReleaseId = ghRelease.id;
       githubReleaseUrl = ghRelease.url;
       pushedAt = new Date().toISOString();
-      logSyncOperation({
+      writeGitSyncLog({
         projectId,
-        operation: "release",
+        operation: "push",
         status: "success",
-        detail: JSON.stringify({
-          releaseId: ghRelease.id,
-          tag: gitTag,
-          draft: true,
-        }),
+        detail: { releaseId: ghRelease.id, tag: gitTag, draft: true },
       });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       githubErrors.push(`GitHub release creation failed: ${errorMsg}`);
-      logSyncOperation({
+      writeGitSyncLog({
         projectId,
-        operation: "release",
-        status: "failure",
-        detail: JSON.stringify({ tag: gitTag, error: errorMsg }),
+        operation: "push",
+        status: "failed",
+        detail: { tag: gitTag, error: errorMsg },
       });
     }
   }
