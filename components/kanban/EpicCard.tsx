@@ -12,8 +12,6 @@ import {
   type KanbanEpicAgentActivity,
 } from "@/lib/types/kanban";
 import {
-  Square,
-  CheckSquare,
   GitPullRequest,
   Hammer,
   Search,
@@ -107,33 +105,26 @@ export function EpicCard({
       } ${epic.type === "bug" ? "border-l-2 border-l-red-500" : ""}`}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
-        <div className="flex items-start gap-2 flex-1 min-w-0">
-          {onToggleSelect && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onToggleSelect();
-              }}
-              className="shrink-0 mt-0.5 text-muted-foreground hover:text-foreground"
-            >
-              {selected ? (
-                <CheckSquare className="h-4 w-4 text-primary" />
-              ) : (
-                <Square className="h-4 w-4" />
-              )}
-            </button>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-start gap-2">
+            {activityConfig && (
+              <span
+                className="shrink-0 mt-0.5 inline-flex items-center justify-center rounded-sm bg-yellow-500/10 text-yellow-600 p-0.5"
+                title={activityTooltip ?? undefined}
+                aria-label={activityTooltip ?? undefined}
+                data-testid={`epic-activity-${epic.id}`}
+              >
+                <activityConfig.Icon className="h-3.5 w-3.5" />
+              </span>
+            )}
+            <div className="flex-1 min-w-0">
+              <span className="text-xs text-muted-foreground font-mono">{epic.id}</span>
+              <h4 className="text-sm font-medium leading-tight truncate">{epic.title}</h4>
+            </div>
+          </div>
+          {epic.description && (
+            <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{epic.description}</p>
           )}
-          {activityConfig && (
-            <span
-              className="shrink-0 mt-0.5 inline-flex items-center justify-center rounded-sm bg-yellow-500/10 text-yellow-600 p-0.5"
-              title={activityTooltip ?? undefined}
-              aria-label={activityTooltip ?? undefined}
-              data-testid={`epic-activity-${epic.id}`}
-            >
-              <activityConfig.Icon className="h-3.5 w-3.5" />
-            </span>
-          )}
-          <h4 className="text-sm font-medium leading-tight truncate">{epic.title}</h4>
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {hasUnreadAiUpdate && (
