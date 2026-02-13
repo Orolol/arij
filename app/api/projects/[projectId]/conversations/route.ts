@@ -9,6 +9,7 @@ import {
   normalizeLegacyConversationStatus,
   sortConversationsForLegacyParity,
 } from "@/lib/chat/parity-contract";
+import { runUnifiedChatCutoverMigrationOnce } from "@/lib/chat/unified-cutover-migration";
 
 function normalizeConversationsForParity<T extends {
   id: string;
@@ -30,6 +31,7 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
+  runUnifiedChatCutoverMigrationOnce(projectId);
 
   let conversations = db
     .select()
