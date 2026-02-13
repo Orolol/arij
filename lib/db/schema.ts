@@ -5,6 +5,7 @@ import {
   real,
   index,
   uniqueIndex,
+  AnySQLiteColumn,
 } from "drizzle-orm/sqlite-core";
 import { sql } from "drizzle-orm";
 
@@ -50,6 +51,9 @@ export const epics = sqliteTable("epics", {
   evidence: text("evidence"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  type: text("type").default("feature"), // 'feature' | 'bug'
+  linkedEpicId: text("linked_epic_id").references((): AnySQLiteColumn => epics.id, { onDelete: "set null" }),
+  images: text("images"), // JSON array of image paths
 });
 
 export const userStories = sqliteTable("user_stories", {
