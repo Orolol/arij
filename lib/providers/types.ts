@@ -5,7 +5,7 @@
  * review routes, and the process manager can work with either backend.
  */
 
-export type ProviderType = "claude-code" | "codex";
+export type ProviderType = "claude-code" | "codex" | "gemini-cli";
 
 export type ProviderChunkStreamType = "response" | "raw" | "output";
 

@@ -25,12 +25,15 @@ function isCodexLoggedIn(): boolean {
 
 export async function GET() {
   const codexOnPath = isOnPath("codex");
+  const geminiOnPath = isOnPath("gemini");
 
   return NextResponse.json({
     data: {
       "claude-code": isOnPath("claude"),
       codex: codexOnPath && isCodexLoggedIn(),
       codexInstalled: codexOnPath,
+      "gemini-cli": geminiOnPath,
+      geminiInstalled: geminiOnPath,
     },
   });
 }
