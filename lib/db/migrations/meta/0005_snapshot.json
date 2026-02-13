@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "e0bc1d81-290b-4665-ab7d-1f1231f953b2",
-  "prevId": "9a8ed7d1-bbc2-42f4-9e59-d815bf84d8d4",
+  "id": "98ede757-5842-4b54-8446-f340b081c424",
+  "prevId": "6685d4e7-7159-471c-9431-dd642e834ced",
   "tables": {
     "agent_prompts": {
       "name": "agent_prompts",
@@ -839,18 +839,18 @@
           "notNull": true,
           "autoincrement": false
         },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
         "branch": {
           "name": "branch",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
+          "autoincrement": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
           "autoincrement": false
         },
         "detail": {
@@ -1020,6 +1020,27 @@
         },
         "git_tag": {
           "name": "git_tag",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "github_release_id": {
+          "name": "github_release_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "github_release_url": {
+          "name": "github_release_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "pushed_at": {
+          "name": "pushed_at",
           "type": "text",
           "primaryKey": false,
           "notNull": false,

@@ -177,6 +177,9 @@ export const releases = sqliteTable("releases", {
   changelog: text("changelog"), // markdown
   epicIds: text("epic_ids"), // JSON array of epic IDs
   gitTag: text("git_tag"),
+  githubReleaseId: integer("github_release_id"),
+  githubReleaseUrl: text("github_release_url"),
+  pushedAt: text("pushed_at"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -265,3 +268,6 @@ export type NewCustomReviewAgent = typeof customReviewAgents.$inferInsert;
 
 export type AgentProviderDefault = typeof agentProviderDefaults.$inferSelect;
 export type NewAgentProviderDefault = typeof agentProviderDefaults.$inferInsert;
+
+export type Release = typeof releases.$inferSelect;
+export type NewRelease = typeof releases.$inferInsert;
