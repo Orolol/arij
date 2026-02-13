@@ -23,7 +23,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare } from "lucide-react";
+import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug } from "lucide-react";
+import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
 
 interface Toast {
   id: string;
@@ -45,6 +46,7 @@ export default function KanbanPage() {
   const [provider, setProvider] = useState<ProviderType>("claude-code");
   const [building, setBuilding] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
+  const [bugDialogOpen, setBugDialogOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const { activities } = useAgentPolling(projectId);
   const { codexAvailable, codexInstalled } = useCodexAvailable();
@@ -211,6 +213,15 @@ export default function KanbanPage() {
                 <Plus className="h-3 w-3 mr-1" />
                 New Epic
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setBugDialogOpen(true)}
+                className="h-7 text-xs text-red-400 border-red-400/30 hover:bg-red-400/10"
+              >
+                <Bug className="h-3 w-3 mr-1" />
+                New Bug
+              </Button>
             </div>
 
             {/* Build toolbar */}
@@ -348,6 +359,13 @@ export default function KanbanPage() {
           </div>
         ))}
       </div>
+
+      <BugCreateDialog
+        projectId={projectId}
+        open={bugDialogOpen}
+        onOpenChange={setBugDialogOpen}
+        onCreated={() => setRefreshTrigger((t) => t + 1)}
+      />
 
       <EpicDetail
         projectId={projectId}
