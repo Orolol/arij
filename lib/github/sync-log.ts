@@ -1,21 +1,36 @@
 import { db } from "@/lib/db";
 import { gitSyncLog } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
+import { eq, desc } from "drizzle-orm";
 
-export type GitSyncOperation = "detect" | "fetch" | "pull" | "push";
-export type GitSyncStatus = "success" | "failed";
+export type GitSyncOperation =
+  | "detect"
+  | "fetch"
+  | "pull"
+  | "push"
+  | "pr_create"
+  | "pr_sync"
+  | "release"
+  | "tag_push";
 
-interface WriteGitSyncLogInput {
+export type GitSyncStatus = "success" | "failed" | "failure";
+
+interface LogSyncOperationInput {
   projectId: string;
   operation: GitSyncOperation;
   status: GitSyncStatus;
   branch?: string | null;
-  detail?: Record<string, unknown> | null;
+  detail?: string | Record<string, unknown> | null;
 }
 
-export function writeGitSyncLog(input: WriteGitSyncLogInput): void {
+export function logSyncOperation(input: LogSyncOperationInput): void {
   const now = new Date().toISOString();
-  const detail = input.detail ? JSON.stringify(input.detail) : null;
+  const detail =
+    input.detail == null
+      ? null
+      : typeof input.detail === "string"
+        ? input.detail
+        : JSON.stringify(input.detail);
 
   try {
     db.insert(gitSyncLog)
@@ -32,4 +47,17 @@ export function writeGitSyncLog(input: WriteGitSyncLogInput): void {
   } catch (error) {
     console.warn("[git/sync-log] failed to write audit row", error);
   }
+}
+
+/** Alias kept for backward compat with main's naming */
+export const writeGitSyncLog = logSyncOperation;
+
+export function getRecentSyncLogs(projectId: string, limit = 50) {
+  return db
+    .select()
+    .from(gitSyncLog)
+    .where(eq(gitSyncLog.projectId, projectId))
+    .orderBy(desc(gitSyncLog.createdAt))
+    .limit(limit)
+    .all();
 }

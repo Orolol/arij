@@ -111,6 +111,29 @@ describe("logSyncOperation", () => {
       })
     );
   });
+
+  it("inserts a release sync log entry with detail object", async () => {
+    const { logSyncOperation } = await import("@/lib/github/sync-log");
+
+    logSyncOperation({
+      projectId: "proj-1",
+      operation: "tag_push",
+      status: "success",
+      detail: { tag: "v1.0.0" },
+    });
+
+    expect(mockDbState.insertCalls).toHaveLength(1);
+    expect(mockDbState.insertCalls[0].payload).toEqual(
+      expect.objectContaining({
+        id: "test-id-123",
+        projectId: "proj-1",
+        operation: "tag_push",
+        branch: null,
+        status: "success",
+        detail: JSON.stringify({ tag: "v1.0.0" }),
+      })
+    );
+  });
 });
 
 describe("getRecentSyncLogs", () => {

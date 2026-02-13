@@ -41,8 +41,40 @@ export function getGitHubTokenFromSettings(): string | null {
   }
 }
 
+/** Alias for backward compat with feature-branch callers */
+export const getGitHubToken = getGitHubTokenFromSettings;
+
 export function createGitHubClient(token: string): Octokit {
   return new Octokit({ auth: token.trim() });
+}
+
+/**
+ * Creates an authenticated Octokit instance using the stored PAT.
+ * Throws if no token is configured.
+ */
+export function createOctokit(): Octokit {
+  const token = getGitHubTokenFromSettings();
+  if (!token) {
+    throw new Error("GitHub PAT not configured. Set it in Settings.");
+  }
+  return createGitHubClient(token);
+}
+
+/**
+ * Parses an "owner/repo" string into its components.
+ * Throws if the format is invalid.
+ */
+export function parseOwnerRepo(ownerRepo: string): {
+  owner: string;
+  repo: string;
+} {
+  const parts = ownerRepo.split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error(
+      `Invalid GitHub owner/repo format: "${ownerRepo}". Expected "owner/repo".`
+    );
+  }
+  return { owner: parts[0], repo: parts[1] };
 }
 
 export async function validateGitHubToken(token: string): Promise<{

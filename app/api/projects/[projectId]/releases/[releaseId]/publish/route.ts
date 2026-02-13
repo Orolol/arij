@@ -53,15 +53,16 @@ export async function POST(
   const [owner, repo] = project.githubOwnerRepo.split("/");
 
   try {
-    const { url } = await publishRelease({
+    const result = await publishRelease({
       owner,
       repo,
       releaseId: release.githubReleaseId,
     });
 
-    // Update local release record with published URL
+    // Update local release record with published URL and timestamp
+    const now = new Date().toISOString();
     db.update(releases)
-      .set({ githubReleaseUrl: url })
+      .set({ githubReleaseUrl: result.url, pushedAt: now })
       .where(eq(releases.id, releaseId))
       .run();
 
@@ -69,15 +70,16 @@ export async function POST(
       projectId,
       operation: "release",
       status: "success",
-      detail: JSON.stringify({
+      detail: {
         releaseId: release.githubReleaseId,
         action: "publish",
         tag: release.gitTag,
-      }),
+        url: result.url,
+      },
     });
 
     return NextResponse.json({
-      data: { published: true, url },
+      data: { published: true, url: result.url },
     });
   } catch (err) {
     const errorMsg = err instanceof Error ? err.message : String(err);
@@ -86,11 +88,11 @@ export async function POST(
       projectId,
       operation: "release",
       status: "failure",
-      detail: JSON.stringify({
+      detail: {
         releaseId: release.githubReleaseId,
         action: "publish",
         error: errorMsg,
-      }),
+      },
     });
 
     return NextResponse.json(

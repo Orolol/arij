@@ -8,6 +8,14 @@ function getOctokit() {
   return createGitHubClient(token);
 }
 
+export interface GitHubReleaseResult {
+  id: number;
+  htmlUrl: string;
+  url: string;
+  draft: boolean;
+  tagName: string;
+}
+
 /**
  * Creates a draft GitHub release for a tag.
  */
@@ -17,7 +25,7 @@ export async function createDraftRelease(params: {
   tag: string;
   title: string;
   body: string;
-}): Promise<{ id: number; url: string }> {
+}): Promise<GitHubReleaseResult> {
   const octokit = getOctokit();
   const { data } = await octokit.rest.repos.createRelease({
     owner: params.owner,
@@ -27,17 +35,23 @@ export async function createDraftRelease(params: {
     body: params.body,
     draft: true,
   });
-  return { id: data.id, url: data.html_url };
+  return {
+    id: data.id,
+    htmlUrl: data.html_url,
+    url: data.html_url,
+    draft: data.draft,
+    tagName: data.tag_name,
+  };
 }
 
 /**
- * Publishes a draft GitHub release.
+ * Publishes a draft GitHub release (sets draft=false).
  */
 export async function publishRelease(params: {
   owner: string;
   repo: string;
   releaseId: number;
-}): Promise<{ url: string }> {
+}): Promise<GitHubReleaseResult> {
   const octokit = getOctokit();
   const { data } = await octokit.rest.repos.updateRelease({
     owner: params.owner,
@@ -45,5 +59,34 @@ export async function publishRelease(params: {
     release_id: params.releaseId,
     draft: false,
   });
-  return { url: data.html_url };
+  return {
+    id: data.id,
+    htmlUrl: data.html_url,
+    url: data.html_url,
+    draft: data.draft,
+    tagName: data.tag_name,
+  };
+}
+
+/**
+ * Gets a release from GitHub by its ID.
+ */
+export async function getRelease(params: {
+  owner: string;
+  repo: string;
+  releaseId: number;
+}): Promise<GitHubReleaseResult> {
+  const octokit = getOctokit();
+  const { data } = await octokit.rest.repos.getRelease({
+    owner: params.owner,
+    repo: params.repo,
+    release_id: params.releaseId,
+  });
+  return {
+    id: data.id,
+    htmlUrl: data.html_url,
+    url: data.html_url,
+    draft: data.draft,
+    tagName: data.tag_name,
+  };
 }

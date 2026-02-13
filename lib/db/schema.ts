@@ -269,7 +269,7 @@ export const gitSyncLog = sqliteTable("git_sync_log", {
   projectId: text("project_id")
     .notNull()
     .references(() => projects.id, { onDelete: "cascade" }),
-  operation: text("operation").notNull(), // push | pull | fetch | tag | pr | release
+  operation: text("operation").notNull(), // push | pull | fetch | detect | tag_push | pr_create | pr_sync | release
   branch: text("branch"),
   status: text("status").notNull(), // success | failure
   detail: text("detail"), // JSON payload for error info

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -13,8 +14,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { Plus, Tag, Loader2, ExternalLink, Send } from "lucide-react";
+import {
+  Plus,
+  Tag,
+  Loader2,
+  ExternalLink,
+  Upload,
+  FileEdit,
+} from "lucide-react";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
+import { useReleasePublish } from "@/hooks/useReleasePublish";
 
 interface Epic {
   id: string;
@@ -33,6 +42,109 @@ interface Release {
   githubReleaseUrl: string | null;
   pushedAt: string | null;
   createdAt: string;
+}
+
+function ReleaseCard({
+  release,
+  projectId,
+  githubConfigured,
+  onPublished,
+}: {
+  release: Release;
+  projectId: string;
+  githubConfigured: boolean;
+  onPublished: () => void;
+}) {
+  const { publish, isPublishing, error } = useReleasePublish(projectId);
+
+  const isDraft = release.githubReleaseId !== null && !release.pushedAt;
+  const isPublished = release.githubReleaseId !== null && release.pushedAt !== null;
+
+  async function handlePublish() {
+    const success = await publish(release.id);
+    if (success) {
+      onPublished();
+    }
+  }
+
+  return (
+    <Card className="p-5">
+      <div className="flex items-start justify-between mb-3">
+        <div>
+          <div className="flex items-center gap-2">
+            <h3 className="text-lg font-bold">v{release.version}</h3>
+            {release.title && (
+              <span className="text-muted-foreground">
+                — {release.title}
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            {release.gitTag && (
+              <Badge variant="outline" className="text-xs">
+                <Tag className="h-3 w-3 mr-1" />
+                {release.gitTag}
+              </Badge>
+            )}
+            {isDraft && (
+              <Badge variant="secondary" className="text-xs">
+                <FileEdit className="h-3 w-3 mr-1" />
+                Draft
+              </Badge>
+            )}
+            {isPublished && (
+              <Badge className="text-xs bg-green-600 text-white hover:bg-green-700">
+                Published
+              </Badge>
+            )}
+            <span className="text-xs text-muted-foreground">
+              {new Date(release.createdAt).toLocaleDateString()}
+            </span>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {isDraft && githubConfigured && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={handlePublish}
+              disabled={isPublishing}
+            >
+              {isPublishing ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              ) : (
+                <Upload className="h-3 w-3 mr-1" />
+              )}
+              Publish
+            </Button>
+          )}
+          {release.githubReleaseUrl && (
+            <a
+              href={release.githubReleaseUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Button size="sm" variant="ghost">
+                <ExternalLink className="h-3 w-3 mr-1" />
+                View on GitHub
+              </Button>
+            </a>
+          )}
+        </div>
+      </div>
+
+      {error && (
+        <p className="text-sm text-destructive mb-2">{error}</p>
+      )}
+
+      {release.changelog && (
+        <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap text-sm text-muted-foreground">
+          {release.changelog}
+        </div>
+      )}
+    </Card>
+  );
 }
 
 export default function ReleasesPage() {
@@ -55,9 +167,6 @@ export default function ReleasesPage() {
   );
   const [pushToGitHub, setPushToGitHub] = useState(false);
   const [creating, setCreating] = useState(false);
-
-  // Publishing state: track which releases are being published
-  const [publishingIds, setPublishingIds] = useState<Set<string>>(new Set());
 
   const loadData = useCallback(async () => {
     const [releasesRes, epicsRes] = await Promise.all([
@@ -109,27 +218,6 @@ export default function ReleasesPage() {
     setCreating(false);
   }
 
-  async function handlePublish(releaseId: string) {
-    setPublishingIds((prev) => new Set(prev).add(releaseId));
-
-    try {
-      const res = await fetch(
-        `/api/projects/${projectId}/releases/${releaseId}/publish`,
-        { method: "POST" }
-      );
-
-      if (res.ok) {
-        loadData();
-      }
-    } finally {
-      setPublishingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(releaseId);
-        return next;
-      });
-    }
-  }
-
   function toggleEpic(epicId: string) {
     setSelectedEpicIds((prev) => {
       const next = new Set(prev);
@@ -137,24 +225,6 @@ export default function ReleasesPage() {
       else next.add(epicId);
       return next;
     });
-  }
-
-  /**
-   * Determines if a release is a GitHub draft.
-   * A release is a draft when it has a githubReleaseId (pushed to GitHub)
-   * but the URL still points to a draft (or we can infer from pushedAt
-   * existing without a publish operation having occurred).
-   * We use the presence of githubReleaseId as the indicator that it was
-   * pushed to GitHub as a draft. After publish, the URL changes but
-   * we don't currently track a separate "published" flag, so we derive
-   * from the URL containing "/releases/tag/" (published) vs other formats.
-   */
-  function isDraft(release: Release): boolean {
-    if (!release.githubReleaseId) return false;
-    // After publishing, GitHub release URLs follow the pattern /releases/tag/vX.Y.Z
-    // Draft URLs follow /releases/ID pattern
-    if (release.githubReleaseUrl?.includes("/releases/tag/")) return false;
-    return true;
   }
 
   if (loading) {
@@ -224,19 +294,22 @@ export default function ReleasesPage() {
                 )}
               </div>
 
-              {/* Push to GitHub checkbox - only shown when GitHub is configured */}
               {!ghLoading && hasGitHub && (
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
+                <div className="flex items-center space-x-2">
+                  <Checkbox
+                    id="push-to-github"
                     checked={pushToGitHub}
-                    onChange={(e) => setPushToGitHub(e.target.checked)}
-                    className="h-4 w-4 rounded border-border accent-primary"
+                    onCheckedChange={(checked) =>
+                      setPushToGitHub(checked === true)
+                    }
                   />
-                  <span className="text-sm">
-                    Push to GitHub (creates draft release)
-                  </span>
-                </label>
+                  <label
+                    htmlFor="push-to-github"
+                    className="text-sm font-medium leading-none cursor-pointer"
+                  >
+                    Push to GitHub as draft
+                  </label>
+                </div>
               )}
 
               <Button
@@ -262,89 +335,15 @@ export default function ReleasesPage() {
         <p className="text-muted-foreground text-sm">No releases yet</p>
       ) : (
         <div className="space-y-4">
-          {releases.map((release) => {
-            const draft = isDraft(release);
-            const isPublishing = publishingIds.has(release.id);
-
-            return (
-              <Card key={release.id} className="p-5">
-                <div className="flex items-start justify-between mb-3">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h3 className="text-lg font-bold">v{release.version}</h3>
-                      {release.title && (
-                        <span className="text-muted-foreground">
-                          — {release.title}
-                        </span>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 mt-1 flex-wrap">
-                      {release.gitTag && (
-                        <Badge variant="outline" className="text-xs">
-                          <Tag className="h-3 w-3 mr-1" />
-                          {release.gitTag}
-                        </Badge>
-                      )}
-                      {draft && (
-                        <Badge
-                          variant="secondary"
-                          className="text-xs bg-yellow-500/15 text-yellow-400 border-yellow-500/30"
-                        >
-                          Draft
-                        </Badge>
-                      )}
-                      {release.githubReleaseId && !draft && (
-                        <Badge
-                          variant="secondary"
-                          className="text-xs bg-green-500/15 text-green-400 border-green-500/30"
-                        >
-                          Published
-                        </Badge>
-                      )}
-                      <span className="text-xs text-muted-foreground">
-                        {new Date(release.createdAt).toLocaleDateString()}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {/* Publish button for draft releases */}
-                    {draft && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => handlePublish(release.id)}
-                        disabled={isPublishing}
-                      >
-                        {isPublishing ? (
-                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                        ) : (
-                          <Send className="h-3 w-3 mr-1" />
-                        )}
-                        Publish
-                      </Button>
-                    )}
-                    {/* View on GitHub link */}
-                    {release.githubReleaseUrl && (
-                      <a
-                        href={release.githubReleaseUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors"
-                      >
-                        <ExternalLink className="h-3 w-3" />
-                        View on GitHub
-                      </a>
-                    )}
-                  </div>
-                </div>
-                {release.changelog && (
-                  <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap text-sm text-muted-foreground">
-                    {release.changelog}
-                  </div>
-                )}
-              </Card>
-            );
-          })}
+          {releases.map((release) => (
+            <ReleaseCard
+              key={release.id}
+              release={release}
+              projectId={projectId}
+              githubConfigured={hasGitHub}
+              onPublished={loadData}
+            />
+          ))}
         </div>
       )}
     </div>

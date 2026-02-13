@@ -12,7 +12,7 @@ import { spawnClaude } from "@/lib/claude/spawn";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import simpleGit from "simple-git";
 import { createDraftRelease } from "@/lib/github/releases";
-import { writeGitSyncLog } from "@/lib/github/sync-log";
+import { logSyncOperation } from "@/lib/github/sync-log";
 import { activityRegistry } from "@/lib/activity-registry";
 
 export async function GET(
@@ -173,19 +173,19 @@ ${epicSummaries}
     try {
       const git = simpleGit(project.gitRepoPath);
       await git.push("origin", gitTag);
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
-        operation: "push",
+        operation: "tag_push",
         status: "success",
-        detail: { tag: gitTag, action: "push" },
+        detail: { tag: gitTag },
       });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       githubErrors.push(`Tag push failed: ${errorMsg}`);
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
-        operation: "push",
-        status: "failed",
+        operation: "tag_push",
+        status: "failure",
         detail: { tag: gitTag, error: errorMsg },
       });
     }
@@ -205,19 +205,19 @@ ${epicSummaries}
       githubReleaseId = ghRelease.id;
       githubReleaseUrl = ghRelease.url;
       pushedAt = new Date().toISOString();
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
-        operation: "push",
+        operation: "release",
         status: "success",
         detail: { releaseId: ghRelease.id, tag: gitTag, draft: true },
       });
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       githubErrors.push(`GitHub release creation failed: ${errorMsg}`);
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
-        operation: "push",
-        status: "failed",
+        operation: "release",
+        status: "failure",
         detail: { tag: gitTag, error: errorMsg },
       });
     }
