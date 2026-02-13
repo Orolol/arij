@@ -5,13 +5,11 @@ import {
   epics,
   userStories,
   documents,
-  agentSessions,
 } from "@/lib/db/schema";
 import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
-import { isValidTransition, type SessionStatus } from "@/lib/sessions/status-machine";
 import {
   buildBuildPrompt,
   buildTeamBuildPrompt,
@@ -22,6 +20,17 @@ import type { ProviderType } from "@/lib/providers";
 import fs from "fs";
 import path from "path";
 import { tryExportArjiJson } from "@/lib/sync/export";
+import {
+  createAgentAlreadyRunningPayload,
+  getRunningSessionForTarget,
+  insertRunningSessionWithGuard,
+} from "@/lib/agents/concurrency";
+import {
+  createQueuedSession,
+  isSessionLifecycleConflictError,
+  markSessionRunning,
+  markSessionTerminal,
+} from "@/lib/agent-sessions/lifecycle";
 
 export async function POST(
   request: NextRequest,
@@ -46,6 +55,25 @@ export async function POST(
       { error: "epicIds array is required" },
       { status: 400 }
     );
+  }
+
+  // Conflict check up-front so batch launches fail fast with a deterministic payload.
+  for (const epicId of epicIds) {
+    const conflict = getRunningSessionForTarget({
+      scope: "epic",
+      projectId,
+      epicId,
+    });
+    if (conflict) {
+      return NextResponse.json(
+        createAgentAlreadyRunningPayload(
+          { scope: "epic", projectId, epicId },
+          conflict,
+          "Another agent is already running for this epic."
+        ),
+        { status: 409 }
+      );
+    }
   }
 
   // Team mode is Claude Code exclusive — Codex has no Task tool
@@ -155,20 +183,16 @@ export async function POST(
       fs.mkdirSync(logsDir, { recursive: true });
       const logsPath = path.join(logsDir, "logs.json");
 
-      db.insert(agentSessions)
-        .values({
-          id: sessionId,
-          projectId,
-          status: "running",
-          mode: "code",
-          orchestrationMode: "team",
-          provider: "claude-code",
-          prompt,
-          logsPath,
-          startedAt: now,
-          createdAt: now,
-        })
-        .run();
+      createQueuedSession({
+        id: sessionId,
+        projectId,
+        mode: "code",
+        orchestrationMode: "team",
+        provider: "claude-code",
+        prompt,
+        logsPath,
+        createdAt: now,
+      });
 
       // Update project status
       db.update(projects)
@@ -177,6 +201,7 @@ export async function POST(
         .run();
 
       // Spawn single CC session from main repo root with Task in allowedTools
+      markSessionRunning(sessionId, now);
       processManager.start(sessionId, {
         mode: "code",
         prompt,
@@ -210,20 +235,19 @@ export async function POST(
           // ignore
         }
 
-        // Validate transition before updating DB
-        const currentSession = db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
-        const currentStatus = (currentSession?.status ?? "running") as SessionStatus;
-        const targetStatus: SessionStatus = result?.success ? "completed" : "failed";
-
-        if (isValidTransition(currentStatus, targetStatus)) {
-          db.update(agentSessions)
-            .set({
-              status: targetStatus,
-              completedAt,
+        try {
+          markSessionTerminal(
+            sessionId,
+            {
+              success: !!result?.success,
               error: result?.error || null,
-            })
-            .where(eq(agentSessions.id, sessionId))
-            .run();
+            },
+            completedAt
+          );
+        } catch (error) {
+          if (!isSessionLifecycleConflictError(error)) {
+            console.error("[build/team] Failed to finalize session", error);
+          }
         }
 
         // Update all associated epics
@@ -292,23 +316,33 @@ export async function POST(
     fs.mkdirSync(logsDir, { recursive: true });
     const logsPath = path.join(logsDir, "logs.json");
 
-    db.insert(agentSessions)
-      .values({
-        id: sessionId,
-        projectId,
-        epicId,
-        status: "running",
-        mode: "code",
-        orchestrationMode: "solo",
-        provider,
-        prompt,
-        logsPath,
-        branchName,
-        worktreePath,
-        startedAt: now,
-        createdAt: now,
-      })
-      .run();
+    // Check concurrency guard first
+    const conflict = getRunningSessionForTarget({
+      scope: "epic",
+      projectId,
+      epicId,
+    });
+    if (conflict) {
+      throw createAgentAlreadyRunningPayload(
+        { scope: "epic", projectId, epicId },
+        conflict,
+        "Another agent is already running for this epic."
+      );
+    }
+
+    createQueuedSession({
+      id: sessionId,
+      projectId,
+      epicId,
+      mode: "code",
+      orchestrationMode: "solo",
+      provider,
+      prompt,
+      logsPath,
+      branchName,
+      worktreePath,
+      createdAt: now,
+    });
 
     // Move epic to in_progress
     db.update(epics)
@@ -334,6 +368,7 @@ export async function POST(
       .run();
 
     // Spawn agent via process manager
+    markSessionRunning(sessionId, now);
     processManager.start(sessionId, {
       mode: "code",
       prompt,
@@ -358,20 +393,19 @@ export async function POST(
         // ignore
       }
 
-      // Validate transition before updating DB
-      const currentSession = db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
-      const currentStatus = (currentSession?.status ?? "running") as SessionStatus;
-      const targetStatus: SessionStatus = result?.success ? "completed" : "failed";
-
-      if (isValidTransition(currentStatus, targetStatus)) {
-        db.update(agentSessions)
-          .set({
-            status: targetStatus,
-            completedAt,
+      try {
+        markSessionTerminal(
+          sessionId,
+          {
+            success: !!result?.success,
             error: result?.error || null,
-          })
-          .where(eq(agentSessions.id, sessionId))
-          .run();
+          },
+          completedAt
+        );
+      } catch (error) {
+        if (!isSessionLifecycleConflictError(error)) {
+          console.error("[build/solo] Failed to finalize session", error);
+        }
       }
 
       // Move epic + US to review if successful
@@ -414,6 +448,14 @@ export async function POST(
       },
     });
   } catch (e) {
+    if (
+      e &&
+      typeof e === "object" &&
+      "code" in e &&
+      (e as { code?: string }).code === "AGENT_ALREADY_RUNNING"
+    ) {
+      return NextResponse.json(e, { status: 409 });
+    }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Build launch failed" },
       { status: 500 }
