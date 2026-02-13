@@ -14,10 +14,17 @@ interface ColumnProps {
   onEpicClick: (epicId: string) => void;
   selectedEpics?: Set<string>;
   onToggleSelect?: (epicId: string) => void;
-  activeEpicIds?: Set<string>;
+  runningEpicIds?: Set<string>;
 }
 
-export function Column({ status, epics, onEpicClick, selectedEpics, onToggleSelect, activeEpicIds }: ColumnProps) {
+export function Column({
+  status,
+  epics,
+  onEpicClick,
+  selectedEpics,
+  onToggleSelect,
+  runningEpicIds,
+}: ColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
 
   return (
@@ -45,12 +52,12 @@ export function Column({ status, epics, onEpicClick, selectedEpics, onToggleSele
                 epic={epic}
                 onClick={() => onEpicClick(epic.id)}
                 selected={selectedEpics?.has(epic.id)}
+                isRunning={runningEpicIds?.has(epic.id) || false}
                 onToggleSelect={
                   onToggleSelect
                     ? () => onToggleSelect(epic.id)
                     : undefined
                 }
-                isActive={activeEpicIds?.has(epic.id)}
               />
             ))}
           </div>

@@ -31,13 +31,7 @@ import { PRIORITY_LABELS, KANBAN_COLUMNS, COLUMN_LABELS } from "@/lib/types/kanb
 import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, Wrench, ArrowUp, ArrowDown, Upload, RefreshCw } from "lucide-react";
 import { useState, useEffect } from "react";
 import Link from "next/link";
-
-interface ActiveSession {
-  id: string;
-  epicId: string | null;
-  userStoryId?: string | null;
-  status: string;
-}
+import { isAgentAlreadyRunningError } from "@/lib/agents/client-error";
 
 interface EpicDetailProps {
   projectId: string;
@@ -45,10 +39,17 @@ interface EpicDetailProps {
   open: boolean;
   onClose: () => void;
   onMerged?: () => void;
-  projectActiveSessions?: ActiveSession[];
+  onAgentConflict?: (args: { message: string; sessionUrl?: string }) => void;
 }
 
-export function EpicDetail({ projectId, epicId, open, onClose, onMerged, projectActiveSessions = [] }: EpicDetailProps) {
+export function EpicDetail({
+  projectId,
+  epicId,
+  open,
+  onClose,
+  onMerged,
+  onAgentConflict,
+}: EpicDetailProps) {
   const {
     epic,
     userStories,
@@ -68,7 +69,7 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged, project
   } = useEpicComments(projectId, epicId);
 
   const {
-    activeSessions,
+    activeSession,
     dispatching,
     isRunning,
     sendToDev,
@@ -134,6 +135,12 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged, project
         setMergeError(null);
       }
     } catch (e) {
+      if (isAgentAlreadyRunningError(e)) {
+        onAgentConflict?.({
+          message: e.message,
+          sessionUrl: e.sessionUrl || `/projects/${projectId}/sessions/${e.activeSessionId}`,
+        });
+      }
       setMergeError(e instanceof Error ? e.message : "Failed to resolve merge");
     }
     setResolvingMerge(false);
@@ -201,10 +208,27 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged, project
                 epic={epic}
                 dispatching={dispatching}
                 isRunning={isRunning}
-                activeSessions={activeSessions}
+                activeSessionId={activeSession?.id || null}
                 onSendToDev={handleSendToDev}
                 onSendToReview={handleSendToReview}
                 onApprove={handleApprove}
+                onActionError={(error) => {
+                  if (isAgentAlreadyRunningError(error)) {
+                    onAgentConflict?.({
+                      message: error.message,
+                      sessionUrl:
+                        error.sessionUrl ||
+                        `/projects/${projectId}/sessions/${error.activeSessionId}`,
+                    });
+                    return;
+                  }
+                  onAgentConflict?.({
+                    message:
+                      error instanceof Error
+                        ? error.message
+                        : "Failed to run agent action",
+                  });
+                }}
               />
 
               <div>
@@ -406,7 +430,8 @@ export function EpicDetail({ projectId, epicId, open, onClose, onMerged, project
                           projectId={projectId}
                           story={us}
                           onRefresh={refresh}
-                          activeSessions={projectActiveSessions}
+                          isLocked={dispatching || isRunning}
+                          lockReason="Another agent is already running for this epic."
                         />
                         <Button
                           variant="ghost"

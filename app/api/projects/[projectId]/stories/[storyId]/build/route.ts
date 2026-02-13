@@ -5,7 +5,6 @@ import {
   epics,
   userStories,
   documents,
-  agentSessions,
   ticketComments,
 } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
@@ -15,10 +14,19 @@ import { processManager } from "@/lib/claude/process-manager";
 import { buildTicketBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
-import { checkSessionLock } from "@/lib/session-lock";
 import type { ProviderType } from "@/lib/providers";
+import {
+  createAgentAlreadyRunningPayload,
+  getRunningSessionForTarget,
+} from "@/lib/agents/concurrency";
 import fs from "fs";
 import path from "path";
+import {
+  createQueuedSession,
+  isSessionLifecycleConflictError,
+  markSessionRunning,
+  markSessionTerminal,
+} from "@/lib/agent-sessions/lifecycle";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
@@ -55,15 +63,6 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   if (!epic) {
     return NextResponse.json({ error: "Parent epic not found" }, { status: 404 });
-  }
-
-  // Concurrency guard
-  const lock = checkSessionLock({ userStoryId: storyId, epicId: epic.id });
-  if (lock.locked) {
-    return NextResponse.json(
-      { error: "conflict", message: "An agent is already running", sessionId: lock.sessionId },
-      { status: 409 }
-    );
   }
 
   // Get project
@@ -154,23 +153,37 @@ export async function POST(request: NextRequest, { params }: Params) {
   fs.mkdirSync(logsDir, { recursive: true });
   const logsPath = path.join(logsDir, "logs.json");
 
-  db.insert(agentSessions)
-    .values({
-      id: sessionId,
-      projectId,
-      epicId: epic.id,
-      userStoryId: storyId,
-      status: "running",
-      mode: "code",
-      provider,
-      prompt,
-      logsPath,
-      branchName,
-      worktreePath,
-      startedAt: now,
-      createdAt: now,
-    })
-    .run();
+  // Check concurrency guard
+  const conflict = getRunningSessionForTarget({
+    scope: "story",
+    projectId,
+    storyId,
+    epicId: epic.id,
+  });
+  if (conflict) {
+    return NextResponse.json(
+      createAgentAlreadyRunningPayload(
+        { scope: "story", projectId, storyId, epicId: epic.id },
+        conflict,
+        "Another agent is already running for this story."
+      ),
+      { status: 409 }
+    );
+  }
+
+  createQueuedSession({
+    id: sessionId,
+    projectId,
+    epicId: epic.id,
+    userStoryId: storyId,
+    mode: "code",
+    provider,
+    prompt,
+    logsPath,
+    branchName,
+    worktreePath,
+    createdAt: now,
+  });
 
   // Move ticket to in_progress
   db.update(userStories)
@@ -185,6 +198,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     .run();
 
   // Spawn agent
+  markSessionRunning(sessionId, now);
   processManager.start(sessionId, {
     mode: "code",
     prompt,
@@ -211,14 +225,20 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
 
     // Update session
-    db.update(agentSessions)
-      .set({
-        status: result?.success ? "completed" : "failed",
-        completedAt,
-        error: result?.error || null,
-      })
-      .where(eq(agentSessions.id, sessionId))
-      .run();
+    try {
+      markSessionTerminal(
+        sessionId,
+        {
+          success: !!result?.success,
+          error: result?.error || null,
+        },
+        completedAt
+      );
+    } catch (error) {
+      if (!isSessionLifecycleConflictError(error)) {
+        console.error("[story build] Failed to finalize session", error);
+      }
+    }
 
     // On success: move story to review
     if (result?.success) {

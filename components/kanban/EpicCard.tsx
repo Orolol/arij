@@ -9,18 +9,25 @@ import {
   PRIORITY_COLORS,
   type KanbanEpic,
 } from "@/lib/types/kanban";
-import { Square, CheckSquare } from "lucide-react";
+import { Square, CheckSquare, Loader2 } from "lucide-react";
 
 interface EpicCardProps {
   epic: KanbanEpic;
   isOverlay?: boolean;
+  isRunning?: boolean;
   onClick?: () => void;
   selected?: boolean;
   onToggleSelect?: () => void;
-  isActive?: boolean;
 }
 
-export function EpicCard({ epic, isOverlay, onClick, selected, onToggleSelect, isActive }: EpicCardProps) {
+export function EpicCard({
+  epic,
+  isOverlay,
+  isRunning = false,
+  onClick,
+  selected,
+  onToggleSelect,
+}: EpicCardProps) {
   const {
     attributes,
     listeners,
@@ -67,7 +74,7 @@ export function EpicCard({ epic, isOverlay, onClick, selected, onToggleSelect, i
               )}
             </button>
           )}
-          {isActive && (
+          {isRunning && (
             <span
               className="shrink-0 mt-1.5 h-2 w-2 rounded-full bg-yellow-500 animate-pulse"
               title="Agent running"
@@ -85,6 +92,16 @@ export function EpicCard({ epic, isOverlay, onClick, selected, onToggleSelect, i
         <span className="text-xs text-muted-foreground">
           {epic.usDone}/{epic.usCount} US
         </span>
+        {isRunning && (
+          <span
+            className="inline-flex items-center gap-1 text-xs text-yellow-600"
+            data-testid={`epic-running-${epic.id}`}
+            aria-label="Epic has active agent work"
+          >
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Running
+          </span>
+        )}
       </div>
     </Card>
   );

@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { GITHUB_PAT_SETTING_KEY } from "@/lib/github/client";
+
+function parseValue(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
 
 /**
  * Redacts a GitHub PAT, keeping only the prefix and last 4 characters.
@@ -16,27 +25,48 @@ function redactPat(pat: string): string {
 export async function GET() {
   const rows = db.select().from(settings).all();
   const data: Record<string, unknown> = {};
-  for (const row of rows) {
-    try {
-      data[row.key] = JSON.parse(row.value);
-    } catch {
-      data[row.key] = row.value;
-    }
-  }
 
-  // Redact GitHub PAT if present
-  if (data.github_pat && typeof data.github_pat === "string") {
-    data.github_pat = redactPat(data.github_pat);
+  for (const row of rows) {
+    if (row.key === GITHUB_PAT_SETTING_KEY) {
+      const parsed = parseValue(row.value);
+      const token =
+        typeof parsed === "string"
+          ? parsed.trim()
+          : parsed &&
+              typeof parsed === "object" &&
+              "token" in (parsed as Record<string, unknown>) &&
+              typeof (parsed as Record<string, unknown>).token === "string"
+            ? ((parsed as Record<string, unknown>).token as string).trim()
+            : "";
+      data[row.key] = { hasToken: token.length > 0 };
+      continue;
+    }
+
+    data[row.key] = parseValue(row.value);
   }
 
   return NextResponse.json({ data });
 }
 
 export async function PATCH(request: NextRequest) {
-  const body = await request.json();
+  const body = await request.json().catch(() => null);
+  if (!body || typeof body !== "object") {
+    return NextResponse.json(
+      { error: "Invalid settings payload. Send a JSON object of setting keys." },
+      { status: 400 }
+    );
+  }
+
   const now = new Date().toISOString();
 
   for (const [key, value] of Object.entries(body)) {
+    if (key === GITHUB_PAT_SETTING_KEY && typeof value !== "string") {
+      return NextResponse.json(
+        { error: "GitHub token must be saved as a string value." },
+        { status: 400 }
+      );
+    }
+
     const jsonValue = JSON.stringify(value);
     const existing = db.select().from(settings).where(eq(settings.key, key)).get();
 

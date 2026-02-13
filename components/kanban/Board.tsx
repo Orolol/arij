@@ -20,22 +20,23 @@ import { KANBAN_COLUMNS, type KanbanStatus, type KanbanEpic } from "@/lib/types/
 import { useKanban } from "@/hooks/useKanban";
 import { BoardSkeleton } from "./BoardSkeleton";
 
-interface ActiveSession {
-  id: string;
-  epicId: string | null;
-  status: string;
-}
-
 interface BoardProps {
   projectId: string;
   onEpicClick: (epicId: string) => void;
   selectedEpics?: Set<string>;
   onToggleSelect?: (epicId: string) => void;
   refreshTrigger?: number;
-  activeSessions?: ActiveSession[];
+  runningEpicIds?: Set<string>;
 }
 
-export function Board({ projectId, onEpicClick, selectedEpics, onToggleSelect, refreshTrigger, activeSessions = [] }: BoardProps) {
+export function Board({
+  projectId,
+  onEpicClick,
+  selectedEpics,
+  onToggleSelect,
+  refreshTrigger,
+  runningEpicIds,
+}: BoardProps) {
   const { board, loading, moveEpic, refresh } = useKanban(projectId);
 
   useEffect(() => {
@@ -48,13 +49,6 @@ export function Board({ projectId, onEpicClick, selectedEpics, onToggleSelect, r
     useSensor(KeyboardSensor, {
       coordinateGetter: sortableKeyboardCoordinates,
     })
-  );
-
-  // Compute which epics have active agent sessions
-  const activeEpicIds = new Set(
-    activeSessions
-      .filter((s) => s.epicId && s.status === "running")
-      .map((s) => s.epicId!)
   );
 
   if (loading) return <BoardSkeleton />;
@@ -132,14 +126,18 @@ export function Board({ projectId, onEpicClick, selectedEpics, onToggleSelect, r
             onEpicClick={onEpicClick}
             selectedEpics={selectedEpics}
             onToggleSelect={onToggleSelect}
-            activeEpicIds={activeEpicIds}
+            runningEpicIds={runningEpicIds}
           />
         ))}
       </div>
       <DragOverlay>
         {activeEpic && (
           <div className="w-[272px]">
-            <EpicCard epic={activeEpic} isOverlay />
+            <EpicCard
+              epic={activeEpic}
+              isOverlay
+              isRunning={runningEpicIds?.has(activeEpic.id) || false}
+            />
           </div>
         )}
       </DragOverlay>

@@ -32,34 +32,30 @@ interface Story {
   title: string;
 }
 
-interface AgentSession {
-  id: string;
-  status: string;
-  mode: string;
-}
-
 interface StoryActionsProps {
   story: Story;
   dispatching: boolean;
   isRunning: boolean;
-  activeSessions: AgentSession[];
+  activeSessionId?: string | null;
   codexAvailable: boolean;
   codexInstalled?: boolean;
   onSendToDev: (comment?: string, provider?: ProviderType) => Promise<void>;
   onSendToReview: (types: string[], provider?: ProviderType) => Promise<void>;
   onApprove: () => Promise<void>;
+  onActionError?: (error: unknown) => void;
 }
 
 export function StoryActions({
   story,
   dispatching,
   isRunning,
-  activeSessions,
+  activeSessionId,
   codexAvailable,
   codexInstalled,
   onSendToDev,
   onSendToReview,
   onApprove,
+  onActionError,
 }: StoryActionsProps) {
   const [sendToDevOpen, setSendToDevOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -74,6 +70,13 @@ export function StoryActions({
   const canSendToDevFromReview = status === "review";
   const canReview = status === "review";
   const canApprove = status === "review";
+  const actionsLocked = dispatching || isRunning;
+  const lockMessage =
+    isRunning && activeSessionId
+      ? `Another agent is already running for this task (#${activeSessionId.slice(0, 6)}).`
+      : isRunning
+        ? "Another agent is already running for this task."
+        : null;
 
   // Send to Dev (from todo/in_progress — optional comment)
   async function handleSendToDev() {
@@ -81,8 +84,8 @@ export function StoryActions({
       await onSendToDev(devComment.trim() || undefined, devProvider);
       setSendToDevOpen(false);
       setDevComment("");
-    } catch {
-      // error handled by parent
+    } catch (error) {
+      onActionError?.(error);
     }
   }
 
@@ -93,8 +96,8 @@ export function StoryActions({
       await onSendToDev(devComment.trim(), devProvider);
       setSendToDevOpen(false);
       setDevComment("");
-    } catch {
-      // error handled by parent
+    } catch (error) {
+      onActionError?.(error);
     }
   }
 
@@ -117,8 +120,8 @@ export function StoryActions({
       await onSendToReview(Array.from(reviewTypes), reviewProvider);
       setReviewOpen(false);
       setReviewTypes(new Set());
-    } catch {
-      // error handled by parent
+    } catch (error) {
+      onActionError?.(error);
     }
   }
 
@@ -127,6 +130,8 @@ export function StoryActions({
     setApproving(true);
     try {
       await onApprove();
+    } catch (error) {
+      onActionError?.(error);
     } finally {
       setApproving(false);
     }
@@ -138,7 +143,7 @@ export function StoryActions({
 
   return (
     <TooltipProvider>
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 flex-wrap">
       {/* Running indicator */}
       {isRunning && (
         <Badge variant="outline" className="gap-1 text-yellow-500 border-yellow-500/30">
@@ -146,83 +151,59 @@ export function StoryActions({
           Agent running
         </Badge>
       )}
+      {lockMessage && (
+        <span className="text-xs text-muted-foreground">{lockMessage}</span>
+      )}
 
       {/* Send to Dev button */}
       {(canSendToDev || canSendToDevFromReview) && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setDevComment("");
-                  setSendToDevOpen(true);
-                }}
-                disabled={dispatching || isRunning}
-                className="h-7 text-xs"
-              >
-                <Hammer className="h-3 w-3 mr-1" />
-                Send to Dev
-              </Button>
-            </span>
-          </TooltipTrigger>
-          {lockedTooltip && (
-            <TooltipContent>{lockedTooltip}</TooltipContent>
-          )}
-        </Tooltip>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setDevComment("");
+            setSendToDevOpen(true);
+          }}
+          disabled={actionsLocked}
+          className="h-7 text-xs"
+        >
+          <Hammer className="h-3 w-3 mr-1" />
+          Send to Dev
+        </Button>
       )}
 
       {/* Agent Review button */}
       {canReview && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setReviewTypes(new Set());
-                  setReviewOpen(true);
-                }}
-                disabled={dispatching || isRunning}
-                className="h-7 text-xs"
-              >
-                <Search className="h-3 w-3 mr-1" />
-                Agent Review
-              </Button>
-            </span>
-          </TooltipTrigger>
-          {lockedTooltip && (
-            <TooltipContent>{lockedTooltip}</TooltipContent>
-          )}
-        </Tooltip>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={() => {
+            setReviewTypes(new Set());
+            setReviewOpen(true);
+          }}
+          disabled={actionsLocked}
+          className="h-7 text-xs"
+        >
+          <Search className="h-3 w-3 mr-1" />
+          Agent Review
+        </Button>
       )}
 
       {/* Approve button */}
       {canApprove && (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span>
-              <Button
-                size="sm"
-                onClick={handleApprove}
-                disabled={approving || dispatching || isRunning}
-                className="h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
-              >
-                {approving ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <CheckCircle2 className="h-3 w-3 mr-1" />
-                )}
-                Approve
-              </Button>
-            </span>
-          </TooltipTrigger>
-          {lockedTooltip && (
-            <TooltipContent>{lockedTooltip}</TooltipContent>
+        <Button
+          size="sm"
+          onClick={handleApprove}
+          disabled={approving || actionsLocked}
+          className="h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
+        >
+          {approving ? (
+            <Loader2 className="h-3 w-3 animate-spin mr-1" />
+          ) : (
+            <CheckCircle2 className="h-3 w-3 mr-1" />
           )}
-        </Tooltip>
+          Approve
+        </Button>
       )}
 
       {/* Send to Dev Dialog */}
@@ -271,7 +252,7 @@ export function StoryActions({
                   : handleSendToDev
               }
               disabled={
-                dispatching ||
+                actionsLocked ||
                 (canSendToDevFromReview && !devComment.trim())
               }
             >
@@ -361,7 +342,7 @@ export function StoryActions({
             </Button>
             <Button
               onClick={handleReview}
-              disabled={dispatching || reviewTypes.size === 0}
+              disabled={actionsLocked || reviewTypes.size === 0}
             >
               {dispatching ? (
                 <Loader2 className="h-4 w-4 animate-spin mr-1" />
