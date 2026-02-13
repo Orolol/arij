@@ -31,6 +31,11 @@ import {
   markSessionRunning,
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
+import {
+  buildExecutionPlan,
+  executeDagPlan,
+  type LayerResult,
+} from "@/lib/dependencies/scheduler";
 
 export async function POST(
   request: NextRequest,
@@ -280,11 +285,16 @@ export async function POST(
   }
 
   // -----------------------------------------------------------------------
-  // SOLO MODE — one session per epic (existing behavior)
+  // SOLO MODE — one session per epic
   // -----------------------------------------------------------------------
-  async function launchEpic(epicId: string) {
+
+  /**
+   * Launch a single epic build agent.
+   * Returns the sessionId without waiting for completion.
+   */
+  async function spawnEpicBuild(epicId: string): Promise<string> {
     const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
-    if (!epic) return;
+    if (!epic) throw new Error(`Epic not found: ${epicId}`);
 
     const us = db
       .select()
@@ -376,67 +386,128 @@ export async function POST(
       allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
     }, provider);
 
-    // Background: wait for completion and update DB
-    (async () => {
-      let info = processManager.getStatus(sessionId);
-      while (info && info.status === "running") {
-        await new Promise((r) => setTimeout(r, 2000));
-        info = processManager.getStatus(sessionId);
-      }
-
-      const completedAt = new Date().toISOString();
-      const result = info?.result;
-
-      try {
-        fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-      } catch {
-        // ignore
-      }
-
-      try {
-        markSessionTerminal(
-          sessionId,
-          {
-            success: !!result?.success,
-            error: result?.error || null,
-          },
-          completedAt
-        );
-      } catch (error) {
-        if (!isSessionLifecycleConflictError(error)) {
-          console.error("[build/solo] Failed to finalize session", error);
-        }
-      }
-
-      // Move epic + US to review if successful
-      if (result?.success) {
-        db.update(userStories)
-          .set({ status: "review" })
-          .where(
-            and(
-              eq(userStories.epicId, epicId),
-              eq(userStories.status, "in_progress")
-            )
-          )
-          .run();
-
-        db.update(epics)
-          .set({ status: "review", updatedAt: completedAt })
-          .where(eq(epics.id, epicId))
-          .run();
-      }
-    })();
-
     sessionsCreated.push(sessionId);
+    return sessionId;
+  }
+
+  /**
+   * Wait for a session to finish and finalize its DB state.
+   * Returns whether the session was successful.
+   */
+  async function waitAndFinalize(
+    sessionId: string,
+    epicId: string
+  ): Promise<{ success: boolean; error?: string }> {
+    let info = processManager.getStatus(sessionId);
+    while (info && info.status === "running") {
+      await new Promise((r) => setTimeout(r, 2000));
+      info = processManager.getStatus(sessionId);
+    }
+
+    const completedAt = new Date().toISOString();
+    const result = info?.result;
+
+    try {
+      const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
+      const logsPath = path.join(logsDir, "logs.json");
+      fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
+    } catch {
+      // ignore
+    }
+
+    try {
+      markSessionTerminal(
+        sessionId,
+        {
+          success: !!result?.success,
+          error: result?.error || null,
+        },
+        completedAt
+      );
+    } catch (error) {
+      if (!isSessionLifecycleConflictError(error)) {
+        console.error("[build/solo] Failed to finalize session", error);
+      }
+    }
+
+    // Move epic + US to review if successful
+    if (result?.success) {
+      db.update(userStories)
+        .set({ status: "review" })
+        .where(
+          and(
+            eq(userStories.epicId, epicId),
+            eq(userStories.status, "in_progress")
+          )
+        )
+        .run();
+
+      db.update(epics)
+        .set({ status: "review", updatedAt: completedAt })
+        .where(eq(epics.id, epicId))
+        .run();
+    }
+
+    return {
+      success: !!result?.success,
+      error: result?.error || undefined,
+    };
+  }
+
+  /**
+   * Launch an epic and wait for it to finish (used by DAG scheduler).
+   */
+  async function launchAndWait(epicId: string): Promise<LayerResult> {
+    const sessionId = await spawnEpicBuild(epicId);
+    const result = await waitAndFinalize(sessionId, epicId);
+    return { epicId, sessionId, ...result };
   }
 
   try {
+    // Build a DAG execution plan so dependencies are respected.
+    // Epics in the same topological layer launch concurrently;
+    // the next layer starts only after the previous layer finishes.
+    const plan = buildExecutionPlan(projectId, epicIds);
+    const hasDependencies = plan.layers.length > 1;
+
+    if (hasDependencies) {
+      // DAG-aware execution: layer-by-layer in the background
+      const planLayers = plan.layers.map((layer) => [...layer]);
+      (async () => {
+        try {
+          await executeDagPlan(projectId, plan, launchAndWait);
+        } catch (e) {
+          console.error("[build/dag] DAG execution error", e);
+        }
+      })();
+
+      tryExportArjiJson(projectId);
+      return NextResponse.json({
+        data: {
+          sessions: sessionsCreated,
+          count: epicIds.length,
+          orchestrationMode: "dag",
+          dagPlan: { layers: planLayers },
+        },
+      });
+    }
+
+    // No dependencies — launch all at once with background finalization
     if (mode === "sequential") {
       for (const epicId of epicIds) {
-        await launchEpic(epicId);
+        await spawnEpicBuild(epicId);
       }
     } else {
-      await Promise.all(epicIds.map(launchEpic));
+      await Promise.all(epicIds.map(spawnEpicBuild));
+    }
+
+    // Background finalization for each session
+    for (let i = 0; i < sessionsCreated.length; i++) {
+      const sessionId = sessionsCreated[i];
+      const epicId = epicIds[i];
+      (async () => {
+        await waitAndFinalize(sessionId, epicId);
+      })();
     }
 
     tryExportArjiJson(projectId);
