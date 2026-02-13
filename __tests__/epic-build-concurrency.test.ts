@@ -1,9 +1,11 @@
 /**
- * Tests that the epic build route returns 409 when a session lock is active.
+ * Tests that the epic build route returns 409 when a concurrency conflict exists.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 let getCallCount = 0;
+
+const mockGetRunningForTarget = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/db", () => {
   const chain = {
@@ -87,8 +89,37 @@ vi.mock("@/lib/agent-config/prompts", () => ({
   resolveAgentPrompt: vi.fn().mockResolvedValue("system prompt"),
 }));
 
+vi.mock("@/lib/agent-config/providers", () => ({
+  resolveAgent: vi.fn(() => ({ provider: "claude-code" })),
+}));
+
 vi.mock("@/lib/claude/json-parser", () => ({
   parseClaudeOutput: vi.fn().mockReturnValue({ content: "output" }),
+}));
+
+vi.mock("@/lib/agent-sessions/lifecycle", () => ({
+  createQueuedSession: vi.fn(),
+  markSessionRunning: vi.fn(),
+  markSessionTerminal: vi.fn(),
+  isSessionLifecycleConflictError: vi.fn(() => false),
+}));
+
+vi.mock("@/lib/agents/concurrency", () => ({
+  getRunningSessionForTarget: mockGetRunningForTarget,
+  createAgentAlreadyRunningPayload: vi.fn(
+    (target: Record<string, unknown>, conflict: Record<string, unknown>, message: string) => ({
+      code: "AGENT_ALREADY_RUNNING",
+      message,
+      data: {
+        activeSessionId: conflict.id,
+        target,
+      },
+    })
+  ),
+}));
+
+vi.mock("@/lib/sync/export", () => ({
+  tryExportArjiJson: vi.fn(),
 }));
 
 vi.mock("fs", () => ({
@@ -104,12 +135,6 @@ vi.mock("path", () => ({
   },
 }));
 
-// Mock session lock — this is what we're testing
-let mockLockResult = { locked: false };
-vi.mock("@/lib/session-lock", () => ({
-  checkSessionLock: vi.fn(() => mockLockResult),
-}));
-
 function mockRequest(body: Record<string, unknown> = {}) {
   return {
     json: () => Promise.resolve(body),
@@ -119,15 +144,16 @@ function mockRequest(body: Record<string, unknown> = {}) {
 describe("Epic Build Route - Concurrency Guard", () => {
   beforeEach(() => {
     getCallCount = 0;
-    mockLockResult = { locked: false };
+    mockGetRunningForTarget.mockReturnValue(null);
     vi.resetModules();
   });
 
-  it("returns 409 when a session lock is active", async () => {
-    mockLockResult = {
-      locked: true,
-      sessionId: "existing-session",
-    } as typeof mockLockResult;
+  it("returns 409 when a concurrency conflict exists", async () => {
+    mockGetRunningForTarget.mockReturnValue({
+      id: "existing-session",
+      projectId: "proj-1",
+      epicId: "epic-1",
+    });
 
     const { POST } = await import(
       "@/app/api/projects/[projectId]/epics/[epicId]/build/route"
@@ -139,13 +165,12 @@ describe("Epic Build Route - Concurrency Guard", () => {
 
     const json = await res.json();
     expect(res.status).toBe(409);
-    expect(json.error).toBe("conflict");
-    expect(json.message).toContain("already running");
-    expect(json.sessionId).toBe("existing-session");
+    expect(json.code).toBe("AGENT_ALREADY_RUNNING");
+    expect(json.data.activeSessionId).toBe("existing-session");
   });
 
-  it("proceeds when no session lock is active", async () => {
-    mockLockResult = { locked: false };
+  it("proceeds when no concurrency conflict exists", async () => {
+    mockGetRunningForTarget.mockReturnValue(null);
 
     const { POST } = await import(
       "@/app/api/projects/[projectId]/epics/[epicId]/build/route"

@@ -7,6 +7,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Track call counts to return different values for sequential .get() calls
 let getCallCount = 0;
 
+const mockResolveAgent = vi.hoisted(() =>
+  vi.fn(() => ({ provider: "claude-code" })),
+);
+
 vi.mock("@/lib/db", () => {
   const chain = {
     select: vi.fn().mockReturnThis(),
@@ -90,6 +94,10 @@ vi.mock("@/lib/agent-config/prompts", () => ({
   resolveAgentPrompt: vi.fn().mockResolvedValue("resolved system prompt"),
 }));
 
+vi.mock("@/lib/agent-config/providers", () => ({
+  resolveAgent: mockResolveAgent,
+}));
+
 vi.mock("@/lib/sync/export", () => ({
   tryExportArjiJson: vi.fn(),
 }));
@@ -123,9 +131,12 @@ function mockRequest(body: Record<string, unknown>) {
 describe("Build Route", () => {
   beforeEach(() => {
     getCallCount = 0;
+    mockResolveAgent.mockReturnValue({ provider: "claude-code" });
   });
 
-  it("rejects team mode with codex provider", async () => {
+  it("rejects team mode when resolved provider is not claude-code", async () => {
+    mockResolveAgent.mockReturnValue({ provider: "codex" });
+
     const { POST } = await import(
       "@/app/api/projects/[projectId]/build/route"
     );
@@ -134,7 +145,6 @@ describe("Build Route", () => {
       mockRequest({
         epicIds: ["epic-1", "epic-2"],
         team: true,
-        provider: "codex",
       }),
       { params: Promise.resolve({ projectId: "proj-1" }) }
     );
@@ -193,22 +203,25 @@ describe("Build Route", () => {
     expect(json.data.orchestrationMode).toBe("solo");
   });
 
-  it("accepts provider parameter for solo mode", async () => {
+  it("uses resolved provider for solo mode", async () => {
+    mockResolveAgent.mockReturnValue({ provider: "codex" });
+
     const { POST } = await import(
       "@/app/api/projects/[projectId]/build/route"
     );
 
     const res = await POST(
-      mockRequest({ epicIds: ["epic-1"], provider: "codex" }),
+      mockRequest({ epicIds: ["epic-1"] }),
       { params: Promise.resolve({ projectId: "proj-1" }) }
     );
 
     const json = await res.json();
     expect(res.status).toBe(200);
     expect(json.data.orchestrationMode).toBe("solo");
+    expect(mockResolveAgent).toHaveBeenCalledWith("build", "proj-1");
   });
 
-  it("defaults provider to claude-code", async () => {
+  it("defaults provider to claude-code via resolveAgent", async () => {
     const { POST } = await import(
       "@/app/api/projects/[projectId]/build/route"
     );
@@ -220,5 +233,6 @@ describe("Build Route", () => {
     const json = await res.json();
     expect(res.status).toBe(200);
     expect(json.data).toBeDefined();
+    expect(mockResolveAgent).toHaveBeenCalledWith("build", "proj-1");
   });
 });

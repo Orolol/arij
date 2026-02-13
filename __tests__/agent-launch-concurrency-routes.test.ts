@@ -5,8 +5,8 @@ const mockDbState = vi.hoisted(() => ({
   allQueue: [] as unknown[],
 }));
 
-const mockInsertWithGuard = vi.hoisted(() => vi.fn());
 const mockGetRunningForTarget = vi.hoisted(() => vi.fn());
+const mockCheckSessionLock = vi.hoisted(() => vi.fn());
 
 vi.mock("drizzle-orm", () => ({
   eq: vi.fn(() => ({})),
@@ -14,6 +14,7 @@ vi.mock("drizzle-orm", () => ({
   or: vi.fn(() => ({})),
   desc: vi.fn(() => ({})),
   notInArray: vi.fn(() => ({})),
+  inArray: vi.fn(() => ({})),
 }));
 
 vi.mock("@/lib/db", () => {
@@ -129,6 +130,10 @@ vi.mock("@/lib/agent-config/constants", () => ({
   },
 }));
 
+vi.mock("@/lib/agent-config/providers", () => ({
+  resolveAgent: vi.fn(() => ({ provider: "claude-code" })),
+}));
+
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "session-1"),
 }));
@@ -137,16 +142,31 @@ vi.mock("@/lib/sync/export", () => ({
   tryExportArjiJson: vi.fn(),
 }));
 
-vi.mock("@/lib/agents/concurrency", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/agents/concurrency")>(
-    "@/lib/agents/concurrency"
-  );
-  return {
-    ...actual,
-    insertRunningSessionWithGuard: mockInsertWithGuard,
-    getRunningSessionForTarget: mockGetRunningForTarget,
-  };
-});
+vi.mock("@/lib/agent-sessions/lifecycle", () => ({
+  createQueuedSession: vi.fn(),
+  markSessionRunning: vi.fn(),
+  markSessionTerminal: vi.fn(),
+  isSessionLifecycleConflictError: vi.fn(() => false),
+}));
+
+vi.mock("@/lib/session-lock", () => ({
+  checkSessionLock: mockCheckSessionLock,
+}));
+
+vi.mock("@/lib/agents/concurrency", () => ({
+  getRunningSessionForTarget: mockGetRunningForTarget,
+  insertRunningSessionWithGuard: vi.fn(() => ({ inserted: true })),
+  createAgentAlreadyRunningPayload: vi.fn(
+    (target: Record<string, unknown>, conflict: Record<string, unknown>, message: string) => ({
+      code: "AGENT_ALREADY_RUNNING",
+      message,
+      data: {
+        activeSessionId: conflict.id,
+        target,
+      },
+    })
+  ),
+}));
 
 vi.mock("fs", () => ({
   default: {
@@ -183,8 +203,8 @@ describe("Agent launch routes concurrency conflicts", () => {
     vi.resetModules();
     mockDbState.getQueue = [];
     mockDbState.allQueue = [];
-    mockInsertWithGuard.mockReturnValue({ inserted: true });
     mockGetRunningForTarget.mockReturnValue(null);
+    mockCheckSessionLock.mockReturnValue({ locked: false });
   });
 
   it("returns AGENT_ALREADY_RUNNING for epic build launches", async () => {
@@ -193,7 +213,7 @@ describe("Agent launch routes concurrency conflicts", () => {
       { id: "proj-1", gitRepoPath: "/repo" },
     ];
     mockDbState.allQueue = [[], []];
-    mockInsertWithGuard.mockReturnValue({ inserted: false, conflict: CONFLICT });
+    mockGetRunningForTarget.mockReturnValue(CONFLICT);
 
     const { POST } = await import("@/app/api/projects/[projectId]/epics/[epicId]/build/route");
     const res = await POST(mockRequest({}), {
@@ -214,9 +234,9 @@ describe("Agent launch routes concurrency conflicts", () => {
       { id: "proj-1", gitRepoPath: "/repo" },
     ];
     mockDbState.allQueue = [[], []];
-    mockInsertWithGuard.mockReturnValue({
-      inserted: false,
-      conflict: { ...CONFLICT, userStoryId: "story-1" },
+    mockGetRunningForTarget.mockReturnValue({
+      ...CONFLICT,
+      userStoryId: "story-1",
     });
 
     const { POST } = await import("@/app/api/projects/[projectId]/stories/[storyId]/build/route");
@@ -232,13 +252,16 @@ describe("Agent launch routes concurrency conflicts", () => {
     expect(json.data.target.storyId).toBe("story-1");
   });
 
-  it("returns AGENT_ALREADY_RUNNING for epic review launches", async () => {
+  it("returns 409 for epic review launches via checkSessionLock", async () => {
     mockDbState.getQueue = [
       { id: "epic-1", status: "review", title: "Epic 1" },
       { id: "proj-1", gitRepoPath: "/repo" },
     ];
     mockDbState.allQueue = [[], []];
-    mockInsertWithGuard.mockReturnValue({ inserted: false, conflict: CONFLICT });
+    mockCheckSessionLock.mockReturnValue({
+      locked: true,
+      sessionId: "running-session-42",
+    });
 
     const { POST } = await import("@/app/api/projects/[projectId]/epics/[epicId]/review/route");
     const res = await POST(mockRequest({ reviewTypes: ["security"] }), {
@@ -247,20 +270,20 @@ describe("Agent launch routes concurrency conflicts", () => {
 
     const json = await res.json();
     expect(res.status).toBe(409);
-    expect(json.code).toBe("AGENT_ALREADY_RUNNING");
-    expect(json.data.activeSessionId).toBe("running-session-42");
+    expect(json.error).toBe("conflict");
+    expect(json.sessionId).toBe("running-session-42");
   });
 
-  it("returns AGENT_ALREADY_RUNNING for story review launches", async () => {
+  it("returns 409 for story review launches via checkSessionLock", async () => {
     mockDbState.getQueue = [
       { id: "story-1", status: "review", epicId: "epic-1" },
       { id: "epic-1", title: "Epic 1" },
       { id: "proj-1", gitRepoPath: "/repo" },
     ];
     mockDbState.allQueue = [[]];
-    mockInsertWithGuard.mockReturnValue({
-      inserted: false,
-      conflict: { ...CONFLICT, userStoryId: "story-1" },
+    mockCheckSessionLock.mockReturnValue({
+      locked: true,
+      sessionId: "running-session-42",
     });
 
     const { POST } = await import("@/app/api/projects/[projectId]/stories/[storyId]/review/route");
@@ -270,9 +293,8 @@ describe("Agent launch routes concurrency conflicts", () => {
 
     const json = await res.json();
     expect(res.status).toBe(409);
-    expect(json.code).toBe("AGENT_ALREADY_RUNNING");
-    expect(json.data.activeSessionId).toBe("running-session-42");
-    expect(json.data.target.storyId).toBe("story-1");
+    expect(json.error).toBe("conflict");
+    expect(json.sessionId).toBe("running-session-42");
   });
 
   it("returns AGENT_ALREADY_RUNNING for merge-resolution launches", async () => {
@@ -282,7 +304,7 @@ describe("Agent launch routes concurrency conflicts", () => {
       { key: "global_prompt", value: JSON.stringify("global") },
     ];
     mockDbState.allQueue = [[]];
-    mockInsertWithGuard.mockReturnValue({ inserted: false, conflict: CONFLICT });
+    mockGetRunningForTarget.mockReturnValue(CONFLICT);
 
     const { POST } = await import("@/app/api/projects/[projectId]/epics/[epicId]/resolve-merge/route");
     const res = await POST(mockRequest({}), {
