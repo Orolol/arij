@@ -44,10 +44,10 @@ class ClaudeProcessManager {
   private sessions: Map<string, TrackedSession> = new Map();
 
   /**
-   * Spawns a new Claude CLI process and tracks it under the given session ID.
+   * Spawns a new agent process and tracks it under the given session ID.
    * If a session with the same ID is already running, it throws an error.
    *
-   * When provider is 'codex', delegates to the Codex provider instead.
+   * Dispatches to the appropriate provider (Claude Code, Codex, or Gemini CLI).
    *
    * Returns the session info immediately. The process runs in the background
    * and updates the session state on completion.
@@ -68,10 +68,10 @@ class ClaudeProcessManager {
     let promise: Promise<ClaudeResult>;
     let providerSession: ProviderSession | undefined;
 
-    if (provider === "codex") {
-      // Delegate to Codex provider
-      const codexProvider = getProvider("codex");
-      const session = codexProvider.spawn({
+    if (provider !== "claude-code") {
+      // Delegate to external provider (Codex, Gemini CLI, etc.)
+      const externalProvider = getProvider(provider);
+      const session = externalProvider.spawn({
         sessionId,
         prompt: options.prompt,
         cwd: options.cwd || process.cwd(),
@@ -89,7 +89,7 @@ class ClaudeProcessManager {
             });
           } catch (error) {
             console.error(
-              `[process-manager] Failed to persist Codex chunk for session ${sessionId}`,
+              `[process-manager] Failed to persist ${provider} chunk for session ${sessionId}`,
               error
             );
           }
@@ -152,7 +152,7 @@ class ClaudeProcessManager {
 
   /**
    * Cancels a running session by killing the underlying process.
-   * Works uniformly for both Claude Code (SIGTERM→SIGKILL) and Codex (AbortController).
+   * Works uniformly for all providers (Claude Code, Codex, Gemini CLI).
    * Returns true if the session was running and has been cancelled,
    * false if the session was not found or not in a cancellable state.
    */
