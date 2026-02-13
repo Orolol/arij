@@ -27,6 +27,7 @@ interface ProviderDefaultsTabProps {
 const PROVIDER_LABELS: Record<AgentProvider, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
+  "gemini-cli": "Gemini CLI",
 };
 
 function sourceBadgeVariant(source: string) {
