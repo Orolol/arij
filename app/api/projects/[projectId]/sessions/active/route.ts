@@ -7,8 +7,8 @@ import { activityRegistry } from "@/lib/activity-registry";
 
 export interface UnifiedActivity {
   id: string;
-  epicId?: string | null;
-  userStoryId?: string | null;
+  epicId: string | null;
+  userStoryId: string | null;
   type: "build" | "review" | "merge" | "chat" | "spec_generation" | "release";
   label: string;
   status: string;
@@ -17,6 +17,56 @@ export interface UnifiedActivity {
   startedAt: string;
   source: "db" | "registry";
   cancellable: boolean;
+}
+
+function inferDbActivityType(row: {
+  orchestrationMode: string | null;
+  mode: string | null;
+  prompt: string | null;
+}): UnifiedActivity["type"] {
+  if (row.orchestrationMode === "team") {
+    return "build";
+  }
+
+  const prompt = (row.prompt || "").toLowerCase();
+  if (
+    prompt.includes("merge conflict resolution") ||
+    prompt.includes("git merge main")
+  ) {
+    return "merge";
+  }
+
+  if (
+    row.mode === "plan" ||
+    /you are performing a \*\*.+review/.test(prompt)
+  ) {
+    return "review";
+  }
+
+  return "build";
+}
+
+function buildDbActivityLabel(
+  type: UnifiedActivity["type"],
+  row: { storyTitle: string | null; epicTitle: string | null }
+): string {
+  if (type === "merge") {
+    return row.epicTitle ? `Merging: ${row.epicTitle}` : "Merging";
+  }
+
+  if (type === "review") {
+    return row.storyTitle
+      ? `Reviewing: ${row.storyTitle}`
+      : row.epicTitle
+        ? `Reviewing: ${row.epicTitle}`
+        : "Reviewing";
+  }
+
+  return row.storyTitle
+    ? `Building: ${row.storyTitle}`
+    : row.epicTitle
+      ? `Building: ${row.epicTitle}`
+      : "Building";
 }
 
 export async function GET(
@@ -35,6 +85,7 @@ export async function GET(
       mode: agentSessions.mode,
       orchestrationMode: agentSessions.orchestrationMode,
       provider: agentSessions.provider,
+      prompt: agentSessions.prompt,
       startedAt: agentSessions.startedAt,
       epicTitle: epics.title,
       storyTitle: userStories.title,
@@ -51,33 +102,20 @@ export async function GET(
     .all();
 
   const dbActivities: UnifiedActivity[] = rows.map((row) => {
-    let type: UnifiedActivity["type"];
-    let label: string;
-
-    if (row.orchestrationMode === "team") {
-      type = "build";
-      label = "Team Build";
-    } else if (row.mode === "code") {
-      type = "build";
-      label = row.storyTitle
-        ? `Building: ${row.storyTitle}`
-        : row.epicTitle
-          ? `Building: ${row.epicTitle}`
-          : "Building";
-    } else {
-      // mode === "plan" → review
-      type = "review";
-      label = row.epicTitle ? `Reviewing: ${row.epicTitle}` : "Reviewing";
-    }
+    const type = inferDbActivityType(row);
+    const label =
+      row.orchestrationMode === "team"
+        ? "Team Build"
+        : buildDbActivityLabel(type, row);
 
     return {
       id: row.id,
-      epicId: row.epicId,
-      userStoryId: row.userStoryId,
+      epicId: row.epicId ?? null,
+      userStoryId: row.userStoryId ?? null,
       type,
       label,
       status: getSessionStatusForApi(row.status),
-      mode: row.mode || "plan",
+      mode: row.mode || "code",
       provider: row.provider || "claude-code",
       startedAt: row.startedAt || new Date().toISOString(),
       source: "db" as const,
@@ -90,6 +128,8 @@ export async function GET(
     .listByProject(projectId)
     .map((a) => ({
       id: a.id,
+      epicId: null,
+      userStoryId: null,
       type: a.type,
       label: a.label,
       status: "running",
