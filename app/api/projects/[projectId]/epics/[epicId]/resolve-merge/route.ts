@@ -18,6 +18,7 @@ import { processManager } from "@/lib/claude/process-manager";
 import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import { resolveAgent } from "@/lib/agent-config/providers";
+import type { ProviderType } from "@/lib/providers";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import {
   createAgentAlreadyRunningPayload,
@@ -38,8 +39,10 @@ type Params = { params: Promise<{ projectId: string; epicId: string }> };
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
   const body = await request.json().catch(() => ({}));
-  const providerOverride = body.provider as string | undefined;
-  const { provider, model } = resolveAgent("build", projectId, providerOverride);
+  const providerOverride = body.provider as ProviderType | undefined;
+  const resolved = resolveAgent("build", projectId);
+  const provider = providerOverride || resolved.provider;
+  const model = resolved.model;
 
   // Validate project
   const project = db
@@ -162,7 +165,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   // Resume support: look up previous session's claudeSessionId
   let claudeSessionId: string | undefined;
   let resumeSession = false;
-  if (body.resumeSessionId && provider === "claude-code") {
+  if (body.resumeSessionId) {
     const prevSession = db
       .select({ claudeSessionId: agentSessions.claudeSessionId })
       .from(agentSessions)
@@ -173,7 +176,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       resumeSession = true;
     }
   }
-  if (!claudeSessionId && provider === "claude-code") {
+  if (!claudeSessionId) {
     claudeSessionId = crypto.randomUUID();
   }
 

@@ -26,6 +26,10 @@ export interface CodexOptions {
   onResponseChunk?: (chunk: { text: string; emittedAt: string }) => void;
   /** Optional identifier for NDJSON session logging (same format as Claude Code). */
   logIdentifier?: string;
+  /** Session UUID for resume support. */
+  sessionId?: string;
+  /** When true, resume the session identified by sessionId. */
+  resumeSession?: boolean;
 }
 
 /**
@@ -48,6 +52,8 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
     onOutputChunk,
     onResponseChunk,
     logIdentifier,
+    sessionId: cliSessionId,
+    resumeSession,
   } = options;
 
   // Temp file for -o (reliable output capture)
@@ -75,6 +81,13 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
 
   // Common flags
   args.push("--skip-git-repo-check");
+
+  // Resume support
+  if (cliSessionId && resumeSession) {
+    args.push("--resume", cliSessionId);
+  } else if (cliSessionId) {
+    args.push("--thread-id", cliSessionId);
+  }
 
   // Capture final message to file (avoids mixing with banners/logs)
   args.push("-o", outputFile);

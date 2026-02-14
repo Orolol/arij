@@ -22,6 +22,10 @@ export interface GeminiOptions {
   onOutputChunk?: (chunk: { text: string; emittedAt: string }) => void;
   onResponseChunk?: (chunk: { text: string; emittedAt: string }) => void;
   logIdentifier?: string;
+  /** Session UUID for resume support. */
+  sessionId?: string;
+  /** When true, resume the session identified by sessionId. */
+  resumeSession?: boolean;
 }
 
 function extractGeminiResult(stdout: string): string {
@@ -103,10 +107,17 @@ function extractGeminiResult(stdout: string): string {
 }
 
 export function spawnGemini(options: GeminiOptions): SpawnedClaude {
-  const { mode, prompt, cwd, model, onRawChunk, onOutputChunk, onResponseChunk, logIdentifier } =
+  const { mode, prompt, cwd, model, onRawChunk, onOutputChunk, onResponseChunk, logIdentifier, sessionId: cliSessionId, resumeSession } =
     options;
 
-  const args: string[] = ["-p", prompt, "--output-format", "json"];
+  const args: string[] = [];
+
+  // Resume support
+  if (cliSessionId && resumeSession) {
+    args.push("--resume", cliSessionId);
+  }
+
+  args.push("-p", prompt, "--output-format", "json");
 
   if (mode === "code") {
     args.push("-y");

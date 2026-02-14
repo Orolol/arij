@@ -56,11 +56,6 @@ export function SessionPicker({
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (provider !== "claude-code") {
-      setSessions([]);
-      return;
-    }
-
     setLoading(true);
     const params = new URLSearchParams();
     if (epicId) params.set("epicId", epicId);
@@ -73,7 +68,7 @@ export function SessionPicker({
       .finally(() => setLoading(false));
   }, [projectId, epicId, agentType, provider]);
 
-  if (provider !== "claude-code" || (!loading && sessions.length === 0)) {
+  if (!loading && sessions.length === 0) {
     return null;
   }
 

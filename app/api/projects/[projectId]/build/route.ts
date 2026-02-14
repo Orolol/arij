@@ -231,7 +231,7 @@ export async function POST(
       fs.mkdirSync(logsDir, { recursive: true });
       const logsPath = path.join(logsDir, "logs.json");
 
-      const teamClaudeSessionId = resolvedTeamAgent.provider === "claude-code" ? crypto.randomUUID() : undefined;
+      const teamClaudeSessionId = crypto.randomUUID();
 
       createQueuedSession({
         id: sessionId,
@@ -398,7 +398,7 @@ export async function POST(
       );
     }
 
-    const soloClaudeSessionId = resolvedBuildAgent.provider === "claude-code" ? crypto.randomUUID() : undefined;
+    const soloClaudeSessionId = crypto.randomUUID();
 
     createQueuedSession({
       id: sessionId,

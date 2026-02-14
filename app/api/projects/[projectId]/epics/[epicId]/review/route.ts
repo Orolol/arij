@@ -239,9 +239,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     const useResume = idx === 0 && !!resumeClaudeSessionId;
     const claudeSessionId = useResume
       ? resumeClaudeSessionId
-      : resolvedAgent.provider === "claude-code"
-        ? crypto.randomUUID()
-        : undefined;
+      : crypto.randomUUID();
 
     createQueuedSession({
       id: sessionId,

@@ -77,6 +77,8 @@ class ClaudeProcessManager {
         mode: options.mode,
         allowedTools: options.allowedTools,
         model: options.model,
+        claudeSessionId: options.claudeSessionId,
+        resumeSession: options.resumeSession,
         onChunk: (chunk) => {
           try {
             appendSessionChunk({

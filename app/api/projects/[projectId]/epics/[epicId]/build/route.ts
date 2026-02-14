@@ -160,7 +160,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   // Resume support: look up previous session's claudeSessionId
   let claudeSessionId: string | undefined;
   let resumeSession = false;
-  if (body.resumeSessionId && resolvedAgent.provider === "claude-code") {
+  if (body.resumeSessionId) {
     const prevSession = db
       .select({ claudeSessionId: agentSessions.claudeSessionId })
       .from(agentSessions)
@@ -171,7 +171,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       resumeSession = true;
     }
   }
-  if (!claudeSessionId && resolvedAgent.provider === "claude-code") {
+  if (!claudeSessionId) {
     claudeSessionId = crypto.randomUUID();
   }
 

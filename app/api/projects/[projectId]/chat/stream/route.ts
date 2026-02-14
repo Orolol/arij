@@ -169,12 +169,12 @@ export async function POST(
     throw error;
   }
 
-  // Session resume for Claude Code
+  // Session resume — works for all providers
   let claudeSessionId: string | undefined;
   let resumeSession = false;
   let effectivePrompt = prompt;
 
-  if (resolvedAgent.provider === "claude-code" && conversationId) {
+  if (conversationId) {
     const conv = db
       .select()
       .from(chatConversations)
@@ -187,6 +187,9 @@ export async function POST(
     } else {
       claudeSessionId = crypto.randomUUID();
     }
+  }
+  if (!claudeSessionId) {
+    claudeSessionId = crypto.randomUUID();
   }
 
   setConversationStatus("generating");

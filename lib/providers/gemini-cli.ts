@@ -14,7 +14,7 @@ export class GeminiCliProvider implements AgentProvider {
   readonly type = "gemini-cli" as const;
 
   spawn(options: ProviderSpawnOptions): ProviderSession {
-    const { sessionId, mode, prompt, cwd, model, onChunk, logIdentifier } = options;
+    const { sessionId, mode, prompt, cwd, model, onChunk, logIdentifier, claudeSessionId, resumeSession } = options;
 
     const spawned = spawnGemini({
       mode,
@@ -22,6 +22,8 @@ export class GeminiCliProvider implements AgentProvider {
       cwd,
       model,
       logIdentifier,
+      sessionId: claudeSessionId,
+      resumeSession,
       onRawChunk: ({ source, index, text, emittedAt }) =>
         onChunk?.({
           streamType: "raw",

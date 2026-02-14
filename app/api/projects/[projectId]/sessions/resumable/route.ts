@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
-import { eq, and, isNotNull, desc } from "drizzle-orm";
+import { eq, and, desc } from "drizzle-orm";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -14,7 +14,6 @@ export async function GET(request: NextRequest, { params }: Params) {
   const conditions = [
     eq(agentSessions.projectId, projectId),
     eq(agentSessions.status, "completed"),
-    isNotNull(agentSessions.claudeSessionId),
   ];
 
   if (epicId) {

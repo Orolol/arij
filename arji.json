@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastSyncedAt": "2026-02-14T09:03:40.459Z",
+  "lastSyncedAt": "2026-02-14T11:04:23.498Z",
   "project": {
     "name": "Arij",
     "description": "A local, AI-first project orchestrator that provides a web interface for managing multi-project workflows with Claude Code as the execution engine. It covers the full project lifecycle: ideation, specification, kanban-based planning, automated code generation via Claude Code CLI, real-time agent monitoring, and release management.",
@@ -8,65 +8,6 @@
     "spec": "The plan is ready for your review. It covers 5 phases:\n\n1. **Schema** — 4 new nullable columns across `agentSessions` and `chatConversations`\n2. **Provider Layer** — Capture CLI session IDs from output, inject `--resume` flag for Claude Code and Gemini CLI\n3. **Process Manager** — Persist `cliSessionId` to DB on session completion\n4. **Chat Continuity** — Resume-first logic with automatic fallback to fresh prompt if the session expired\n5. **Work Session Resume** — New API endpoint, session picker dialog, and integration into build/review hooks\n\nKey design decisions:\n- Codex is marked non-resumable (its `exec` mode doesn't support `--resume`)\n- `resolveAgent()` is extended to return `namedAgentId` for session filtering\n- Resume failures fall back gracefully to full-prompt mode"
   },
   "epics": [
-    {
-      "id": "4587o18AAsJ7",
-      "title": "Mistral Vibe CLI Provider Parity",
-      "description": "Implement Mistral Vibe as a first-class provider across the same perimeter as existing CLI agents (build, review, chat, brainstorm, and release) using the current named-agent and assignment architecture.\n\nImplementation plan:\n1. Foundation: add `mistral-vibe` to provider enums/types/validation and provider registry wiring.\n2. Runner: add a Vibe execution module following the Codex/Gemini pattern, using headless invocation with `--prompt`, `--model`, `--agent`, and JSON output for machine parsing.\n3. Configuration: support both a global default Vibe profile and per-named-agent profile override (`plan`, `accept-edits`, `auto-approve`) while keeping existing model selection behavior.\n4. Dispatch integration: route all existing agent execution flows through provider/model/profile resolution and provider-agnostic process dispatch.\n5. UI parity: expose Mistral Vibe in existing provider selectors and add profile selection to current settings/agents/assignments surfaces with default-vs-override behavior.\n6. Quality: add tests for command construction, profile precedence, and flow dispatch parity; update docs.\n\nOut of scope: advanced Vibe-only controls (`--max-turns`, `--max-price`, `--resume`) and streaming-specific UX.",
-      "priority": 0,
-      "status": "backlog",
-      "position": 0,
-      "branchName": null,
-      "user_stories": [
-        {
-          "id": "Gj7JJSif4i1p",
-          "title": "As a platform engineer, I want `mistral-vibe` added as a provider type so that projects can configure Vibe like other CLI agents",
-          "description": "Extend shared provider definitions, API validation, and persistence mappings to recognize `mistral-vibe` end-to-end without changing current behavior for existing providers.",
-          "acceptance_criteria": "- [ ] `mistral-vibe` is accepted by provider enums/types on backend and frontend.\n- [ ] API payload validation and serialization support `mistral-vibe`.\n- [ ] Provider registry/process dispatch can resolve `mistral-vibe` at runtime.\n- [ ] Existing provider configurations continue to work unchanged after migration.",
-          "status": "todo",
-          "position": 0
-        },
-        {
-          "id": "JbfwNkLZC98u",
-          "title": "As an orchestration service, I want a Mistral Vibe runner so that agent tasks execute headlessly and deterministically",
-          "description": "Create Vibe spawn/provider modules that build and execute CLI commands in non-interactive mode, parse structured output, and normalize error handling to match existing provider contracts.",
-          "acceptance_criteria": "- [ ] A Vibe runner module is implemented following the existing provider pattern.\n- [ ] Command generation includes prompt, model, profile (`--agent`), and JSON output mode.\n- [ ] Final response text and usage/error metadata are parsed into the common provider result shape.\n- [ ] Timeouts, non-zero exits, and malformed output are mapped to normalized platform errors.",
-          "status": "todo",
-          "position": 1
-        },
-        {
-          "id": "wSD3sWE6_sQs",
-          "title": "As a project admin, I want both global default and per-named-agent Vibe profiles so that autonomy can be controlled safely",
-          "description": "Add configuration support for a project/provider-level default Vibe profile and optional named-agent override, with deterministic precedence during agent resolution.",
-          "acceptance_criteria": "- [ ] Global default Vibe profile is configurable and persisted.\n- [ ] Named agents can optionally override profile with `plan`, `accept-edits`, or `auto-approve`.\n- [ ] Resolution precedence is enforced: named-agent override > global provider default > system fallback.\n- [ ] Invalid profile values are rejected by validation.",
-          "status": "todo",
-          "position": 2
-        },
-        {
-          "id": "Deolo70l9G5I",
-          "title": "As a product user, I want all existing agent flows to dispatch through Mistral Vibe when selected so that behavior matches other providers",
-          "description": "Wire build, review, chat, brainstorm, and release execution paths to resolve provider/model/profile and pass them to provider-agnostic dispatch.",
-          "acceptance_criteria": "- [ ] Build flow executes with Mistral Vibe when provider is selected.\n- [ ] Review flow executes with Mistral Vibe when provider is selected.\n- [ ] Chat, brainstorm, and release flows execute with Mistral Vibe when provider is selected.\n- [ ] Each flow passes resolved model/profile and records provider/model in execution metadata.",
-          "status": "todo",
-          "position": 3
-        },
-        {
-          "id": "bc-y34qtoEi-",
-          "title": "As a project admin, I want UI parity for Mistral Vibe in provider, model, and profile selectors so that configuration is consistent",
-          "description": "Update existing UI surfaces (settings, agents, assignments) to include `mistral-vibe` and profile selection without adding new standalone configuration concepts.",
-          "acceptance_criteria": "- [ ] Provider dropdowns include `mistral-vibe` wherever other CLI providers are selectable.\n- [ ] Model selection for `mistral-vibe` is available with the same UX pattern used by existing providers.\n- [ ] Profile selection supports default-vs-override behavior in existing forms.\n- [ ] No new Vibe-specific advanced controls are exposed in this epic.",
-          "status": "todo",
-          "position": 4
-        },
-        {
-          "id": "3tW49gimqm4k",
-          "title": "As a maintainer, I want automated coverage for Vibe parity so that regressions are caught before release",
-          "description": "Add targeted tests and documentation updates validating command assembly, profile precedence, and dispatch behavior across supported flows.",
-          "acceptance_criteria": "- [ ] Unit tests cover Vibe command construction and output parsing.\n- [ ] Unit tests cover profile precedence resolution.\n- [ ] Integration/smoke tests verify dispatch success for build/review and coverage for chat/brainstorm/release routing.\n- [ ] Developer docs include setup, required CLI assumptions, and known out-of-scope constraints.",
-          "status": "todo",
-          "position": 5
-        }
-      ]
-    },
     {
       "id": "7FFiclGUqPE-",
       "title": "GitHub Release Lifecycle",
@@ -107,6 +48,65 @@
           "acceptance_criteria": "- [ ] Tag push, release create, and release publish write `gitSyncLog` records\\n- [ ] Log entries include operation type, project id, status, and detail payload\\n- [ ] Failures include remote error identifiers when available\\n- [ ] Logs can be queried by release workflow for debugging",
           "status": "todo",
           "position": 3
+        }
+      ]
+    },
+    {
+      "id": "9D8XWvhZju9s",
+      "title": "Named Agents Global Dropdown Cutover (Runtime-Only Selection)",
+      "description": "Standardize the product so runtime workflows select only named agents, not raw provider/model pairs. Provider/model selection remains available only when creating or editing named agents. Implementation plan: 1) inventory all provider/model dropdowns and classify runtime vs Named Agent CRUD/admin; 2) enforce a globally seeded default named agent created once (`Claude Code` + `claude-opus-4-6`) with idempotent seed logic; 3) replace all runtime selectors with a shared named-agent dropdown bound to `namedAgentId`; 4) route every build/review/fix/release dispatch through `resolveAgent()` returning `{ provider, model }`; 5) use process-manager dispatch to invoke the correct CLI implementation (including `gemini-cli`) with headless-safe execution patterns; 6) keep upgrades non-breaking by falling back to the global default when legacy/missing `namedAgentId` is encountered instead of requiring DB backfill; 7) add backend, frontend, and e2e regression tests proving no runtime path still depends on raw provider selection.",
+      "priority": 0,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "a7t95IN5LJSO",
+          "title": "As a workspace admin, I want a global default named agent seeded once so that runtime flows always have a safe fallback",
+          "description": "Create and maintain a single global default named agent used when no explicit named agent is resolvable. The default is provider `claude-code` with model `claude-opus-4-6`.",
+          "acceptance_criteria": "- [ ] On bootstrap/migration, the system creates the default named agent if it does not exist.\n- [ ] The seed is idempotent and never creates duplicates.\n- [ ] The default is global (not project-scoped).\n- [ ] Runtime fallback logic can always resolve this default agent.",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "ibvw75HHsvP6",
+          "title": "As a project user, I want every runtime dropdown to select a named agent so that agent selection is consistent across the app",
+          "description": "Replace provider/model runtime selectors across build, review, assignment, release, and related operational actions with a named-agent selector.",
+          "acceptance_criteria": "- [ ] All user-facing runtime dropdowns use `namedAgentId`.\n- [ ] Raw provider/model options are removed from runtime surfaces.\n- [ ] Empty-state UX directs users to create a named agent and/or uses default fallback behavior.\n- [ ] No runtime UI surface exposes provider/model selection outside Named Agent CRUD.",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "FtU9bun5x7vv",
+          "title": "As a workspace admin, I want provider/model selection limited to named-agent create/edit so that agent definitions are centrally managed",
+          "description": "Keep provider and model controls only in the Agents management experience, including support for the Gemini CLI provider and model selection validation.",
+          "acceptance_criteria": "- [ ] Agents CRUD supports create, list, update, and delete operations for named agents.\n- [ ] Agent create/edit forms include provider selection and model input/validation.\n- [ ] Provider list includes `claude-code` and `gemini-cli`.\n- [ ] Runtime forms do not include provider/model fields.",
+          "status": "review",
+          "position": 2
+        },
+        {
+          "id": "IG8AQRoyG98V",
+          "title": "As the orchestration backend, I want all dispatch routes to resolve `{ provider, model }` from `namedAgentId` so that the correct CLI is always invoked",
+          "description": "Unify dispatch by requiring `resolveAgent()` across build/review/fix/release endpoints and pass resolved provider/model into generalized process-manager dispatch.",
+          "acceptance_criteria": "- [ ] All relevant execution routes call `resolveAgent()` before spawning a CLI process.\n- [ ] `resolveAgent()` returns a `{ provider, model }` tuple for valid, missing, and invalid IDs.\n- [ ] Dispatch supports provider-specific runners (including Gemini CLI) from the same orchestration path.\n- [ ] Automated tests validate route-level resolution and provider-specific command construction.",
+          "status": "review",
+          "position": 3
+        },
+        {
+          "id": "vL5Lfvo8Gs7U",
+          "title": "As an existing customer, I want legacy provider/model assignments to keep working so that upgrades do not break active workflows",
+          "description": "Support legacy records that do not yet have `namedAgentId` by applying runtime fallback to the global default agent, while ensuring new writes use named-agent references.",
+          "acceptance_criteria": "- [ ] If `namedAgentId` is null, missing, or invalid, runtime execution falls back to the global default named agent.\n- [ ] Existing records are not blocked and do not require a one-time backfill migration.\n- [ ] New or updated assignments persist `namedAgentId` as the runtime selector.\n- [ ] Regression tests cover legacy-read + fallback + new-write behavior.",
+          "status": "review",
+          "position": 4
+        },
+        {
+          "id": "H2o-yqJEGkmK",
+          "title": "As a QA engineer, I want regression coverage for the dropdown cutover so that provider-based runtime selection cannot reappear",
+          "description": "Add automated coverage to guarantee runtime surfaces and dispatch paths remain named-agent-first and fallback-safe over time.",
+          "acceptance_criteria": "- [ ] Frontend tests assert runtime forms render named-agent selectors and not provider selectors.\n- [ ] Backend tests assert fallback resolution and provider/model tuple output from `resolveAgent()`.\n- [ ] End-to-end tests validate build/review/release execution with explicit named agents and fallback scenarios.\n- [ ] Test failures clearly identify any route or UI surface still using provider-based runtime selection.",
+          "status": "review",
+          "position": 5
         }
       ]
     },
@@ -2080,65 +2080,6 @@
       ]
     },
     {
-      "id": "9D8XWvhZju9s",
-      "title": "Named Agents Global Dropdown Cutover (Runtime-Only Selection)",
-      "description": "Standardize the product so runtime workflows select only named agents, not raw provider/model pairs. Provider/model selection remains available only when creating or editing named agents. Implementation plan: 1) inventory all provider/model dropdowns and classify runtime vs Named Agent CRUD/admin; 2) enforce a globally seeded default named agent created once (`Claude Code` + `claude-opus-4-6`) with idempotent seed logic; 3) replace all runtime selectors with a shared named-agent dropdown bound to `namedAgentId`; 4) route every build/review/fix/release dispatch through `resolveAgent()` returning `{ provider, model }`; 5) use process-manager dispatch to invoke the correct CLI implementation (including `gemini-cli`) with headless-safe execution patterns; 6) keep upgrades non-breaking by falling back to the global default when legacy/missing `namedAgentId` is encountered instead of requiring DB backfill; 7) add backend, frontend, and e2e regression tests proving no runtime path still depends on raw provider selection.",
-      "priority": 0,
-      "status": "in_progress",
-      "position": 0,
-      "branchName": "feature/epic-9D8XWvhZju9s-named-agents-global-dropdown-cutover-run",
-      "user_stories": [
-        {
-          "id": "a7t95IN5LJSO",
-          "title": "As a workspace admin, I want a global default named agent seeded once so that runtime flows always have a safe fallback",
-          "description": "Create and maintain a single global default named agent used when no explicit named agent is resolvable. The default is provider `claude-code` with model `claude-opus-4-6`.",
-          "acceptance_criteria": "- [ ] On bootstrap/migration, the system creates the default named agent if it does not exist.\n- [ ] The seed is idempotent and never creates duplicates.\n- [ ] The default is global (not project-scoped).\n- [ ] Runtime fallback logic can always resolve this default agent.",
-          "status": "done",
-          "position": 0
-        },
-        {
-          "id": "ibvw75HHsvP6",
-          "title": "As a project user, I want every runtime dropdown to select a named agent so that agent selection is consistent across the app",
-          "description": "Replace provider/model runtime selectors across build, review, assignment, release, and related operational actions with a named-agent selector.",
-          "acceptance_criteria": "- [ ] All user-facing runtime dropdowns use `namedAgentId`.\n- [ ] Raw provider/model options are removed from runtime surfaces.\n- [ ] Empty-state UX directs users to create a named agent and/or uses default fallback behavior.\n- [ ] No runtime UI surface exposes provider/model selection outside Named Agent CRUD.",
-          "status": "done",
-          "position": 1
-        },
-        {
-          "id": "FtU9bun5x7vv",
-          "title": "As a workspace admin, I want provider/model selection limited to named-agent create/edit so that agent definitions are centrally managed",
-          "description": "Keep provider and model controls only in the Agents management experience, including support for the Gemini CLI provider and model selection validation.",
-          "acceptance_criteria": "- [ ] Agents CRUD supports create, list, update, and delete operations for named agents.\n- [ ] Agent create/edit forms include provider selection and model input/validation.\n- [ ] Provider list includes `claude-code` and `gemini-cli`.\n- [ ] Runtime forms do not include provider/model fields.",
-          "status": "done",
-          "position": 2
-        },
-        {
-          "id": "IG8AQRoyG98V",
-          "title": "As the orchestration backend, I want all dispatch routes to resolve `{ provider, model }` from `namedAgentId` so that the correct CLI is always invoked",
-          "description": "Unify dispatch by requiring `resolveAgent()` across build/review/fix/release endpoints and pass resolved provider/model into generalized process-manager dispatch.",
-          "acceptance_criteria": "- [ ] All relevant execution routes call `resolveAgent()` before spawning a CLI process.\n- [ ] `resolveAgent()` returns a `{ provider, model }` tuple for valid, missing, and invalid IDs.\n- [ ] Dispatch supports provider-specific runners (including Gemini CLI) from the same orchestration path.\n- [ ] Automated tests validate route-level resolution and provider-specific command construction.",
-          "status": "done",
-          "position": 3
-        },
-        {
-          "id": "vL5Lfvo8Gs7U",
-          "title": "As an existing customer, I want legacy provider/model assignments to keep working so that upgrades do not break active workflows",
-          "description": "Support legacy records that do not yet have `namedAgentId` by applying runtime fallback to the global default agent, while ensuring new writes use named-agent references.",
-          "acceptance_criteria": "- [ ] If `namedAgentId` is null, missing, or invalid, runtime execution falls back to the global default named agent.\n- [ ] Existing records are not blocked and do not require a one-time backfill migration.\n- [ ] New or updated assignments persist `namedAgentId` as the runtime selector.\n- [ ] Regression tests cover legacy-read + fallback + new-write behavior.",
-          "status": "done",
-          "position": 4
-        },
-        {
-          "id": "H2o-yqJEGkmK",
-          "title": "As a QA engineer, I want regression coverage for the dropdown cutover so that provider-based runtime selection cannot reappear",
-          "description": "Add automated coverage to guarantee runtime surfaces and dispatch paths remain named-agent-first and fallback-safe over time.",
-          "acceptance_criteria": "- [ ] Frontend tests assert runtime forms render named-agent selectors and not provider selectors.\n- [ ] Backend tests assert fallback resolution and provider/model tuple output from `resolveAgent()`.\n- [ ] End-to-end tests validate build/review/release execution with explicit named agents and fallback scenarios.\n- [ ] Test failures clearly identify any route or UI surface still using provider-based runtime selection.",
-          "status": "done",
-          "position": 5
-        }
-      ]
-    },
-    {
       "id": "HGhTDE1Y__j_",
       "title": "THe chat bar is too small in chat",
       "description": null,
@@ -2147,6 +2088,65 @@
       "position": 1,
       "branchName": "feature/epic-HGhTDE1Y__j_-the-chat-bar-is-too-small-in-chat",
       "user_stories": []
+    },
+    {
+      "id": "4587o18AAsJ7",
+      "title": "Mistral Vibe CLI Provider Parity",
+      "description": "Implement Mistral Vibe as a first-class provider across the same perimeter as existing CLI agents (build, review, chat, brainstorm, and release) using the current named-agent and assignment architecture.\n\nImplementation plan:\n1. Foundation: add `mistral-vibe` to provider enums/types/validation and provider registry wiring.\n2. Runner: add a Vibe execution module following the Codex/Gemini pattern, using headless invocation with `--prompt`, `--model`, `--agent`, and JSON output for machine parsing.\n3. Configuration: support both a global default Vibe profile and per-named-agent profile override (`plan`, `accept-edits`, `auto-approve`) while keeping existing model selection behavior.\n4. Dispatch integration: route all existing agent execution flows through provider/model/profile resolution and provider-agnostic process dispatch.\n5. UI parity: expose Mistral Vibe in existing provider selectors and add profile selection to current settings/agents/assignments surfaces with default-vs-override behavior.\n6. Quality: add tests for command construction, profile precedence, and flow dispatch parity; update docs.\n\nOut of scope: advanced Vibe-only controls (`--max-turns`, `--max-price`, `--resume`) and streaming-specific UX.",
+      "priority": 0,
+      "status": "review",
+      "position": 0,
+      "branchName": "feature/epic-4587o18AAsJ7-mistral-vibe-cli-provider-parity",
+      "user_stories": [
+        {
+          "id": "Gj7JJSif4i1p",
+          "title": "As a platform engineer, I want `mistral-vibe` added as a provider type so that projects can configure Vibe like other CLI agents",
+          "description": "Extend shared provider definitions, API validation, and persistence mappings to recognize `mistral-vibe` end-to-end without changing current behavior for existing providers.",
+          "acceptance_criteria": "- [ ] `mistral-vibe` is accepted by provider enums/types on backend and frontend.\n- [ ] API payload validation and serialization support `mistral-vibe`.\n- [ ] Provider registry/process dispatch can resolve `mistral-vibe` at runtime.\n- [ ] Existing provider configurations continue to work unchanged after migration.",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "JbfwNkLZC98u",
+          "title": "As an orchestration service, I want a Mistral Vibe runner so that agent tasks execute headlessly and deterministically",
+          "description": "Create Vibe spawn/provider modules that build and execute CLI commands in non-interactive mode, parse structured output, and normalize error handling to match existing provider contracts.",
+          "acceptance_criteria": "- [ ] A Vibe runner module is implemented following the existing provider pattern.\n- [ ] Command generation includes prompt, model, profile (`--agent`), and JSON output mode.\n- [ ] Final response text and usage/error metadata are parsed into the common provider result shape.\n- [ ] Timeouts, non-zero exits, and malformed output are mapped to normalized platform errors.",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "wSD3sWE6_sQs",
+          "title": "As a project admin, I want both global default and per-named-agent Vibe profiles so that autonomy can be controlled safely",
+          "description": "Add configuration support for a project/provider-level default Vibe profile and optional named-agent override, with deterministic precedence during agent resolution.",
+          "acceptance_criteria": "- [ ] Global default Vibe profile is configurable and persisted.\n- [ ] Named agents can optionally override profile with `plan`, `accept-edits`, or `auto-approve`.\n- [ ] Resolution precedence is enforced: named-agent override > global provider default > system fallback.\n- [ ] Invalid profile values are rejected by validation.",
+          "status": "review",
+          "position": 2
+        },
+        {
+          "id": "Deolo70l9G5I",
+          "title": "As a product user, I want all existing agent flows to dispatch through Mistral Vibe when selected so that behavior matches other providers",
+          "description": "Wire build, review, chat, brainstorm, and release execution paths to resolve provider/model/profile and pass them to provider-agnostic dispatch.",
+          "acceptance_criteria": "- [ ] Build flow executes with Mistral Vibe when provider is selected.\n- [ ] Review flow executes with Mistral Vibe when provider is selected.\n- [ ] Chat, brainstorm, and release flows execute with Mistral Vibe when provider is selected.\n- [ ] Each flow passes resolved model/profile and records provider/model in execution metadata.",
+          "status": "review",
+          "position": 3
+        },
+        {
+          "id": "bc-y34qtoEi-",
+          "title": "As a project admin, I want UI parity for Mistral Vibe in provider, model, and profile selectors so that configuration is consistent",
+          "description": "Update existing UI surfaces (settings, agents, assignments) to include `mistral-vibe` and profile selection without adding new standalone configuration concepts.",
+          "acceptance_criteria": "- [ ] Provider dropdowns include `mistral-vibe` wherever other CLI providers are selectable.\n- [ ] Model selection for `mistral-vibe` is available with the same UX pattern used by existing providers.\n- [ ] Profile selection supports default-vs-override behavior in existing forms.\n- [ ] No new Vibe-specific advanced controls are exposed in this epic.",
+          "status": "review",
+          "position": 4
+        },
+        {
+          "id": "3tW49gimqm4k",
+          "title": "As a maintainer, I want automated coverage for Vibe parity so that regressions are caught before release",
+          "description": "Add targeted tests and documentation updates validating command assembly, profile precedence, and dispatch behavior across supported flows.",
+          "acceptance_criteria": "- [ ] Unit tests cover Vibe command construction and output parsing.\n- [ ] Unit tests cover profile precedence resolution.\n- [ ] Integration/smoke tests verify dispatch success for build/review and coverage for chat/brainstorm/release routing.\n- [ ] Developer docs include setup, required CLI assumptions, and known out-of-scope constraints.",
+          "status": "review",
+          "position": 5
+        }
+      ]
     }
   ]
 }
