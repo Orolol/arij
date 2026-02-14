@@ -6,6 +6,19 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Track call counts to return different values for sequential .get() calls
 let getCallCount = 0;
+const mockState = vi.hoisted(() => ({
+  updateCalls: [] as Array<{ table: string; values: Record<string, unknown> }>,
+  processManagerResult: {
+    success: true,
+    duration: 1000,
+  } as {
+    success: boolean;
+    duration: number;
+    result?: string;
+    error?: string;
+    endedWithQuestion?: boolean;
+  },
+}));
 
 const mockResolveAgentByNamedId = vi.hoisted(() =>
   vi.fn(() => ({ provider: "claude-code" })),
@@ -41,19 +54,26 @@ vi.mock("@/lib/db", () => {
     insert: vi.fn().mockReturnValue({
       values: vi.fn().mockReturnValue({ run: vi.fn() }),
     }),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({ run: vi.fn() }),
-      }),
+    update: vi.fn((table: { _name?: string } | string) => {
+      const tableName =
+        typeof table === "string" ? table : table?._name ?? "unknown";
+      return {
+        set: vi.fn((values: Record<string, unknown>) => {
+          mockState.updateCalls.push({ table: tableName, values });
+          return {
+            where: vi.fn().mockReturnValue({ run: vi.fn() }),
+          };
+        }),
+      };
     }),
   };
   return { db: chain };
 });
 
 vi.mock("@/lib/db/schema", () => ({
-  projects: {},
-  epics: { id: "id", epicId: "epicId", position: "position" },
-  userStories: { epicId: "epicId", position: "position" },
+  projects: { _name: "projects" },
+  epics: { _name: "epics", id: "id", epicId: "epicId", position: "position" },
+  userStories: { _name: "userStories", epicId: "epicId", position: "position", status: "status" },
   documents: { projectId: "projectId" },
   agentSessions: { id: "id", epicId: "epicId", mode: "mode", status: "status" },
   ticketComments: { userStoryId: "userStoryId", createdAt: "createdAt" },
@@ -78,10 +98,10 @@ vi.mock("@/lib/claude/process-manager", () => ({
       status: "running",
       startedAt: new Date(),
     }),
-    getStatus: vi.fn().mockReturnValue({
+    getStatus: vi.fn(() => ({
       status: "completed",
-      result: { success: true, duration: 1000 },
-    }),
+      result: mockState.processManagerResult,
+    })),
   },
 }));
 
@@ -128,9 +148,16 @@ function mockRequest(body: Record<string, unknown>) {
   } as unknown as import("next/server").NextRequest;
 }
 
+async function flushBackground() {
+  await new Promise((r) => setTimeout(r, 50));
+  await new Promise((r) => setTimeout(r, 50));
+}
+
 describe("Build Route", () => {
   beforeEach(() => {
     getCallCount = 0;
+    mockState.updateCalls = [];
+    mockState.processManagerResult = { success: true, duration: 1000 };
     mockResolveAgentByNamedId.mockReturnValue({ provider: "claude-code" });
   });
 
@@ -234,5 +261,30 @@ describe("Build Route", () => {
     expect(res.status).toBe(200);
     expect(json.data).toBeDefined();
     expect(mockResolveAgentByNamedId).toHaveBeenCalledWith("build", "proj-1", null);
+  });
+
+  it("keeps statuses in progress when build ended with a question", async () => {
+    mockState.processManagerResult = {
+      success: true,
+      duration: 1000,
+      result: "Need clarification before continuing",
+      endedWithQuestion: true,
+    };
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/build/route"
+    );
+
+    const res = await POST(mockRequest({ epicIds: ["epic-1"] }), {
+      params: Promise.resolve({ projectId: "proj-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    const reviewUpdates = mockState.updateCalls.filter(
+      (u) => u.values.status === "review"
+    );
+    expect(reviewUpdates).toHaveLength(0);
   });
 });

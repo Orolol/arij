@@ -3,6 +3,7 @@ import {
   parseClaudeOutput,
   extractJsonFromOutput,
   extractCliSessionIdFromOutput,
+  hasAskUserQuestion,
 } from "@/lib/claude/json-parser";
 
 describe("parseClaudeOutput", () => {
@@ -278,5 +279,50 @@ describe("extractCliSessionIdFromOutput", () => {
   it("returns null when no session id is present", () => {
     const output = JSON.stringify({ type: "result", result: "done" });
     expect(extractCliSessionIdFromOutput(output)).toBeNull();
+  });
+});
+
+describe("hasAskUserQuestion", () => {
+  it("detects AskUserQuestion tool_use in JSON output", () => {
+    const output = JSON.stringify({
+      type: "assistant",
+      message: {
+        content: [
+          {
+            type: "tool_use",
+            name: "AskUserQuestion",
+            input: {
+              questions: [
+                {
+                  question: "Which API should we use?",
+                  header: "Question",
+                  options: [{ label: "A", description: "Use A" }],
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    expect(hasAskUserQuestion(output)).toBe(true);
+  });
+
+  it("detects request_user_input-style tool names in NDJSON output", () => {
+    const output = [
+      JSON.stringify({ type: "content_block_start", content_block: { type: "tool_use" } }),
+      JSON.stringify({ type: "tool_use", name: "request_user_input", input: { question: "Continue?" } }),
+    ].join("\n");
+
+    expect(hasAskUserQuestion(output)).toBe(true);
+  });
+
+  it("returns false for regular non-question output", () => {
+    const output = JSON.stringify({
+      type: "result",
+      result: "Implemented all tasks and pushed tests.",
+    });
+
+    expect(hasAskUserQuestion(output)).toBe(false);
   });
 });

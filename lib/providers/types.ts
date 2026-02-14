@@ -48,6 +48,8 @@ export interface ProviderResult {
   duration: number;
   /** Provider CLI session ID extracted from output when available. */
   cliSessionId?: string;
+  /** True when the provider ended by asking a follow-up user question. */
+  endedWithQuestion?: boolean;
 }
 
 export interface ProviderSession {

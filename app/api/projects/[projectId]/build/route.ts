@@ -306,8 +306,8 @@ export async function POST(
           }
         }
 
-        // Update all associated epics
-        if (result?.success) {
+        // Update all associated epics unless the agent ended by asking a question.
+        if (result?.success && !result?.endedWithQuestion) {
           for (const eid of allEpicIds) {
             db.update(epics)
               .set({ status: "review", updatedAt: completedAt })
@@ -490,9 +490,9 @@ export async function POST(
         }
       }
 
-      // Move epic + US to review if successful
-      // The ticket should go through review before being moved to done/merged.
-      if (result?.success) {
+      // Move epic + US to review if successful.
+      // If the agent asked a follow-up question, keep work in progress.
+      if (result?.success && !result?.endedWithQuestion) {
         db.update(userStories)
           .set({ status: "review" })
           .where(

@@ -43,6 +43,7 @@ export class ClaudeCodeProvider implements AgentProvider {
       error: r.error,
       duration: r.duration,
       cliSessionId: r.cliSessionId,
+      endedWithQuestion: r.endedWithQuestion,
     }));
 
     return {

@@ -6,7 +6,7 @@ import {
   endStreamLog,
   type StreamLogContext,
 } from "./logger";
-import { extractCliSessionIdFromOutput } from "./json-parser";
+import { extractCliSessionIdFromOutput, hasAskUserQuestion } from "./json-parser";
 
 export interface ClaudeOptions {
   mode: "plan" | "code" | "analyze";
@@ -27,6 +27,8 @@ export interface ClaudeResult {
   error?: string;
   duration: number;
   cliSessionId?: string;
+  /** True when the agent ended by asking a user question. */
+  endedWithQuestion?: boolean;
 }
 
 export interface SpawnedClaude {
@@ -151,6 +153,7 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
       const stderr = Buffer.concat(stderrChunks).toString("utf-8");
       const parsedCliSessionId =
         extractCliSessionIdFromOutput(stdout) ?? cliSessionId;
+      const endedWithQuestion = hasAskUserQuestion(stdout);
 
       console.log("[spawn] Process exited, code:", code, "duration:", duration + "ms", "stdout:", stdout.length, "bytes, stderr:", stderr.length, "bytes");
       if (stderr.trim()) {
@@ -178,6 +181,7 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
           result: stdout.trim() || undefined,
           duration,
           cliSessionId: parsedCliSessionId,
+          endedWithQuestion,
         });
         return;
       }
@@ -187,6 +191,7 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
         result: stdout.trim(),
         duration,
         cliSessionId: parsedCliSessionId,
+        endedWithQuestion,
       });
     });
   });

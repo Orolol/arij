@@ -7,6 +7,7 @@ vi.mock("@/lib/claude/spawn", () => ({
       success: true,
       result: "test output",
       duration: 1000,
+      endedWithQuestion: false,
     }),
     kill: vi.fn(),
   })),
@@ -18,6 +19,7 @@ vi.mock("@/lib/codex/spawn", () => ({
       success: true,
       result: "Codex output",
       duration: 500,
+      endedWithQuestion: false,
     }),
     kill: vi.fn(),
   })),
@@ -29,6 +31,7 @@ vi.mock("@/lib/gemini/spawn", () => ({
       success: true,
       result: "Gemini output",
       duration: 400,
+      endedWithQuestion: false,
     }),
     kill: vi.fn(),
   })),
@@ -105,6 +108,23 @@ describe("ClaudeCodeProvider", () => {
     expect(result.success).toBe(true);
     expect(result.result).toBe("test output");
     expect(result.duration).toBe(1000);
+    expect(result.endedWithQuestion).toBe(false);
+  });
+
+  it("maps endedWithQuestion from spawnClaude", async () => {
+    vi.mocked(spawnClaude).mockReturnValueOnce({
+      promise: Promise.resolve({
+        success: true,
+        result: "Need input",
+        duration: 250,
+        endedWithQuestion: true,
+      }),
+      kill: vi.fn(),
+    });
+
+    const session = provider.spawn(baseOptions);
+    const result = await session.promise;
+    expect(result.endedWithQuestion).toBe(true);
   });
 
   it("cancel calls kill on the session", () => {
@@ -148,6 +168,23 @@ describe("CodexProvider", () => {
     const result = await session.promise;
     expect(result.success).toBe(true);
     expect(result.result).toContain("Codex output");
+    expect(result.endedWithQuestion).toBe(false);
+  });
+
+  it("preserves endedWithQuestion from Codex spawn result", async () => {
+    vi.mocked(spawnCodex).mockReturnValueOnce({
+      promise: Promise.resolve({
+        success: true,
+        result: "Need user decision",
+        duration: 300,
+        endedWithQuestion: true,
+      }),
+      kill: vi.fn(),
+    });
+
+    const session = provider.spawn(baseOptions);
+    const result = await session.promise;
+    expect(result.endedWithQuestion).toBe(true);
   });
 
   it("cancel calls kill on the session", () => {
@@ -191,6 +228,23 @@ describe("GeminiCliProvider", () => {
     const result = await session.promise;
     expect(result.success).toBe(true);
     expect(result.result).toContain("Gemini output");
+    expect(result.endedWithQuestion).toBe(false);
+  });
+
+  it("preserves endedWithQuestion from Gemini spawn result", async () => {
+    vi.mocked(spawnGemini).mockReturnValueOnce({
+      promise: Promise.resolve({
+        success: true,
+        result: "Need clarification",
+        duration: 200,
+        endedWithQuestion: true,
+      }),
+      kill: vi.fn(),
+    });
+
+    const session = provider.spawn(baseOptions);
+    const result = await session.promise;
+    expect(result.endedWithQuestion).toBe(true);
   });
 
   it("forwards cliSessionId and resumeSession to spawnGemini", () => {
