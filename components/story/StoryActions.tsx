@@ -25,9 +25,11 @@ import {
   Loader2,
 } from "lucide-react";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
+import { SessionPicker } from "@/components/shared/SessionPicker";
 
 interface Story {
   id: string;
+  epicId?: string;
   status: string;
   title: string;
 }
@@ -38,8 +40,8 @@ interface StoryActionsProps {
   dispatching: boolean;
   isRunning: boolean;
   activeSessionId?: string | null;
-  onSendToDev: (comment?: string, namedAgentId?: string | null) => Promise<void>;
-  onSendToReview: (types: string[], namedAgentId?: string | null) => Promise<void>;
+  onSendToDev: (comment?: string, namedAgentId?: string | null, resumeSessionId?: string) => Promise<void>;
+  onSendToReview: (types: string[], namedAgentId?: string | null, resumeSessionId?: string) => Promise<void>;
   onApprove: () => Promise<void>;
   onActionError?: (error: unknown) => void;
 }
@@ -62,6 +64,8 @@ export function StoryActions({
   const [reviewAgentId, setReviewAgentId] = useState<string | null>(null);
   const [reviewTypes, setReviewTypes] = useState<Set<string>>(new Set(["feature_review"]));
   const [approving, setApproving] = useState(false);
+  const [resumeSessionId, setResumeSessionId] = useState<string | undefined>();
+  const [reviewResumeSessionId, setReviewResumeSessionId] = useState<string | undefined>();
 
   const status = story.status;
   const canSendToDev = ["todo", "in_progress"].includes(status);
@@ -79,9 +83,10 @@ export function StoryActions({
   // Send to Dev (from todo/in_progress — optional comment)
   async function handleSendToDev() {
     try {
-      await onSendToDev(devComment.trim() || undefined, devAgentId);
+      await onSendToDev(devComment.trim() || undefined, devAgentId, resumeSessionId);
       setSendToDevOpen(false);
       setDevComment("");
+      setResumeSessionId(undefined);
     } catch (error) {
       onActionError?.(error);
     }
@@ -91,9 +96,10 @@ export function StoryActions({
   async function handleSendToDevFromReview() {
     if (!devComment.trim()) return;
     try {
-      await onSendToDev(devComment.trim(), devAgentId);
+      await onSendToDev(devComment.trim(), devAgentId, resumeSessionId);
       setSendToDevOpen(false);
       setDevComment("");
+      setResumeSessionId(undefined);
     } catch (error) {
       onActionError?.(error);
     }
@@ -115,9 +121,10 @@ export function StoryActions({
   async function handleReview() {
     if (reviewTypes.size === 0) return;
     try {
-      await onSendToReview(Array.from(reviewTypes), reviewAgentId);
+      await onSendToReview(Array.from(reviewTypes), reviewAgentId, reviewResumeSessionId);
       setReviewOpen(false);
       setReviewTypes(new Set());
+      setReviewResumeSessionId(undefined);
     } catch (error) {
       onActionError?.(error);
     }
@@ -205,7 +212,7 @@ export function StoryActions({
       )}
 
       {/* Send to Dev Dialog */}
-      <Dialog open={sendToDevOpen} onOpenChange={setSendToDevOpen}>
+      <Dialog open={sendToDevOpen} onOpenChange={(open) => { setSendToDevOpen(open); if (!open) setResumeSessionId(undefined); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Send to Dev</DialogTitle>
@@ -223,6 +230,14 @@ export function StoryActions({
               className="w-44 h-8 text-xs"
             />
           </div>
+          <SessionPicker
+            projectId={projectId}
+            epicId={story.epicId}
+            agentType="ticket_build"
+            provider="claude-code"
+            selectedSessionId={resumeSessionId}
+            onSelect={setResumeSessionId}
+          />
           <MentionTextarea
             projectId={projectId}
             value={devComment}
@@ -265,7 +280,7 @@ export function StoryActions({
       </Dialog>
 
       {/* Agent Review Dialog */}
-      <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
+      <Dialog open={reviewOpen} onOpenChange={(open) => { setReviewOpen(open); if (!open) setReviewResumeSessionId(undefined); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Agent Review</DialogTitle>
@@ -282,6 +297,13 @@ export function StoryActions({
               className="w-44 h-8 text-xs"
             />
           </div>
+          <SessionPicker
+            projectId={projectId}
+            epicId={story.epicId}
+            provider="claude-code"
+            selectedSessionId={reviewResumeSessionId}
+            onSelect={setReviewResumeSessionId}
+          />
           <div className="space-y-3">
             <label className="flex items-start gap-3 p-3 rounded-lg border border-border hover:bg-accent/50 cursor-pointer">
               <input

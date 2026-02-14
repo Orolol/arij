@@ -35,7 +35,17 @@ import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, GitPullReque
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { isAgentAlreadyRunningError } from "@/lib/agents/client-error";
+import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
+import { SessionPicker } from "@/components/shared/SessionPicker";
 import { PermanentDeleteDialog } from "@/components/shared/PermanentDeleteDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
 import { DependencyEditor } from "@/components/dependencies/DependencyEditor";
 
 interface EpicDetailProps {
@@ -128,6 +138,9 @@ export function EpicDetail({
   const [merging, setMerging] = useState(false);
   const [mergeError, setMergeError] = useState<string | null>(null);
   const [resolvingMerge, setResolvingMerge] = useState(false);
+  const [resolveMergeOpen, setResolveMergeOpen] = useState(false);
+  const [resolveMergeAgentId, setResolveMergeAgentId] = useState<string | null>(null);
+  const [resolveMergeResumeSessionId, setResolveMergeResumeSessionId] = useState<string | undefined>();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deletingEpic, setDeletingEpic] = useState(false);
   const [deleteEpicError, setDeleteEpicError] = useState<string | null>(null);
@@ -154,20 +167,20 @@ export function EpicDetail({
     setMerging(false);
   }
 
-  async function handleResolveMerge() {
+  async function handleResolveMerge(provider?: string, resumeSessionId?: string) {
     if (!epicId) return;
     setResolvingMerge(true);
     try {
-      const result = await resolveMerge();
+      const result = await resolveMerge(provider, resumeSessionId);
       if (result?.clean) {
-        // Merge was clean — no agent needed
         setMergeError(null);
         onMerged?.();
         onClose();
       } else {
-        // Agent spawned — clear error, polling will track it
         setMergeError(null);
       }
+      setResolveMergeOpen(false);
+      setResolveMergeResumeSessionId(undefined);
     } catch (e) {
       if (isAgentAlreadyRunningError(e)) {
         onAgentConflict?.({
@@ -185,13 +198,13 @@ export function EpicDetail({
     refresh();
   }
 
-  async function handleSendToDev(comment?: string, namedAgentId?: string | null) {
-    await sendToDev(comment, namedAgentId);
+  async function handleSendToDev(comment?: string, namedAgentId?: string | null, resumeSessionId?: string) {
+    await sendToDev(comment, namedAgentId, resumeSessionId);
     refresh();
   }
 
-  async function handleSendToReview(types: string[], namedAgentId?: string | null) {
-    await sendToReview(types, namedAgentId);
+  async function handleSendToReview(types: string[], namedAgentId?: string | null, resumeSessionId?: string) {
+    await sendToReview(types, namedAgentId, resumeSessionId);
     refresh();
   }
 
@@ -499,7 +512,7 @@ export function EpicDetail({
                       <Button
                         size="sm"
                         variant="outline"
-                        onClick={handleResolveMerge}
+                        onClick={() => setResolveMergeOpen(true)}
                         disabled={resolvingMerge || isRunning}
                         className="h-7 text-xs shrink-0"
                       >
@@ -645,6 +658,51 @@ export function EpicDetail({
           </>
         )}
       </SheetContent>
+
+      <Dialog open={resolveMergeOpen} onOpenChange={(open) => { setResolveMergeOpen(open); if (!open) setResolveMergeResumeSessionId(undefined); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Resolve Merge Conflicts</DialogTitle>
+            <DialogDescription>
+              Launch an agent to resolve merge conflicts for this epic.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm text-muted-foreground">Agent:</span>
+            <NamedAgentSelect
+              value={resolveMergeAgentId}
+              onChange={setResolveMergeAgentId}
+              className="w-44 h-8 text-xs"
+            />
+          </div>
+          {epicId && (
+            <SessionPicker
+              projectId={projectId}
+              epicId={epicId}
+              agentType="merge"
+              provider="claude-code"
+              selectedSessionId={resolveMergeResumeSessionId}
+              onSelect={setResolveMergeResumeSessionId}
+            />
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setResolveMergeOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => handleResolveMerge(undefined, resolveMergeResumeSessionId)}
+              disabled={resolvingMerge || isRunning}
+            >
+              {resolvingMerge ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+              ) : (
+                <Wrench className="h-4 w-4 mr-1" />
+              )}
+              Dispatch Agent
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <PermanentDeleteDialog
         open={deleteDialogOpen}

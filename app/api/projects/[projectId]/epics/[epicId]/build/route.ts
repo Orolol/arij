@@ -32,6 +32,7 @@ import {
   validateMentionsExist,
 } from "@/lib/documents/mentions";
 import { listProjectTextDocuments } from "@/lib/documents/query";
+import { agentSessions } from "@/lib/db/schema";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -156,6 +157,24 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const resolvedAgent = resolveAgentByNamedId("build", projectId, namedAgentId);
 
+  // Resume support: look up previous session's claudeSessionId
+  let claudeSessionId: string | undefined;
+  let resumeSession = false;
+  if (body.resumeSessionId && resolvedAgent.provider === "claude-code") {
+    const prevSession = db
+      .select({ claudeSessionId: agentSessions.claudeSessionId })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, body.resumeSessionId))
+      .get();
+    if (prevSession?.claudeSessionId) {
+      claudeSessionId = prevSession.claudeSessionId;
+      resumeSession = true;
+    }
+  }
+  if (!claudeSessionId && resolvedAgent.provider === "claude-code") {
+    claudeSessionId = crypto.randomUUID();
+  }
+
   // Create session
   const sessionId = createId();
   const now = new Date().toISOString();
@@ -190,6 +209,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     logsPath,
     branchName,
     worktreePath,
+    claudeSessionId,
+    agentType: "build",
     createdAt: now,
   });
 
@@ -217,6 +238,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     cwd: worktreePath,
     allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
     model: resolvedAgent.model,
+    claudeSessionId,
+    resumeSession,
   }, resolvedAgent.provider);
 
   // Background: wait for completion, sync statuses, post agent comment
@@ -251,10 +274,11 @@ export async function POST(request: NextRequest, { params }: Params) {
       }
     }
 
-    // On success: all non-done US -> done, epic -> done
+    // On success: all non-done US -> review, epic -> review
+    // The ticket should go through review before being moved to done/merged.
     if (result?.success) {
       db.update(userStories)
-        .set({ status: "done" })
+        .set({ status: "review" })
         .where(
           and(
             eq(userStories.epicId, epicId),
@@ -264,7 +288,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         .run();
 
       db.update(epics)
-        .set({ status: "done", updatedAt: completedAt })
+        .set({ status: "review", updatedAt: completedAt })
         .where(eq(epics.id, epicId))
         .run();
     }

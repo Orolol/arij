@@ -32,6 +32,7 @@ import {
   validateMentionsExist,
 } from "@/lib/documents/mentions";
 import { listProjectTextDocuments } from "@/lib/documents/query";
+import { agentSessions } from "@/lib/db/schema";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
@@ -175,6 +176,24 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const resolvedAgent = resolveAgentByNamedId("ticket_build", projectId, namedAgentId);
 
+  // Resume support
+  let claudeSessionId: string | undefined;
+  let resumeSession = false;
+  if (body.resumeSessionId && resolvedAgent.provider === "claude-code") {
+    const prevSession = db
+      .select({ claudeSessionId: agentSessions.claudeSessionId })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, body.resumeSessionId))
+      .get();
+    if (prevSession?.claudeSessionId) {
+      claudeSessionId = prevSession.claudeSessionId;
+      resumeSession = true;
+    }
+  }
+  if (!claudeSessionId && resolvedAgent.provider === "claude-code") {
+    claudeSessionId = crypto.randomUUID();
+  }
+
   // Create session
   const sessionId = createId();
   const now = new Date().toISOString();
@@ -211,6 +230,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     logsPath,
     branchName,
     worktreePath,
+    claudeSessionId,
+    agentType: "ticket_build",
     createdAt: now,
   });
 
@@ -234,6 +255,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     cwd: worktreePath,
     allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
     model: resolvedAgent.model,
+    claudeSessionId,
+    resumeSession,
   }, resolvedAgent.provider);
 
   // Background: wait for completion, update DB, post agent comment
@@ -270,10 +293,10 @@ export async function POST(request: NextRequest, { params }: Params) {
       }
     }
 
-    // On success: move story to done
+    // On success: move story to review (not done — requires review/approval first)
     if (result?.success) {
       db.update(userStories)
-        .set({ status: "done" })
+        .set({ status: "review" })
         .where(
           and(
             eq(userStories.id, storyId),
@@ -282,20 +305,20 @@ export async function POST(request: NextRequest, { params }: Params) {
         )
         .run();
 
-      // Check if all stories in the epic are now done
+      // Check if all stories in the epic are now done or in review
       const allStories = db
         .select()
         .from(userStories)
         .where(eq(userStories.epicId, epic.id))
         .all();
 
-      const allDone = allStories.every(
-        (s) => s.id === storyId || s.status === "done"
+      const allReviewOrDone = allStories.every(
+        (s) => s.id === storyId || s.status === "done" || s.status === "review"
       );
 
-      if (allDone) {
+      if (allReviewOrDone) {
         db.update(epics)
-          .set({ status: "done", updatedAt: completedAt })
+          .set({ status: "review", updatedAt: completedAt })
           .where(eq(epics.id, epic.id))
           .run();
       }

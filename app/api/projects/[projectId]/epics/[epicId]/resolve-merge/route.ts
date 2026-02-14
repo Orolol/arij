@@ -31,13 +31,15 @@ import {
   markSessionRunning,
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
+import { agentSessions } from "@/lib/db/schema";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
   const body = await request.json().catch(() => ({}));
-  const { provider, model } = resolveAgent("build", projectId);
+  const providerOverride = body.provider as string | undefined;
+  const { provider, model } = resolveAgent("build", projectId, providerOverride);
 
   // Validate project
   const project = db
@@ -157,6 +159,24 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
+  // Resume support: look up previous session's claudeSessionId
+  let claudeSessionId: string | undefined;
+  let resumeSession = false;
+  if (body.resumeSessionId && provider === "claude-code") {
+    const prevSession = db
+      .select({ claudeSessionId: agentSessions.claudeSessionId })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, body.resumeSessionId))
+      .get();
+    if (prevSession?.claudeSessionId) {
+      claudeSessionId = prevSession.claudeSessionId;
+      resumeSession = true;
+    }
+  }
+  if (!claudeSessionId && provider === "claude-code") {
+    claudeSessionId = crypto.randomUUID();
+  }
+
   createQueuedSession({
     id: sessionId,
     projectId,
@@ -167,6 +187,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     logsPath,
     branchName,
     worktreePath,
+    claudeSessionId,
+    agentType: "merge",
     createdAt: now,
   });
 
@@ -178,6 +200,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     cwd: worktreePath,
     model,
     allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+    claudeSessionId,
+    resumeSession,
   }, provider);
 
   // Background completion handler

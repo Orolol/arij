@@ -141,12 +141,12 @@ export default function StoryDetailPage() {
           story={story}
           dispatching={dispatching}
           isRunning={isRunning}
-          onSendToDev={async (comment, namedAgentId) => {
-            await sendToDev(comment, namedAgentId);
+          onSendToDev={async (comment, namedAgentId, resumeSessionId) => {
+            await sendToDev(comment, namedAgentId, resumeSessionId);
             refreshStory();
           }}
-          onSendToReview={async (types, namedAgentId) => {
-            await sendToReview(types, namedAgentId);
+          onSendToReview={async (types, namedAgentId, resumeSessionId) => {
+            await sendToReview(types, namedAgentId, resumeSessionId);
           }}
           onApprove={async () => {
             await approve();

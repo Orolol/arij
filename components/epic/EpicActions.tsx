@@ -25,6 +25,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
+import { SessionPicker } from "@/components/shared/SessionPicker";
 
 interface EpicActions_Epic {
   id: string;
@@ -38,8 +39,8 @@ interface EpicActionsProps {
   dispatching: boolean;
   isRunning: boolean;
   activeSessionId?: string | null;
-  onSendToDev: (comment?: string, namedAgentId?: string | null) => Promise<unknown>;
-  onSendToReview: (types: string[], namedAgentId?: string | null) => Promise<unknown>;
+  onSendToDev: (comment?: string, namedAgentId?: string | null, resumeSessionId?: string) => Promise<unknown>;
+  onSendToReview: (types: string[], namedAgentId?: string | null, resumeSessionId?: string) => Promise<unknown>;
   onApprove: () => Promise<unknown>;
   onActionError?: (error: unknown) => void;
 }
@@ -62,6 +63,8 @@ export function EpicActions({
   const [reviewAgentId, setReviewAgentId] = useState<string | null>(null);
   const [reviewTypes, setReviewTypes] = useState<Set<string>>(new Set(["feature_review"]));
   const [approving, setApproving] = useState(false);
+  const [resumeSessionId, setResumeSessionId] = useState<string | undefined>();
+  const [reviewResumeSessionId, setReviewResumeSessionId] = useState<string | undefined>();
 
   const status = epic.status;
   const canSendToDev = ["backlog", "todo", "in_progress"].includes(status);
@@ -78,9 +81,10 @@ export function EpicActions({
 
   async function handleSendToDev() {
     try {
-      await onSendToDev(devComment.trim() || undefined, devAgentId);
+      await onSendToDev(devComment.trim() || undefined, devAgentId, resumeSessionId);
       setSendToDevOpen(false);
       setDevComment("");
+      setResumeSessionId(undefined);
     } catch (error) {
       onActionError?.(error);
     }
@@ -89,9 +93,10 @@ export function EpicActions({
   async function handleSendToDevFromReview() {
     if (!devComment.trim()) return;
     try {
-      await onSendToDev(devComment.trim(), devAgentId);
+      await onSendToDev(devComment.trim(), devAgentId, resumeSessionId);
       setSendToDevOpen(false);
       setDevComment("");
+      setResumeSessionId(undefined);
     } catch (error) {
       onActionError?.(error);
     }
@@ -112,9 +117,10 @@ export function EpicActions({
   async function handleReview() {
     if (reviewTypes.size === 0) return;
     try {
-      await onSendToReview(Array.from(reviewTypes), reviewAgentId);
+      await onSendToReview(Array.from(reviewTypes), reviewAgentId, reviewResumeSessionId);
       setReviewOpen(false);
       setReviewTypes(new Set());
+      setReviewResumeSessionId(undefined);
     } catch (error) {
       onActionError?.(error);
     }
@@ -197,7 +203,7 @@ export function EpicActions({
       )}
 
       {/* Send to Dev Dialog */}
-      <Dialog open={sendToDevOpen} onOpenChange={setSendToDevOpen}>
+      <Dialog open={sendToDevOpen} onOpenChange={(open) => { setSendToDevOpen(open); if (!open) setResumeSessionId(undefined); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Send Epic to Dev</DialogTitle>
@@ -215,6 +221,14 @@ export function EpicActions({
               className="w-44 h-8 text-xs"
             />
           </div>
+          <SessionPicker
+            projectId={projectId}
+            epicId={epic.id}
+            agentType="build"
+            provider="claude-code"
+            selectedSessionId={resumeSessionId}
+            onSelect={setResumeSessionId}
+          />
           <MentionTextarea
             projectId={projectId}
             value={devComment}
@@ -254,7 +268,7 @@ export function EpicActions({
       </Dialog>
 
       {/* Agent Review Dialog */}
-      <Dialog open={reviewOpen} onOpenChange={setReviewOpen}>
+      <Dialog open={reviewOpen} onOpenChange={(open) => { setReviewOpen(open); if (!open) setReviewResumeSessionId(undefined); }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Epic Agent Review</DialogTitle>
@@ -270,6 +284,13 @@ export function EpicActions({
               className="w-44 h-8 text-xs"
             />
           </div>
+          <SessionPicker
+            projectId={projectId}
+            epicId={epic.id}
+            provider="claude-code"
+            selectedSessionId={reviewResumeSessionId}
+            onSelect={setReviewResumeSessionId}
+          />
           <div className="space-y-3">
             <label className="flex items-start gap-3 p-3 rounded-lg border border-border hover:bg-accent/50 cursor-pointer">
               <input

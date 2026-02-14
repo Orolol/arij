@@ -231,6 +231,8 @@ export async function POST(
       fs.mkdirSync(logsDir, { recursive: true });
       const logsPath = path.join(logsDir, "logs.json");
 
+      const teamClaudeSessionId = resolvedTeamAgent.provider === "claude-code" ? crypto.randomUUID() : undefined;
+
       createQueuedSession({
         id: sessionId,
         projectId,
@@ -239,6 +241,8 @@ export async function POST(
         provider: resolvedTeamAgent.provider,
         prompt: enrichedTeamPrompt,
         logsPath,
+        claudeSessionId: teamClaudeSessionId,
+        agentType: "team_build",
         createdAt: now,
       });
 
@@ -264,6 +268,7 @@ export async function POST(
           "Task",
         ],
         model: resolvedTeamAgent.model,
+        claudeSessionId: teamClaudeSessionId,
       }, resolvedTeamAgent.provider);
 
       // Background: wait for completion, update all epic statuses
@@ -393,6 +398,8 @@ export async function POST(
       );
     }
 
+    const soloClaudeSessionId = resolvedBuildAgent.provider === "claude-code" ? crypto.randomUUID() : undefined;
+
     createQueuedSession({
       id: sessionId,
       projectId,
@@ -404,6 +411,8 @@ export async function POST(
       logsPath,
       branchName,
       worktreePath,
+      claudeSessionId: soloClaudeSessionId,
+      agentType: "build",
       createdAt: now,
     });
 
@@ -438,6 +447,7 @@ export async function POST(
       cwd: worktreePath,
       allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
       model: resolvedBuildAgent.model,
+      claudeSessionId: soloClaudeSessionId,
     }, resolvedBuildAgent.provider);
 
     // Background: wait for completion and update DB
@@ -472,10 +482,11 @@ export async function POST(
         }
       }
 
-      // Move epic + US to done if successful
+      // Move epic + US to review if successful
+      // The ticket should go through review before being moved to done/merged.
       if (result?.success) {
         db.update(userStories)
-          .set({ status: "done" })
+          .set({ status: "review" })
           .where(
             and(
               eq(userStories.epicId, epicId),
@@ -485,7 +496,7 @@ export async function POST(
           .run();
 
         db.update(epics)
-          .set({ status: "done", updatedAt: completedAt })
+          .set({ status: "review", updatedAt: completedAt })
           .where(eq(epics.id, epicId))
           .run();
       }
