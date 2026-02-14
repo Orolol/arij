@@ -4,6 +4,7 @@ import {
   buildChatPrompt,
   buildReviewPrompt,
   buildSpecPrompt,
+  buildTechCheckPrompt,
   buildTeamBuildPrompt,
   buildTicketBuildPrompt,
   type PromptDocument,
@@ -63,12 +64,21 @@ describe("Prompt builders with resolved system prompts", () => {
       [],
       systemPrompt
     );
+    const techCheck = buildTechCheckPrompt(
+      project,
+      docs,
+      "Focus on auth/session flows.",
+      systemPrompt
+    );
 
     expect(build).toContain("System Instructions");
     expect(chat).toContain("System Instructions");
     expect(spec).toContain("System Instructions");
     expect(team).toContain("System Instructions");
     expect(ticket).toContain("System Instructions");
+    expect(techCheck).toContain("System Instructions");
+    expect(techCheck).toContain("Focus on auth/session flows.");
+    expect(techCheck).toContain("Comprehensive Tech Check");
   });
 
   it("buildReviewPrompt supports built-in and custom review agents", () => {

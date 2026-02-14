@@ -346,8 +346,44 @@ export const gitSyncLog = sqliteTable("git_sync_log", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const qaReports = sqliteTable("qa_reports", {
+  id: text("id").primaryKey(),
+  projectId: text("project_id")
+    .notNull()
+    .references(() => projects.id, { onDelete: "cascade" }),
+  status: text("status").notNull().default("running"), // running | completed | failed | cancelled
+  agentSessionId: text("agent_session_id").references(() => agentSessions.id, { onDelete: "set null" }),
+  namedAgentId: text("named_agent_id").references(() => namedAgents.id, { onDelete: "set null" }),
+  promptUsed: text("prompt_used"),
+  customPromptId: text("custom_prompt_id"),
+  reportContent: text("report_content"),
+  summary: text("summary"),
+  createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  completedAt: text("completed_at"),
+});
+
+export const qaPrompts = sqliteTable(
+  "qa_prompts",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    prompt: text("prompt").notNull(),
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    nameUnique: uniqueIndex("qa_prompts_name_unique").on(table.name),
+  }),
+);
+
 export type GitSyncLog = typeof gitSyncLog.$inferSelect;
 export type NewGitSyncLog = typeof gitSyncLog.$inferInsert;
+
+export type QaReport = typeof qaReports.$inferSelect;
+export type NewQaReport = typeof qaReports.$inferInsert;
+
+export type QaPrompt = typeof qaPrompts.$inferSelect;
+export type NewQaPrompt = typeof qaPrompts.$inferInsert;
 
 export type AgentPrompt = typeof agentPrompts.$inferSelect;
 export type NewAgentPrompt = typeof agentPrompts.$inferInsert;

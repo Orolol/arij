@@ -9,6 +9,7 @@ export const AGENT_TYPES = [
   "team_build",
   "ticket_build",
   "merge",
+  "tech_check",
 ] as const;
 
 export type AgentType = (typeof AGENT_TYPES)[number];
@@ -33,6 +34,7 @@ export const AGENT_TYPE_LABELS: Record<AgentType, string> = {
   team_build: "Team Build",
   ticket_build: "Ticket Build",
   merge: "Merge",
+  tech_check: "Tech Check",
 };
 
 export function isAgentType(value: string): value is AgentType {
@@ -57,6 +59,7 @@ export const BUILTIN_AGENT_PROMPTS: Record<AgentType, string> = {
   team_build: "",
   ticket_build: "",
   merge: "",
+  tech_check: "",
 };
 
 export type AgentProvider = "claude-code" | "codex" | "gemini-cli";
