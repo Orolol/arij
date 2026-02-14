@@ -3,6 +3,9 @@ import { db } from "@/lib/db";
 import { projects, epics, userStories, documents, chatMessages, agentSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { tryExportArjiJson } from "@/lib/sync/export";
+import { updateProjectSchema } from "@/lib/validation/schemas";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { validatePath } from "@/lib/validation/path";
 
 export async function GET(
   _request: NextRequest,
@@ -23,11 +26,26 @@ export async function PATCH(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const body = await request.json();
+
+  const validated = await validateBody(updateProjectSchema, request);
+  if (isValidationError(validated)) return validated;
 
   const existing = db.select().from(projects).where(eq(projects.id, projectId)).get();
   if (!existing) {
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+
+  const body = validated.data;
+
+  // Validate gitRepoPath if provided
+  if (body.gitRepoPath) {
+    const pathResult = await validatePath(body.gitRepoPath);
+    if (!pathResult.valid) {
+      return NextResponse.json(
+        { error: pathResult.error },
+        { status: 400 }
+      );
+    }
   }
 
   const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
@@ -37,7 +55,6 @@ export async function PATCH(
   if (body.gitRepoPath !== undefined) updates.gitRepoPath = body.gitRepoPath;
   if (body.githubOwnerRepo !== undefined) updates.githubOwnerRepo = body.githubOwnerRepo;
   if (body.spec !== undefined) updates.spec = body.spec;
-  if (body.githubOwnerRepo !== undefined) updates.githubOwnerRepo = body.githubOwnerRepo;
 
   db.update(projects).set(updates).where(eq(projects.id, projectId)).run();
 
