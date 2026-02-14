@@ -98,6 +98,28 @@ describe("parseClaudeOutput", () => {
     expect(result.content).toBe("Some text content here.");
   });
 
+  it("extracts text from single object with response field", () => {
+    const obj = JSON.stringify({
+      response: "Tech check markdown response",
+      usage: { input_tokens: 123 },
+    });
+    const result = parseClaudeOutput(obj);
+    expect(result.content).toBe("Tech check markdown response");
+  });
+
+  it("extracts nested response text from result envelope string payload", () => {
+    const envelope = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: JSON.stringify({
+        response: "# Findings\n\n- Item 1",
+        telemetry: { durationMs: 42 },
+      }),
+    });
+    const result = parseClaudeOutput(envelope);
+    expect(result.content).toBe("# Findings\n\n- Item 1");
+  });
+
   // --- Array of blocks ---
 
   it("extracts text from array of blocks", () => {
@@ -140,6 +162,21 @@ describe("parseClaudeOutput", () => {
     // Should contain the JSON dump since type is not "result"
     expect(result.content).toContain('"foo"');
     expect(result.content).toContain('"bar"');
+  });
+
+  it("extracts text from NDJSON response payloads", () => {
+    const ndjson = [
+      JSON.stringify({ type: "init", session_id: "sess-1" }),
+      JSON.stringify({
+        type: "result",
+        result: JSON.stringify({
+          response: "Only the response should be shown.",
+          stats: { totalTokens: 99 },
+        }),
+      }),
+    ].join("\n");
+    const result = parseClaudeOutput(ndjson);
+    expect(result.content).toBe("Only the response should be shown.");
   });
 });
 

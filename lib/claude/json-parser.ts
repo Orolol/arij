@@ -75,6 +75,11 @@ export function parseClaudeOutput(raw: string): ParsedClaudeOutput {
   const parsed = tryParseJson(trimmed);
 
   if (parsed === null) {
+    const ndjson = tryParseLineDelimitedJson(trimmed);
+    if (ndjson) {
+      return ndjson;
+    }
+
     // Not valid JSON at all -- return raw text as content
     return { content: trimmed };
   }
@@ -291,6 +296,18 @@ function parseSingleObject(
 }
 
 function extractTextFromBlock(block: ClaudeJsonBlock): string {
+  if (typeof block.response === "string") {
+    return block.response;
+  }
+
+  if (typeof block.output === "string") {
+    return block.output;
+  }
+
+  if (typeof block.message === "string") {
+    return block.message;
+  }
+
   // Direct text or content fields
   if (typeof block.content === "string") {
     return block.content;
@@ -302,7 +319,18 @@ function extractTextFromBlock(block: ClaudeJsonBlock): string {
 
   // Result field (top-level response object)
   if (typeof block.result === "string") {
+    const nestedResultText = extractTextFromJsonString(block.result);
+    if (nestedResultText) {
+      return nestedResultText;
+    }
     return block.result;
+  }
+
+  if (isRecord(block.result)) {
+    const nestedResultText = extractTextFromBlock(block.result as ClaudeJsonBlock);
+    if (nestedResultText) {
+      return nestedResultText;
+    }
   }
 
   // Content array (Anthropic message format: content: [{type: "text", text: "..."}])
@@ -319,6 +347,30 @@ function extractTextFromBlock(block: ClaudeJsonBlock): string {
         typeof (item as Record<string, unknown>).text === "string"
       ) {
         parts.push((item as Record<string, unknown>).text as string);
+      } else if (isRecord(item)) {
+        const nested = extractTextFromBlock(item as ClaudeJsonBlock);
+        if (nested) {
+          parts.push(nested);
+        }
+      }
+    }
+    if (parts.length > 0) {
+      return parts.join("\n");
+    }
+  }
+
+  if (Array.isArray(block.candidates)) {
+    const parts: string[] = [];
+    const candidates = block.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    for (const candidate of candidates) {
+      const candidateParts = candidate.content?.parts;
+      if (!Array.isArray(candidateParts)) {
+        continue;
+      }
+      for (const part of candidateParts) {
+        if (typeof part.text === "string" && part.text.trim().length > 0) {
+          parts.push(part.text);
+        }
       }
     }
     if (parts.length > 0) {
@@ -327,4 +379,77 @@ function extractTextFromBlock(block: ClaudeJsonBlock): string {
   }
 
   return "";
+}
+
+function extractTextFromJsonString(value: string): string {
+  const parsed = tryParseJson(value.trim());
+  if (parsed === null) {
+    return "";
+  }
+
+  if (Array.isArray(parsed)) {
+    return parseBlockArray(parsed).content;
+  }
+
+  if (isRecord(parsed)) {
+    return extractTextFromBlock(parsed as ClaudeJsonBlock);
+  }
+
+  return "";
+}
+
+function tryParseLineDelimitedJson(raw: string): ParsedClaudeOutput | null {
+  const lines = raw.split(/\r?\n/);
+  const parts: string[] = [];
+  const types: string[] = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) {
+      continue;
+    }
+
+    const parsed = tryParseJson(trimmed);
+    if (parsed === null) {
+      continue;
+    }
+
+    if (Array.isArray(parsed)) {
+      const parsedArray = parseBlockArray(parsed);
+      if (parsedArray.content) {
+        parts.push(parsedArray.content);
+      }
+      continue;
+    }
+
+    if (!isRecord(parsed)) {
+      continue;
+    }
+
+    if (typeof parsed.type === "string" && parsed.type.trim().length > 0) {
+      types.push(parsed.type);
+    }
+
+    const text = extractTextFromBlock(parsed as ClaudeJsonBlock);
+    if (text) {
+      parts.push(text);
+      continue;
+    }
+
+    if (parsed.type === "result") {
+      const fallback = parseSingleObject(parsed);
+      if (fallback.content) {
+        parts.push(fallback.content);
+      }
+    }
+  }
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return {
+    content: parts.join("\n\n"),
+    metadata: types.length > 0 ? { types } : undefined,
+  };
 }
