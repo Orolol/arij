@@ -1,4 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { db } from "@/lib/db";
+
+const mockSql = vi.hoisted(() =>
+  vi.fn(() => ({
+    as: vi.fn(() => ({})),
+  }))
+);
+const mockCount = vi.hoisted(() =>
+  vi.fn(() => ({
+    as: vi.fn(() => ({})),
+  }))
+);
 
 const mockSchema = vi.hoisted(() => ({
   epics: {
@@ -27,6 +39,13 @@ const mockSchema = vi.hoisted(() => ({
     position: "position",
     createdAt: "createdAt",
   },
+  ticketComments: {
+    __name: "ticketComments",
+    id: "id",
+    epicId: "epicId",
+    author: "author",
+    createdAt: "createdAt",
+  },
 }));
 
 const mockDbState = vi.hoisted(() => ({
@@ -41,7 +60,8 @@ const mockTryExportArjiJson = vi.hoisted(() => vi.fn());
 vi.mock("drizzle-orm", () => ({
   eq: vi.fn(() => ({})),
   and: vi.fn(() => ({})),
-  sql: vi.fn(() => ({})),
+  sql: mockSql,
+  count: mockCount,
 }));
 
 vi.mock("@/lib/db", () => {
@@ -50,6 +70,9 @@ vi.mock("@/lib/db", () => {
     from: ReturnType<typeof vi.fn>;
     where: ReturnType<typeof vi.fn>;
     orderBy: ReturnType<typeof vi.fn>;
+    groupBy: ReturnType<typeof vi.fn>;
+    leftJoin: ReturnType<typeof vi.fn>;
+    as: ReturnType<typeof vi.fn>;
     get: ReturnType<typeof vi.fn>;
     all: ReturnType<typeof vi.fn>;
     insert: ReturnType<typeof vi.fn>;
@@ -58,6 +81,9 @@ vi.mock("@/lib/db", () => {
     from: vi.fn(),
     where: vi.fn(),
     orderBy: vi.fn(),
+    groupBy: vi.fn(),
+    leftJoin: vi.fn(),
+    as: vi.fn(),
     get: vi.fn(),
     all: vi.fn(),
     insert: vi.fn(),
@@ -67,6 +93,9 @@ vi.mock("@/lib/db", () => {
   chain.from.mockReturnValue(chain);
   chain.where.mockReturnValue(chain);
   chain.orderBy.mockReturnValue(chain);
+  chain.groupBy.mockReturnValue(chain);
+  chain.leftJoin.mockReturnValue(chain);
+  chain.as.mockReturnValue({});
   chain.get.mockImplementation(() => mockDbState.getQueue.shift() ?? null);
   chain.all.mockImplementation(() => mockDbState.allQueue.shift() ?? []);
   chain.insert.mockImplementation((table: unknown) => ({
@@ -82,6 +111,7 @@ vi.mock("@/lib/db", () => {
 vi.mock("@/lib/db/schema", () => ({
   epics: mockSchema.epics,
   userStories: mockSchema.userStories,
+  ticketComments: mockSchema.ticketComments,
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({
@@ -166,6 +196,54 @@ describe("POST /api/projects/[projectId]/epics", () => {
     );
 
     expect(mockTryExportArjiJson).toHaveBeenCalledWith("proj1");
+  });
+
+  it("lists epics with JOIN-based story counts and latest comment metadata", async () => {
+    const debugSpy = vi.spyOn(console, "debug").mockImplementation(() => {});
+    mockDbState.allQueue = [
+      [
+        {
+          id: "epic-1",
+          projectId: "proj1",
+          title: "Account Security",
+          usCount: 2,
+          usDone: 1,
+          latestCommentId: "comment-2",
+          latestCommentAuthor: "agent",
+          latestCommentCreatedAt: "2026-02-14T11:22:00.000Z",
+        },
+      ],
+    ];
+
+    const { GET } = await import("@/app/api/projects/[projectId]/epics/route");
+    const response = await GET({} as never, {
+      params: Promise.resolve({ projectId: "proj1" }),
+    });
+
+    const json = await response.json();
+    expect(response.status).toBe(200);
+    expect(json.data[0]).toMatchObject({
+      id: "epic-1",
+      usCount: 2,
+      usDone: 1,
+      latestCommentId: "comment-2",
+    });
+    expect((db as unknown as { leftJoin: ReturnType<typeof vi.fn> }).leftJoin).toHaveBeenCalledTimes(2);
+    expect((db as unknown as { groupBy: ReturnType<typeof vi.fn> }).groupBy).toHaveBeenCalledTimes(1);
+
+    const sqlFragments = mockSql.mock.calls.map(([template]) =>
+      Array.isArray(template) ? template.join(" ") : String(template),
+    );
+    expect(sqlFragments.some((fragment) => fragment.includes("ROW_NUMBER() OVER"))).toBe(true);
+    expect(debugSpy).toHaveBeenCalledWith(
+      "[epics/GET] query profile",
+      expect.objectContaining({
+        projectId: "proj1",
+        rowCount: 1,
+        queryMs: expect.any(Number),
+      }),
+    );
+    debugSpy.mockRestore();
   });
 
   it("validates title input", async () => {
