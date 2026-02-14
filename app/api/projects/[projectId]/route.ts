@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, epics, userStories, documents, chatMessages, agentSessions } from "@/lib/db/schema";
+import { projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import { updateProjectSchema } from "@/lib/validation/schemas";
