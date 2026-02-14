@@ -2,12 +2,21 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useParams } from "next/navigation";
 import { LayoutDashboard, Settings, FolderKanban, Bot } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AgentConfigPanel } from "@/components/agent-config/AgentConfigPanel";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
 
 export function SidebarNav() {
   const [agentConfigOpen, setAgentConfigOpen] = useState(false);
+  const params = useParams();
+  const projectId = typeof params?.projectId === "string" ? params.projectId : undefined;
 
   return (
     <>
@@ -44,10 +53,16 @@ export function SidebarNav() {
         </Link>
       </aside>
 
-      <AgentConfigPanel
-        open={agentConfigOpen}
-        onClose={setAgentConfigOpen}
-      />
+      <Sheet open={agentConfigOpen} onOpenChange={setAgentConfigOpen}>
+        <SheetContent side="left" className="w-[480px] sm:max-w-[480px] p-0 flex flex-col">
+          <SheetHeader className="px-4 pt-4 pb-2 shrink-0">
+            <SheetTitle>Agent Configuration</SheetTitle>
+          </SheetHeader>
+          <div className="flex-1 min-h-0">
+            <AgentConfigPanel projectId={projectId} />
+          </div>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

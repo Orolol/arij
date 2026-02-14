@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mockDb = vi.hoisted(() => ({
   getQueue: [] as unknown[],
   allQueue: [] as unknown[],
+  runQueue: [] as Array<{ changes: number }>,
   runCalls: [] as Array<Record<string, unknown>>,
   insertValues: [] as unknown[],
 }));
@@ -21,15 +22,15 @@ vi.mock("@/lib/db", () => {
     insert: vi.fn().mockReturnValue({
       values: vi.fn((vals: unknown) => {
         mockDb.insertValues.push(vals);
-        return { run: vi.fn() };
+        return { run: vi.fn(() => mockDb.runQueue.shift() ?? { changes: 1 }) };
       }),
     }),
     update: vi.fn().mockReturnValue({
       set: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnValue({ run: vi.fn() }),
+      where: vi.fn().mockReturnValue({ run: vi.fn(() => mockDb.runQueue.shift() ?? { changes: 1 }) }),
     }),
     delete: vi.fn().mockReturnValue({
-      where: vi.fn().mockReturnValue({ run: vi.fn() }),
+      where: vi.fn().mockReturnValue({ run: vi.fn(() => mockDb.runQueue.shift() ?? { changes: 1 }) }),
     }),
   };
   return { db: chain };
@@ -57,6 +58,7 @@ describe("Named Agents CRUD", () => {
     vi.clearAllMocks();
     mockDb.getQueue = [];
     mockDb.allQueue = [];
+    mockDb.runQueue = [];
     mockDb.runCalls = [];
     mockDb.insertValues = [];
   });
@@ -70,7 +72,7 @@ describe("Named Agents CRUD", () => {
       mockDb.allQueue = [agents];
 
       const { listNamedAgents } = await import("@/lib/agent-config/named-agents");
-      const result = listNamedAgents();
+      const result = await listNamedAgents();
       expect(result).toEqual(agents);
     });
 
@@ -78,7 +80,7 @@ describe("Named Agents CRUD", () => {
       mockDb.allQueue = [[]];
 
       const { listNamedAgents } = await import("@/lib/agent-config/named-agents");
-      const result = listNamedAgents();
+      const result = await listNamedAgents();
       expect(result).toEqual([]);
     });
   });
@@ -89,7 +91,7 @@ describe("Named Agents CRUD", () => {
       mockDb.getQueue = [agent];
 
       const { getNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = getNamedAgent("a1");
+      const result = await getNamedAgent("a1");
       expect(result).toEqual(agent);
     });
 
@@ -97,8 +99,8 @@ describe("Named Agents CRUD", () => {
       mockDb.getQueue = [undefined];
 
       const { getNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = getNamedAgent("nonexistent");
-      expect(result).toBeUndefined();
+      const result = await getNamedAgent("nonexistent");
+      expect(result).toBeNull();
     });
   });
 
@@ -116,47 +118,45 @@ describe("Named Agents CRUD", () => {
       mockDb.getQueue = [undefined, created];
 
       const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = createNamedAgent({
+      const result = await createNamedAgent({
+        id: "test-id-123",
         name: "CC Opus",
         provider: "claude-code",
         model: "claude-opus-4-6",
       });
-      expect(result).toEqual(created);
+      expect(result.data).toEqual(created);
     });
 
-    it("throws on empty name", async () => {
+    it("returns error on empty name", async () => {
       const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      expect(() =>
-        createNamedAgent({ name: "  ", provider: "claude-code", model: "m1" })
-      ).toThrow("Name is required");
+      const result = await createNamedAgent({ id: "id", name: "  ", provider: "claude-code", model: "m1" });
+      expect(result.error).toContain("Name must not be empty");
     });
 
-    it("throws on empty model", async () => {
+    it("returns error on empty model", async () => {
       const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      expect(() =>
-        createNamedAgent({ name: "Test", provider: "claude-code", model: "  " })
-      ).toThrow("Model is required");
+      const result = await createNamedAgent({ id: "id", name: "Test", provider: "claude-code", model: "  " });
+      expect(result.error).toContain("Model must not be empty");
     });
 
-    it("throws on invalid provider", async () => {
+    it("returns error on invalid provider", async () => {
       const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      expect(() =>
-        createNamedAgent({
-          name: "Test",
-          provider: "invalid" as "claude-code",
-          model: "m1",
-        })
-      ).toThrow("Invalid provider");
+      const result = await createNamedAgent({
+        id: "id",
+        name: "Test",
+        provider: "invalid" as "claude-code",
+        model: "m1",
+      });
+      expect(result.error).toContain("provider");
     });
 
-    it("throws on duplicate name", async () => {
+    it("returns error on duplicate name", async () => {
       // Uniqueness check: found existing
       mockDb.getQueue = [{ id: "existing-id" }];
 
       const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      expect(() =>
-        createNamedAgent({ name: "Existing", provider: "claude-code", model: "m1" })
-      ).toThrow('already exists');
+      const result = await createNamedAgent({ id: "id", name: "Existing", provider: "claude-code", model: "m1" });
+      expect(result.error).toContain('already exists');
     });
 
     it("creates agents with gemini-cli provider", async () => {
@@ -170,13 +170,14 @@ describe("Named Agents CRUD", () => {
       mockDb.getQueue = [undefined, created];
 
       const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = createNamedAgent({
+      const result = await createNamedAgent({
+        id: "test-id-123",
         name: "Gemini Flash",
         provider: "gemini-cli",
         model: "gemini-2.0-flash",
       });
-      expect(result.provider).toBe("gemini-cli");
-      expect(result.model).toBe("gemini-2.0-flash");
+      expect(result.data?.provider).toBe("gemini-cli");
+      expect(result.data?.model).toBe("gemini-2.0-flash");
     });
   });
 
@@ -190,24 +191,26 @@ describe("Named Agents CRUD", () => {
       mockDb.getQueue = [existing, undefined, updated];
 
       const { updateNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = updateNamedAgent("a1", { name: "New" });
-      expect(result.name).toBe("New");
+      const result = await updateNamedAgent("a1", { name: "New" });
+      expect(result.data?.name).toBe("New");
     });
 
-    it("throws when agent not found", async () => {
+    it("returns error when agent not found", async () => {
       mockDb.getQueue = [undefined];
 
       const { updateNamedAgent } = await import("@/lib/agent-config/named-agents");
-      expect(() => updateNamedAgent("nonexistent", { name: "Test" })).toThrow("not found");
+      const result = await updateNamedAgent("nonexistent", { name: "Test" });
+      expect(result.error).toContain("not found");
     });
 
-    it("throws on duplicate name with different id", async () => {
+    it("returns error on duplicate name with different id", async () => {
       const existing = { id: "a1", name: "Original", provider: "claude-code", model: "m1", createdAt: "2026-01-01" };
       // existence check, then name uniqueness check returns different id
       mockDb.getQueue = [existing, { id: "a2" }];
 
       const { updateNamedAgent } = await import("@/lib/agent-config/named-agents");
-      expect(() => updateNamedAgent("a1", { name: "Taken" })).toThrow("already exists");
+      const result = await updateNamedAgent("a1", { name: "Taken" });
+      expect(result.error).toContain("already exists");
     });
   });
 
@@ -216,15 +219,15 @@ describe("Named Agents CRUD", () => {
       mockDb.getQueue = [{ id: "a1", name: "Test", provider: "claude-code", model: "m1" }];
 
       const { deleteNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = deleteNamedAgent("a1");
+      const result = await deleteNamedAgent("a1");
       expect(result).toBe(true);
     });
 
     it("returns false when agent not found", async () => {
-      mockDb.getQueue = [undefined];
+      mockDb.runQueue = [{ changes: 0 }];
 
       const { deleteNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = deleteNamedAgent("nonexistent");
+      const result = await deleteNamedAgent("nonexistent");
       expect(result).toBe(false);
     });
   });

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastSyncedAt": "2026-02-14T11:04:23.498Z",
+  "lastSyncedAt": "2026-02-14T13:49:28.379Z",
   "project": {
     "name": "Arij",
     "description": "A local, AI-first project orchestrator that provides a web interface for managing multi-project workflows with Claude Code as the execution engine. It covers the full project lifecycle: ideation, specification, kanban-based planning, automated code generation via Claude Code CLI, real-time agent monitoring, and release management.",
@@ -8,6 +8,16 @@
     "spec": "The plan is ready for your review. It covers 5 phases:\n\n1. **Schema** — 4 new nullable columns across `agentSessions` and `chatConversations`\n2. **Provider Layer** — Capture CLI session IDs from output, inject `--resume` flag for Claude Code and Gemini CLI\n3. **Process Manager** — Persist `cliSessionId` to DB on session completion\n4. **Chat Continuity** — Resume-first logic with automatic fallback to fresh prompt if the session expired\n5. **Work Session Resume** — New API endpoint, session picker dialog, and integration into build/review hooks\n\nKey design decisions:\n- Codex is marked non-resumable (its `exec` mode doesn't support `--resume`)\n- `resolveAgent()` is extended to return `namedAgentId` for session filtering\n- Resume failures fall back gracefully to full-prompt mode"
   },
   "epics": [
+    {
+      "id": "blda9a5Brbb4",
+      "title": "Problem with chat, lot of empty responses",
+      "description": "Example : \n\n\nI want a new top tab \"Tech check\"\n\nIn this tab, you can start assing an named agent to do a tech check on the whole project, then the agent after working on it will output a report. You can then ask to create epic from this report.\n\nThe tech check is a complete review of the code, architecture, patterns, etc ...\n\nWe'll have a prompt for all tech check, but let the user add a custom prompt. custom prompts can be saved, app wise, and reused.\n\nI like this idea — it's a natural extension of Arij's AI-first philosophy. Let me make sure I understand the scope before we shape the epic.\n\nA few clarifying questions:\n\n    Report storage & display: Should the tech check report be stored as a project-level document (similar to how specs work), or as a chat conversation with the agent? I'm leaning toward a dedicated techCheckReports table so reports are browsable/comparable over time — does that match your vision?\n\n    \"Create epic from report\": When the user asks to create epics from the report, should the agent automatically propose a list of epics/stories based on its findings (e.g. \"I found 5 issues, here are suggested epics\"), or should the user manually highlight sections of the report and say \"make this an epic\"? The former feels more aligned with the AI-first approach.\n\n    Custom prompts scope: You mentioned custom prompts are saved \"app-wise\" (global, not per-project). Should there also be a default per-project prompt that gets merged with the global one (similar to how CLAUDE.md works at project level), or is global-only sufficient for V1?\n\n    Scope for V1: The tech check tab itself — should it show a history of past tech checks (with dates, agent used, status), or just the current/latest one? History seems valuable for tracking code health over time, but it adds scope.\n\nThese answers will help me shape tight user stories and avoid overlap with existing epics like \"Project Document Registry\" or \"Sessions Tab Readability.\"\n\n    chat with agent\n    The agent automatically chose\n    No default\n    Yes, an history is perfect\n\n(empty response)\n\nThe tab qhould be named QA, bvecause we'll have other QA tools here later\n\n(empty response)",
+      "priority": 2,
+      "status": "backlog",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
     {
       "id": "7FFiclGUqPE-",
       "title": "GitHub Release Lifecycle",
@@ -109,6 +119,26 @@
           "position": 5
         }
       ]
+    },
+    {
+      "id": "wN7avJzd_uy2",
+      "title": "THe chat bar is too small in chat",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "FFSmXmvi7e8b",
+      "title": "THe chat bar is still to small in Chat and comment",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
     },
     {
       "id": "agJ6EuLOQFEs",
@@ -2080,73 +2110,14 @@
       ]
     },
     {
-      "id": "HGhTDE1Y__j_",
-      "title": "THe chat bar is too small in chat",
+      "id": "7TgE1dSzwMN7",
+      "title": "I've created a bug and assigned a named Gmini agent to do it, but a CC agent is working on it",
       "description": null,
       "priority": 2,
       "status": "in_progress",
-      "position": 1,
-      "branchName": "feature/epic-HGhTDE1Y__j_-the-chat-bar-is-too-small-in-chat",
-      "user_stories": []
-    },
-    {
-      "id": "4587o18AAsJ7",
-      "title": "Mistral Vibe CLI Provider Parity",
-      "description": "Implement Mistral Vibe as a first-class provider across the same perimeter as existing CLI agents (build, review, chat, brainstorm, and release) using the current named-agent and assignment architecture.\n\nImplementation plan:\n1. Foundation: add `mistral-vibe` to provider enums/types/validation and provider registry wiring.\n2. Runner: add a Vibe execution module following the Codex/Gemini pattern, using headless invocation with `--prompt`, `--model`, `--agent`, and JSON output for machine parsing.\n3. Configuration: support both a global default Vibe profile and per-named-agent profile override (`plan`, `accept-edits`, `auto-approve`) while keeping existing model selection behavior.\n4. Dispatch integration: route all existing agent execution flows through provider/model/profile resolution and provider-agnostic process dispatch.\n5. UI parity: expose Mistral Vibe in existing provider selectors and add profile selection to current settings/agents/assignments surfaces with default-vs-override behavior.\n6. Quality: add tests for command construction, profile precedence, and flow dispatch parity; update docs.\n\nOut of scope: advanced Vibe-only controls (`--max-turns`, `--max-price`, `--resume`) and streaming-specific UX.",
-      "priority": 0,
-      "status": "review",
       "position": 0,
-      "branchName": "feature/epic-4587o18AAsJ7-mistral-vibe-cli-provider-parity",
-      "user_stories": [
-        {
-          "id": "Gj7JJSif4i1p",
-          "title": "As a platform engineer, I want `mistral-vibe` added as a provider type so that projects can configure Vibe like other CLI agents",
-          "description": "Extend shared provider definitions, API validation, and persistence mappings to recognize `mistral-vibe` end-to-end without changing current behavior for existing providers.",
-          "acceptance_criteria": "- [ ] `mistral-vibe` is accepted by provider enums/types on backend and frontend.\n- [ ] API payload validation and serialization support `mistral-vibe`.\n- [ ] Provider registry/process dispatch can resolve `mistral-vibe` at runtime.\n- [ ] Existing provider configurations continue to work unchanged after migration.",
-          "status": "review",
-          "position": 0
-        },
-        {
-          "id": "JbfwNkLZC98u",
-          "title": "As an orchestration service, I want a Mistral Vibe runner so that agent tasks execute headlessly and deterministically",
-          "description": "Create Vibe spawn/provider modules that build and execute CLI commands in non-interactive mode, parse structured output, and normalize error handling to match existing provider contracts.",
-          "acceptance_criteria": "- [ ] A Vibe runner module is implemented following the existing provider pattern.\n- [ ] Command generation includes prompt, model, profile (`--agent`), and JSON output mode.\n- [ ] Final response text and usage/error metadata are parsed into the common provider result shape.\n- [ ] Timeouts, non-zero exits, and malformed output are mapped to normalized platform errors.",
-          "status": "review",
-          "position": 1
-        },
-        {
-          "id": "wSD3sWE6_sQs",
-          "title": "As a project admin, I want both global default and per-named-agent Vibe profiles so that autonomy can be controlled safely",
-          "description": "Add configuration support for a project/provider-level default Vibe profile and optional named-agent override, with deterministic precedence during agent resolution.",
-          "acceptance_criteria": "- [ ] Global default Vibe profile is configurable and persisted.\n- [ ] Named agents can optionally override profile with `plan`, `accept-edits`, or `auto-approve`.\n- [ ] Resolution precedence is enforced: named-agent override > global provider default > system fallback.\n- [ ] Invalid profile values are rejected by validation.",
-          "status": "review",
-          "position": 2
-        },
-        {
-          "id": "Deolo70l9G5I",
-          "title": "As a product user, I want all existing agent flows to dispatch through Mistral Vibe when selected so that behavior matches other providers",
-          "description": "Wire build, review, chat, brainstorm, and release execution paths to resolve provider/model/profile and pass them to provider-agnostic dispatch.",
-          "acceptance_criteria": "- [ ] Build flow executes with Mistral Vibe when provider is selected.\n- [ ] Review flow executes with Mistral Vibe when provider is selected.\n- [ ] Chat, brainstorm, and release flows execute with Mistral Vibe when provider is selected.\n- [ ] Each flow passes resolved model/profile and records provider/model in execution metadata.",
-          "status": "review",
-          "position": 3
-        },
-        {
-          "id": "bc-y34qtoEi-",
-          "title": "As a project admin, I want UI parity for Mistral Vibe in provider, model, and profile selectors so that configuration is consistent",
-          "description": "Update existing UI surfaces (settings, agents, assignments) to include `mistral-vibe` and profile selection without adding new standalone configuration concepts.",
-          "acceptance_criteria": "- [ ] Provider dropdowns include `mistral-vibe` wherever other CLI providers are selectable.\n- [ ] Model selection for `mistral-vibe` is available with the same UX pattern used by existing providers.\n- [ ] Profile selection supports default-vs-override behavior in existing forms.\n- [ ] No new Vibe-specific advanced controls are exposed in this epic.",
-          "status": "review",
-          "position": 4
-        },
-        {
-          "id": "3tW49gimqm4k",
-          "title": "As a maintainer, I want automated coverage for Vibe parity so that regressions are caught before release",
-          "description": "Add targeted tests and documentation updates validating command assembly, profile precedence, and dispatch behavior across supported flows.",
-          "acceptance_criteria": "- [ ] Unit tests cover Vibe command construction and output parsing.\n- [ ] Unit tests cover profile precedence resolution.\n- [ ] Integration/smoke tests verify dispatch success for build/review and coverage for chat/brainstorm/release routing.\n- [ ] Developer docs include setup, required CLI assumptions, and known out-of-scope constraints.",
-          "status": "review",
-          "position": 5
-        }
-      ]
+      "branchName": "feature/epic-7TgE1dSzwMN7-i-ve-created-a-bug-and-assigned-a-named-",
+      "user_stories": []
     }
   ]
 }

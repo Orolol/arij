@@ -2,6 +2,9 @@ import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { namedAgents } from "@/lib/db/schema";
 import { isAgentProvider, type AgentProvider } from "@/lib/agent-config/constants";
+import { createId } from "@/lib/utils/nanoid";
+
+export { resolveAgent } from "./providers";
 
 export interface NamedAgentRecord {
   id: string;
@@ -20,7 +23,7 @@ export async function listNamedAgents(): Promise<NamedAgentRecord[]> {
   const rows = db
     .select()
     .from(namedAgents)
-    .orderBy(namedAgents.createdAt, namedAgents.name)
+    .orderBy(namedAgents.name)
     .all();
 
   return rows.map((row) => ({
@@ -32,7 +35,7 @@ export async function listNamedAgents(): Promise<NamedAgentRecord[]> {
   }));
 }
 
-export async function getNamedAgentById(agentId: string): Promise<NamedAgentRecord | null> {
+export async function getNamedAgent(agentId: string): Promise<NamedAgentRecord | null> {
   const row = db
     .select()
     .from(namedAgents)
@@ -51,7 +54,7 @@ export async function getNamedAgentById(agentId: string): Promise<NamedAgentReco
 }
 
 export async function createNamedAgent(input: {
-  id: string;
+  id?: string;
   name: string;
   provider: string;
   model: string;
@@ -61,15 +64,15 @@ export async function createNamedAgent(input: {
   const provider = normalizeProvider(input.provider);
 
   if (!name) {
-    return { data: null, error: "name is required" };
+    return { data: null, error: "Name must not be empty" };
   }
 
   if (!provider) {
-    return { data: null, error: "provider must be 'claude-code', 'codex', or 'gemini-cli'" };
+    return { data: null, error: "Invalid provider" };
   }
 
   if (!model) {
-    return { data: null, error: "model is required" };
+    return { data: null, error: "Model must not be empty" };
   }
 
   const duplicate = db
@@ -81,9 +84,10 @@ export async function createNamedAgent(input: {
     return { data: null, error: "name already exists" };
   }
 
+  const id = input.id || createId();
   db.insert(namedAgents)
     .values({
-      id: input.id,
+      id,
       name,
       provider,
       model,
@@ -91,7 +95,7 @@ export async function createNamedAgent(input: {
     })
     .run();
 
-  const created = await getNamedAgentById(input.id);
+  const created = await getNamedAgent(id);
   return { data: created };
 }
 
@@ -150,7 +154,7 @@ export async function updateNamedAgent(
   }
 
   if (Object.keys(patch).length === 0) {
-    return { data: await getNamedAgentById(agentId) };
+    return { data: await getNamedAgent(agentId) };
   }
 
   db.update(namedAgents)
@@ -158,7 +162,7 @@ export async function updateNamedAgent(
     .where(eq(namedAgents.id, agentId))
     .run();
 
-  return { data: await getNamedAgentById(agentId) };
+  return { data: await getNamedAgent(agentId) };
 }
 
 export async function deleteNamedAgent(agentId: string): Promise<boolean> {

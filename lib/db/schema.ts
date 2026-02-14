@@ -146,6 +146,9 @@ export const agentSessions = sqliteTable("agent_sessions", {
   cliSessionId: text("cli_session_id"),
   namedAgentId: text("named_agent_id"),
   agentType: text("agent_type"),
+  namedAgentName: text("named_agent_name"),
+  model: text("model"),
+  cliCommand: text("cli_command"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 

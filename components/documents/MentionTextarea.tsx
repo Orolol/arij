@@ -143,7 +143,7 @@ export function MentionTextarea({
   const hasSuggestionMenu = Boolean(activeMention && filteredDocuments.length > 0);
 
   return (
-    <div className="relative">
+    <div className="relative flex-1 min-w-0 w-full">
       <Textarea
         {...props}
         ref={(node) => {

@@ -200,6 +200,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     cliSessionId,
     namedAgentId: resolved.namedAgentId ?? null,
     agentType: "merge",
+    namedAgentName: resolved.name || null,
+    model: resolved.model || null,
     createdAt: now,
   });
 

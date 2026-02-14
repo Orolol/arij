@@ -240,7 +240,7 @@ export function EpicActions({
                 : "Optional instructions for the agent..."
             }
             rows={4}
-            className="text-sm"
+            className=""
           />
           <DialogFooter>
             <Button variant="outline" onClick={() => setSendToDevOpen(false)}>

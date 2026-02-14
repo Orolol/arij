@@ -62,6 +62,7 @@ export class GeminiCliProvider implements AgentProvider {
       handle: `gemini-${sessionId}`,
       kill: spawned.kill,
       promise: spawned.promise,
+      command: spawned.command,
     };
   }
 

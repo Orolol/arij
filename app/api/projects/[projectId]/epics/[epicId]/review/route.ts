@@ -35,7 +35,6 @@ import {
   MentionResolutionError,
   enrichPromptWithDocumentMentions,
 } from "@/lib/documents/mentions";
-import { listProjectTextDocuments } from "@/lib/documents/query";
 import { agentSessions } from "@/lib/db/schema";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
@@ -128,8 +127,6 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   // Load context
-  const docs = listProjectTextDocuments(projectId);
-
   const us = db
     .select()
     .from(userStories)
@@ -185,7 +182,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
     const prompt = buildEpicReviewPrompt(
       project,
-      docs,
+      [],
       epic,
       us,
       reviewType,
@@ -265,6 +262,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       cliSessionId,
       namedAgentId: resolvedAgent.namedAgentId ?? null,
       agentType: REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
+      namedAgentName: resolvedAgent.name || null,
+      model: resolvedAgent.model || null,
       createdAt: now,
     });
 

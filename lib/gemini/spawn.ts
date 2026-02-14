@@ -297,5 +297,13 @@ export function spawnGemini(options: GeminiOptions): SpawnedClaude {
     }
   };
 
-  return { promise, kill };
+  // Build display command (replace prompt with <prompt>)
+  const displayArgs = args.map((a, i) => {
+    if (i > 0 && args[i - 1] === "-p") return "<prompt>";
+    if (a === prompt && a.length > 50) return "<prompt>";
+    return a;
+  });
+  const command = `gemini ${displayArgs.join(" ")}`;
+
+  return { promise, kill, command };
 }

@@ -31,7 +31,6 @@ import {
   enrichPromptWithDocumentMentions,
   validateMentionsExist,
 } from "@/lib/documents/mentions";
-import { listProjectTextDocuments } from "@/lib/documents/query";
 import { agentSessions } from "@/lib/db/schema";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
@@ -106,8 +105,6 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   // Load context
-  const docs = listProjectTextDocuments(projectId);
-
   const us = db
     .select()
     .from(userStories)
@@ -139,7 +136,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   );
 
   // Build prompt
-  const prompt = buildBuildPrompt(project, docs, epic, us, buildSystemPrompt, promptComments);
+  const prompt = buildBuildPrompt(project, [], epic, us, buildSystemPrompt, promptComments);
 
   let enrichedPrompt = prompt;
   try {
@@ -221,6 +218,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     cliSessionId,
     namedAgentId: resolvedAgent.namedAgentId ?? null,
     agentType: "build",
+    namedAgentName: resolvedAgent.name || null,
+    model: resolvedAgent.model || null,
     createdAt: now,
   });
 

@@ -26,7 +26,7 @@ export class ClaudeCodeProvider implements AgentProvider {
       resumeSession,
     } = options;
 
-    const { promise: rawPromise, kill } = spawnClaude({
+    const { promise: rawPromise, kill, command } = spawnClaude({
       mode,
       prompt,
       cwd,
@@ -49,6 +49,7 @@ export class ClaudeCodeProvider implements AgentProvider {
       handle: `cc-${options.sessionId}`,
       kill,
       promise,
+      command,
     };
   }
 

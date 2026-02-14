@@ -962,7 +962,7 @@ export function buildCustomReviewPrompt(
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(globalPrompt));
   parts.push(`# Project: ${project.name}\n`);
   parts.push(section("Project Specification", project.spec));
   parts.push(documentsSection(documents));
@@ -1019,7 +1019,7 @@ export function buildCustomEpicReviewPrompt(
 ): string {
   const parts: string[] = [];
 
-  parts.push(globalSection(globalPrompt));
+  parts.push(systemSection(globalPrompt));
   parts.push(`# Project: ${project.name}\n`);
   parts.push(section("Project Specification", project.spec));
   parts.push(documentsSection(documents));

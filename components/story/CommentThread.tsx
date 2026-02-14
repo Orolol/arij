@@ -124,8 +124,8 @@ export function CommentThread({
               }
             }}
             placeholder="Add a comment..."
-            rows={2}
-            className="text-sm resize-none"
+            rows={3}
+            className="min-h-24 resize-none"
           />
           <Button
             size="icon"
@@ -134,9 +134,9 @@ export function CommentThread({
             className="shrink-0 self-end"
           >
             {sending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-5 w-5 animate-spin" />
             ) : (
-              <Send className="h-4 w-4" />
+              <Send className="h-5 w-5" />
             )}
           </Button>
         </div>

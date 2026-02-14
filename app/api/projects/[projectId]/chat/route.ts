@@ -14,7 +14,6 @@ import {
 } from "@/lib/documents/mentions";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
 import { getProvider } from "@/lib/providers";
-import { listProjectTextDocuments } from "@/lib/documents/query";
 
 export async function GET(
   request: NextRequest,
@@ -122,7 +121,6 @@ export async function POST(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  const docs = listProjectTextDocuments(projectId);
   const recentMessages = db
     .select()
     .from(chatMessages)
@@ -136,7 +134,7 @@ export async function POST(
 
   const prompt = buildChatPrompt(
     project,
-    docs,
+    [],
     recentMessages.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
     chatSystemPrompt
   );

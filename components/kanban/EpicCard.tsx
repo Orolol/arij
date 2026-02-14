@@ -30,6 +30,7 @@ interface EpicCardProps {
   hasUnreadAiUpdate?: boolean;
   onClick?: () => void;
   selected?: boolean;
+  autoIncluded?: boolean;
   onToggleSelect?: () => void;
 }
 
@@ -50,6 +51,7 @@ export function EpicCard({
   hasUnreadAiUpdate = false,
   onClick,
   selected,
+  autoIncluded,
   onToggleSelect,
 }: EpicCardProps) {
   const {
@@ -101,7 +103,7 @@ export function EpicCard({
       className={`p-2 gap-0 rounded-md shadow-none cursor-pointer hover:bg-accent/50 transition-colors ${
         isOverlay ? "shadow-lg" : ""
       } ${isDragging ? "shadow-md" : ""} ${
-        selected ? "ring-2 ring-primary" : ""
+        selected ? "ring-2 ring-primary" : autoIncluded ? "ring-2 ring-blue-400/50" : ""
       } ${epic.type === "bug" ? "border-l-2 border-l-red-500" : ""}`}
     >
       <div className="flex items-start justify-between gap-2 mb-1">

@@ -28,6 +28,8 @@ export interface CodexOptions {
   logIdentifier?: string;
   /** Optional legacy thread/session ID (ignored in `codex exec` mode). */
   sessionId?: string;
+  /** Optional CLI session ID for resume support (codex exec resume). */
+  cliSessionId?: string;
   /** @deprecated `codex exec` is non-resumable; this flag is ignored. */
   resumeSession?: boolean;
 }
@@ -52,6 +54,8 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
     onOutputChunk,
     onResponseChunk,
     logIdentifier,
+    cliSessionId,
+    resumeSession,
   } = options;
 
   // Temp file for -o (reliable output capture)
@@ -60,41 +64,56 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
     `codex-out-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`
   );
 
+  const effectiveCwd = cwd || process.cwd();
+  const isResume = !!(cliSessionId && resumeSession);
+
+  // `codex exec resume <ID> <PROMPT>` is a separate subcommand with its own
+  // flag set (no -C, -o, --color, -s).  Build args accordingly.
   const args: string[] = ["exec"];
 
-  // Sandbox mode
-  if (mode === "code") {
-    args.push("--dangerously-bypass-approvals-and-sandbox");
-  } else if (mode === "analyze") {
-    // analyze → can read + write workspace files (e.g. arji.json)
-    args.push("-s", "workspace-write");
+  if (isResume) {
+    args.push("resume", cliSessionId!);
+
+    // resume only supports a subset of flags
+    if (mode === "code") {
+      args.push("--dangerously-bypass-approvals-and-sandbox");
+    }
+    args.push("--skip-git-repo-check");
+
+    if (model) {
+      args.push("-m", model);
+    }
+
+    // Prompt as positional argument (after session ID)
+    args.push(prompt);
   } else {
-    // plan → read-only
-    args.push("-s", "read-only");
+    // --- normal (non-resume) exec ---
+
+    // Sandbox mode
+    if (mode === "code") {
+      args.push("--dangerously-bypass-approvals-and-sandbox");
+    } else if (mode === "analyze") {
+      args.push("-s", "workspace-write");
+    } else {
+      args.push("-s", "read-only");
+    }
+
+    args.push("-C", effectiveCwd);
+    args.push("--skip-git-repo-check");
+
+    // Capture final message to file (avoids mixing with banners/logs)
+    args.push("-o", outputFile);
+
+    // No ANSI escape codes
+    args.push("--color", "never");
+
+    if (model) {
+      args.push("-m", model);
+    }
+
+    // Prompt as positional argument
+    args.push(prompt);
   }
-
-  // Working directory
-  const effectiveCwd = cwd || process.cwd();
-  args.push("-C", effectiveCwd);
-
-  // Common flags
-  args.push("--skip-git-repo-check");
-
-  // `codex exec` does not support resume semantics; always start fresh.
-
-  // Capture final message to file (avoids mixing with banners/logs)
-  args.push("-o", outputFile);
-
-  // No ANSI escape codes
-  args.push("--color", "never");
-
-  // Model override
-  if (model) {
-    args.push("-m", model);
-  }
-
-  // Prompt as positional argument
-  args.push(prompt);
 
   console.log(
     "[spawn] codex",
@@ -300,5 +319,12 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
     }
   };
 
-  return { promise, kill };
+  // Build display command (replace prompt with <prompt>)
+  const displayArgs = args.map((a) => {
+    if (a === prompt && a.length > 50) return "<prompt>";
+    return a;
+  });
+  const command = `codex ${displayArgs.join(" ")}`;
+
+  return { promise, kill, command };
 }

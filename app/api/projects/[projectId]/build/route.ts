@@ -30,7 +30,6 @@ import {
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
-import { listProjectTextDocuments } from "@/lib/documents/query";
 import {
   enrichPromptWithDocumentMentions,
   MentionResolutionError,
@@ -133,7 +132,6 @@ export async function POST(
   }
 
   // Load project context
-  const docs = listProjectTextDocuments(projectId);
   const buildSystemPrompt = await resolveAgentPrompt("build", projectId);
   const teamBuildSystemPrompt = await resolveAgentPrompt(
     "team_build",
@@ -189,7 +187,7 @@ export async function POST(
       // Build team prompt
       const prompt = buildTeamBuildPrompt(
         projectRef,
-        docs,
+        [],
         teamEpics,
         teamBuildSystemPrompt
       );
@@ -245,6 +243,8 @@ export async function POST(
         cliSessionId: teamCliSessionId,
         namedAgentId: resolvedTeamAgent.namedAgentId ?? null,
         agentType: "team_build",
+        namedAgentName: resolvedTeamAgent.name || null,
+        model: resolvedTeamAgent.model || null,
         createdAt: now,
       });
 
@@ -359,7 +359,7 @@ export async function POST(
     // Compose prompt
     const prompt = buildBuildPrompt(
       projectRef,
-      docs,
+      [],
       epic,
       us,
       buildSystemPrompt
@@ -419,6 +419,8 @@ export async function POST(
       cliSessionId: soloCliSessionId,
       namedAgentId: resolvedBuildAgent.namedAgentId ?? null,
       agentType: "build",
+      namedAgentName: resolvedBuildAgent.name || null,
+      model: resolvedBuildAgent.model || null,
       createdAt: now,
     });
 

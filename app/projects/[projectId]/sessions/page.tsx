@@ -19,6 +19,7 @@ interface Session {
   id: string;
   status: string;
   mode: string;
+  provider?: string;
   epicId?: string;
   branchName?: string;
   startedAt?: string;
@@ -28,6 +29,8 @@ interface Session {
   error?: string;
   agentType?: string;
   claudeSessionId?: string;
+  namedAgentName?: string | null;
+  model?: string | null;
   createdAt: string;
 }
 
@@ -140,6 +143,20 @@ export default function SessionsPage() {
                         <Badge variant="outline" className="text-xs">
                           {session.mode}
                         </Badge>
+                        {session.namedAgentName ? (
+                          <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-400/30">
+                            {session.namedAgentName}
+                          </Badge>
+                        ) : session.provider && session.provider !== "claude-code" ? (
+                          <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+                            {session.provider === "codex" ? "Codex" : session.provider === "gemini-cli" ? "Gemini" : session.provider}
+                          </Badge>
+                        ) : null}
+                        {session.model && (
+                          <span className="text-[10px] text-muted-foreground font-mono">
+                            {session.model}
+                          </span>
+                        )}
                         {session.claudeSessionId && (
                           <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-400/30">
                             resumable
