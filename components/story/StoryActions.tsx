@@ -248,7 +248,7 @@ export function StoryActions({
                 : "Optional instructions for the agent..."
             }
             rows={4}
-            className="text-sm"
+            className=""
           />
           <DialogFooter>
             <Button

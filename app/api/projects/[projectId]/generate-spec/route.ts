@@ -12,7 +12,6 @@ import { getProvider } from "@/lib/providers";
 
 import { activityRegistry } from "@/lib/activity-registry";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
-import { listProjectTextDocuments } from "@/lib/documents/query";
 import {
   enrichPromptWithDocumentMentions,
   MentionResolutionError,
@@ -39,7 +38,6 @@ export async function POST(
     return NextResponse.json({ error: "Project not found" }, { status: 404 });
   }
 
-  const docs = listProjectTextDocuments(projectId);
   const chatHistory = db
     .select()
     .from(chatMessages)
@@ -56,7 +54,7 @@ export async function POST(
 
   const prompt = buildSpecGenerationPrompt(
     project,
-    docs,
+    [],
     chatHistory.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
     specSystemPrompt
   );

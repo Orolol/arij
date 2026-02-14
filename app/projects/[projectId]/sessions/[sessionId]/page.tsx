@@ -31,6 +31,9 @@ interface SessionDetail {
   lastNonEmptyText?: string | null;
   claudeSessionId?: string | null;
   agentType?: string | null;
+  namedAgentName?: string | null;
+  model?: string | null;
+  cliCommand?: string | null;
   logs?: {
     success?: boolean;
     result?: string;
@@ -159,10 +162,19 @@ export default function SessionDetailPage() {
                 {AGENT_TYPE_LABELS[session.agentType] || session.agentType}
               </Badge>
             )}
-            {session.provider && (
-              <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                {session.provider === "codex" ? "Codex" : "CC"}
+            {session.namedAgentName ? (
+              <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-400/30">
+                {session.namedAgentName}
               </Badge>
+            ) : session.provider ? (
+              <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
+                {session.provider === "claude-code" ? "CC" : session.provider === "codex" ? "Codex" : session.provider === "gemini-cli" ? "Gemini" : session.provider}
+              </Badge>
+            ) : null}
+            {session.model && (
+              <span className="text-[10px] text-muted-foreground font-mono">
+                {session.model}
+              </span>
             )}
             {session.claudeSessionId && (
               <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-400/30">
@@ -243,6 +255,16 @@ export default function SessionDetailPage() {
             <div className="text-xs text-muted-foreground">CLI Session ID</div>
             <div className="text-sm font-mono text-blue-400 truncate">
               {session.claudeSessionId}
+            </div>
+          </Card>
+        )}
+        {session.cliCommand && (
+          <Card className="p-3 col-span-2">
+            <div className="text-xs text-muted-foreground">Command</div>
+            <div className="max-h-[80px] overflow-y-auto overflow-x-hidden">
+              <div className="text-sm font-mono text-muted-foreground break-all whitespace-pre-wrap">
+                {session.cliCommand}
+              </div>
             </div>
           </Card>
         )}

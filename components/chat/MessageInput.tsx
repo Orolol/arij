@@ -116,7 +116,7 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
   const hasContent = value.trim().length > 0 || attachments.length > 0;
 
   return (
-    <div className="p-3 border-t border-border">
+    <div className="p-4 border-t border-border">
       {/* Attachment preview strip */}
       {(attachments.length > 0 || uploading) && (
         <div className="flex gap-2 mb-2 flex-wrap">
@@ -152,8 +152,8 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder={placeholder}
-          rows={2}
-          className="resize-none text-sm"
+          rows={3}
+          className="min-h-24 resize-none"
           disabled={disabled}
         />
         <div className="flex flex-col gap-1 shrink-0">
@@ -166,9 +166,9 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
             type="button"
           >
             {uploading ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
+              <Loader2 className="h-5 w-5 animate-spin" />
             ) : (
-              <ImagePlus className="h-4 w-4" />
+              <ImagePlus className="h-5 w-5" />
             )}
           </Button>
           <Button
@@ -176,7 +176,7 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
             onClick={handleSubmit}
             disabled={disabled || !hasContent || uploading}
           >
-            <Send className="h-4 w-4" />
+            <Send className="h-5 w-5" />
           </Button>
         </div>
       </div>

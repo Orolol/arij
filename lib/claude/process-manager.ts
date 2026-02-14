@@ -6,6 +6,9 @@ import {
   isTerminalStatus,
 } from "@/lib/sessions/status-machine";
 import { appendSessionChunk } from "@/lib/agent-sessions/chunks";
+import { db } from "@/lib/db";
+import { agentSessions } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -99,11 +102,31 @@ class ClaudeProcessManager {
       kill = session.kill;
       promise = session.promise;
       providerSession = session;
+
+      // Persist CLI command
+      if (session.command) {
+        try {
+          db.update(agentSessions)
+            .set({ cliCommand: session.command })
+            .where(eq(agentSessions.id, sessionId))
+            .run();
+        } catch { /* best-effort */ }
+      }
     } else {
       // Default: Claude Code CLI
       const spawned = spawnClaude(options);
       kill = spawned.kill;
       promise = spawned.promise;
+
+      // Persist CLI command
+      if (spawned.command) {
+        try {
+          db.update(agentSessions)
+            .set({ cliCommand: spawned.command })
+            .where(eq(agentSessions.id, sessionId))
+            .run();
+        } catch { /* best-effort */ }
+      }
     }
 
     const session: TrackedSession = {

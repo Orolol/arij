@@ -31,7 +31,6 @@ import {
   enrichPromptWithDocumentMentions,
   validateMentionsExist,
 } from "@/lib/documents/mentions";
-import { listProjectTextDocuments } from "@/lib/documents/query";
 import { agentSessions } from "@/lib/db/schema";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
@@ -125,8 +124,6 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   // Load context
-  const docs = listProjectTextDocuments(projectId);
-
   const comments = db
     .select()
     .from(ticketComments)
@@ -149,7 +146,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   // Build prompt
   const prompt = buildTicketBuildPrompt(
     project,
-    docs,
+    [],
     epic,
     story,
     comments.map((c) => ({
@@ -232,6 +229,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     worktreePath,
     claudeSessionId,
     agentType: "ticket_build",
+    namedAgentName: resolvedAgent.name || null,
+    model: resolvedAgent.model || null,
     createdAt: now,
   });
 

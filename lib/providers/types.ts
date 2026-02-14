@@ -53,6 +53,8 @@ export interface ProviderSession {
   kill: () => void;
   /** Promise that resolves when the session completes. */
   promise: Promise<ProviderResult>;
+  /** The CLI command that was spawned (prompt replaced with <prompt>). */
+  command?: string;
 }
 
 export interface AgentProvider {

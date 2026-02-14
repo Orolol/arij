@@ -127,6 +127,8 @@ export async function POST(
       worktreePath,
       claudeSessionId,
       agentType: "merge",
+      namedAgentName: null,
+      model: null,
       createdAt: now,
     });
 
@@ -174,7 +176,7 @@ export async function POST(
       // If agent succeeded, attempt merge again
       if (agentResult?.success) {
         const retryResult = await mergeWorktree(
-          project.gitRepoPath,
+          project.gitRepoPath!,
           epic.branchName!,
           worktreePath
         );

@@ -15,7 +15,6 @@ import {
   MentionResolutionError,
   validateMentionsExist,
 } from "@/lib/documents/mentions";
-import { listProjectTextDocuments } from "@/lib/documents/query";
 
 export async function POST(
   request: NextRequest,
@@ -89,8 +88,6 @@ export async function POST(
     });
   }
 
-  const docs = listProjectTextDocuments(projectId);
-
   const conditions = [eq(chatMessages.projectId, projectId)];
   if (conversationId) {
     conditions.push(eq(chatMessages.conversationId, conversationId));
@@ -134,21 +131,21 @@ export async function POST(
     prompt = finalize
       ? buildEpicFinalizationPrompt(
           project,
-          docs,
+          [],
           messageHistory,
           globalPrompt,
           existingEpics,
         )
       : buildEpicRefinementPrompt(
           project,
-          docs,
+          [],
           messageHistory,
           globalPrompt,
           existingEpics,
         );
   } else {
     const chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
-    prompt = buildChatPrompt(project, docs, messageHistory, chatSystemPrompt);
+    prompt = buildChatPrompt(project, [], messageHistory, chatSystemPrompt);
   }
 
   const resolvedAgent = resolveAgent("chat", projectId);

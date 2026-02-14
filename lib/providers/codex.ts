@@ -54,6 +54,7 @@ export class CodexProvider implements AgentProvider {
       handle: `codex-${sessionId}`,
       kill: spawned.kill,
       promise: spawned.promise,
+      command: spawned.command,
     };
   }
 

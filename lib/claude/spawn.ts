@@ -28,6 +28,7 @@ export interface ClaudeResult {
 export interface SpawnedClaude {
   promise: Promise<ClaudeResult>;
   kill: () => void;
+  command?: string;
 }
 
 export interface QuestionOption {
@@ -195,7 +196,15 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
     }
   };
 
-  return { promise, kill };
+  // Build display command (replace prompt with <prompt>)
+  const displayArgs = args.map((a, i) => {
+    if (i > 0 && (args[i - 1] === "-p" || args[i - 1] === "--print")) return "<prompt>";
+    if (a === prompt && a.length > 50) return "<prompt>";
+    return a;
+  });
+  const command = `claude ${displayArgs.join(" ")}`;
+
+  return { promise, kill, command };
 }
 
 // Events that are expected but carry no text to stream

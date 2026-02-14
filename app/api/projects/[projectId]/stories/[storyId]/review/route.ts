@@ -35,7 +35,6 @@ import {
   MentionResolutionError,
   enrichPromptWithDocumentMentions,
 } from "@/lib/documents/mentions";
-import { listProjectTextDocuments } from "@/lib/documents/query";
 import { agentSessions } from "@/lib/db/schema";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
@@ -157,7 +156,6 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   // Load context
-  const docs = listProjectTextDocuments(projectId);
   const comments = db
     .select()
     .from(ticketComments)
@@ -195,7 +193,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
     const prompt = buildReviewPrompt(
       project,
-      docs,
+      [],
       epic,
       story,
       reviewType,
@@ -268,6 +266,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       branchName,
       worktreePath,
       claudeSessionId,
+      namedAgentName: resolvedAgent.name || null,
+      model: resolvedAgent.model || null,
       createdAt: now,
     });
 

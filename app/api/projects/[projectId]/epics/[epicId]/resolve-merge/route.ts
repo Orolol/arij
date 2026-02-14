@@ -192,6 +192,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     worktreePath,
     claudeSessionId,
     agentType: "merge",
+    namedAgentName: resolved.name || null,
+    model: resolved.model || null,
     createdAt: now,
   });
 

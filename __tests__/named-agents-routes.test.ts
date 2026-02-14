@@ -73,7 +73,7 @@ describe("Named Agents API Routes", () => {
         model: "claude-opus-4-6",
         createdAt: "2026-01-01",
       };
-      mockCreate.mockReturnValue(created);
+      mockCreate.mockReturnValue({ data: created });
 
       const { POST } = await import("@/app/api/agent-config/named-agents/route");
       const res = await POST(mockRequest({
@@ -146,7 +146,7 @@ describe("Named Agents API Routes", () => {
         model: "gemini-2.0-flash",
         createdAt: "2026-01-01",
       };
-      mockCreate.mockReturnValue(created);
+      mockCreate.mockReturnValue({ data: created });
 
       const { POST } = await import("@/app/api/agent-config/named-agents/route");
       const res = await POST(mockRequest({
@@ -191,7 +191,7 @@ describe("Named Agents API Routes", () => {
   describe("PUT /api/agent-config/named-agents/[agentId]", () => {
     it("updates a named agent", async () => {
       const updated = { id: "a1", name: "Updated", provider: "claude-code", model: "m1" };
-      mockUpdate.mockReturnValue(updated);
+      mockUpdate.mockReturnValue({ data: updated });
 
       const { PUT } = await import("@/app/api/agent-config/named-agents/[agentId]/route");
       const res = await PUT(mockRequest({ name: "Updated" }), {
