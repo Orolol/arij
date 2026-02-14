@@ -34,6 +34,7 @@ let processManagerResult: {
   result?: string;
   error?: string;
   duration: number;
+  endedWithQuestion?: boolean;
 } = { success: true, duration: 1000 };
 
 // ---------------------------------------------------------------------------
@@ -300,6 +301,47 @@ describe("Epic build — failure does NOT mark done", () => {
   });
 });
 
+describe("Epic build — question keeps in_progress", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    dbUpdates = [];
+    processManagerResult = {
+      success: true,
+      result: "I need clarification before implementing this.",
+      duration: 400,
+      endedWithQuestion: true,
+    };
+    mockProject = { id: "proj-1", name: "Test", gitRepoPath: "/repos/test" };
+    mockEpic = {
+      id: "epic-1",
+      title: "Test Epic",
+      status: "in_progress",
+      branchName: "feature/epic-1-test",
+    };
+    mockStories = [
+      { id: "us-1", epicId: "epic-1", status: "in_progress", title: "US 1" },
+    ];
+  });
+
+  it("does NOT set US or epic to review when build ended with a question", async () => {
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/epics/[epicId]/build/route"
+    );
+
+    const res = await POST(mockRequest({}), {
+      params: Promise.resolve({ projectId: "proj-1", epicId: "epic-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    const reviewUpdates = dbUpdates.filter(
+      (u) => u.setValues.status === "review"
+    );
+    expect(reviewUpdates).toHaveLength(0);
+  });
+});
+
 describe("Epic review — negative verdict reverts to in_progress", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -476,6 +518,47 @@ describe("Story build — marks story as review on success", () => {
       (u) => u.table === "userStories" && u.setValues.status === "review"
     );
     expect(storyReview).toBeDefined();
+  });
+});
+
+describe("Story build — question keeps in_progress", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    dbUpdates = [];
+    processManagerResult = {
+      success: true,
+      result: "Do you want REST or GraphQL for this endpoint?",
+      duration: 350,
+      endedWithQuestion: true,
+    };
+    mockProject = { id: "proj-1", name: "Test", gitRepoPath: "/repos/test" };
+    mockEpic = {
+      id: "epic-1",
+      title: "Test Epic",
+      status: "in_progress",
+      branchName: "feature/epic-1-test",
+    };
+    mockStories = [
+      { id: "us-1", epicId: "epic-1", status: "todo", title: "US 1" },
+    ];
+  });
+
+  it("does NOT set story to review when build ended with a question", async () => {
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/stories/[storyId]/build/route"
+    );
+
+    const res = await POST(mockRequest({}), {
+      params: Promise.resolve({ projectId: "proj-1", storyId: "us-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    const reviewUpdates = dbUpdates.filter(
+      (u) => u.setValues.status === "review"
+    );
+    expect(reviewUpdates).toHaveLength(0);
   });
 });
 

@@ -297,8 +297,9 @@ export async function POST(request: NextRequest, { params }: Params) {
       }
     }
 
-    // On success: move story to review (not done — requires review/approval first)
-    if (result?.success) {
+    // On success: move story to review (not done — requires review/approval first).
+    // If the agent asked a follow-up question, keep it in progress.
+    if (result?.success && !result?.endedWithQuestion) {
       db.update(userStories)
         .set({ status: "review" })
         .where(

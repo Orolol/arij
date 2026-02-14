@@ -277,9 +277,9 @@ export async function POST(request: NextRequest, { params }: Params) {
       }
     }
 
-    // On success: all non-done US -> review, epic -> review
-    // The ticket should go through review before being moved to done/merged.
-    if (result?.success) {
+    // On success: all non-done US -> review, epic -> review.
+    // If the agent asked a follow-up question, keep work in progress.
+    if (result?.success && !result?.endedWithQuestion) {
       db.update(userStories)
         .set({ status: "review" })
         .where(

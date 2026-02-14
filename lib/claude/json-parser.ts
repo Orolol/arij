@@ -57,6 +57,41 @@ export function extractCliSessionIdFromOutput(raw: string): string | null {
 }
 
 /**
+ * Detects whether provider output includes an AskUserQuestion-style tool call.
+ *
+ * This is used by build routes to keep tickets in `in_progress` when an agent
+ * asked the user a follow-up question instead of completing implementation.
+ */
+export function hasAskUserQuestion(raw: string): boolean {
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+
+  // Fast path for full JSON payloads.
+  const parsed = tryParseJson(trimmed);
+  if (containsQuestionToolCall(parsed)) {
+    return true;
+  }
+
+  // Fallback for NDJSON / stream-json style output.
+  const lines = trimmed.split(/\r?\n/);
+  for (const line of lines) {
+    const candidate = line.trim();
+    if (!candidate.startsWith("{") && !candidate.startsWith("[")) {
+      continue;
+    }
+
+    const parsedLine = tryParseJson(candidate);
+    if (containsQuestionToolCall(parsedLine)) {
+      return true;
+    }
+  }
+
+  // Last-resort fallback for plain-text traces that still mention tool names.
+  return /\bask[_\s-]*user[_\s-]*question\b|\brequest[_\s-]*user[_\s-]*input\b/i
+    .test(trimmed);
+}
+
+/**
  * Parses the raw stdout from Claude Code CLI and extracts structured content.
  *
  * Handles the following formats:
@@ -228,6 +263,67 @@ function isCliResultEnvelope(value: unknown): boolean {
     "session_id" in value ||
     "is_error" in value
   );
+}
+
+const QUESTION_TOOL_NAME_NORMALIZED = new Set([
+  "askuserquestion",
+  "requestuserinput",
+]);
+
+function normalizeToolName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z]/g, "");
+}
+
+function isQuestionToolName(name: string): boolean {
+  return QUESTION_TOOL_NAME_NORMALIZED.has(normalizeToolName(name));
+}
+
+function findToolNameInRecord(record: Record<string, unknown>): string | null {
+  if (typeof record.name === "string" && record.name.trim().length > 0) {
+    return record.name;
+  }
+
+  const nestedToolCandidates = [
+    record.tool_use,
+    record.toolUse,
+    record.tool,
+    record.function_call,
+    record.functionCall,
+  ];
+
+  for (const candidate of nestedToolCandidates) {
+    if (!isRecord(candidate)) {
+      continue;
+    }
+    if (typeof candidate.name === "string" && candidate.name.trim().length > 0) {
+      return candidate.name;
+    }
+  }
+
+  return null;
+}
+
+function containsQuestionToolCall(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => containsQuestionToolCall(item));
+  }
+
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const toolName = findToolNameInRecord(value);
+  if (toolName && isQuestionToolName(toolName)) {
+    return true;
+  }
+
+  for (const nested of Object.values(value)) {
+    if (containsQuestionToolCall(nested)) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function findSessionIdInValue(value: unknown): string | null {

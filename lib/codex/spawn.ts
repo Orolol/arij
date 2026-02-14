@@ -10,6 +10,7 @@ import {
   endStreamLog,
   type StreamLogContext,
 } from "@/lib/claude/logger";
+import { hasAskUserQuestion } from "@/lib/claude/json-parser";
 
 export interface CodexOptions {
   mode: "plan" | "code" | "analyze";
@@ -210,6 +211,10 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
 
       // Best output: -o file > stdout
       const result = fileOutput || stdout.trim();
+      const endedWithQuestion =
+        hasAskUserQuestion(fileOutput) ||
+        hasAskUserQuestion(stdout) ||
+        hasAskUserQuestion(stderr);
 
       if (fileOutput) {
         onOutputChunk?.({
@@ -285,6 +290,7 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
           error,
           result: result || undefined,
           duration,
+          endedWithQuestion,
         });
         return;
       }
@@ -293,6 +299,7 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
         success: true,
         result,
         duration,
+        endedWithQuestion,
       });
     });
   });
