@@ -48,6 +48,7 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
   review_compliance: "Compliance Review",
   review_feature: "Feature Review",
   merge: "Merge",
+  tech_check: "Tech Check",
 };
 
 /**

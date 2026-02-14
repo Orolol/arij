@@ -201,6 +201,86 @@ export function buildSpecPrompt(
 }
 
 // ---------------------------------------------------------------------------
+// 2b. Tech Check Prompt
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the prompt for a comprehensive project tech check (QA).
+ */
+export function buildTechCheckPrompt(
+  project: PromptProject,
+  documents: PromptDocument[],
+  customPrompt?: string | null,
+  systemPrompt?: string | null,
+): string {
+  const parts: string[] = [];
+
+  parts.push(systemSection(systemPrompt));
+  parts.push(`# Project: ${project.name}\n`);
+  parts.push(section("Project Specification", project.spec));
+  parts.push(documentsSection(documents));
+
+  if (customPrompt && customPrompt.trim()) {
+    parts.push(`## Additional Instructions\n\n${customPrompt.trim()}\n`);
+  }
+
+  parts.push(`## Task: Comprehensive Tech Check
+
+Perform a thorough technical review of the entire project codebase. This is a full code health audit, not scoped to a single epic or ticket.
+
+### Review Areas
+
+1. **Architecture & Patterns**
+   - Overall architecture quality and consistency
+   - Design pattern usage and appropriateness
+   - Separation of concerns
+   - Module boundaries and dependencies
+
+2. **Code Quality**
+   - Code readability and naming conventions
+   - DRY violations and code duplication
+   - Dead code and unused imports
+   - Error handling patterns
+   - Type safety and proper TypeScript usage
+
+3. **Performance**
+   - Obvious performance bottlenecks
+   - Database query patterns (N+1, missing indexes)
+   - Frontend rendering inefficiencies
+   - Bundle size concerns
+
+4. **Security**
+   - Input validation gaps
+   - Authentication/authorization issues
+   - Secrets exposure risks
+   - Dependency vulnerabilities
+
+5. **Testing**
+   - Test coverage gaps
+   - Test quality and maintainability
+   - Missing edge case coverage
+
+6. **Technical Debt**
+   - TODOs and FIXMEs in code
+   - Outdated dependencies
+   - Deprecated API usage
+   - Migration/upgrade needs
+
+### Output Format
+
+Produce a detailed markdown report with:
+- An executive summary (2-3 paragraphs)
+- Findings organized by the categories above
+- Each finding should include: severity (Critical/High/Medium/Low), file location, description, and recommendation
+- A prioritized action items list at the end, suitable for creating epics
+
+Your response should be a well-formatted markdown report.
+`);
+
+  return parts.filter(Boolean).join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // 3. Import Prompt
 // ---------------------------------------------------------------------------
 

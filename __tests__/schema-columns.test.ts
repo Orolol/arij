@@ -74,6 +74,37 @@ describe("Schema: existing columns preserved", () => {
   });
 });
 
+describe("Schema: QA tables", () => {
+  it("qaReports has required columns", () => {
+    const cols = schema.qaReports;
+    expect(cols.id).toBeDefined();
+    expect(cols.projectId).toBeDefined();
+    expect(cols.status).toBeDefined();
+    expect(cols.agentSessionId).toBeDefined();
+    expect(cols.namedAgentId).toBeDefined();
+    expect(cols.promptUsed).toBeDefined();
+    expect(cols.customPromptId).toBeDefined();
+    expect(cols.reportContent).toBeDefined();
+    expect(cols.summary).toBeDefined();
+    expect(cols.createdAt).toBeDefined();
+    expect(cols.completedAt).toBeDefined();
+  });
+
+  it("qaPrompts has required columns and unique name index", () => {
+    const cols = schema.qaPrompts;
+    expect(cols.id).toBeDefined();
+    expect(cols.name).toBeDefined();
+    expect(cols.prompt).toBeDefined();
+    expect(cols.createdAt).toBeDefined();
+    expect(cols.updatedAt).toBeDefined();
+
+    const extraConfig = schema.qaPrompts[Symbol.for("drizzle:ExtraConfigBuilder")](
+      schema.qaPrompts
+    );
+    expect(extraConfig.nameUnique).toBeDefined();
+  });
+});
+
 describe("Schema: session chunk tables", () => {
   it("has agentSessionSequences table columns", () => {
     const cols = schema.agentSessionSequences;
@@ -196,9 +227,31 @@ describe("Schema: exported types", () => {
       createdAt: null,
       updatedAt: null,
     };
+    const qaReportShape: schema.QaReport = {
+      id: "qr_1",
+      projectId: "proj_1",
+      status: "running",
+      agentSessionId: null,
+      namedAgentId: null,
+      promptUsed: null,
+      customPromptId: null,
+      reportContent: null,
+      summary: null,
+      createdAt: null,
+      completedAt: null,
+    };
+    const qaPromptShape: schema.QaPrompt = {
+      id: "qp_1",
+      name: "Backend Audit",
+      prompt: "Check security and performance.",
+      createdAt: null,
+      updatedAt: null,
+    };
 
     expect(agentPromptShape.agentType).toBe("build");
     expect(customReviewAgentShape.name).toBe("UI Review");
     expect(agentProviderDefaultShape.provider).toBe("claude-code");
+    expect(qaReportShape.status).toBe("running");
+    expect(qaPromptShape.name).toBe("Backend Audit");
   });
 });
