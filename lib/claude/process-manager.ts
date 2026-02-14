@@ -77,6 +77,7 @@ class ClaudeProcessManager {
         mode: options.mode,
         allowedTools: options.allowedTools,
         model: options.model,
+        cliSessionId: options.cliSessionId ?? options.claudeSessionId,
         claudeSessionId: options.claudeSessionId,
         resumeSession: options.resumeSession,
         onChunk: (chunk) => {
