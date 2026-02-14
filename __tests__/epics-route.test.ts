@@ -52,6 +52,7 @@ const mockDbState = vi.hoisted(() => ({
   getQueue: [] as unknown[],
   allQueue: [] as unknown[],
   insertCalls: [] as Array<{ table: unknown; payload: unknown }>,
+  failOnStoryInsert: false,
 }));
 
 const mockIdState = vi.hoisted(() => ({ value: 1 }));
@@ -76,6 +77,7 @@ vi.mock("@/lib/db", () => {
     get: ReturnType<typeof vi.fn>;
     all: ReturnType<typeof vi.fn>;
     insert: ReturnType<typeof vi.fn>;
+    transaction: ReturnType<typeof vi.fn>;
   } = {
     select: vi.fn(),
     from: vi.fn(),
@@ -87,6 +89,7 @@ vi.mock("@/lib/db", () => {
     get: vi.fn(),
     all: vi.fn(),
     insert: vi.fn(),
+    transaction: vi.fn(),
   };
 
   chain.select.mockReturnValue(chain);
@@ -104,6 +107,25 @@ vi.mock("@/lib/db", () => {
       return { run: vi.fn() };
     }),
   }));
+  chain.transaction.mockImplementation((callback: (tx: { insert: ReturnType<typeof vi.fn> }) => unknown) => {
+    const staged: Array<{ table: unknown; payload: unknown }> = [];
+    const tx = {
+      insert: vi.fn((table: unknown) => ({
+        values: vi.fn((payload: unknown) => ({
+          run: vi.fn(() => {
+            if (mockDbState.failOnStoryInsert && table === mockSchema.userStories) {
+              throw new Error("story insert failed");
+            }
+            staged.push({ table, payload });
+          }),
+        })),
+      })),
+    };
+
+    const result = callback(tx);
+    mockDbState.insertCalls.push(...staged);
+    return result;
+  });
 
   return { db: chain };
 });
@@ -138,6 +160,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
     mockDbState.getQueue = [];
     mockDbState.allQueue = [];
     mockDbState.insertCalls = [];
+    mockDbState.failOnStoryInsert = false;
     mockIdState.value = 1;
   });
 
@@ -180,20 +203,23 @@ describe("POST /api/projects/[projectId]/epics", () => {
     const epicInserts = mockDbState.insertCalls.filter((call) => call.table === mockSchema.epics);
     const storyInserts = mockDbState.insertCalls.filter((call) => call.table === mockSchema.userStories);
     expect(epicInserts).toHaveLength(1);
-    expect(storyInserts).toHaveLength(2);
+    expect(storyInserts).toHaveLength(1);
+    const insertedStories = storyInserts[0].payload as Array<Record<string, unknown>>;
+    expect(insertedStories).toHaveLength(2);
 
-    expect(storyInserts[0].payload).toEqual(
+    expect(insertedStories[0]).toEqual(
       expect.objectContaining({
         epicId: "id-1",
         position: 0,
       }),
     );
-    expect(storyInserts[1].payload).toEqual(
+    expect(insertedStories[1]).toEqual(
       expect.objectContaining({
         epicId: "id-1",
         position: 1,
       }),
     );
+    expect((db as unknown as { transaction: ReturnType<typeof vi.fn> }).transaction).toHaveBeenCalledTimes(1);
 
     expect(mockTryExportArjiJson).toHaveBeenCalledWith("proj1");
   });
@@ -258,5 +284,28 @@ describe("POST /api/projects/[projectId]/epics", () => {
     const json = await response.json();
     expect(response.status).toBe(400);
     expect(json.error).toBe("Title is required");
+  });
+
+  it("rolls back epic creation when story insert fails inside transaction", async () => {
+    mockDbState.getQueue = [{ max: 0 }];
+    mockDbState.failOnStoryInsert = true;
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    const { POST } = await import("@/app/api/projects/[projectId]/epics/route");
+    const response = await POST(
+      mockRequest({
+        title: "Transactional Epic",
+        userStories: [{ title: "As a user, I want safety so that failures rollback" }],
+      }),
+      { params: Promise.resolve({ projectId: "proj1" }) },
+    );
+
+    const json = await response.json();
+    expect(response.status).toBe(500);
+    expect(json.error).toBe("Failed to create epic");
+    expect(mockDbState.insertCalls).toHaveLength(0);
+    expect(mockTryExportArjiJson).not.toHaveBeenCalled();
+    expect(errorSpy).toHaveBeenCalled();
+    errorSpy.mockRestore();
   });
 });

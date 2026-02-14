@@ -140,43 +140,45 @@ export async function POST(
     .get();
 
   const id = createId();
+  const storiesToInsert = normalizedUserStories.map((story, index) => ({
+    id: createId(),
+    epicId: id,
+    title: story.title,
+    description: story.description,
+    acceptanceCriteria: story.acceptanceCriteria,
+    status: "todo",
+    position: index,
+    createdAt: now,
+  }));
 
-  db.insert(epics)
-    .values({
-      id,
-      projectId,
-      title: body.title,
-      description: body.description || null,
-      priority: body.priority ?? 0,
-      status: body.status || "backlog",
-      position: (maxPos?.max ?? -1) + 1,
-      branchName: body.branchName || null,
-      confidence: body.confidence ?? null,
-      evidence: body.evidence || null,
-      createdAt: now,
-      updatedAt: now,
-      type: body.type || "feature",
-      linkedEpicId: body.linkedEpicId || null,
-      images: body.images ? JSON.stringify(body.images) : null,
-    })
-    .run();
-
-  if (normalizedUserStories.length > 0) {
-    for (let index = 0; index < normalizedUserStories.length; index += 1) {
-      const story = normalizedUserStories[index];
-      db.insert(userStories)
+  try {
+    db.transaction((tx) => {
+      tx.insert(epics)
         .values({
-          id: createId(),
-          epicId: id,
-          title: story.title,
-          description: story.description,
-          acceptanceCriteria: story.acceptanceCriteria,
-          status: "todo",
-          position: index,
+          id,
+          projectId,
+          title: body.title,
+          description: body.description || null,
+          priority: body.priority ?? 0,
+          status: body.status || "backlog",
+          position: (maxPos?.max ?? -1) + 1,
+          branchName: body.branchName || null,
+          confidence: body.confidence ?? null,
+          evidence: body.evidence || null,
           createdAt: now,
+          updatedAt: now,
+          type: body.type || "feature",
+          linkedEpicId: body.linkedEpicId || null,
+          images: body.images ? JSON.stringify(body.images) : null,
         })
         .run();
-    }
+      if (storiesToInsert.length > 0) {
+        tx.insert(userStories).values(storiesToInsert).run();
+      }
+    });
+  } catch (error) {
+    console.error("[epics/POST] Failed to create epic transaction:", error);
+    return NextResponse.json({ error: "Failed to create epic" }, { status: 500 });
   }
 
   // Persist dependency edges if provided by the generation agent
@@ -223,7 +225,7 @@ export async function POST(
     {
       data: {
         ...epic,
-        userStoriesCreated: normalizedUserStories.length,
+        userStoriesCreated: storiesToInsert.length,
         dependenciesCreated,
       },
     },
