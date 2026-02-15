@@ -33,6 +33,8 @@ export interface CodexOptions {
   cliSessionId?: string;
   /** @deprecated `codex exec` is non-resumable; this flag is ignored. */
   resumeSession?: boolean;
+  /** Developer instructions injected via `-c developer_instructions="..."`. */
+  developerInstructions?: string;
 }
 
 /**
@@ -57,6 +59,7 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
     logIdentifier,
     cliSessionId,
     resumeSession,
+    developerInstructions,
   } = options;
 
   // Temp file for -o (reliable output capture)
@@ -85,6 +88,10 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
       args.push("-m", model);
     }
 
+    if (developerInstructions && developerInstructions.trim()) {
+      args.push("-c", `developer_instructions=${JSON.stringify(developerInstructions)}`);
+    }
+
     // Prompt as positional argument (after session ID)
     args.push(prompt);
   } else {
@@ -110,6 +117,10 @@ export function spawnCodex(options: CodexOptions): SpawnedClaude {
 
     if (model) {
       args.push("-m", model);
+    }
+
+    if (developerInstructions && developerInstructions.trim()) {
+      args.push("-c", `developer_instructions=${JSON.stringify(developerInstructions)}`);
     }
 
     // Prompt as positional argument

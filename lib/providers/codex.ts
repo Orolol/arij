@@ -6,6 +6,7 @@
  */
 
 import { spawnCodex } from "@/lib/codex/spawn";
+import { CODEX_SUBAGENT_DEVELOPER_INSTRUCTIONS } from "@/lib/codex/constants";
 import { execSync } from "child_process";
 import type {
   AgentProvider,
@@ -26,6 +27,7 @@ export class CodexProvider implements AgentProvider {
       cwd,
       model,
       logIdentifier,
+      developerInstructions: CODEX_SUBAGENT_DEVELOPER_INSTRUCTIONS,
       onRawChunk: ({ source, index, text, emittedAt }) =>
         onChunk?.({
           streamType: "raw",
