@@ -219,6 +219,25 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
   });
 
   it("enriches Claude prompt with mentioned text and image document context", async () => {
+    const docsList = [
+      {
+        id: "doc-text",
+        projectId: "proj1",
+        originalFilename: "spec.md",
+        kind: "text",
+        markdownContent: "# Spec Body",
+        imagePath: null,
+      },
+      {
+        id: "doc-image",
+        projectId: "proj1",
+        originalFilename: "diagram.png",
+        kind: "image",
+        markdownContent: null,
+        imagePath: "data/documents/proj1/diagram.png",
+      },
+    ];
+
     mockDbState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       { id: "conv1", type: "brainstorm", provider: "claude-code", label: "Brainstorm" },
@@ -226,44 +245,12 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     ];
 
     mockDbState.allQueue = [
-      [
-        {
-          id: "doc-text",
-          projectId: "proj1",
-          originalFilename: "spec.md",
-          kind: "text",
-          markdownContent: "# Spec Body",
-          imagePath: null,
-        },
-        {
-          id: "doc-image",
-          projectId: "proj1",
-          originalFilename: "diagram.png",
-          kind: "image",
-          markdownContent: null,
-          imagePath: "data/documents/proj1/diagram.png",
-        },
-      ],
-      [{ name: "README.md", contentMd: "Project docs" }],
+      // 1. validateMentionsExist → listProjectDocuments
+      docsList,
+      // 2. recentMessages
       [{ role: "user", content: "Previous message", createdAt: "2026-01-01T10:00:00.000Z" }],
-      [
-        {
-          id: "doc-text",
-          projectId: "proj1",
-          originalFilename: "spec.md",
-          kind: "text",
-          markdownContent: "# Spec Body",
-          imagePath: null,
-        },
-        {
-          id: "doc-image",
-          projectId: "proj1",
-          originalFilename: "diagram.png",
-          kind: "image",
-          markdownContent: null,
-          imagePath: "data/documents/proj1/diagram.png",
-        },
-      ],
+      // 3. enrichPromptWithDocumentMentions → listProjectDocuments
+      docsList,
     ];
 
     const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
@@ -286,6 +273,25 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
   });
 
   it("enriches Gemini prompt with mentioned text and image document context", async () => {
+    const docsList = [
+      {
+        id: "doc-text",
+        projectId: "proj1",
+        originalFilename: "spec.md",
+        kind: "text",
+        markdownContent: "## Implementation Notes",
+        imagePath: null,
+      },
+      {
+        id: "doc-image",
+        projectId: "proj1",
+        originalFilename: "diagram.png",
+        kind: "image",
+        markdownContent: null,
+        imagePath: "data/documents/proj1/diagram.png",
+      },
+    ];
+
     mockDbState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       { id: "conv2", type: "brainstorm", provider: "gemini-cli", label: "Brainstorm" },
@@ -293,44 +299,12 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     ];
 
     mockDbState.allQueue = [
-      [
-        {
-          id: "doc-text",
-          projectId: "proj1",
-          originalFilename: "spec.md",
-          kind: "text",
-          markdownContent: "## Implementation Notes",
-          imagePath: null,
-        },
-        {
-          id: "doc-image",
-          projectId: "proj1",
-          originalFilename: "diagram.png",
-          kind: "image",
-          markdownContent: null,
-          imagePath: "data/documents/proj1/diagram.png",
-        },
-      ],
-      [{ name: "README.md", contentMd: "Project docs" }],
+      // 1. validateMentionsExist → listProjectDocuments
+      docsList,
+      // 2. recentMessages
       [{ role: "user", content: "Previous message", createdAt: "2026-01-01T10:00:00.000Z" }],
-      [
-        {
-          id: "doc-text",
-          projectId: "proj1",
-          originalFilename: "spec.md",
-          kind: "text",
-          markdownContent: "## Implementation Notes",
-          imagePath: null,
-        },
-        {
-          id: "doc-image",
-          projectId: "proj1",
-          originalFilename: "diagram.png",
-          kind: "image",
-          markdownContent: null,
-          imagePath: "data/documents/proj1/diagram.png",
-        },
-      ],
+      // 3. enrichPromptWithDocumentMentions → listProjectDocuments
+      docsList,
     ];
 
     const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
@@ -360,10 +334,11 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     ];
 
     mockDbState.allQueue = [
-      [{ name: "README.md", contentMd: "Project docs" }],
+      // 1. recentMessages
       [
         { role: "user", content: "Need auth flow", createdAt: "2026-01-01T10:00:00.000Z" },
       ],
+      // 2. existingEpics
       [
         { title: "User Management", description: "Manage users" },
         { title: "Audit Logs", description: null },
@@ -379,9 +354,10 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     expect(response.status).toBe(200);
     expect(mockPromptBuilder.buildEpicRefinementPrompt).toHaveBeenCalledTimes(1);
     expect(mockPromptBuilder.buildChatPrompt).not.toHaveBeenCalled();
+    // The route now passes empty docs array [] for the second argument
     expect(mockPromptBuilder.buildEpicRefinementPrompt).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Arij" }),
-      [{ name: "README.md", contentMd: "Project docs" }],
+      [],
       expect.any(Array),
       "Global prompt",
       [
@@ -401,7 +377,7 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     ];
 
     mockDbState.allQueue = [
-      [{ name: "README.md", contentMd: "Project docs" }],
+      // 1. recentMessages
       [{ role: "user", content: "How should architecture look?", createdAt: "2026-01-01T10:00:00.000Z" }],
     ];
 
@@ -460,7 +436,7 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       },
     ];
     mockDbState.allQueue = [
-      [{ name: "README.md", contentMd: "Project docs" }],
+      // 1. recentMessages
       [{ role: "user", content: "Previous", createdAt: "2026-01-01T10:00:00.000Z" }],
     ];
 
