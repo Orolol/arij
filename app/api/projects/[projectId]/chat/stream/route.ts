@@ -9,6 +9,7 @@ import { getProvider, type ProviderType } from "@/lib/providers";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
 import { isEpicCreationConversationAgentType } from "@/lib/chat/conversation-agent";
+import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import { activityRegistry } from "@/lib/activity-registry";
 import {
   enrichPromptWithDocumentMentions,
@@ -354,7 +355,7 @@ export async function POST(
           }
 
           const fullContent = result.success
-            ? result.result || "(empty response)"
+            ? parseClaudeOutput(result.result || "").content || "(empty response)"
             : `Error: ${result.error || "Provider request failed"}`;
           const resolvedCliSessionId = result.cliSessionId ?? cliSessionId;
 
@@ -444,7 +445,7 @@ export async function POST(
           }
 
           const fullContent = result.success
-            ? result.result || "(empty response)"
+            ? parseClaudeOutput(result.result || "").content || "(empty response)"
             : `Error: ${result.error || "Provider request failed"}`;
           const resolvedCliSessionId = result.cliSessionId ?? resultSessionId;
 

@@ -488,4 +488,115 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       }),
     );
   });
+
+  it("normalizes JSON envelope from non-streaming provider before storing", async () => {
+    mockResolveAgentByNamedId.mockReturnValue({
+      provider: "codex",
+      model: undefined,
+      namedAgentId: null,
+    });
+
+    // Simulate Codex returning a JSON result envelope wrapping markdown
+    const envelope = JSON.stringify({
+      type: "result",
+      result: "Here is the epic:\n\n```json\n{\"title\": \"Auth\"}\n```",
+      session_id: "codex-123",
+    });
+    mockDynamicProviderSpawn.mockReturnValueOnce({
+      promise: Promise.resolve({ success: true, result: envelope }),
+      kill: vi.fn(),
+    });
+
+    mockDbState.getQueue = [
+      { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
+      { id: "conv1", type: "brainstorm", provider: "codex", label: "Chat" },
+    ];
+    mockDbState.allQueue = [
+      [{ role: "user", content: "Hello", createdAt: "2026-01-01T10:00:00.000Z" }],
+    ];
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockRequest({ content: "Create epic", conversationId: "conv1" }),
+      { params: Promise.resolve({ projectId: "proj1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const events = await readSseEvents(response as unknown as Response);
+
+    // The stored message should be the extracted text, not the raw envelope
+    const deltaEvents = events.filter((e) => e.delta);
+    const combined = deltaEvents.map((e) => e.delta).join("");
+    expect(combined).not.toContain('"type":"result"');
+    expect(combined).toContain("Here is the epic:");
+
+    // Verify the DB-persisted assistant message is also normalized
+    const assistantInsert = mockDbState.insertedValues.find(
+      (v: Record<string, unknown>) => v.role === "assistant",
+    );
+    expect(assistantInsert).toBeDefined();
+    expect(assistantInsert.content).toContain("Here is the epic:");
+    expect(assistantInsert.content).not.toContain('"type":"result"');
+  });
+
+  it("normalizes JSON envelope from Claude resume path before storing", async () => {
+    mockResolveAgentByNamedId.mockReturnValue({
+      provider: "claude-code",
+      model: undefined,
+      namedAgentId: null,
+    });
+
+    // Claude resume returns a result envelope
+    const envelope = JSON.stringify({
+      type: "result",
+      result: "Resumed session output with epic details",
+      session_id: "resume-456",
+      subtype: "success",
+    });
+    mockSpawnHelpers.spawnClaude.mockReturnValue({
+      promise: Promise.resolve({
+        success: true,
+        result: envelope,
+        cliSessionId: "resume-456",
+      }),
+      kill: vi.fn(),
+    });
+
+    mockDbState.getQueue = [
+      { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
+      {
+        id: "conv1",
+        type: "brainstorm",
+        provider: "claude-code",
+        namedAgentId: null,
+        cliSessionId: "resume-456",
+        label: "Chat",
+      },
+    ];
+    mockDbState.allQueue = [
+      [{ role: "user", content: "Hello", createdAt: "2026-01-01T10:00:00.000Z" }],
+    ];
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockRequest({ content: "Continue", conversationId: "conv1" }),
+      { params: Promise.resolve({ projectId: "proj1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const events = await readSseEvents(response as unknown as Response);
+
+    const deltaEvents = events.filter((e) => e.delta);
+    const combined = deltaEvents.map((e) => e.delta).join("");
+    expect(combined).not.toContain('"type":"result"');
+    expect(combined).toContain("Resumed session output with epic details");
+
+    // Verify the DB-persisted assistant message is also normalized
+    const assistantInsert = mockDbState.insertedValues.find(
+      (v: Record<string, unknown>) => v.role === "assistant",
+    );
+    expect(assistantInsert).toBeDefined();
+    expect(assistantInsert.content).toContain("Resumed session output with epic details");
+    expect(assistantInsert.content).not.toContain('"type":"result"');
+  });
 });
