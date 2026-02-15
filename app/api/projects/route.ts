@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, epics, agentSessions } from "@/lib/db/schema";
-import { eq, count, sql } from "drizzle-orm";
+import { projects } from "@/lib/db/schema";
+import { eq, sql } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
+import { createProjectSchema } from "@/lib/validation/schemas";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { validatePath } from "@/lib/validation/path";
 
 export async function GET() {
   const result = db
@@ -28,11 +31,20 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const { name, description, gitRepoPath, githubOwnerRepo } = body;
+  const validated = await validateBody(createProjectSchema, request);
+  if (isValidationError(validated)) return validated;
 
-  if (!name) {
-    return NextResponse.json({ error: "Name is required" }, { status: 400 });
+  const { name, description, gitRepoPath, githubOwnerRepo } = validated.data;
+
+  // Validate gitRepoPath if provided
+  if (gitRepoPath) {
+    const pathResult = await validatePath(gitRepoPath);
+    if (!pathResult.valid) {
+      return NextResponse.json(
+        { error: pathResult.error },
+        { status: 400 }
+      );
+    }
   }
 
   const id = createId();
