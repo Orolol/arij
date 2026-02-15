@@ -11,6 +11,7 @@ export interface UnifiedActivity {
   status: string;
   mode: string;
   provider: string;
+  namedAgentName?: string | null;
   startedAt: string;
   source: "db" | "registry";
   cancellable: boolean;

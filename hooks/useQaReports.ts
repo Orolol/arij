@@ -29,7 +29,11 @@ export function useQaReports(projectId: string, intervalMs = 3000) {
         setError(json.error || "Failed to load QA reports");
         return;
       }
-      setReports((json.data || []) as QaReportListItem[]);
+      const next = (json.data || []) as QaReportListItem[];
+      setReports((prev) => {
+        if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
+        return next;
+      });
       setError(null);
     } catch {
       setError("Failed to load QA reports");

@@ -85,6 +85,7 @@ export async function POST(
     type: "spec_generation",
     label: "Generating Spec & Plan",
     provider: resolvedAgent.provider,
+    namedAgentName: resolvedAgent.name ?? null,
     startedAt: new Date().toISOString(),
   });
 

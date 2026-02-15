@@ -313,6 +313,7 @@ export async function POST(
       type: "chat",
       label: activityLabel,
       provider: resolvedAgent.provider,
+      namedAgentName: resolvedAgent.name ?? null,
       startedAt: new Date().toISOString(),
       kill: () => activeProviderSession.kill(),
     });
@@ -405,6 +406,7 @@ export async function POST(
       type: "chat",
       label: activityLabel,
       provider: "claude-code",
+      namedAgentName: resolvedAgent.name ?? null,
       startedAt: new Date().toISOString(),
       kill: () => currentKill(),
     });
@@ -500,6 +502,7 @@ export async function POST(
     type: "chat",
     label: activityLabel,
     provider: "claude-code",
+    namedAgentName: resolvedAgent.name ?? null,
     startedAt: new Date().toISOString(),
     kill,
   });

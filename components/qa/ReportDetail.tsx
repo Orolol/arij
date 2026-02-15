@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, Loader2, Sparkles, XCircle } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,6 +50,9 @@ export function ReportDetail({
   const [creatingEpics, setCreatingEpics] = useState(false);
   const [createdEpics, setCreatedEpics] = useState<Array<{ id: string; title: string }>>([]);
 
+  const onReportUpdatedRef = useRef(onReportUpdated);
+  onReportUpdatedRef.current = onReportUpdated;
+
   const loadReport = useCallback(async () => {
     if (!reportId) {
       setReport(null);
@@ -69,14 +72,13 @@ export function ReportDetail({
 
       setReport((json.data || null) as QaReport | null);
       setError(null);
-      onReportUpdated?.();
     } catch {
       setError("Failed to load report");
       setReport(null);
     } finally {
       setLoading(false);
     }
-  }, [projectId, reportId, onReportUpdated]);
+  }, [projectId, reportId]);
 
   useEffect(() => {
     void loadReport();
@@ -90,7 +92,7 @@ export function ReportDetail({
     }, 3000);
 
     return () => clearInterval(timer);
-  }, [reportId, report, loadReport]);
+  }, [reportId, report?.status, loadReport]);
 
   async function handleCreateEpics() {
     if (!reportId) return;

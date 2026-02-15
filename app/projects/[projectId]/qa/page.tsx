@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { Activity, Plus, RefreshCw } from "lucide-react";
 import { ReportDetail } from "@/components/qa/ReportDetail";
@@ -38,10 +38,23 @@ export default function QAPage() {
       return;
     }
 
-    if (!selectedReportId || !reports.some((report) => report.id === selectedReportId)) {
-      setSelectedReportId(reports[0].id);
-    }
-  }, [reports, selectedReportId]);
+    setSelectedReportId((prev) => {
+      if (prev && reports.some((report) => report.id === prev)) return prev;
+      return reports[0].id;
+    });
+  }, [reports]);
+
+  const handleStarted = useCallback((data: { reportId: string; sessionId: string }) => {
+    setActionMessage("Tech check started.");
+    setSelectedReportId(data.reportId);
+    void refresh();
+  }, [refresh]);
+
+  const handleCreateEpics = useCallback((epics: Array<{ id: string; title: string }>) => {
+    setActionMessage(
+      `Created ${epics.length} epic${epics.length === 1 ? "" : "s"} from QA report.`,
+    );
+  }, []);
 
   const stats = useMemo(() => {
     const running = reports.filter((report) => report.status === "running").length;
@@ -142,12 +155,8 @@ export default function QAPage() {
         <ReportDetail
           projectId={projectId}
           reportId={selectedReportId}
-          onReportUpdated={() => void refresh()}
-          onCreateEpics={(epics) => {
-            setActionMessage(
-              `Created ${epics.length} epic${epics.length === 1 ? "" : "s"} from QA report.`,
-            );
-          }}
+          onReportUpdated={refresh}
+          onCreateEpics={handleCreateEpics}
         />
       </div>
 
@@ -155,11 +164,7 @@ export default function QAPage() {
         projectId={projectId}
         open={startDialogOpen}
         onOpenChange={setStartDialogOpen}
-        onStarted={(data) => {
-          setActionMessage("Tech check started.");
-          setSelectedReportId(data.reportId);
-          void refresh();
-        }}
+        onStarted={handleStarted}
       />
     </div>
   );

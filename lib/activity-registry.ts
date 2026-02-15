@@ -13,6 +13,7 @@ export interface Activity {
   type: ActivityType;
   label: string;
   provider: "claude-code" | "codex" | "gemini-cli";
+  namedAgentName?: string | null;
   startedAt: string;
   kill?: () => void;
 }

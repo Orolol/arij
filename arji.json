@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastSyncedAt": "2026-02-14T13:49:28.379Z",
+  "lastSyncedAt": "2026-02-15T13:21:16.663Z",
   "project": {
     "name": "Arij",
     "description": "A local, AI-first project orchestrator that provides a web interface for managing multi-project workflows with Claude Code as the execution engine. It covers the full project lifecycle: ideation, specification, kanban-based planning, automated code generation via Claude Code CLI, real-time agent monitoring, and release management.",
@@ -9,9 +9,9 @@
   },
   "epics": [
     {
-      "id": "blda9a5Brbb4",
-      "title": "Problem with chat, lot of empty responses",
-      "description": "Example : \n\n\nI want a new top tab \"Tech check\"\n\nIn this tab, you can start assing an named agent to do a tech check on the whole project, then the agent after working on it will output a report. You can then ask to create epic from this report.\n\nThe tech check is a complete review of the code, architecture, patterns, etc ...\n\nWe'll have a prompt for all tech check, but let the user add a custom prompt. custom prompts can be saved, app wise, and reused.\n\nI like this idea — it's a natural extension of Arij's AI-first philosophy. Let me make sure I understand the scope before we shape the epic.\n\nA few clarifying questions:\n\n    Report storage & display: Should the tech check report be stored as a project-level document (similar to how specs work), or as a chat conversation with the agent? I'm leaning toward a dedicated techCheckReports table so reports are browsable/comparable over time — does that match your vision?\n\n    \"Create epic from report\": When the user asks to create epics from the report, should the agent automatically propose a list of epics/stories based on its findings (e.g. \"I found 5 issues, here are suggested epics\"), or should the user manually highlight sections of the report and say \"make this an epic\"? The former feels more aligned with the AI-first approach.\n\n    Custom prompts scope: You mentioned custom prompts are saved \"app-wise\" (global, not per-project). Should there also be a default per-project prompt that gets merged with the global one (similar to how CLAUDE.md works at project level), or is global-only sufficient for V1?\n\n    Scope for V1: The tech check tab itself — should it show a history of past tech checks (with dates, agent used, status), or just the current/latest one? History seems valuable for tracking code health over time, but it adds scope.\n\nThese answers will help me shape tight user stories and avoid overlap with existing epics like \"Project Document Registry\" or \"Sessions Tab Readability.\"\n\n    chat with agent\n    The agent automatically chose\n    No default\n    Yes, an history is perfect\n\n(empty response)\n\nThe tab qhould be named QA, bvecause we'll have other QA tools here later\n\n(empty response)",
+      "id": "d2aCCPhrsiXc",
+      "title": "While creating an epic, the response model was the whole JSON instead of markdown",
+      "description": null,
       "priority": 2,
       "status": "backlog",
       "position": 0,
@@ -133,6 +133,66 @@
     {
       "id": "FFSmXmvi7e8b",
       "title": "THe chat bar is still to small in Chat and comment",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "7TgE1dSzwMN7",
+      "title": "I've created a bug and assigned a named Gmini agent to do it, but a CC agent is working on it",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "blda9a5Brbb4",
+      "title": "Problem with chat, lot of empty responses",
+      "description": "Example : \n\n\nI want a new top tab \"Tech check\"\n\nIn this tab, you can start assing an named agent to do a tech check on the whole project, then the agent after working on it will output a report. You can then ask to create epic from this report.\n\nThe tech check is a complete review of the code, architecture, patterns, etc ...\n\nWe'll have a prompt for all tech check, but let the user add a custom prompt. custom prompts can be saved, app wise, and reused.\n\nI like this idea — it's a natural extension of Arij's AI-first philosophy. Let me make sure I understand the scope before we shape the epic.\n\nA few clarifying questions:\n\n    Report storage & display: Should the tech check report be stored as a project-level document (similar to how specs work), or as a chat conversation with the agent? I'm leaning toward a dedicated techCheckReports table so reports are browsable/comparable over time — does that match your vision?\n\n    \"Create epic from report\": When the user asks to create epics from the report, should the agent automatically propose a list of epics/stories based on its findings (e.g. \"I found 5 issues, here are suggested epics\"), or should the user manually highlight sections of the report and say \"make this an epic\"? The former feels more aligned with the AI-first approach.\n\n    Custom prompts scope: You mentioned custom prompts are saved \"app-wise\" (global, not per-project). Should there also be a default per-project prompt that gets merged with the global one (similar to how CLAUDE.md works at project level), or is global-only sufficient for V1?\n\n    Scope for V1: The tech check tab itself — should it show a history of past tech checks (with dates, agent used, status), or just the current/latest one? History seems valuable for tracking code health over time, but it adds scope.\n\nThese answers will help me shape tight user stories and avoid overlap with existing epics like \"Project Document Registry\" or \"Sessions Tab Readability.\"\n\n    chat with agent\n    The agent automatically chose\n    No default\n    Yes, an history is perfect\n\n(empty response)\n\nThe tab qhould be named QA, bvecause we'll have other QA tools here later\n\n(empty response)",
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "B82Y-LOTN6Od",
+      "title": "When using an agent, since we added the resume session part, sometimes the agent will solve something else than the ticket assigned, even if we said to not use a previous session",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "mLywt2fYOjri",
+      "title": "In the report from tech check, we should only show the reponse, not the whole JSON",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "i78UudEKywGV",
+      "title": "Impàossible to create epics from QA report",
+      "description": "GET /api/projects/cUfHlegssamR/qa/reports 200 in 62ms (compile: 57ms, render: 4ms)\n GET /api/projects/cUfHlegssamR/qa/reports 200 in 5ms (compile: 1373µs, render: 4ms)\n GET /api/projects/cUfHlegssamR/qa/reports/X2rut39Injad 200 in 68ms (compile: 65ms, render: 3ms)\n POST /api/projects/cUfHlegssamR/qa/reports/X2rut39Injad/create-epics 500 in 34.7s (compile: 54ms, render: 34.6s)",
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "wck4g8Pl-o_y",
+      "title": "When trying to create epics from report : Failed to parse epics JSON from agent response",
       "description": null,
       "priority": 2,
       "status": "done",
@@ -2110,14 +2170,234 @@
       ]
     },
     {
-      "id": "7TgE1dSzwMN7",
-      "title": "I've created a bug and assigned a named Gmini agent to do it, but a CC agent is working on it",
+      "id": "N_A7wzUfoX59",
+      "title": "Documentation & Prompt Logic Refinement",
+      "description": "Improve project onboarding by updating documentation and refactor prompt construction to reduce duplication.",
+      "priority": 0,
+      "status": "done",
+      "position": 55,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "XUyXmqnOFzu4",
+          "title": "As a new contributor, I want a comprehensive README so that I can quickly understand the project architecture",
+          "description": "Update the root `README.md` with technical details from `specs.md` and `docs/architecture/`, replacing the default Next.js template.",
+          "acceptance_criteria": "- [ ] README includes project purpose, tech stack, and high-level architectural overview.",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "A7nBGpvEUDji",
+          "title": "As a developer, I want reusable prompt components so that I can maintain agent instructions more easily",
+          "description": "Extract duplicated prompt sections for 'Project Spec' and 'Documents' in `lib/claude/prompt-builder.ts` into shared utility functions.",
+          "acceptance_criteria": "- [ ] Redundant prompt construction logic is replaced with calls to shared helpers.\n- [ ] Tests in `__tests__/agent-config-prompts-resolver.test.ts` still pass.",
+          "status": "review",
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": "H2klEll2f4Di",
+      "title": "When we create Epic from tech check report, it create bug ticket with  US story attached, but bug can't have US. We should change it so only Epics are created from reports, no bug",
       "description": null,
       "priority": 2,
+      "status": "done",
+      "position": 55,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "yXKgj1a7MEhz",
+      "title": "When we give a task to an agent, and the agent instead of doign it, ask a question in comments, the ticket need to stay in progress, not in review",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 56,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "tMfMvjPMcBNz",
+      "title": "Security Hardening and Input Validation",
+      "description": "Improve the application's security posture by validating external inputs and hardening the local API perimeter. This includes preventing path injection and ensuring API payloads match expected schemas.",
+      "priority": 3,
+      "status": "done",
+      "position": 57,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "JwEl7LdT70gH",
+          "title": "As a developer, I want all project file paths validated so that I can prevent command injection attacks",
+          "description": "Implement strict validation for `gitRepoPath` in `app/api/projects/route.ts` and related endpoints to ensure paths are valid directories and within safe boundaries.",
+          "acceptance_criteria": "- [ ] Use `fs.stat` to verify path existence and directory type before database insertion\n- [ ] Implement a path normalization step to prevent traversal attacks\n- [ ] Return 400 Bad Request for invalid paths with descriptive errors",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "OQ-LWWfsVti-",
+          "title": "As a developer, I want centralized request validation so that the API handles malformed data gracefully",
+          "description": "Integrate Zod for all POST and PATCH routes in `app/api/` to enforce strict typing on incoming request bodies.",
+          "acceptance_criteria": "- [ ] Define Zod schemas for Project, Epic, and Story creation\n- [ ] Implement a shared middleware or helper to validate requests against schemas\n- [ ] Ensure all existing API tests pass with the new validation layer",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "qhflfLiiIBho",
+          "title": "As a developer, I want a local-only security middleware so that the app is protected if accidentally exposed to a network",
+          "description": "Add a middleware layer to verify that requests originate from localhost or match expected origin headers.",
+          "acceptance_criteria": "- [ ] Implement checks for 'host' and 'origin' headers\n- [ ] Block non-local requests by default with a 403 Forbidden response\n- [ ] Allow configuration for specific allowed origins if needed for development",
+          "status": "review",
+          "position": 2
+        }
+      ]
+    },
+    {
+      "id": "-AoYQXinjff8",
+      "title": "Data Access Performance Optimization",
+      "description": "Address SQL-level N+1 query patterns and inefficient persistence logic to improve API response times and database reliability.",
+      "priority": 2,
+      "status": "done",
+      "position": 58,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "Lvpdns004KFm",
+          "title": "As a developer, I want to use SQL joins for aggregates so that I can eliminate N+1 subqueries in project and epic lists",
+          "description": "Refactor `app/api/projects/route.ts` and `app/api/projects/[id]/epics/route.ts` to replace subqueries in the `select` clause with LEFT JOINs and GROUP BY clauses.",
+          "acceptance_criteria": "- [ ] Fetch story and epic counts using JOINs instead of scalar subqueries\n- [ ] Optimize 'latest comment' retrieval using a window function or a single efficient join\n- [ ] Verify query performance improvement via database logs or profiling",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "gummQDP2i7-9",
+          "title": "As a developer, I want to use batch inserts and transactions so that I can improve write performance for complex objects",
+          "description": "Refactor dependency and story creation logic in `lib/dependencies/crud.ts` and epic creation routes to use Drizzle's batch insert capabilities.",
+          "acceptance_criteria": "- [ ] Replace loops of individual `.insert()` calls with a single `.insert().values([...])` call\n- [ ] Wrap multi-table inserts (e.g., Epic + Stories) in a database transaction\n- [ ] Ensure atomicity: if one story fails, the entire epic creation should roll back",
+          "status": "review",
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": "s8KGMYe-l_d0",
+      "title": "Database Schema Consolidation and Technical Debt Reduction",
+      "description": "Unify the internal data model and remove legacy code paths to simplify the codebase and improve maintainability.",
+      "priority": 1,
+      "status": "done",
+      "position": 59,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "66lF62m0oOY2",
+          "title": "As a developer, I want a unified session ID column so that I can support multiple AI providers without legacy aliasing",
+          "description": "Consolidate `claude_session_id` and `cli_session_id` into a single `provider_session_id` in `lib/db/schema.ts` and perform necessary data migrations.",
+          "acceptance_criteria": "- [ ] Create a migration to add `provider_session_id` and backfill data\n- [ ] Remove legacy columns after verification\n- [ ] Update all repository and service methods to use the new unified column",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "FYYx45_UINNA",
+          "title": "As a developer, I want to remove legacy aliasing logic in stream routes so that the code is cleaner",
+          "description": "Cleanup `app/api/projects/[id]/epics/[epicId]/stream/route.ts` and related files that currently alias session IDs for backward compatibility.",
+          "acceptance_criteria": "- [ ] Refactor stream handlers to use the unified session model\n- [ ] Remove temporary mapping objects used for compatibility\n- [ ] Ensure UI components (Kanban, Chat) correctly reference the updated property names",
+          "status": "review",
+          "position": 1
+        }
+      ]
+    },
+    {
+      "id": "cIzojs2zKh0w",
+      "title": "Developer Experience and Test Infrastructure Enhancement",
+      "description": "Improve internal code reuse, documentation, and test isolation to support faster and more reliable development.",
+      "priority": 0,
+      "status": "done",
+      "position": 60,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "V-kPbAY6-uZ1",
+          "title": "As a developer, I want reusable prompt section helpers so that I can maintain consistent agent instructions",
+          "description": "Extract duplicated prompt construction logic in `lib/claude/prompt-builder.ts` into a suite of shared helper functions.",
+          "acceptance_criteria": "- [ ] Create helpers for common sections: Spec, Documents, and Context\n- [ ] Refactor existing prompt builders to use these helpers\n- [ ] Verify that generated prompts remain functionally identical",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "D_Np4dznXcBs",
+          "title": "As a developer, I want in-memory database isolation for tests so that the test suite is faster and side-effect free",
+          "description": "Update the test setup in `vitest.setup.ts` and `__tests__/` to use an in-memory SQLite instance (`:memory:`) instead of temporary files.",
+          "acceptance_criteria": "- [ ] Configure Drizzle to connect to a new in-memory instance per test file\n- [ ] Ensure migrations run against the in-memory instance before tests start\n- [ ] Remove any leftover temporary `.db` files from the test execution process",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "rQgHNqyj5_h3",
+          "title": "As a developer, I want a comprehensive project README so that new contributors can understand the architecture quickly",
+          "description": "Update the root `README.md` with architectural details, setup instructions, and the design philosophy currently documented in `specs.md`.",
+          "acceptance_criteria": "- [ ] Include a high-level system diagram or architecture overview\n- [ ] Document the Provider and State Machine patterns used in the project\n- [ ] Provide clear steps for local development and database migrations",
+          "status": "review",
+          "position": 2
+        }
+      ]
+    },
+    {
+      "id": "0b--_UcXJvgN",
+      "title": "Non-Modal Kanban Ticket Details with Persistent Multi-Select",
+      "description": "Rework Kanban ticket detail behavior from a blocking right-side modal to a non-modal experience in the shared left panel area. Clicking a ticket must both select it and open its details, while the board remains fully interactive for additional selections and quick actions.\n\nImplementation plan:\n1. Refactor board UI state to keep ordered selection (`selectedTicketIds`) and derive `activeDetailTicketId` from the first selected ticket.\n2. Update card interaction so primary ticket click selects the ticket and opens details in the shared left panel container (same area used by chat/epic panels).\n3. Keep multi-select active while details are open using existing additive selection controls; additional selections must not block board interaction.\n4. Enforce first-selected anchoring: detail content follows the first selected ticket; adding more tickets does not switch detail; if the first selected ticket is removed, promote the next oldest selected ticket; if none remain, close details.\n5. Remove all modal mechanics across desktop/tablet/mobile: no dim layer, no pointer-event lock, no focus trap, no modal fallback.\n6. Increase detail panel width for readability using responsive sizing target `clamp(420px, 34vw, 560px)` and preserve usable board space.\n7. Add/adjust tests for selection-order logic, non-modal interactivity, quick-action continuity, and responsive rendering. No DB/schema/API/provider changes are expected.",
+      "priority": 0,
       "status": "in_progress",
       "position": 0,
-      "branchName": "feature/epic-7TgE1dSzwMN7-i-ve-created-a-bug-and-assigned-a-named-",
-      "user_stories": []
+      "branchName": "feature/epic-0b--_UcXJvgN-non-modal-kanban-ticket-details-with-per",
+      "user_stories": [
+        {
+          "id": "1L1ELIrQdPmc",
+          "title": "As a project manager, I want ticket details to open in the shared left panel so that I can review details without leaving the board context.",
+          "description": "Replace the current blocking right-side modal flow with a shared left-panel detail view that reuses the existing left-panel container pattern.",
+          "acceptance_criteria": "- [ ] Clicking a ticket opens its detail view in the shared left panel container.\n- [ ] The right-side modal behavior is removed for ticket details.\n- [ ] Closing the detail panel does not force navigation away from the Kanban board.\n- [ ] The panel integration does not break existing chat/epic panel mounting behavior.",
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "7AO2AagJrMtA",
+          "title": "As a project manager, I want clicking a ticket to automatically select it so that quick actions are immediately available.",
+          "description": "Unify ticket open and selection into one primary action to reduce clicks and enable faster bulk operations.",
+          "acceptance_criteria": "- [ ] Primary click on a ticket marks it as selected.\n- [ ] Primary click on a ticket opens its detail panel in the same action.\n- [ ] Quick action controls appear as soon as at least one ticket is selected.\n- [ ] Existing additive multi-select interactions remain available while detail is open.",
+          "status": "in_progress",
+          "position": 1
+        },
+        {
+          "id": "TB_ejoBMibBc",
+          "title": "As a project manager, I want detail content anchored to the first-selected ticket so that multi-select does not disrupt what I am reading.",
+          "description": "Selection order must be preserved and used as the source of truth for which ticket is shown in detail.",
+          "acceptance_criteria": "- [ ] When multiple tickets are selected, the detail panel shows the first-selected ticket.\n- [ ] Selecting additional tickets does not change the currently shown detail ticket.\n- [ ] If the first-selected ticket is deselected and others remain, detail switches to the next oldest selected ticket.\n- [ ] If no tickets remain selected, the detail panel closes.",
+          "status": "in_progress",
+          "position": 2
+        },
+        {
+          "id": "HatGN0m5zXdf",
+          "title": "As a project manager, I want the board to remain fully clickable while details are open so that I can continue selecting and managing tickets.",
+          "description": "Remove blocking UX from the detail experience so users can keep interacting with cards, lanes, and quick actions in parallel.",
+          "acceptance_criteria": "- [ ] No backdrop or greyed overlay appears when ticket details are open.\n- [ ] Pointer interaction with board cards and lane controls remains enabled while details are open.\n- [ ] Users can continue adding/removing selected tickets without closing the detail panel.\n- [ ] Quick actions always apply to the current selected set.",
+          "status": "in_progress",
+          "position": 3
+        },
+        {
+          "id": "wRK078pRWx6P",
+          "title": "As a project manager, I want a slightly wider detail panel on all screen sizes so that ticket content is easier to read.",
+          "description": "Increase panel width with responsive constraints while preserving board usability and keeping non-modal behavior on desktop, tablet, and mobile.",
+          "acceptance_criteria": "- [ ] Detail panel width follows a responsive target of `clamp(420px, 34vw, 560px)` on larger viewports.\n- [ ] Non-modal behavior is preserved on desktop, tablet, and mobile (no modal fallback).\n- [ ] Board remains usable and scrollable while the panel is open at each breakpoint.\n- [ ] Overflow and truncation issues in ticket detail content are resolved at the new width.",
+          "status": "in_progress",
+          "position": 4
+        },
+        {
+          "id": "7p3YJoO2-pkQ",
+          "title": "As a developer, I want automated coverage for the new selection and panel behavior so that regressions are caught early.",
+          "description": "Add reducer/state and UI integration tests validating non-modal interactions, selection order, and detail anchoring.",
+          "acceptance_criteria": "- [ ] Unit tests cover selection ordering and first-selected promotion logic.\n- [ ] Integration tests verify no overlay/board-lock behavior when details are open.\n- [ ] Integration tests verify click-to-select-and-open behavior and multi-select continuity.\n- [ ] Regression tests confirm no backend/API contract changes are required for this epic.",
+          "status": "in_progress",
+          "position": 5
+        }
+      ]
     }
   ]
 }

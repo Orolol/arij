@@ -14,6 +14,7 @@ export interface UnifiedActivity {
   status: string;
   mode: string;
   provider: string;
+  namedAgentName: string | null;
   startedAt: string;
   source: "db" | "registry";
   cancellable: boolean;
@@ -85,6 +86,7 @@ export async function GET(
       mode: agentSessions.mode,
       orchestrationMode: agentSessions.orchestrationMode,
       provider: agentSessions.provider,
+      namedAgentName: agentSessions.namedAgentName,
       prompt: agentSessions.prompt,
       startedAt: agentSessions.startedAt,
       epicTitle: epics.title,
@@ -117,6 +119,7 @@ export async function GET(
       status: getSessionStatusForApi(row.status),
       mode: row.mode || "code",
       provider: row.provider || "claude-code",
+      namedAgentName: row.namedAgentName ?? null,
       startedAt: row.startedAt || new Date().toISOString(),
       source: "db" as const,
       cancellable: true,
@@ -135,6 +138,7 @@ export async function GET(
       status: "running",
       mode: "plan",
       provider: a.provider,
+      namedAgentName: a.namedAgentName ?? null,
       startedAt: a.startedAt,
       source: "registry" as const,
       cancellable: !!a.kill,

@@ -23,6 +23,12 @@ interface AgentMonitorProps {
   highlightedActivityId?: string | null;
 }
 
+function providerLabel(provider: string): string {
+  if (provider === "gemini-cli") return "Gemini";
+  if (provider === "codex") return "Codex";
+  return "CC";
+}
+
 const typeIcons: Record<UnifiedActivity["type"], typeof Hammer> = {
   build: Hammer,
   review: Search,
@@ -103,7 +109,7 @@ export function AgentMonitor({
                 <Icon className="h-3 w-3 text-green-500 shrink-0" />
                 <span className="truncate">{activity.label}</span>
                 <span className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide shrink-0">
-                  {activity.provider === "codex" ? "Codex" : "CC"}
+                  {activity.namedAgentName || providerLabel(activity.provider)}
                 </span>
                 <span className="text-muted-foreground font-mono shrink-0">
                   {elapsed[activity.id] || "0s"}

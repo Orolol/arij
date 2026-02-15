@@ -221,11 +221,10 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
     const panelWidthPx = computePanelWidth(panelRatio);
 
     const createNewConversationTab = useCallback(
-      async (options?: { type?: string; label?: string; provider?: string }) => {
+      async (options?: { type?: string; label?: string }) => {
         const created = await createConversation({
           type: options?.type || "brainstorm",
           label: options?.label || "Brainstorm",
-          provider: options?.provider || activeProvider,
         });
 
         if (created) {
@@ -235,7 +234,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
 
         return created;
       },
-      [createConversation, setActiveId, activeProvider],
+      [createConversation, setActiveId],
     );
 
     const openChatConversation = useCallback(async () => {

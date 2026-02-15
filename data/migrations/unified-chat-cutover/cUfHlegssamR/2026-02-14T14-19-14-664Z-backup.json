@@ -1,0 +1,114 @@
+{
+  "migrationId": "2026-02-14T14-19-14-664Z",
+  "projectId": "cUfHlegssamR",
+  "capturedAt": "2026-02-14T14:19:14.664Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "d4C_MYeScFy8",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "New Epic",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-14T11:01:57.881Z"
+      },
+      {
+        "id": "aZMhPqrXjiUj",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "New Epic",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-14T13:23:42.916Z"
+      },
+      {
+        "id": "0whzSwzit9VR",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "Tech check feature planning",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-14T13:25:37.574Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "RFe0gkWJ5jUA",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "0whzSwzit9VR",
+        "role": "user",
+        "content": "I want a new top tab \"Tech check\"\n\nIn this tab, you can start assing an named agent to do a tech check on the whole project, then the agent after working on it will output a report. You can then ask to create epic from this report.\n\nThe tech check is a complete review of the code, architecture, patterns, etc ...\n\nWe'll have a prompt for all tech check, but let the user add a custom prompt. custom prompts can be saved, app wise, and reused.",
+        "metadata": null,
+        "created_at": "2026-02-14T13:32:50.735Z"
+      },
+      {
+        "id": "um1U5qQgWYTp",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "0whzSwzit9VR",
+        "role": "assistant",
+        "content": "\n\nI like this idea — it's a natural extension of Arij's AI-first philosophy. Let me make sure I understand the scope before we shape the epic.\n\nA few clarifying questions:\n\n1. **Report storage & display**: Should the tech check report be stored as a project-level document (similar to how specs work), or as a chat conversation with the agent? I'm leaning toward a dedicated `techCheckReports` table so reports are browsable/comparable over time — does that match your vision?\n\n2. **\"Create epic from report\"**: When the user asks to create epics from the report, should the agent automatically propose a list of epics/stories based on its findings (e.g. \"I found 5 issues, here are suggested epics\"), or should the user manually highlight sections of the report and say \"make this an epic\"? The former feels more aligned with the AI-first approach.\n\n3. **Custom prompts scope**: You mentioned custom prompts are saved \"app-wise\" (global, not per-project). Should there also be a default per-project prompt that gets merged with the global one (similar to how CLAUDE.md works at project level), or is global-only sufficient for V1?\n\n4. **Scope for V1**: The tech check tab itself — should it show a history of past tech checks (with dates, agent used, status), or just the current/latest one? History seems valuable for tracking code health over time, but it adds scope.\n\nThese answers will help me shape tight user stories and avoid overlap with existing epics like \"Project Document Registry\" or \"Sessions Tab Readability.\"",
+        "metadata": null,
+        "created_at": "2026-02-14T13:33:08.984Z"
+      },
+      {
+        "id": "dbXhgeLh7b5s",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "0whzSwzit9VR",
+        "role": "user",
+        "content": "1) chat with agent\n2) The agent automatically chose\n3) No default\n4) Yes, an history is perfect",
+        "metadata": null,
+        "created_at": "2026-02-14T13:35:09.005Z"
+      },
+      {
+        "id": "q4cpd6CATgW0",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "0whzSwzit9VR",
+        "role": "assistant",
+        "content": "(empty response)",
+        "metadata": null,
+        "created_at": "2026-02-14T13:39:19.651Z"
+      },
+      {
+        "id": "uEVsV67CCocq",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "0whzSwzit9VR",
+        "role": "user",
+        "content": "The tab qhould be named QA, bvecause we'll have other QA tools here later",
+        "metadata": null,
+        "created_at": "2026-02-14T13:41:56.904Z"
+      },
+      {
+        "id": "4DL8RUWpSJPe",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "0whzSwzit9VR",
+        "role": "assistant",
+        "content": "(empty response)",
+        "metadata": null,
+        "created_at": "2026-02-14T13:48:17.792Z"
+      },
+      {
+        "id": "tlGewUvOR0EQ",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "0whzSwzit9VR",
+        "role": "user",
+        "content": "Generate the final epic with user stories based on our discussion.",
+        "metadata": null,
+        "created_at": "2026-02-14T13:50:03.884Z"
+      },
+      {
+        "id": "RcsZmyGKHNDb",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "0whzSwzit9VR",
+        "role": "assistant",
+        "content": "(empty response)",
+        "metadata": null,
+        "created_at": "2026-02-14T13:50:21.606Z"
+      }
+    ],
+    "attachments": []
+  }
+}
