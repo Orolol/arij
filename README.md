@@ -170,4 +170,4 @@ e2e/          → End-to-end tests (Playwright)
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) main

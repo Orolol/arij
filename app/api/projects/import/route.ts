@@ -7,23 +7,35 @@ import { eq } from "drizzle-orm";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { buildImportPrompt } from "@/lib/claude/prompt-builder";
 import { arjiJsonExists, readArjiJson } from "@/lib/sync/arji-json";
+import { importProjectSchema } from "@/lib/validation/schemas";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { validatePath } from "@/lib/validation/path";
 
 const ARJI_JSON = "arji.json";
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
+  const validated = await validateBody(importProjectSchema, request);
+  if (isValidationError(validated)) return validated;
 
-  if (!body.path) {
-    return NextResponse.json({ error: "path is required" }, { status: 400 });
+  const { path: inputPath } = validated.data;
+
+  // Validate the path is a real directory and safe
+  const pathResult = await validatePath(inputPath);
+  if (!pathResult.valid) {
+    return NextResponse.json(
+      { error: pathResult.error },
+      { status: 400 }
+    );
   }
+  const safePath = pathResult.normalizedPath;
 
   // Check if arji.json already exists — skip Claude analysis if so
   try {
-    if (await arjiJsonExists(body.path)) {
-      const existing = await readArjiJson(body.path);
+    if (await arjiJsonExists(safePath)) {
+      const existing = await readArjiJson(safePath);
       if (existing && existing.project && Array.isArray(existing.epics)) {
         return NextResponse.json({
-          data: { preview: existing, path: body.path, fromExistingFile: true },
+          data: { preview: existing, path: safePath, fromExistingFile: true },
         });
       }
     }
@@ -38,13 +50,13 @@ export async function POST(request: NextRequest) {
   const prompt = buildImportPrompt(globalPrompt);
 
   try {
-    console.log("[import] Spawning Claude CLI with cwd:", body.path);
+    console.log("[import] Spawning Claude CLI with cwd:", safePath);
     console.log("[import] Prompt length:", prompt.length);
 
     const { promise } = spawnClaude({
       mode: "analyze",
       prompt,
-      cwd: body.path,
+      cwd: safePath,
     });
 
     const result = await promise;
@@ -67,7 +79,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Read the arji.json file that Claude Code wrote to disk
-    const arjiPath = join(body.path, ARJI_JSON);
+    const arjiPath = join(safePath, ARJI_JSON);
     let rawJson: string;
 
     try {
@@ -115,7 +127,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ data: { preview: importData, path: body.path } });
+    return NextResponse.json({ data: { preview: importData, path: safePath } });
   } catch (e) {
     console.error("[import] Unexpected error:", e);
     return NextResponse.json(

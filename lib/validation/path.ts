@@ -1,0 +1,44 @@
+import { stat } from "node:fs/promises";
+import { resolve, normalize } from "node:path";
+
+type PathValidationResult =
+  | { valid: true; normalizedPath: string }
+  | { valid: false; error: string };
+
+export async function validatePath(
+  inputPath: string
+): Promise<PathValidationResult> {
+  if (!inputPath || inputPath.trim().length === 0) {
+    return { valid: false, error: "Path is required" };
+  }
+
+  if (inputPath.includes("\0")) {
+    return { valid: false, error: "Path contains invalid characters" };
+  }
+
+  const trimmed = inputPath.trim();
+
+  // Reject traversal attempts before normalization
+  if (trimmed.includes("..")) {
+    return {
+      valid: false,
+      error: "Path must not contain traversal components (..)",
+    };
+  }
+
+  const normalized = resolve(normalize(trimmed));
+
+  try {
+    const stats = await stat(normalized);
+    if (!stats.isDirectory()) {
+      return { valid: false, error: "Path is not a directory" };
+    }
+  } catch {
+    return {
+      valid: false,
+      error: "Path does not exist or is not accessible",
+    };
+  }
+
+  return { valid: true, normalizedPath: normalized };
+}

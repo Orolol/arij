@@ -50,6 +50,48 @@ export interface PromptUserStory {
 }
 
 // ---------------------------------------------------------------------------
+// Local helpers (not extracted to prompt-sections)
+// ---------------------------------------------------------------------------
+
+function userStoriesSection(
+  userStories: PromptUserStory[],
+  options: { heading?: string; checkmark?: boolean } = {},
+): string {
+  if (userStories.length === 0) return "";
+
+  const { heading = "User Stories", checkmark = true } = options;
+  const parts: string[] = [];
+
+  parts.push(`### ${heading}\n`);
+
+  const storyLines = userStories.map((us) => {
+    const lines: string[] = [];
+    const prefix = checkmark ? "- [ ] " : "- ";
+    lines.push(`${prefix}**${us.title}**`);
+
+    if (us.description) {
+      lines.push(`  ${us.description.trim()}`);
+    }
+
+    if (us.acceptanceCriteria) {
+      lines.push(`  **Acceptance criteria:**`);
+      // Indent each line of the acceptance criteria
+      const criteria = us.acceptanceCriteria
+        .trim()
+        .split("\n")
+        .map((line) => `  ${line}`)
+        .join("\n");
+      lines.push(criteria);
+    }
+
+    return lines.join("\n");
+  });
+
+  parts.push(storyLines.join("\n\n") + "\n");
+  return parts.join("");
+}
+
+// ---------------------------------------------------------------------------
 // 1. Chat Brainstorm Prompt
 // ---------------------------------------------------------------------------
 
@@ -558,27 +600,7 @@ export function buildTeamBuildPrompt(
       parts.push(`${epic.description.trim()}\n`);
     }
 
-    if (epic.userStories.length > 0) {
-      parts.push(`**User Stories:**\n`);
-      const storyLines = epic.userStories.map((us) => {
-        const lines: string[] = [];
-        lines.push(`- [ ] **${us.title}**`);
-        if (us.description) {
-          lines.push(`  ${us.description.trim()}`);
-        }
-        if (us.acceptanceCriteria) {
-          lines.push(`  **Acceptance criteria:**`);
-          const criteria = us.acceptanceCriteria
-            .trim()
-            .split("\n")
-            .map((line) => `  ${line}`)
-            .join("\n");
-          lines.push(criteria);
-        }
-        return lines.join("\n");
-      });
-      parts.push(storyLines.join("\n\n") + "\n");
-    }
+    parts.push(userStoriesSection(epic.userStories));
   }
 
   parts.push(`## Instructions — Team Lead Mode
@@ -642,33 +664,7 @@ export function buildBuildPrompt(
   }
 
   // User stories
-  if (userStories.length > 0) {
-    parts.push(`### User Stories\n`);
-
-    const storyLines = userStories.map((us) => {
-      const lines: string[] = [];
-      lines.push(`- [ ] **${us.title}**`);
-
-      if (us.description) {
-        lines.push(`  ${us.description.trim()}`);
-      }
-
-      if (us.acceptanceCriteria) {
-        lines.push(`  **Acceptance criteria:**`);
-        // Indent each line of the acceptance criteria
-        const criteria = us.acceptanceCriteria
-          .trim()
-          .split("\n")
-          .map((line) => `  ${line}`)
-          .join("\n");
-        lines.push(criteria);
-      }
-
-      return lines.join("\n");
-    });
-
-    parts.push(storyLines.join("\n\n") + "\n");
-  }
+  parts.push(userStoriesSection(userStories));
 
   // Comment history
   if (comments && comments.length > 0) {
@@ -1061,27 +1057,7 @@ export function buildCustomEpicReviewPrompt(
   }
 
   // All user stories
-  if (userStories.length > 0) {
-    parts.push(`### User Stories\n`);
-    const storyLines = userStories.map((us) => {
-      const lines: string[] = [];
-      lines.push(`- **${us.title}**`);
-      if (us.description) {
-        lines.push(`  ${us.description.trim()}`);
-      }
-      if (us.acceptanceCriteria) {
-        lines.push(`  **Acceptance criteria:**`);
-        const criteria = us.acceptanceCriteria
-          .trim()
-          .split("\n")
-          .map((line) => `  ${line}`)
-          .join("\n");
-        lines.push(criteria);
-      }
-      return lines.join("\n");
-    });
-    parts.push(storyLines.join("\n\n") + "\n");
-  }
+  parts.push(userStoriesSection(userStories, { checkmark: false }));
 
   // Custom review instructions
   parts.push(`## ${customAgentName} Review Criteria\n`);
@@ -1186,27 +1162,7 @@ export function buildEpicReviewPrompt(
   }
 
   // All user stories in this epic
-  if (userStories.length > 0) {
-    parts.push(`### User Stories\n`);
-    const storyLines = userStories.map((us) => {
-      const lines: string[] = [];
-      lines.push(`- **${us.title}**`);
-      if (us.description) {
-        lines.push(`  ${us.description.trim()}`);
-      }
-      if (us.acceptanceCriteria) {
-        lines.push(`  **Acceptance criteria:**`);
-        const criteria = us.acceptanceCriteria
-          .trim()
-          .split("\n")
-          .map((line) => `  ${line}`)
-          .join("\n");
-        lines.push(criteria);
-      }
-      return lines.join("\n");
-    });
-    parts.push(storyLines.join("\n\n") + "\n");
-  }
+  parts.push(userStoriesSection(userStories, { checkmark: false }));
 
   // Comment history
   if (comments && comments.length > 0) {

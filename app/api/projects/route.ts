@@ -1,10 +1,38 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, epics, agentSessions } from "@/lib/db/schema";
-import { eq, count, sql } from "drizzle-orm";
+import { projects } from "@/lib/db/schema";
+import { eq, sql } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
+import { createProjectSchema } from "@/lib/validation/schemas";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { validatePath } from "@/lib/validation/path";
 
 export async function GET() {
+  const queryStartedAt = Date.now();
+
+  const epicCounts = db
+    .select({
+      projectId: epics.projectId,
+      epicCount: count(epics.id).as("epic_count"),
+      epicsDone:
+        sql<number>`SUM(CASE WHEN ${epics.status} = 'done' THEN 1 ELSE 0 END)`.as(
+          "epics_done"
+        ),
+    })
+    .from(epics)
+    .groupBy(epics.projectId)
+    .as("epic_counts");
+
+  const activeAgentCounts = db
+    .select({
+      projectId: agentSessions.projectId,
+      activeAgents: count(agentSessions.id).as("active_agents"),
+    })
+    .from(agentSessions)
+    .where(eq(agentSessions.status, "running"))
+    .groupBy(agentSessions.projectId)
+    .as("active_agent_counts");
+
   const result = db
     .select({
       id: projects.id,
@@ -16,23 +44,39 @@ export async function GET() {
       imported: projects.imported,
       createdAt: projects.createdAt,
       updatedAt: projects.updatedAt,
-      epicCount: sql<number>`(SELECT COUNT(*) FROM epics WHERE epics.project_id = ${projects.id})`,
-      epicsDone: sql<number>`(SELECT COUNT(*) FROM epics WHERE epics.project_id = ${projects.id} AND epics.status = 'done')`,
-      activeAgents: sql<number>`(SELECT COUNT(*) FROM agent_sessions WHERE agent_sessions.project_id = ${projects.id} AND agent_sessions.status = 'running')`,
+      epicCount: sql<number>`COALESCE(${epicCounts.epicCount}, 0)`,
+      epicsDone: sql<number>`COALESCE(${epicCounts.epicsDone}, 0)`,
+      activeAgents: sql<number>`COALESCE(${activeAgentCounts.activeAgents}, 0)`,
     })
     .from(projects)
+    .leftJoin(epicCounts, eq(projects.id, epicCounts.projectId))
+    .leftJoin(activeAgentCounts, eq(projects.id, activeAgentCounts.projectId))
     .orderBy(projects.updatedAt)
     .all();
+
+  console.debug("[projects/GET] query profile", {
+    rowCount: result.length,
+    queryMs: Date.now() - queryStartedAt,
+  });
 
   return NextResponse.json({ data: result });
 }
 
 export async function POST(request: NextRequest) {
-  const body = await request.json();
-  const { name, description, gitRepoPath, githubOwnerRepo } = body;
+  const validated = await validateBody(createProjectSchema, request);
+  if (isValidationError(validated)) return validated;
 
-  if (!name) {
-    return NextResponse.json({ error: "Name is required" }, { status: 400 });
+  const { name, description, gitRepoPath, githubOwnerRepo } = validated.data;
+
+  // Validate gitRepoPath if provided
+  if (gitRepoPath) {
+    const pathResult = await validatePath(gitRepoPath);
+    if (!pathResult.valid) {
+      return NextResponse.json(
+        { error: pathResult.error },
+        { status: 400 }
+      );
+    }
   }
 
   const id = createId();
