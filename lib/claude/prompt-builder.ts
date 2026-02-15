@@ -6,6 +6,18 @@
  * in the agent configuration.
  */
 
+import {
+  section,
+  systemSection,
+  documentsSection,
+  existingEpicsSection,
+  chatHistorySection,
+  specSection,
+  projectHeader,
+  descriptionSection,
+  projectContextSections,
+} from "./prompt-sections";
+
 // ---------------------------------------------------------------------------
 // Types — lightweight projections of the Drizzle schema rows
 // ---------------------------------------------------------------------------
@@ -38,51 +50,6 @@ export interface PromptUserStory {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function section(heading: string, content: string | null | undefined): string {
-  if (!content || content.trim().length === 0) return "";
-  return `## ${heading}\n\n${content.trim()}\n`;
-}
-
-function systemSection(systemPrompt: string | null | undefined): string {
-  if (!systemPrompt || systemPrompt.trim().length === 0) return "";
-  return `# System Instructions\n\n${systemPrompt.trim()}\n\n`;
-}
-
-function documentsSection(documents: PromptDocument[]): string {
-  if (documents.length === 0) return "";
-
-  const parts = documents.map(
-    (doc) => `### ${doc.name}\n\n${doc.contentMd.trim()}`,
-  );
-
-  return `## Reference Documents\n\n${parts.join("\n\n---\n\n")}\n`;
-}
-
-function existingEpicsSection(existingEpics: PromptEpic[]): string {
-  if (existingEpics.length === 0) return "";
-
-  const list = existingEpics
-    .map((epic) => `- ${epic.title}`)
-    .join("\n");
-
-  return `## Existing Epics\n\n${list}\n`;
-}
-
-function chatHistorySection(messages: PromptMessage[]): string {
-  if (messages.length === 0) return "";
-
-  const formatted = messages.map((msg) => {
-    const prefix = msg.role === "user" ? "**User:**" : "**Assistant:**";
-    return `${prefix}\n${msg.content.trim()}`;
-  });
-
-  return `## Conversation History\n\n${formatted.join("\n\n")}\n`;
-}
-
-// ---------------------------------------------------------------------------
 // 1. Chat Brainstorm Prompt
 // ---------------------------------------------------------------------------
 
@@ -99,12 +66,7 @@ export function buildChatPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-
-  parts.push(`# Project: ${project.name}\n`);
-
-  parts.push(section("Project Description", project.description));
-  parts.push(section("Project Specification", project.spec));
-  parts.push(documentsSection(documents));
+  parts.push(projectContextSections(project, documents));
   parts.push(chatHistorySection(messages));
 
   parts.push(`## Instructions
@@ -135,10 +97,8 @@ export function buildSpecGenerationPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-
-  parts.push(`# Project: ${project.name}\n`);
-
-  parts.push(section("Project Description", project.description));
+  parts.push(projectHeader(project.name));
+  parts.push(descriptionSection(project.description));
   parts.push(section("Current Specification", project.spec));
   parts.push(documentsSection(documents));
   parts.push(chatHistorySection(chatHistory));
@@ -216,8 +176,8 @@ export function buildTechCheckPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Specification", project.spec));
+  parts.push(projectHeader(project.name));
+  parts.push(specSection(project.spec));
   parts.push(documentsSection(documents));
 
   if (customPrompt && customPrompt.trim()) {
@@ -374,10 +334,7 @@ export function buildEpicRefinementPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Description", project.description));
-  parts.push(section("Project Specification", project.spec));
-  parts.push(documentsSection(documents));
+  parts.push(projectContextSections(project, documents));
   parts.push(existingEpicsSection(existingEpics));
   parts.push(chatHistorySection(messages));
 
@@ -415,10 +372,7 @@ export function buildEpicFinalizationPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Description", project.description));
-  parts.push(section("Project Specification", project.spec));
-  parts.push(documentsSection(documents));
+  parts.push(projectContextSections(project, documents));
   parts.push(existingEpicsSection(existingEpics));
   parts.push(chatHistorySection(messages));
 
@@ -479,10 +433,7 @@ export function buildEpicCreationPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Description", project.description));
-  parts.push(section("Project Specification", project.spec));
-  parts.push(documentsSection(documents));
+  parts.push(projectContextSections(project, documents));
   parts.push(chatHistorySection(messages));
 
   parts.push(`## Task: Generate Epic with User Stories
@@ -588,8 +539,8 @@ export function buildTeamBuildPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Specification", project.spec));
+  parts.push(projectHeader(project.name));
+  parts.push(specSection(project.spec));
   parts.push(documentsSection(documents));
 
   // Epics section
@@ -679,10 +630,8 @@ export function buildBuildPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-
-  parts.push(`# Project: ${project.name}\n`);
-
-  parts.push(section("Project Specification", project.spec));
+  parts.push(projectHeader(project.name));
+  parts.push(specSection(project.spec));
   parts.push(documentsSection(documents));
 
   // Epic section
@@ -775,8 +724,8 @@ export function buildTicketBuildPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Specification", project.spec));
+  parts.push(projectHeader(project.name));
+  parts.push(specSection(project.spec));
   parts.push(documentsSection(documents));
 
   // Epic context
@@ -945,8 +894,8 @@ export function buildReviewPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Specification", project.spec));
+  parts.push(projectHeader(project.name));
+  parts.push(specSection(project.spec));
   parts.push(documentsSection(documents));
 
   // Epic context
@@ -1043,8 +992,8 @@ export function buildCustomReviewPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(globalPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Specification", project.spec));
+  parts.push(projectHeader(project.name));
+  parts.push(specSection(project.spec));
   parts.push(documentsSection(documents));
 
   // Epic context
@@ -1100,8 +1049,8 @@ export function buildCustomEpicReviewPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(globalPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Specification", project.spec));
+  parts.push(projectHeader(project.name));
+  parts.push(specSection(project.spec));
   parts.push(documentsSection(documents));
 
   // Epic details
@@ -1173,8 +1122,8 @@ export function buildMergeResolutionPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Specification", project.spec));
+  parts.push(projectHeader(project.name));
+  parts.push(specSection(project.spec));
 
   parts.push(`## Epic Context\n`);
   parts.push(`### ${epic.title}\n`);
@@ -1225,8 +1174,8 @@ export function buildEpicReviewPrompt(
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
-  parts.push(`# Project: ${project.name}\n`);
-  parts.push(section("Project Specification", project.spec));
+  parts.push(projectHeader(project.name));
+  parts.push(specSection(project.spec));
   parts.push(documentsSection(documents));
 
   // Epic details
