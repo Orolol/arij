@@ -1,7 +1,8 @@
 import { db } from "@/lib/db";
-import { projects, epics, userStories } from "@/lib/db/schema";
+import { projects, epics, userStories, ticketComments } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { readArjiJson } from "./arji-json";
+import type { ArjiJsonComment } from "./arji-json";
 import Database from "better-sqlite3";
 
 export interface ImportResult {
@@ -9,6 +10,7 @@ export interface ImportResult {
   epicsRemoved: number;
   storiesUpserted: number;
   storiesRemoved: number;
+  commentsUpserted: number;
 }
 
 export async function importArjiJson(projectId: string): Promise<ImportResult> {
@@ -40,6 +42,7 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
   let epicsRemoved = 0;
   let storiesUpserted = 0;
   let storiesRemoved = 0;
+  let commentsUpserted = 0;
 
   const transaction = sqlite.transaction(() => {
     // Get current epic IDs for this project
@@ -62,6 +65,7 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
             status: epic.status,
             position: epic.position,
             branchName: epic.branchName,
+            type: epic.type ?? "feature",
             updatedAt: now,
           })
           .where(eq(epics.id, epic.id))
@@ -77,12 +81,18 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
             status: epic.status,
             position: epic.position,
             branchName: epic.branchName,
+            type: epic.type ?? "feature",
             createdAt: now,
             updatedAt: now,
           })
           .run();
       }
       epicsUpserted++;
+
+      // Sync epic comments
+      if (epic.comments) {
+        commentsUpserted += upsertComments(epic.comments, { epicId: epic.id });
+      }
 
       // Sync user stories within this epic
       const currentStories = db
@@ -120,6 +130,11 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
             .run();
         }
         storiesUpserted++;
+
+        // Sync story comments
+        if (story.comments) {
+          commentsUpserted += upsertComments(story.comments, { userStoryId: story.id });
+        }
       }
 
       // Delete stories not in JSON
@@ -142,5 +157,41 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
 
   transaction();
 
-  return { epicsUpserted, epicsRemoved, storiesUpserted, storiesRemoved };
+  return { epicsUpserted, epicsRemoved, storiesUpserted, storiesRemoved, commentsUpserted };
+}
+
+function upsertComments(
+  comments: ArjiJsonComment[],
+  parent: { epicId?: string; userStoryId?: string },
+): number {
+  let count = 0;
+  for (const comment of comments) {
+    const existing = db
+      .select({ id: ticketComments.id })
+      .from(ticketComments)
+      .where(eq(ticketComments.id, comment.id))
+      .get();
+
+    if (existing) {
+      db.update(ticketComments)
+        .set({
+          author: comment.author,
+          content: comment.content,
+        })
+        .where(eq(ticketComments.id, comment.id))
+        .run();
+    } else {
+      db.insert(ticketComments)
+        .values({
+          id: comment.id,
+          author: comment.author,
+          content: comment.content,
+          createdAt: comment.createdAt ?? new Date().toISOString(),
+          ...parent,
+        })
+        .run();
+    }
+    count++;
+  }
+  return count;
 }
