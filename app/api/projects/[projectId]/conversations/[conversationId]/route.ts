@@ -4,6 +4,42 @@ import { chatConversations, namedAgents } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { resolveAgent } from "@/lib/agent-config/providers";
 
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ projectId: string; conversationId: string }> }
+) {
+  const { projectId, conversationId } = await params;
+
+  const result = db
+    .select({
+      id: chatConversations.id,
+      projectId: chatConversations.projectId,
+      type: chatConversations.type,
+      label: chatConversations.label,
+      status: chatConversations.status,
+      epicId: chatConversations.epicId,
+      provider: chatConversations.provider,
+      namedAgentId: chatConversations.namedAgentId,
+      createdAt: chatConversations.createdAt,
+      namedAgentName: namedAgents.readableAgentName,
+    })
+    .from(chatConversations)
+    .leftJoin(namedAgents, eq(chatConversations.namedAgentId, namedAgents.id))
+    .where(
+      and(
+        eq(chatConversations.id, conversationId),
+        eq(chatConversations.projectId, projectId)
+      )
+    )
+    .get();
+
+  if (!result) {
+    return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+  }
+
+  return NextResponse.json({ data: result });
+}
+
 export async function DELETE(
   _request: NextRequest,
   { params }: { params: Promise<{ projectId: string; conversationId: string }> }
