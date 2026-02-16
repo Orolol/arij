@@ -133,7 +133,7 @@ export function EpicCard({
               </span>
             )}
             <div className="flex-1 min-w-0">
-              <span className="text-xs text-muted-foreground font-mono">{epic.id}</span>
+              <span className="text-xs text-muted-foreground font-mono">{epic.readableId || epic.id}</span>
               <h4 className="text-sm font-medium leading-tight truncate">{epic.title}</h4>
             </div>
           </div>

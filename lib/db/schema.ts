@@ -18,6 +18,7 @@ export const projects = sqliteTable("projects", {
   githubOwnerRepo: text("github_owner_repo"),
   spec: text("spec"),
   imported: integer("imported").default(0),
+  ticketCounter: integer("ticket_counter").default(0), // shared sequence across epics+bugs
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -69,6 +70,7 @@ export const epics = sqliteTable("epics", {
   type: text("type").default("feature"), // 'feature' | 'bug'
   linkedEpicId: text("linked_epic_id").references((): AnySQLiteColumn => epics.id, { onDelete: "set null" }),
   images: text("images"), // JSON array of image paths
+  readableId: text("readable_id"), // E-project-001 or B-project-002
 });
 
 export const userStories = sqliteTable("user_stories", {
@@ -282,10 +284,12 @@ export const namedAgents = sqliteTable(
     name: text("name").notNull(),
     provider: text("provider").notNull(), // 'claude-code' | 'codex' | 'gemini-cli'
     model: text("model").notNull(),
+    readableAgentName: text("readable_agent_name"), // Ancient Greek name
     createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => ({
     nameUnique: uniqueIndex("named_agents_name_unique").on(table.name),
+    readableAgentNameUnique: uniqueIndex("named_agents_readable_agent_name_unique").on(table.readableAgentName),
   }),
 );
 

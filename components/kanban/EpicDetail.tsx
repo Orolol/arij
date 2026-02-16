@@ -263,11 +263,18 @@ export function EpicDetail({
       ) : (
         <>
           <div className="border-b border-border px-4 py-3 space-y-2">
-            <InlineEdit
-              value={epic.title}
-              onSave={(v) => updateEpic({ title: v })}
-              className="text-lg font-bold"
-            />
+            <div className="flex items-center gap-2">
+              {epic.readableId && (
+                <span className="text-xs font-mono text-muted-foreground shrink-0">
+                  {epic.readableId}
+                </span>
+              )}
+              <InlineEdit
+                value={epic.title}
+                onSave={(v) => updateEpic({ title: v })}
+                className="text-lg font-bold"
+              />
+            </div>
             {epic.type === "bug" && (
               <Badge className="bg-red-500/10 text-red-400 text-xs w-fit">
                 <Bug className="h-3 w-3 mr-1" />
@@ -623,6 +630,25 @@ export function EpicDetail({
                   comments={comments}
                   loading={commentsLoading}
                   onAddComment={addComment}
+                  onSendToDev={
+                    epic && ["backlog", "todo", "in_progress", "review"].includes(epic.status)
+                      ? async () => {
+                          try {
+                            await sendToDev();
+                            refresh();
+                          } catch (error) {
+                            if (isAgentAlreadyRunningError(error)) {
+                              onAgentConflict?.({
+                                message: error.message,
+                                sessionUrl: error.sessionUrl || `/projects/${projectId}/sessions/${error.activeSessionId}`,
+                              });
+                            }
+                          }
+                        }
+                      : undefined
+                  }
+                  sendToDevDisabled={dispatching || isRunning}
+                  sendToDevLoading={dispatching}
               />
             </div>
 

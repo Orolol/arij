@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { MentionTextarea } from "@/components/documents/MentionTextarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MarkdownContent } from "@/components/chat/MarkdownContent";
-import { Send, User, Bot, Loader2 } from "lucide-react";
+import { Send, User, Bot, Loader2, Hammer } from "lucide-react";
 import type { TicketComment } from "@/hooks/useComments";
 
 interface CommentThreadProps {
@@ -13,6 +13,12 @@ interface CommentThreadProps {
   comments: TicketComment[];
   loading: boolean;
   onAddComment: (content: string) => Promise<unknown>;
+  /** One-click dispatch: immediately sends to dev without dialog */
+  onSendToDev?: () => Promise<unknown>;
+  /** Whether the send-to-dev action is disabled (agent running, etc.) */
+  sendToDevDisabled?: boolean;
+  /** Whether the send-to-dev action is currently dispatching */
+  sendToDevLoading?: boolean;
 }
 
 function formatTime(dateStr: string) {
@@ -30,6 +36,9 @@ export function CommentThread({
   comments,
   loading,
   onAddComment,
+  onSendToDev,
+  sendToDevDisabled,
+  sendToDevLoading,
 }: CommentThreadProps) {
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
@@ -127,18 +136,35 @@ export function CommentThread({
             rows={3}
             className="min-h-24 resize-none"
           />
-          <Button
-            size="icon"
-            onClick={handleSubmit}
-            disabled={!input.trim() || sending}
-            className="shrink-0 self-end"
-          >
-            {sending ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <Send className="h-5 w-5" />
+          <div className="flex flex-col gap-1 shrink-0 self-end">
+            <Button
+              size="icon"
+              onClick={handleSubmit}
+              disabled={!input.trim() || sending}
+            >
+              {sending ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <Send className="h-5 w-5" />
+              )}
+            </Button>
+            {onSendToDev && (
+              <Button
+                size="icon"
+                variant="outline"
+                onClick={onSendToDev}
+                disabled={sendToDevDisabled || sendToDevLoading}
+                title="Send to dev"
+                data-testid="send-to-dev-button"
+              >
+                {sendToDevLoading ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Hammer className="h-4 w-4" />
+                )}
+              </Button>
             )}
-          </Button>
+          </div>
         </div>
       </div>
     </div>

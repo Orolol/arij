@@ -161,7 +161,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
-  const providerSupportsResume = provider === "claude-code" || provider === "gemini-cli";
+  const providerSupportsResume = provider === "claude-code" || provider === "gemini-cli" || provider === "codex";
 
   // Resume support — scope-guarded
   let cliSessionId: string | undefined;

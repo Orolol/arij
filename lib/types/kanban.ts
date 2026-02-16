@@ -49,6 +49,7 @@ export interface KanbanEpic {
   type: string; // 'feature' | 'bug'
   linkedEpicId: string | null;
   images: string | null; // JSON array
+  readableId: string | null;
   usCount: number;
   usDone: number;
   latestCommentId?: string | null;

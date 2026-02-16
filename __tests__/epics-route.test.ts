@@ -27,6 +27,12 @@ const mockSchema = vi.hoisted(() => ({
     evidence: "evidence",
     createdAt: "createdAt",
     updatedAt: "updatedAt",
+    readableId: "readableId",
+  },
+  projects: {
+    __name: "projects",
+    id: "id",
+    name: "name",
   },
   userStories: {
     __name: "userStories",
@@ -132,6 +138,7 @@ vi.mock("@/lib/db", () => {
 
 vi.mock("@/lib/db/schema", () => ({
   epics: mockSchema.epics,
+  projects: mockSchema.projects,
   userStories: mockSchema.userStories,
   ticketComments: mockSchema.ticketComments,
 }));
@@ -146,6 +153,10 @@ vi.mock("@/lib/utils/nanoid", () => ({
 
 vi.mock("@/lib/sync/export", () => ({
   tryExportArjiJson: mockTryExportArjiJson,
+}));
+
+vi.mock("@/lib/db/readable-id", () => ({
+  generateReadableId: vi.fn(() => "E-test-001"),
 }));
 
 function mockRequest(body: Record<string, unknown>) {
@@ -167,6 +178,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
   it("creates an epic and related user stories in one request", async () => {
     mockDbState.getQueue = [
       { max: 2 },
+      { id: "proj1", name: "Test Project" },
       {
         id: "id-1",
         projectId: "proj1",
@@ -287,7 +299,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
   });
 
   it("rolls back epic creation when story insert fails inside transaction", async () => {
-    mockDbState.getQueue = [{ max: 0 }];
+    mockDbState.getQueue = [{ max: 0 }, { id: "proj1", name: "Test Project" }];
     mockDbState.failOnStoryInsert = true;
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
