@@ -31,7 +31,7 @@ export interface CodexOptions {
   sessionId?: string;
   /** Optional CLI session ID for resume support (codex exec resume). */
   cliSessionId?: string;
-  /** @deprecated `codex exec` is non-resumable; this flag is ignored. */
+  /** When true, uses `codex exec resume <cliSessionId>` instead of a fresh exec. */
   resumeSession?: boolean;
   /** Developer instructions injected via `-c developer_instructions="..."`. */
   developerInstructions?: string;
