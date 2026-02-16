@@ -90,15 +90,131 @@ function normalizeChecklist(items: string[]): string | null {
   return items.map((item) => `- [ ] ${item}`).join("\n");
 }
 
-function toParsedEpicFromJson(raw: unknown): ParsedEpic | null {
-  if (!raw || typeof raw !== "object") return null;
+function toRecord(input: unknown): Record<string, unknown> | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    return null;
+  }
+  return input as Record<string, unknown>;
+}
 
-  const input = raw as {
-    title?: unknown;
-    description?: unknown;
-    userStories?: unknown;
-    user_stories?: unknown;
-  };
+function toTextScalar(input: unknown): string | null {
+  if (typeof input === "string") {
+    const trimmed = input.trim();
+    return trimmed.length > 0 ? cleanLine(trimmed) : null;
+  }
+
+  if (typeof input === "number" || typeof input === "boolean") {
+    return String(input);
+  }
+
+  const record = toRecord(input);
+  if (record) {
+    const keys = ["text", "description", "title", "name", "value"];
+    for (const key of keys) {
+      const value = toTextScalar(record[key]);
+      if (value) return value;
+    }
+  }
+
+  return null;
+}
+
+function toJoinedText(input: unknown, separator = "\n\n"): string | null {
+  if (Array.isArray(input)) {
+    const parts = input.map((item) => toTextScalar(item)).filter((part): part is string => Boolean(part));
+    if (parts.length === 0) return null;
+    return cleanLine(parts.join(separator));
+  }
+  return toTextScalar(input);
+}
+
+function normalizeChecklistItem(input: string): string {
+  return input.replace(/^[-*]\s+\[[xX ]\]\s+/, "").replace(/^[-*]\s+/, "").trim();
+}
+
+function normalizeAcceptanceCriteria(input: unknown): string | null {
+  if (typeof input === "string") {
+    const normalized = cleanLine(input);
+    return normalized.length > 0 ? normalized : null;
+  }
+
+  if (!Array.isArray(input)) {
+    return null;
+  }
+
+  const items = input
+    .map((item) => toTextScalar(item))
+    .filter((item): item is string => Boolean(item))
+    .map((item) => normalizeChecklistItem(item))
+    .filter((item) => item.length > 0);
+
+  return normalizeChecklist(items);
+}
+
+function hasStoriesArray(record: Record<string, unknown>): boolean {
+  return (
+    Array.isArray(record.userStories) ||
+    Array.isArray(record.user_stories) ||
+    Array.isArray(record.stories) ||
+    Array.isArray(record.items)
+  );
+}
+
+function maybeParseJsonObject(input: string): Record<string, unknown> | null {
+  const trimmed = input.trim();
+  if (!(trimmed.startsWith("{") && trimmed.endsWith("}"))) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(trimmed);
+    return toRecord(parsed);
+  } catch {
+    return null;
+  }
+}
+
+function unwrapEpicPayload(raw: unknown): Record<string, unknown> | null {
+  const queue: unknown[] = [raw];
+  const seen = new Set<unknown>();
+  const wrapperKeys = ["epic", "data", "result", "payload"];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || seen.has(current)) continue;
+    seen.add(current);
+
+    if (Array.isArray(current)) {
+      for (const item of current) {
+        queue.push(item);
+      }
+      continue;
+    }
+
+    const record = toRecord(current);
+    if (!record) continue;
+
+    if (typeof record.title === "string" && record.title.trim().length > 0 && hasStoriesArray(record)) {
+      return record;
+    }
+
+    for (const key of wrapperKeys) {
+      const value = record[key];
+      if (!value) continue;
+      if (typeof value === "string") {
+        const parsed = maybeParseJsonObject(value);
+        if (parsed) queue.push(parsed);
+        continue;
+      }
+      queue.push(value);
+    }
+  }
+
+  return null;
+}
+
+function toParsedEpicFromJson(raw: unknown): ParsedEpic | null {
+  const input = unwrapEpicPayload(raw);
+  if (!input) return null;
 
   if (typeof input.title !== "string" || input.title.trim().length === 0) {
     return null;
@@ -108,36 +224,30 @@ function toParsedEpicFromJson(raw: unknown): ParsedEpic | null {
     ? input.userStories
     : Array.isArray(input.user_stories)
       ? input.user_stories
+      : Array.isArray(input.stories)
+        ? input.stories
+        : Array.isArray(input.items)
+          ? input.items
       : [];
 
   const userStories: ParsedUserStory[] = storiesRaw
     .map((story) => {
-      if (!story || typeof story !== "object") return null;
-      const storyInput = story as {
-        title?: unknown;
-        description?: unknown;
-        acceptanceCriteria?: unknown;
-        acceptance_criteria?: unknown;
-      };
+      const storyInput = toRecord(story);
+      if (!storyInput) return null;
 
-      if (typeof storyInput.title !== "string" || storyInput.title.trim().length === 0) {
+      const title = toTextScalar(storyInput.title);
+      if (!title) {
         return null;
       }
 
       const acceptance =
-        typeof storyInput.acceptanceCriteria === "string"
-          ? storyInput.acceptanceCriteria
-          : typeof storyInput.acceptance_criteria === "string"
-            ? storyInput.acceptance_criteria
-            : null;
+        normalizeAcceptanceCriteria(storyInput.acceptanceCriteria) ??
+        normalizeAcceptanceCriteria(storyInput.acceptance_criteria);
 
       return {
-        title: cleanLine(storyInput.title),
-        description:
-          typeof storyInput.description === "string" && storyInput.description.trim().length > 0
-            ? cleanLine(storyInput.description)
-            : null,
-        acceptanceCriteria: acceptance ? cleanLine(acceptance) : null,
+        title,
+        description: toJoinedText(storyInput.description, "\n\n"),
+        acceptanceCriteria: acceptance,
       };
     })
     .filter((story): story is ParsedUserStory => Boolean(story));
@@ -148,10 +258,7 @@ function toParsedEpicFromJson(raw: unknown): ParsedEpic | null {
 
   return {
     title: cleanLine(input.title),
-    description:
-      typeof input.description === "string" && input.description.trim().length > 0
-        ? cleanLine(input.description)
-        : "Epic generated from conversation",
+    description: toJoinedText(input.description, "\n\n") || "Epic generated from conversation",
     userStories,
   };
 }
