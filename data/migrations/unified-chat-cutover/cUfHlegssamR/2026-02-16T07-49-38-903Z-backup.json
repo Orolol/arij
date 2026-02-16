@@ -1,0 +1,40 @@
+{
+  "migrationId": "2026-02-16T07-49-38-903Z",
+  "projectId": "cUfHlegssamR",
+  "capturedAt": "2026-02-16T07:49:38.903Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "sXCE8LYd6-9U",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "Readable Ticket IDs & QOL",
+        "status": "active",
+        "epic_id": null,
+        "provider": "codex",
+        "created_at": "2026-02-15T19:39:42.485Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "VKJFZjTZxgKK",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "sXCE8LYd6-9U",
+        "role": "user",
+        "content": "QOL epic :\n\n    add send to dev button near the \"Add comment\" button at the bottom of a ticket. No need to have the dialog, it will auto resume session with the current agent, and no need to add comment.\n    We should add readable ID to tickets (Epics and bug), It would be like E-projectName-001 and use this on ticket cards instead of the technical id.\n    For agent, we should have a list of prefedefinites names (I was thinking of ancient greek names) and use names from this list to readable id.",
+        "metadata": null,
+        "created_at": "2026-02-15T19:39:49.571Z"
+      },
+      {
+        "id": "nNo31O50L50z",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "sXCE8LYd6-9U",
+        "role": "assistant",
+        "content": "This is a strong QOL direction, but it currently mixes two domains: ticket workflow UX (`Send to dev` auto-resume) and identity/labeling (readable IDs for tickets/agents). To avoid overlap, I’d scope it as a follow-up to `Ticket Comments, Send-to-Dev & Agent Review` plus a clearly separate dependency on `Named Agents ...` / `Codex Session Tracking Hardening` for resume behavior.\n\nTwo clarifications will make it implementation-ready:\n1. For readable ticket IDs, should numbering be per project and shared across Epic+Bug (`E-project-001`, `B-project-002`), or separate counters per type? Also, must IDs remain immutable if project name changes?\n2. For the one-click `Send to dev`, what should happen when the assigned agent/session is not resumable (for example Codex, per current spec) or expired: disable button, or auto-fallback to fresh prompt mode?\n\nIf you want this tight and low-risk, split into two epics: one for `Send to dev` no-dialog resume-first UX (aligned with the current resume/fallback specification), and one for readable ID system (DB schema, generator, backfill, UI replacement of technical IDs). That split will make acceptance criteria much cleaner and reduce cross-team coupling.",
+        "metadata": null,
+        "created_at": "2026-02-15T19:40:11.423Z"
+      }
+    ],
+    "attachments": []
+  }
+}

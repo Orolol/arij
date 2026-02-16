@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastSyncedAt": "2026-02-15T18:10:02.946Z",
+  "lastSyncedAt": "2026-02-16T10:30:56.290Z",
   "project": {
     "name": "Arij",
     "description": "A local, AI-first project orchestrator that provides a web interface for managing multi-project workflows with Claude Code as the execution engine. It covers the full project lifecycle: ideation, specification, kanban-based planning, automated code generation via Claude Code CLI, real-time agent monitoring, and release management.",
@@ -8,6 +8,16 @@
     "spec": "The plan is ready for your review. It covers 5 phases:\n\n1. **Schema** — 4 new nullable columns across `agentSessions` and `chatConversations`\n2. **Provider Layer** — Capture CLI session IDs from output, inject `--resume` flag for Claude Code and Gemini CLI\n3. **Process Manager** — Persist `cliSessionId` to DB on session completion\n4. **Chat Continuity** — Resume-first logic with automatic fallback to fresh prompt if the session expired\n5. **Work Session Resume** — New API endpoint, session picker dialog, and integration into build/review hooks\n\nKey design decisions:\n- Codex is marked non-resumable (its `exec` mode doesn't support `--resume`)\n- `resolveAgent()` is extended to return `namedAgentId` for session filtering\n- Resume failures fall back gracefully to full-prompt mode"
   },
   "epics": [
+    {
+      "id": "9a4G7BgwWGyk",
+      "title": "Despite the output being in correct JSON format, the epic isn't created when chating",
+      "description": "We should automatically extract correct JSON format response",
+      "priority": 2,
+      "status": "backlog",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
     {
       "id": "7FFiclGUqPE-",
       "title": "GitHub Release Lifecycle",
@@ -52,12 +62,103 @@
       ]
     },
     {
+      "id": "5Rf0X7ELSO5N",
+      "title": "Sometimes the agent seem unable to generate epics",
+      "description": "Please change the prompts to force the model to answer in the correct format. Below is a example of chat with agent : \n\n\n\n\nGenerate the final epic with user stories based on our discussion.\n\nplease providfe Epics and US in correct format\n\nThe plan is ready for your review. Here's the summary:\n\nEpic: Multi-Provider CLI Integration with Base Class Refactor\n\n11 User Stories across 4 phases:\n#\tUser Story\tKey Deliverable\n1\tBaseCliProvider abstract class\tlib/providers/base-provider.ts — shared spawn/kill/log/parse lifecycle\n2\tRefactor existing 3 providers onto base\tClaude Code, Codex, Gemini extend base class\n3\tProviderType registry update (9 providers)\tTypes, factory, availability API\n4\tMistral Vibe provider\t--prompt, --agent, --resume, --output json\n5\tQwen Code provider\t-p, --yolo, non-resumable\n6\tOpenCode provider\trun, --format json, --session resume\n7\tDeepSeek provider\t-q, --no-stream, non-resumable\n8\tKimi/Moonshot provider\t--print, --continue resume, stream-json\n9\tZai/Zhipu AI provider\tAPI-based wrapper, GLM models, non-resumable\n10\tResume validation for all 9\tResumable: CC, Gemini, Vibe, OpenCode, Kimi. Non-resumable: Codex, Qwen, DeepSeek, Zai\n11\tSettings UI for all 9 providers\tDropdowns, availability indicators, tiered grouping\n\nThe JSON block in the plan file is ready to be submitted directly to the Arij epic creation API. Should I proceed?\n\nGenerate the final epic with user stories based on our discussion.\n\nThe plan is ready for your approval. It contains the complete epic JSON with 11 user stories covering:\n\n    US 1-2: BaseCliProvider base class + refactor existing 3 providers onto it\n    US 3: ProviderType registry expansion to 9 providers\n    US 4-9: Six new provider implementations (Mistral Vibe, Qwen Code, OpenCode, DeepSeek, Kimi, Zai)\n    US 10: Resume validation for all 9 providers\n    US 11: Settings UI update with availability indicators",
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "6A1Q_qhKNt8C",
+      "title": "Don't show 0/0 US for bug tickets",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "ab3656k4iX4O",
+      "title": "when asking for a review on a bug ticket, the agent instead do a review of a porevious epic",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "z8tXdz8DogmS",
+      "title": "Default sort order in kanban should be creation date",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 1,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "8eZojPqmYweV",
+      "title": "One-Click Send-to-Dev, Full Agent Resume, and Readable IDs",
+      "description": "Implement a QOL continuity and identity upgrade across ticket workflow, session resume, and UI readability. The epic removes friction from re-dispatching work, enforces resume-first execution for all providers (including Codex), and introduces human-readable IDs for tickets and agents with full backfill.\n\nImplementation plan:\n1) Schema and constraints: add/extend nullable session continuity fields in `agentSessions` and `chatConversations` for provider session tracking, add immutable `readableId` fields for Epic/Bug records, and add agent display-name fields tied to a predefined name registry; enforce uniqueness with indexes.\n2) Provider layer: capture CLI session IDs from provider output and inject resume arguments for Claude Code, Gemini CLI, and Codex; extend `resolveAgent()` to return `namedAgentId` for scoped session filtering.\n3) Process manager and APIs: persist `cliSessionId` on completion, expose/extend resume endpoints used by work-session actions, and implement resume-first with automatic fallback to fresh prompt when session resume fails or expires.\n4) Ticket UX: add `Send to dev` next to `Add comment` at the bottom of ticket detail; clicking it immediately dispatches the assigned/current agent with no dialog and no required comment.\n5) Readable ticket IDs: generate IDs using one shared per-project counter across Epic and Bug types (e.g., `E-project-001`, `B-project-002`), keep IDs immutable after assignment, and replace technical IDs with readable IDs on cards/details/activity surfaces.\n6) Agent readable identity: seed a predefined Ancient Greek name list, assign deterministic unique names to existing and new agents/sessions, and use these names where agent identity is shown.\n7) Backfill and validation: run idempotent backfill for existing tickets and agents, add collision/concurrency tests for counter generation, add resume/fallback tests for all providers, and add UI tests for button placement and readable ID rendering.",
+      "priority": 1,
+      "status": "done",
+      "position": 1,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "en84UcFR0Y6R",
+          "title": "As a project manager, I want a one-click Send to dev action in ticket detail so that I can restart work immediately without extra steps",
+          "description": "Add a `Send to dev` button beside `Add comment` in ticket detail (Epic and Bug). The action should dispatch work instantly using the currently assigned agent context, without opening a modal and without requiring a new comment.",
+          "acceptance_criteria": "- [ ] `Send to dev` is visible next to `Add comment` in Epic and Bug ticket detail footers.\n- [ ] Clicking `Send to dev` dispatches the assigned/current agent immediately with no confirmation dialog.\n- [ ] A user comment is not required to trigger dispatch.\n- [ ] Ticket transitions to and remains in `In Progress` when work is re-dispatched.",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "ti4pb5wXLAlq",
+          "title": "As a team member, I want all providers to resume prior sessions first so that execution continues with full context",
+          "description": "Implement resume-first continuity for Claude Code, Gemini CLI, and Codex providers. The system should use persisted `cliSessionId` and agent scoping to resume existing sessions, then gracefully fall back to a fresh prompt when resume is unavailable.",
+          "acceptance_criteria": "- [ ] Provider adapters capture and persist `cliSessionId` for Claude Code, Gemini CLI, and Codex.\n- [ ] Resume attempts use stored `cliSessionId` with `namedAgentId`-scoped session filtering.\n- [ ] On resume failure/expiration, execution automatically falls back to fresh-prompt mode.\n- [ ] Codex follows the same resumable flow and is not treated as non-resumable.",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "Orx_PehCsHEO",
+          "title": "As a developer, I want immutable readable ticket IDs with a shared project counter so that Epic and Bug references are human-friendly and consistent",
+          "description": "Introduce readable IDs for Epics and Bugs with one shared sequence per project, while keeping type prefixes. IDs are assigned at creation, immutable thereafter, and safe under concurrent creation.",
+          "acceptance_criteria": "- [ ] New tickets get IDs in the form `E-<projectName>-NNN` or `B-<projectName>-NNN`.\n- [ ] The numeric sequence is shared across Epic and Bug within each project.\n- [ ] Readable IDs are immutable once assigned, even if project metadata changes.\n- [ ] Database constraints prevent duplicates and race-condition collisions.",
+          "status": "review",
+          "position": 2
+        },
+        {
+          "id": "RE8hL44ErJB4",
+          "title": "As an operations owner, I want historical tickets backfilled and UI surfaces switched to readable IDs so that all references are consistent",
+          "description": "Backfill all existing Epics and Bugs with readable IDs using deterministic ordering, then replace technical ID display on ticket cards and key detail surfaces while keeping technical IDs available internally for data integrity.",
+          "acceptance_criteria": "- [ ] All existing Epic and Bug records are backfilled with readable IDs.\n- [ ] Backfill preserves one shared per-project sequence and is idempotent.\n- [ ] Ticket cards display readable IDs instead of technical IDs.\n- [ ] Ticket detail and activity views show readable IDs consistently.",
+          "status": "review",
+          "position": 3
+        },
+        {
+          "id": "y82lg1CIExrw",
+          "title": "As a workspace admin, I want predefined Ancient Greek agent names assigned to agents and sessions so that agent identity is easier to read",
+          "description": "Create a predefined registry of Ancient Greek names and assign readable names deterministically to new and existing named agents/sessions. Use these names in session picker and agent activity contexts.",
+          "acceptance_criteria": "- [ ] A predefined Ancient Greek name registry is stored and used for assignment.\n- [ ] Existing named agents/sessions are backfilled with deterministic readable names.\n- [ ] New agents are assigned unique readable names automatically.\n- [ ] Session picker and agent-related UI surfaces display readable agent names.",
+          "status": "review",
+          "position": 4
+        }
+      ]
+    },
+    {
       "id": "9D8XWvhZju9s",
       "title": "Named Agents Global Dropdown Cutover (Runtime-Only Selection)",
       "description": "Standardize the product so runtime workflows select only named agents, not raw provider/model pairs. Provider/model selection remains available only when creating or editing named agents. Implementation plan: 1) inventory all provider/model dropdowns and classify runtime vs Named Agent CRUD/admin; 2) enforce a globally seeded default named agent created once (`Claude Code` + `claude-opus-4-6`) with idempotent seed logic; 3) replace all runtime selectors with a shared named-agent dropdown bound to `namedAgentId`; 4) route every build/review/fix/release dispatch through `resolveAgent()` returning `{ provider, model }`; 5) use process-manager dispatch to invoke the correct CLI implementation (including `gemini-cli`) with headless-safe execution patterns; 6) keep upgrades non-breaking by falling back to the global default when legacy/missing `namedAgentId` is encountered instead of requiring DB backfill; 7) add backend, frontend, and e2e regression tests proving no runtime path still depends on raw provider selection.",
       "priority": 0,
       "status": "done",
-      "position": 0,
+      "position": 2,
       "branchName": null,
       "user_stories": [
         {
@@ -116,7 +217,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 3,
       "branchName": null,
       "user_stories": []
     },
@@ -126,7 +227,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 4,
       "branchName": null,
       "user_stories": []
     },
@@ -136,7 +237,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 5,
       "branchName": null,
       "user_stories": []
     },
@@ -146,7 +247,7 @@
       "description": "Example : \n\n\nI want a new top tab \"Tech check\"\n\nIn this tab, you can start assing an named agent to do a tech check on the whole project, then the agent after working on it will output a report. You can then ask to create epic from this report.\n\nThe tech check is a complete review of the code, architecture, patterns, etc ...\n\nWe'll have a prompt for all tech check, but let the user add a custom prompt. custom prompts can be saved, app wise, and reused.\n\nI like this idea — it's a natural extension of Arij's AI-first philosophy. Let me make sure I understand the scope before we shape the epic.\n\nA few clarifying questions:\n\n    Report storage & display: Should the tech check report be stored as a project-level document (similar to how specs work), or as a chat conversation with the agent? I'm leaning toward a dedicated techCheckReports table so reports are browsable/comparable over time — does that match your vision?\n\n    \"Create epic from report\": When the user asks to create epics from the report, should the agent automatically propose a list of epics/stories based on its findings (e.g. \"I found 5 issues, here are suggested epics\"), or should the user manually highlight sections of the report and say \"make this an epic\"? The former feels more aligned with the AI-first approach.\n\n    Custom prompts scope: You mentioned custom prompts are saved \"app-wise\" (global, not per-project). Should there also be a default per-project prompt that gets merged with the global one (similar to how CLAUDE.md works at project level), or is global-only sufficient for V1?\n\n    Scope for V1: The tech check tab itself — should it show a history of past tech checks (with dates, agent used, status), or just the current/latest one? History seems valuable for tracking code health over time, but it adds scope.\n\nThese answers will help me shape tight user stories and avoid overlap with existing epics like \"Project Document Registry\" or \"Sessions Tab Readability.\"\n\n    chat with agent\n    The agent automatically chose\n    No default\n    Yes, an history is perfect\n\n(empty response)\n\nThe tab qhould be named QA, bvecause we'll have other QA tools here later\n\n(empty response)",
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 6,
       "branchName": null,
       "user_stories": []
     },
@@ -156,7 +257,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 7,
       "branchName": null,
       "user_stories": []
     },
@@ -166,7 +267,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 8,
       "branchName": null,
       "user_stories": []
     },
@@ -176,7 +277,7 @@
       "description": "GET /api/projects/cUfHlegssamR/qa/reports 200 in 62ms (compile: 57ms, render: 4ms)\n GET /api/projects/cUfHlegssamR/qa/reports 200 in 5ms (compile: 1373µs, render: 4ms)\n GET /api/projects/cUfHlegssamR/qa/reports/X2rut39Injad 200 in 68ms (compile: 65ms, render: 3ms)\n POST /api/projects/cUfHlegssamR/qa/reports/X2rut39Injad/create-epics 500 in 34.7s (compile: 54ms, render: 34.6s)",
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 9,
       "branchName": null,
       "user_stories": []
     },
@@ -186,7 +287,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 10,
       "branchName": null,
       "user_stories": []
     },
@@ -196,7 +297,7 @@
       "description": "Rework Kanban ticket detail behavior from a blocking right-side modal to a non-modal experience in the shared left panel area. Clicking a ticket must both select it and open its details, while the board remains fully interactive for additional selections and quick actions.\n\nImplementation plan:\n1. Refactor board UI state to keep ordered selection (`selectedTicketIds`) and derive `activeDetailTicketId` from the first selected ticket.\n2. Update card interaction so primary ticket click selects the ticket and opens details in the shared left panel container (same area used by chat/epic panels).\n3. Keep multi-select active while details are open using existing additive selection controls; additional selections must not block board interaction.\n4. Enforce first-selected anchoring: detail content follows the first selected ticket; adding more tickets does not switch detail; if the first selected ticket is removed, promote the next oldest selected ticket; if none remain, close details.\n5. Remove all modal mechanics across desktop/tablet/mobile: no dim layer, no pointer-event lock, no focus trap, no modal fallback.\n6. Increase detail panel width for readability using responsive sizing target `clamp(420px, 34vw, 560px)` and preserve usable board space.\n7. Add/adjust tests for selection-order logic, non-modal interactivity, quick-action continuity, and responsive rendering. No DB/schema/API/provider changes are expected.",
       "priority": 0,
       "status": "done",
-      "position": 0,
+      "position": 11,
       "branchName": null,
       "user_stories": [
         {
@@ -255,7 +356,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 12,
       "branchName": null,
       "user_stories": []
     },
@@ -265,7 +366,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 13,
       "branchName": null,
       "user_stories": []
     },
@@ -275,7 +376,17 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 0,
+      "position": 14,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "SFgv6blyyKPj",
+      "title": "It seems that codex sessions are never resumed",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 15,
       "branchName": null,
       "user_stories": []
     },
@@ -285,7 +396,7 @@
       "description": "Build an orchestration epic for Arij that adds ticket dependencies and batch actions while reusing existing PR/Git/review flows. Scope is limited to dependencies inside one project (including tickets across different epics in that project), with schema designed for future cross-project expansion.\n\nImplementation plan:\n1. Dependency domain model\n- Add dependency edges (`ticket_id`, `depends_on_ticket_id`, `project_id`) plus extensibility fields (`scope_type`, `scope_id`) for future scope expansion.\n- Enforce current business rule: dependencies are valid only within the same project.\n- Persist dependency metadata generated by the ticket-creation agent.\n2. Ticket detail dependency management\n- Add dependency editor in ticket detail to add/remove predecessors.\n- Validate DAG integrity on every update (cycle detection with explicit error path).\n3. Batch selection UX\n- On ticket selection, auto-include all transitive prerequisites.\n- Mark auto-included tickets as required and non-deselectable while dependents remain selected.\n- Show batch actions `Review all` and `Merge all` when multiple tickets are selected.\n4. DAG scheduler and execution engine\n- Implement topological planning for batch `build`, `review`, and `merge` actions.\n- Run dependent chains sequentially and independent branches in parallel, while respecting existing agent concurrency guardrails.\n- Track per-ticket states: `ready`, `running`, `blocked`, `failed`, `success`.\n5. Failure policy and remediation\n- If a ticket fails, block descendants and continue all independent branches.\n- For `Merge all`, add a batch toggle to auto-launch a merge agent on first failure for every failed ticket (including auto-included tickets), with no retry limit; rely on existing manual agent stop controls.\n6. Integration and quality\n- Reuse existing single-ticket PR/Git/review/build pathways; do not duplicate core Git/PR logic.\n- Add tests for transitive auto-inclusion, DAG validation, topological execution, failure propagation, and auto-merge triggering.",
       "priority": 0,
       "status": "done",
-      "position": 1,
+      "position": 16,
       "branchName": "feature/epic-agJ6EuLOQFEs-dependency-aware-batch-ticket-orchestrat",
       "user_stories": [
         {
@@ -344,7 +455,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 1,
+      "position": 17,
       "branchName": null,
       "user_stories": []
     },
@@ -354,7 +465,7 @@
       "description": "## Error Type\nRuntime TypeError\n\n## Error Message\ncreateAgent is not a function\n\n\n    at handleCreate (components/agent-config/NamedAgentsTab.tsx:129:22)\n\n## Code Frame\n  127 |     if (!name.trim() || !model.trim()) return;\n  128 |     setCreating(true);\n> 129 |     const ok = await createAgent({\n      |                      ^\n  130 |       name: name.trim(),\n  131 |       provider,\n  132 |       model: model.trim(),\n\nNext.js version: 16.1.6 (Turbopack)",
       "priority": 2,
       "status": "done",
-      "position": 2,
+      "position": 18,
       "branchName": null,
       "user_stories": []
     },
@@ -364,7 +475,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 3,
+      "position": 19,
       "branchName": null,
       "user_stories": []
     },
@@ -374,7 +485,7 @@
       "description": "Extend the agent system from simple CLI provider selection to named agents that combine a CLI provider with a specific model. Users can create named agents like 'CC Opus 4.6' (Claude Code + claude-opus-4-6), 'Codex GPT-5.3' (Codex + gpt-5.3), or 'Gemini Flash' (Gemini CLI + gemini-2.0-flash), then assign one named agent per task type (build, review, chat, etc.). This also adds full Gemini CLI support as a third provider alongside Claude Code and Codex.\n\n## Implementation Plan\n\n### Phase 1: Schema & Types\n- Add `namedAgents` table to Drizzle schema with columns: id, name, provider (claude-code | codex | gemini-cli), model (text), createdAt\n- Add `namedAgentId` foreign key column to `agentProviderDefaults` table\n- Extend all provider type unions to include `gemini-cli`\n\n### Phase 2: Gemini CLI Provider\n- Create `lib/gemini/spawn.ts` implementing the spawn interface using `gemini --prompt` with `--model`, `--yolo`, and `--output-format stream-json` flags\n- Create `lib/providers/gemini-cli.ts` provider adapter returning `SpawnedClaude`-compatible interface\n- Register Gemini CLI in the provider factory alongside claude-code and codex\n- Generalize process manager dispatch to handle all three providers\n\n### Phase 3: Named Agent CRUD & Resolution\n- Create `lib/agent-config/named-agents.ts` with list, create, update, delete operations\n- Implement `resolveAgent(taskType, projectId)` function that looks up the named agent for a task type and returns { provider, model }\n- Backward compatibility: when `namedAgentId` is null, fall back to existing `provider` column behavior\n\n### Phase 4: API Routes\n- Add CRUD API routes for named agents at `/api/agent-config/named-agents`\n- Update provider defaults API to accept `namedAgentId`\n- Update build, review, and chat dispatch routes to use `resolveAgent()` instead of direct provider lookup\n\n### Phase 5: UI\n- Add new 'Agents' tab in agent settings for creating/editing/deleting named agents (name + provider dropdown + model text input)\n- Update 'Providers' tab to show a named agent dropdown per task type instead of raw provider select\n- Show agent name in session monitoring and activity indicators",
       "priority": 0,
       "status": "done",
-      "position": 4,
+      "position": 20,
       "branchName": "feature/epic-nYiJCMMioN7a-named-agents-with-model-selection-gemini",
       "user_stories": [
         {
@@ -433,7 +544,7 @@
       "description": "Add destructive delete actions directly in Epic Detail and User Story (US) Detail views, with explicit confirmation and immediate permanent deletion (no recovery, undo, or trash).\n\nImplementation plan:\n1. Add a `Delete` action in the danger zone of Epic Detail and US Detail, visible only to users who already have edit/delete permissions.\n2. Implement a shared confirmation dialog used by both pages with irreversible copy (`This action cannot be undone`), Cancel, and Confirm actions.\n3. Wire/extend backend `DELETE` handlers for epics and user stories to perform transactional hard deletes only.\n4. Ensure relationship handling is deterministic: deleting an epic removes its child user stories and dependent planning artifacts in the same transaction; deleting a US removes its dependent links/comments/tasks per FK rules with no partial writes.\n5. On successful deletion, redirect to the correct parent list view (epics/backlog), invalidate cached queries, and refresh UI state so removed items disappear from detail, kanban, and lists immediately.\n6. Add regression coverage for confirmation, successful deletion, authorization, and failure paths for both entity types.",
       "priority": 0,
       "status": "done",
-      "position": 5,
+      "position": 21,
       "branchName": null,
       "user_stories": [
         {
@@ -476,7 +587,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 6,
+      "position": 22,
       "branchName": null,
       "user_stories": []
     },
@@ -486,7 +597,7 @@
       "description": "Finalize chat convergence by making the left workspace (opened from New Epic and the left Chat button) the only chat interface, with full feature parity and complete migration from the legacy right panel. This epic is a final cutover/decommission effort (not a redesign), aligned with prior work in Unified Chat & Epic Creation Workspace, Fuse New Epic into Chat Panel, Session Management & Monitoring, and Codex Session Tracking Hardening.\n\nImplementation plan:\n1. Define a strict parity contract from the legacy right panel: tab taxonomy, labels, filters, sorting, status semantics, history behaviors, and chat capabilities.\n2. Implement parity in the left panel using the same canonical chat/session data sources, ensuring all existing chat capabilities remain available.\n3. Build and run a migration that preserves conversation/session/message IDs and metadata (timestamps, project linkage, statuses), with validation reports and backup before cutover.\n4. Execute a big-bang cutover: left panel becomes the single entry point; right panel UI and triggers are removed.\n5. Decommission legacy technical surface: routes, stores, hooks, components, feature flags, and obsolete services tied to the right panel.\n6. Validate with automated and manual regression checks, including session continuity, history completeness, tab behavior parity, and no data loss.\n\nOut of scope: historical deep-link/bookmark redirection from the old right chat panel.",
       "priority": 0,
       "status": "done",
-      "position": 7,
+      "position": 23,
       "branchName": null,
       "user_stories": [
         {
@@ -545,7 +656,7 @@
       "description": "Implement a project-scoped document registry that standardizes storage and powers @filename mentions across the app. Phase 1: add a documents persistence model (projectId, originalFilename, kind=text|image, markdownContent, imagePath, mimeType, size, timestamps) with a case-insensitive unique constraint per project on filename. Phase 2: build ingestion rules—text files are converted to markdown at upload and only markdown is stored in DB; images are stored on disk and only their path/metadata is stored in DB. Phase 3: deliver a unified Docs tab listing all uploaded docs (text + image) by original filename with delete actions. Phase 4: add @mention autocomplete/parser in all editors and validate mentions at submit time. Phase 5: integrate mention resolution into dispatch so each send resolves docs and enriches the final prompt before CLI execution: full markdown for text, filesystem path sentence for images; keep this provider-agnostic and route through resolveAgent() to pass provider/model correctly for Claude Code and Gemini CLI headless flows. Phase 6: add migration, API, and integration coverage for upload/list/delete/mention/dispatch behavior, including deletion and cross-project isolation.",
       "priority": 0,
       "status": "done",
-      "position": 8,
+      "position": 24,
       "branchName": null,
       "user_stories": [
         {
@@ -596,7 +707,7 @@
       "description": "Implement a focused Kanban ticket-card UX epic that adds visual agent signals and card-to-agent interaction without changing agent orchestration/dispatch logic.\n\nImplementation plan:\n1. Scope and boundaries\n- Limit changes to Kanban ticket cards, shared frontend state wiring, and bottom agent panel highlighting.\n- Reuse existing runtime ticket/agent state; do not change backend workflows for build/review/merge.\n\n2. Agent activity icon on ticket cards\n- Add a single activity icon slot on each ticket card for active agent work.\n- Map action type to icon: `build`, `review`, `merge`.\n- Render only when the ticket has an active agent action; hide otherwise.\n- Add tooltip and aria-label with action type and agent name.\n\n3. Hover link between ticket card and bottom agent panel\n- On ticket-card hover/focus, emit selected agent context to bottom panel.\n- Bottom panel highlights only the linked agent card/row; remove highlight on unhover/blur.\n- Safely no-op if ticket has no linked active agent.\n\n4. Unread AI last-message indicator (session-scoped)\n- Show an unread indicator on ticket card when the latest ticket comment is AI-originated (including system/status messages) and has not been seen in the current browser session.\n- Persist seen state in `sessionStorage` (project+ticket scoped), not user-global persistence.\n- Clear unread indicator immediately when ticket is opened.\n\n5. UI cohabitation and accessibility\n- Define deterministic placement when both activity and unread indicators are present.\n- Ensure contrast, tooltip text, keyboard focus behavior, and aria labels are compliant.\n\n6. Validation and regression safety\n- Add component tests for icon mapping/visibility and unread logic.\n- Add integration/E2E tests for hover highlight lifecycle and unread-clearing-on-open.\n- Verify no regressions in Kanban drag-and-drop, ticket open flow, or bottom panel rendering.",
       "priority": 0,
       "status": "done",
-      "position": 9,
+      "position": 25,
       "branchName": null,
       "user_stories": [
         {
@@ -639,7 +750,7 @@
       "description": "Agent13 févr., 15:17\n\nFeature Review\n\n{ \"type\": \"result\", \"subtype\": \"success\", \"is_error\": false, \"duration_ms\": 147329, \"duration_api_ms\": 383173, \"num_turns\": 15, \"result\": \"\", \"stop_reason\": null, \"session_id\": \"a60e829b-df63-4d9b-8f7b-57c0b9d0749b\", \"total_cost_usd\": 1.1176163000000003, \"usage\": { \"input_tokens\": 2056, \"cache_creation_input_tokens\": 28321, \"cache_read_input_tokens\": 373429, \"output_tokens\": 4589, \"server_tool_use\": { \"web_search_requests\": 0, \"web_fetch_requests\": 0 }, \"service_tier\": \"standard\", \"cache_creation\": { \"ephemeral_1h_input_tokens\": 28321, \"ephemeral_5m_input_tokens\": 0 }, \"inference_geo\": \"\", \"iterations\": [], \"speed\": \"standard\" }, \"modelUsage\": { \"claude-opus-4-6\": { \"inputTokens\": 2056, \"outputTokens\": 4589, \"cacheReadInputTokens\": 373429, \"cacheCreationInputTokens\": 28321, \"webSearchRequests\": 0, \"costUSD\": 0.48872575, \"contextWindow\": 200000, \"maxOutputTokens\": 32000 }, \"claude-haiku-4-5-20251001\": { \"inputTokens\": 46153, \"outputTokens\": 32069, \"cacheReadInputTokens\": 2335638, \"cacheCreationInputTokens\": 151063, \"webSearchRequests\": 0, \"costUSD\": 0.6288905500000002, \"contextWindow\": 200000, \"maxOutputTokens\": 64000 } }, \"permission_denials\": [], \"uuid\": \"397c9394-0d79-4bd4-a3a8-6ec5a13b066e\" }",
       "priority": 2,
       "status": "done",
-      "position": 10,
+      "position": 26,
       "branchName": null,
       "user_stories": []
     },
@@ -649,7 +760,7 @@
       "description": "Fix Codex telemetry correctness and improve sessions UI readability for long logs. Provide server-derived status text and contained scrollable viewers for responses, raw logs, and output.",
       "priority": 2,
       "status": "done",
-      "position": 11,
+      "position": 27,
       "branchName": null,
       "user_stories": [
         {
@@ -692,7 +803,7 @@
       "description": "When asking review or merge, the icon and type of agent in the bottom is still build",
       "priority": 2,
       "status": "done",
-      "position": 12,
+      "position": 28,
       "branchName": null,
       "user_stories": []
     },
@@ -702,7 +813,7 @@
       "description": "WHen creating a bug, a button Create And FIx, which should start an agent to solve it, should be present, but it's not.",
       "priority": 2,
       "status": "done",
-      "position": 13,
+      "position": 29,
       "branchName": null,
       "user_stories": []
     },
@@ -712,7 +823,7 @@
       "description": "When asking for a review the agent should always leave a comment",
       "priority": 2,
       "status": "done",
-      "position": 14,
+      "position": 30,
       "branchName": "feature/epic-pIhpD8Ov9mnP-when-asking-for-a-review-the-agent-shoul",
       "user_stories": []
     },
@@ -722,7 +833,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 15,
+      "position": 31,
       "branchName": null,
       "user_stories": []
     },
@@ -732,7 +843,7 @@
       "description": "Add a new 'bug' ticket type to the existing kanban system. Bugs are standalone kanban cards that reuse the epics table (with a new `type` column: 'feature' | 'bug') and the full dispatch/worktree/PR pipeline. Bugs have a simplified creation flow — a direct form (title, description, images) with no mandatory chat step. They can optionally link to an existing epic. A 'Create and Resolve' action creates the bug and immediately dispatches a selected agent (via the existing provider/agent selector) in an isolated worktree+branch. Bug cards have a distinct background color on the kanban board.\n\n## Implementation Plan\n\n1. Schema migration: Add `type` column ('feature'|'bug') to `epics` table (default 'feature'), add optional `linkedEpicId` self-referencing FK, add `images` JSON column for bug attachments.\n2. API routes: New POST `/api/projects/[id]/bugs` for direct creation (no chat), POST `/api/projects/[id]/bugs/create-and-resolve` that creates + dispatches agent. Existing epic routes continue working unchanged.\n3. Bug creation form: Modal/panel with title, description, image upload (reuse existing image infra from chat), optional epic linker dropdown, and agent selector for 'Create and Resolve'.\n4. Kanban integration: Filter/display bugs alongside epics, distinct BG color for bug cards, badge or icon to distinguish type. Drag-and-drop, status transitions, and column behavior remain identical.\n5. Agent dispatch: Reuse existing worktree+branch creation and agent dispatch logic. When linked to an epic, inject epic context (title, description, user stories) into the agent prompt.\n6. Bug detail view: Lighter version of epic detail — shows title, description, images, linked epic, status, and agent session if dispatched.",
       "priority": 0,
       "status": "done",
-      "position": 16,
+      "position": 32,
       "branchName": null,
       "user_stories": [
         {
@@ -791,7 +902,7 @@
       "description": "Import an existing project by pointing to a local directory. Claude Code analyzes the codebase and generates epics/user stories with confidence scores. User can preview and edit before importing.",
       "priority": 0,
       "status": "done",
-      "position": 17,
+      "position": 33,
       "branchName": null,
       "user_stories": [
         {
@@ -826,7 +937,7 @@
       "description": "Extend releases to support pushing tags, creating draft GitHub releases, and publishing from Arij UI.",
       "priority": 2,
       "status": "done",
-      "position": 18,
+      "position": 34,
       "branchName": null,
       "user_stories": [
         {
@@ -861,7 +972,7 @@
       "description": "Enable one-click push and PR creation from epic context, persist PR metadata, and synchronize status back into Arij UI. This epic extends git sync into full review workflow support.",
       "priority": 2,
       "status": "done",
-      "position": 19,
+      "position": 35,
       "branchName": null,
       "user_stories": [
         {
@@ -904,7 +1015,7 @@
       "description": "Stabilize Codex session lifecycle, event ordering, and derived activity summary so monitoring and lock logic are reliable. This epic is foundational for action blocking and sessions UI improvements.",
       "priority": 3,
       "status": "done",
-      "position": 20,
+      "position": 36,
       "branchName": null,
       "user_stories": [
         {
@@ -947,7 +1058,7 @@
       "description": "Expose branch ahead/behind state and push controls directly in epic detail, gated by project GitHub configuration.",
       "priority": 2,
       "status": "done",
-      "position": 21,
+      "position": 37,
       "branchName": null,
       "user_stories": [
         {
@@ -982,7 +1093,7 @@
       "description": "Build the minimum GitHub integration layer that enables authenticated API usage and reliable remote git sync while preserving local-only behavior. This epic introduces project-level repository binding, token handling, remote operation endpoints, and operation journaling.",
       "priority": 3,
       "status": "done",
-      "position": 22,
+      "position": 38,
       "branchName": null,
       "user_stories": [
         {
@@ -1025,7 +1136,7 @@
       "description": "Rework the separate chat panel and epic creation flow into a single unified side panel component. The panel lives on the right side of the screen, collapsed by default (showing ~5% as a grayed-out edge). Clicking 'Chat' or 'New Epic' expands the panel, splitting the screen into a resizable two-pane layout (board + chat). The panel supports tabbed conversations with agent activity indicators and mandatory agent type selection on each new chat.\n\n## Implementation Plan\n\n### Phase 1 — Unified Panel Shell\n- Create a `UnifiedChatPanel` component that replaces the current separate chat panel and epic creation chat\n- Panel has three visual states: collapsed (5% visible, grayed overlay on the right edge), expanded (resizable split with the board), and hidden (0%)\n- Default state is collapsed — a thin vertical strip visible on the right side\n- Clicking the collapsed strip or toolbar buttons ('Chat', 'New Epic') transitions to expanded state\n- Use a resizable split layout (e.g. `react-resizable-panels` or custom CSS resize) so the user can drag the divider between the board and the chat panel\n- Persist the panel width in local state (or localStorage) so it remembers the user's preferred split\n\n### Phase 2 — Tabbed Conversations\n- The panel supports multiple open conversations as tabs (similar to browser tabs)\n- Each tab represents a chat conversation (brainstorm, epic creation, or general)\n- Tabs show the conversation title (truncated) and a close button\n- A '+' button creates a new tab\n- Active tab is visually highlighted\n- Tab state persisted in the existing `chatMessages` / `chatConversations` DB tables\n\n### Phase 3 — Agent Activity Indicator in Tabs\n- When an agent is actively working on a conversation (streaming response, building, etc.), display a small animated icon (spinner or pulsing dot) on the corresponding tab\n- The indicator is visible even when the panel is collapsed, appearing on the thin right-edge strip as a subtle glow or badge\n- Poll agent session status to determine which conversations have active agents\n\n### Phase 4 — Agent Type Selector on New Chat\n- When creating a new conversation ('+' tab or 'New Epic' / 'Chat' trigger), show a mandatory agent type selector before the first message\n- Agent types: 'Brainstorm' (plan mode), 'Epic Creation' (spec generation mode), or custom types from agent config\n- The selected type determines the prompt builder and Claude Code mode used\n- Selector displayed as a prominent dropdown or button group at the top of the empty chat\n- Once the first message is sent, the agent type is locked for that conversation\n\n### Phase 5 — Board Integration\n- Remove the old chat panel toggle from the project header\n- The kanban board occupies 100% width when the panel is collapsed\n- When expanded, the board flexes to fill the remaining space\n- 'New Epic' button in the board toolbar opens the panel with a new 'Epic Creation' tab pre-selected\n- 'Chat' button opens the panel with a new 'Brainstorm' tab or focuses the last active tab\n- Ensure the kanban board remains fully functional (drag-and-drop, selection, build toolbar) in the reduced width",
       "priority": 2,
       "status": "done",
-      "position": 23,
+      "position": 39,
       "branchName": null,
       "user_stories": [
         {
@@ -1084,7 +1195,7 @@
       "description": "Enable push-and-create PR flow from epic context with generated PR descriptions and synchronized PR status.",
       "priority": 2,
       "status": "done",
-      "position": 24,
+      "position": 40,
       "branchName": "feature/epic-HMaIVdFQ0UQL-pull-request-workflow-from-epics",
       "user_stories": [
         {
@@ -1127,7 +1238,7 @@
       "description": "Fuse New Epic creation and chat into a single right-side workspace that can be partially collapsed, expanded on demand, and resized against the kanban board. Ensure each new chat tab preserves explicit agent type selection.",
       "priority": 1,
       "status": "done",
-      "position": 25,
+      "position": 41,
       "branchName": "feature/epic-uU4p42bLNWzo-unified-chat-and-epic-creation-workspace",
       "user_stories": [
         {
@@ -1178,7 +1289,7 @@
       "description": "Fuse New Epic into the chat system and move to a right-docked, resizable split layout where board and chat coexist. Preserve strong context controls including agent type per tab.",
       "priority": 2,
       "status": "done",
-      "position": 26,
+      "position": 42,
       "branchName": "feature/epic-LiSlsRifJqo--unified-chat-and-epic-creation-split-wor",
       "user_stories": [
         {
@@ -1221,7 +1332,7 @@
       "description": "Prevent launching overlapping agents on the same task and expose clear lock/running feedback across board, detail views, and chat tabs.",
       "priority": 3,
       "status": "done",
-      "position": 27,
+      "position": 43,
       "branchName": null,
       "user_stories": [
         {
@@ -1256,7 +1367,7 @@
       "description": "Provide clear in-product feedback for active agent work and prevent duplicate execution on the same epic or story. This epic combines UI lockouts with strict backend conflict checks.",
       "priority": 3,
       "status": "done",
-      "position": 28,
+      "position": 44,
       "branchName": null,
       "user_stories": [
         {
@@ -1299,7 +1410,7 @@
       "description": "Prevent overlapping agent actions on epics and stories by enforcing busy guards across all action types, and provide clear visual feedback on kanban cards and story views when an agent is actively working.\n\n## Implementation Plan\n\n### Phase 1 — Unified Agent Busy State Detection\n- Create a shared utility/hook `useAgentBusyState(entityId, entityType)` that checks whether any agent session (build, review, chat) is currently running for a given epic or story\n- Query the `agentSessions` table for running sessions linked to the entity\n- Return `{ isBusy, sessionType, sessionId }` so the UI knows what kind of work is happening\n- This replaces the scattered `isRunning` checks with a single source of truth\n\n### Phase 2 — Backend Concurrency Guards\n- Add a generic `checkActiveSession(entityId, entityType)` helper in the API layer\n- Apply it to ALL agent dispatch endpoints: build, review, send-to-dev, team build, chat\n- Return HTTP 409 Conflict with a descriptive message when an agent is already working on the entity\n- Ensure the guard checks both epic-level and story-level sessions (e.g., a story build blocks epic-level actions on the same epic's worktree)\n\n### Phase 3 — Kanban Card Busy Indicators\n- Add a visual indicator (spinner, pulsing dot, or animated border) on kanban epic cards when an agent is actively working\n- Show the type of work in progress (e.g., 'Building...', 'Reviewing...') as a small badge on the card\n- The indicator should be visible without opening the epic detail panel\n- Poll or use existing session polling to keep the indicator in sync\n\n### Phase 4 — Greyed-Out Actions in Epic & Story Views\n- In `EpicActions`, disable ALL agent action buttons (Build, Review, Send to Dev) when any agent session is active for the epic — not just the same action type\n- In `StoryActions` and `UserStoryQuickActions`, disable agent action buttons when a session is running for that story or its parent epic's worktree\n- Show a tooltip on disabled buttons explaining why (e.g., 'Agent is currently building this epic')\n- Replace loading-only disabled state with session-aware disabled state\n\n### Phase 5 — Review Endpoint Concurrency Check\n- The review endpoint currently lacks the same concurrency guard as the build endpoint\n- Add `checkActiveSession` to the review dispatch route\n- Prevent launching multiple overlapping review agents for the same story\n- Allow multiple different review types to run in parallel (security + code review) but prevent duplicate types",
       "priority": 2,
       "status": "done",
-      "position": 29,
+      "position": 45,
       "branchName": null,
       "user_stories": [
         {
@@ -1350,7 +1461,7 @@
       "description": "Introduce project-level GitHub configuration, token validation, remote detection, core remote git routes, and audit logging while preserving local-only workflows.",
       "priority": 3,
       "status": "done",
-      "position": 30,
+      "position": 46,
       "branchName": null,
       "user_stories": [
         {
@@ -1393,7 +1504,7 @@
       "description": "Remove the standalone 'New Epic' modal/flow and instead open epic creation as a new tab in the existing UnifiedChatPanel. When the user clicks 'New Epic', the chat panel opens with a new tab of type `epic_creation`. The chat stream API route checks the conversation type and uses the epic refinement prompt for `epic_creation` conversations. After the brainstorming chat converges, a 'Create Epic & Generate Stories' button triggers epic + user story creation from the conversation context.\n\n## Implementation Plan\n\n### Step 1 — Server-side routing in /api/chat/stream\n- Modify the chat stream endpoint to check the conversation's `type` field\n- When type is `epic_creation`, use the epic refinement prompt builder (existing `buildSpecPrompt` or a new `buildEpicCreationPrompt`) instead of the default brainstorm prompt\n- Ensure the prompt includes project context (spec, documents) and instructs Claude to help the user define an epic with user stories\n\n### Step 2 — New useEpicCreate hook\n- Create a small React hook (`useEpicCreate`) that takes the conversation context and calls the API to create an epic with generated user stories\n- The hook calls `POST /api/projects/[projectId]/epics` with the epic data extracted from the conversation\n- Returns loading/error/success states\n\n### Step 3 — UnifiedChatPanel UI updates\n- Add a 'Create Epic & Generate Stories' button that appears in `epic_creation` conversations once enough context has been discussed\n- Differentiate tab icons: sparkles icon for `epic_creation` tabs vs message icon for regular chat tabs\n- Add an empty-state hint in new `epic_creation` tabs explaining what the user can do\n- Wire `onEpicCreated` callback to refresh the kanban board and optionally close the tab\n\n### Step 4 — MessageInput placeholder\n- Add a `placeholder` prop to the MessageInput component\n- Set context-aware placeholder text: 'Describe your epic idea...' for epic_creation tabs, 'Ask a question...' for brainstorm tabs\n\n### Step 5 — Rewire page.tsx\n- Point the 'New Epic' button in the project page to `panelRef.current?.openNewEpic()` which creates a new `epic_creation` tab\n- Remove the old modal/sheet import and rendering\n\n### Step 6 — Delete dead code\n- Remove `CreateEpicSheet.tsx` component\n- Remove `useEpicCreation.ts` hook\n- Clean up any unused imports",
       "priority": 2,
       "status": "done",
-      "position": 31,
+      "position": 47,
       "branchName": null,
       "user_stories": [
         {
@@ -1452,7 +1563,7 @@
       "description": "Dedicated side panel for configuring agent prompts (global + per-project override), creating custom review agents, and setting the default AI provider per agent type.\n\n## Implementation Plan\n\n### Phase 1 — Schema & Data Layer\n\n**Agent Prompts Table:**\n- Add `agentPrompts` table: id, agentType (text: 'build', 'review_security', 'review_code', 'review_compliance', 'chat', 'spec_generation', 'team_build', 'ticket_build'), systemPrompt (text), scope ('global' | projectId), createdAt, updatedAt\n- Global prompts have scope='global', project overrides store the projectId\n- When resolving a prompt, project-scoped prompt takes precedence over global, which takes precedence over built-in defaults\n\n**Custom Review Agents Table:**\n- Add `customReviewAgents` table: id, name (text), systemPrompt (text), scope ('global' | projectId), position (integer), isEnabled (integer, default 1), createdAt, updatedAt\n- Custom review agents are user-defined and appear alongside the 3 built-in review types\n\n**Agent Provider Defaults Table:**\n- Add `agentProviderDefaults` table: id, agentType (text), provider ('claude-code' | 'codex'), scope ('global' | projectId), createdAt, updatedAt\n- Allows setting CC or Codex as default per agent type, with project override\n\n### Phase 2 — API Routes\n\n**Agent Prompts:**\n- `GET /api/agent-config/prompts` — list all global agent prompts\n- `GET /api/projects/[projectId]/agent-config/prompts` — list project-scoped prompts (merged with global defaults)\n- `PUT /api/agent-config/prompts/[agentType]` — upsert global prompt for an agent type\n- `PUT /api/projects/[projectId]/agent-config/prompts/[agentType]` — upsert project override\n- `DELETE /api/projects/[projectId]/agent-config/prompts/[agentType]` — remove project override (fall back to global)\n\n**Custom Review Agents:**\n- `GET /api/agent-config/review-agents` — list global custom review agents\n- `GET /api/projects/[projectId]/agent-config/review-agents` — list project-scoped + global review agents\n- `POST /api/agent-config/review-agents` — create a custom review agent (global)\n- `POST /api/projects/[projectId]/agent-config/review-agents` — create project-scoped review agent\n- `PATCH /api/agent-config/review-agents/[agentId]` — update name, prompt, enabled status\n- `DELETE /api/agent-config/review-agents/[agentId]` — delete a custom review agent\n\n**Agent Provider Defaults:**\n- `GET /api/agent-config/providers` — list global provider defaults per agent type\n- `PUT /api/agent-config/providers/[agentType]` — set global default provider for agent type\n- `PUT /api/projects/[projectId]/agent-config/providers/[agentType]` — set project override\n\n### Phase 3 — Prompt Builder Integration\n- Refactor all prompt builder functions to load custom prompts from DB before composing\n- Resolution order: project override → global custom → built-in default\n- Update `buildReviewPrompt` to accept custom review agent prompts in addition to built-in types\n- Update `buildBuildPrompt`, `buildChatPrompt`, `buildSpecPrompt`, `buildTeamBuildPrompt`, `buildTicketBuildPrompt` to use configurable prompts\n\n### Phase 4 — Side Panel UI\n- New `AgentConfigPanel` component accessible from the main sidebar\n- Three tabs: **Agent Prompts**, **Review Agents**, **Provider Defaults**\n- Agent Prompts tab: list of agent types with expandable prompt editors, toggle between global/project scope\n- Review Agents tab: list of built-in (read-only name) + custom review agents, each with name/prompt fields, add/delete actions\n- Provider Defaults tab: per-agent-type dropdown to select CC or Codex as default\n- Panel slides in from the left sidebar, can be toggled open/closed\n\n### Phase 5 — Review Dialog Integration\n- Update the Agent Review dialog on the story detail page to include custom review agents alongside the 3 built-in types\n- Custom agents displayed as additional checkboxes with their name\n- Each selected custom agent dispatches a plan-mode agent with the custom prompt\n- Agent output posted as a comment with the custom agent's name as label",
       "priority": 0,
       "status": "done",
-      "position": 32,
+      "position": 48,
       "branchName": null,
       "user_stories": [
         {
@@ -1527,7 +1638,7 @@
       "description": "Make the Sessions tab readable under real-world payload sizes and surface concise live progress text for running sessions.",
       "priority": 2,
       "status": "done",
-      "position": 33,
+      "position": 49,
       "branchName": null,
       "user_stories": [
         {
@@ -1562,7 +1673,7 @@
       "description": "Remove the standalone 'New Epic' modal/flow and instead open epic creation as a new tab in the existing UnifiedChatPanel. When the user clicks 'New Epic', the chat panel opens with a new tab of type `epic_creation`. The chat stream API route checks the conversation type and uses the epic refinement prompt for `epic_creation` conversations. After the brainstorming chat converges, a 'Create Epic & Generate Stories' button triggers epic + user story creation from the conversation context.\n\n## Implementation Plan\n\n### Step 1 — Server-side routing in /api/chat/stream\n- Modify the chat stream endpoint to check the conversation's `type` field\n- When type is `epic_creation`, use the epic refinement prompt builder (existing `buildSpecPrompt` or a new `buildEpicCreationPrompt`) instead of the default brainstorm prompt\n- Ensure the prompt includes project context (spec, documents) and instructs Claude to help the user define an epic with user stories\n\n### Step 2 — New useEpicCreate hook\n- Create a small React hook (`useEpicCreate`) that takes the conversation context and calls the API to create an epic with generated user stories\n- The hook calls `POST /api/projects/[projectId]/epics` with the epic data extracted from the conversation\n- Returns loading/error/success states\n\n### Step 3 — UnifiedChatPanel UI updates\n- Add a 'Create Epic & Generate Stories' button that appears in `epic_creation` conversations once enough context has been discussed\n- Differentiate tab icons: sparkles icon for `epic_creation` tabs vs message icon for regular chat tabs\n- Add an empty-state hint in new `epic_creation` tabs explaining what the user can do\n- Wire `onEpicCreated` callback to refresh the kanban board and optionally close the tab\n\n### Step 4 — MessageInput placeholder\n- Add a `placeholder` prop to the MessageInput component\n- Set context-aware placeholder text: 'Describe your epic idea...' for epic_creation tabs, 'Ask a question...' for brainstorm tabs\n\n### Step 5 — Rewire page.tsx\n- Point the 'New Epic' button in the project page to `panelRef.current?.openNewEpic()` which creates a new `epic_creation` tab\n- Remove the old modal/sheet import and rendering\n\n### Step 6 — Delete dead code\n- Remove `CreateEpicSheet.tsx` component\n- Remove `useEpicCreation.ts` hook\n- Clean up any unused imports",
       "priority": 2,
       "status": "done",
-      "position": 34,
+      "position": 50,
       "branchName": null,
       "user_stories": [
         {
@@ -1621,7 +1732,7 @@
       "description": "Two-part feature: (1) Agent Teams mode that leverages Claude Code's native Task tool to delegate multiple tickets to sub-agents in a single session, and (2) OpenAI Codex integration as an alternative AI provider alongside Claude Code.\n\n## Implementation Plan\n\n### Part A — Agent Teams (Claude Code Only)\n\n**Schema & Data Layer:**\n- Add `orchestrationMode` column to `agentSessions` table (`'solo' | 'team'`, default `'solo'`)\n- Team mode is exclusive to Claude Code (Codex has no equivalent sub-agent delegation)\n\n**Prompt Builder:**\n- New `buildTeamBuildPrompt()` function that describes all selected epics with their worktree paths\n- Instructs Claude Code to act as a team lead and use the `Task` tool to spawn sub-agents per ticket\n- Lets CC decide team composition and size\n\n**Build Route Changes:**\n- When `team=true` in the batch build request, pre-create all git worktrees for selected epics\n- Spawn a single CC session from the main repo root (not inside a worktree)\n- Add `Task` to the `--allowedTools` list for team mode\n- Track as a single `agentSession` with `orchestrationMode: 'team'`\n- On completion, update all associated epics' statuses\n\n**UI — Build Toolbar:**\n- Add 'Team mode' checkbox in the build toolbar, visible when 2+ epics are selected\n- Checkbox disabled when fewer than 2 epics selected or when provider is Codex\n- Tooltip explains team mode behavior\n\n### Part B — Codex Provider Integration\n\n**Provider Abstraction Layer:**\n- New `lib/providers/` directory with provider interface (`AgentProvider`)\n- `lib/providers/claude-code.ts` — wraps existing CC spawn logic\n- `lib/providers/codex.ts` — wraps `@openai/codex-sdk` using `Codex` class, `startThread()`, `runStreamed()` for streaming events\n- `lib/providers/index.ts` — factory function `getProvider(type: 'claude-code' | 'codex')`\n- Codex provider uses `workingDirectory` option on `startThread()` for worktree paths\n\n**Schema Changes:**\n- Add `provider` column to `agentSessions` (`'claude-code' | 'codex'`, default `'claude-code'`)\n- Add `provider` column to `chatConversations` (if table exists) or chat messages\n\n**Process Manager Generalization:**\n- Refactor `lib/claude/process-manager.ts` to accept provider-agnostic session handles\n- Codex sessions tracked via thread ID, CC sessions tracked via PID\n- Unified start/cancel/status interface\n\n**Build & Review Routes:**\n- Build route accepts `provider` parameter, dispatches via provider factory\n- Review route accepts `provider` parameter\n- Send-to-dev route accepts `provider` parameter\n\n**UI — Provider Selector:**\n- Dropdown in build toolbar to choose between Claude Code and Codex\n- Provider selector in Send to Dev dialog\n- Provider selector in Agent Review dialog\n- Provider toggle in chat header (locked/disabled after first message in conversation)\n- Codex option disabled with tooltip if no API key configured\n\n**Settings:**\n- Add Codex API key field to Settings page\n- Stored in `settings` table with key `codex_api_key`\n- Validated on save (non-empty string check)\n\n**Codex SDK Integration Details:**\n- Install `@openai/codex-sdk` dependency\n- Use `new Codex({ env: { CODEX_API_KEY: ... } })` with API key from settings\n- `startThread({ workingDirectory })` for worktree-scoped execution\n- `runStreamed()` for streaming events, map to unified event format\n- Thread IDs stored in session metadata for resumption support",
       "priority": 0,
       "status": "done",
-      "position": 35,
+      "position": 51,
       "branchName": null,
       "user_stories": [
         {
@@ -1712,7 +1823,7 @@
       "description": "Add a comment system to user stories (tickets), a dedicated story detail page replacing the sheet, and review workflows powered by Claude Code agents.\n\n## Implementation Plan\n\n### Phase 1 — Schema & Data Layer\n- Add `ticketComments` table (id, userStoryId, author: 'user'|'agent', content, agentSessionId?, createdAt)\n- Add `userStoryId` column to `agentSessions` to link agent work back to a specific ticket\n- Add `\"review\"` as a valid status for user stories (todo → in_progress → review → done)\n\n### Phase 2 — API Routes\n- `GET/PATCH /api/projects/[projectId]/stories/[storyId]` — fetch & update story detail\n- `GET/POST /api/projects/[projectId]/stories/[storyId]/comments` — list & add comments\n- `POST /api/projects/[projectId]/stories/[storyId]/build` — dispatch a code-mode agent for the ticket (send-to-dev)\n- `POST /api/projects/[projectId]/stories/[storyId]/review` — dispatch review agents (security, code-review, compliance/accessibility)\n\n### Phase 3 — Hooks\n- `useStoryDetail` — fetch story with epic context\n- `useComments` — fetch comments with 5s polling\n- `useTicketAgent` — dispatch agent + poll session status, auto-post final output as agent comment\n\n### Phase 4 — Story Detail Page\n- New route: `/projects/[projectId]/stories/[storyId]`\n- Two-column layout: left = story details (title, description, acceptance criteria, status, priority), right = comment thread\n- Navigate to this page by clicking story titles in the epic detail view\n\n### Phase 5 — Send to Dev\n- Available on tickets in `todo` or `in_progress` status\n- \"Send to Dev\" button opens a dialog with an optional comment field\n- On confirm: post comment (if provided), dispatch code-mode agent with ticket context + full comment history, move ticket to `in_progress`\n- Agent reuses the epic's existing git worktree/branch with concurrency guard\n\n### Phase 6 — Agent Review (Review status)\n- Available on tickets in `review` status\n- \"Send to Dev\" button (requires mandatory comment explaining what to fix) → dispatches code agent, moves ticket back to `in_progress`\n- \"Agent Review\" button opens dialog with 3 checkboxes: Security, Code Review, Compliance/Accessibility\n- Each selected review type dispatches a separate agent in plan mode with a specialized review checklist\n- Agent outputs are posted as comments on the ticket\n\n### Phase 7 — Approve & Merge\n- \"Approve\" action on review-status tickets marks the ticket as `done`\n- Triggers merge of the epic's worktree branch into the target branch\n\n### Prompt Builder\n- `buildTicketBuildPrompt` — code mode, includes project spec, epic context, ticket details, and full comment history\n- `buildReviewPrompt` — plan mode, 3 specialized checklists (security audit, code review best practices, compliance/accessibility standards)",
       "priority": 0,
       "status": "done",
-      "position": 36,
+      "position": 52,
       "branchName": null,
       "user_stories": [
         {
@@ -1787,7 +1898,7 @@
       "description": "Create releases by selecting completed epics, generate changelogs via Claude Code, create git tags, and maintain release history.",
       "priority": 0,
       "status": "done",
-      "position": 37,
+      "position": 53,
       "branchName": null,
       "user_stories": [
         {
@@ -1822,7 +1933,7 @@
       "description": "Add image support to chat panels — users can upload images via a file picker or paste them from the clipboard. Images are saved locally, displayed as thumbnails before sending, and rendered inline in chat messages.\n\n## Implementation Plan\n\n### Phase 1 — Storage & Schema\n- Create `data/uploads/` directory for storing chat image files (gitignored)\n- Add `chatAttachments` table to Drizzle schema (id, chatMessageId FK, fileName, filePath, mimeType, sizeBytes, createdAt)\n- Add cascade delete from chatMessages to chatAttachments\n- Generate and push migration\n\n### Phase 2 — Upload API\n- Create `POST /api/projects/[projectId]/chat/upload` route\n- Accept multipart form data with image files (png, jpg, jpeg, gif, webp)\n- Validate file type and size (max 10MB per file)\n- Save files to `data/uploads/{projectId}/{nanoid}-{originalName}`\n- Return attachment metadata (id, fileName, filePath, mimeType)\n- Create `GET /api/projects/[projectId]/chat/uploads/[attachmentId]` to serve images\n\n### Phase 3 — Enhanced MessageInput Component\n- Add paste event handler on the textarea to intercept `clipboardData.items` with `type.startsWith('image/')`\n- Convert pasted image blobs to File objects and upload immediately\n- Add image upload button (paperclip/image icon) next to the send button\n- Hidden file input accepting image MIME types, triggered by the button\n- Display pending image thumbnails in a preview strip above the textarea\n- Allow removing individual thumbnails before sending\n- On send, include attachment IDs alongside the message content\n\n### Phase 4 — Message Rendering\n- Update MessageList / MarkdownContent to detect and render images associated with messages\n- Fetch attachments for each message and display them as inline images below the text\n- Support lightbox/modal view on image click for full-size viewing\n- Lazy-load images with placeholder skeleton\n\n### Phase 5 — Chat API Integration\n- Update `POST /api/projects/[projectId]/chat/messages` to accept an optional `attachmentIds` array\n- Link uploaded attachments to the created message\n- Update `GET /api/projects/[projectId]/chat/messages` to include attachment metadata in response\n- Ensure attachments are cleaned up when messages are deleted (cascade)",
       "priority": 0,
       "status": "done",
-      "position": 38,
+      "position": 54,
       "branchName": null,
       "user_stories": [
         {
@@ -1881,7 +1992,7 @@
       "description": "Render Markdown content as styled HTML in the document viewer and spec preview components.",
       "priority": 0,
       "status": "done",
-      "position": 39,
+      "position": 55,
       "branchName": null,
       "user_stories": [
         {
@@ -1908,7 +2019,7 @@
       "description": "Automatic test detection/execution and dev server preview within Arij, as planned for V2.",
       "priority": 0,
       "status": "done",
-      "position": 40,
+      "position": 56,
       "branchName": null,
       "user_stories": [
         {
@@ -1935,7 +2046,7 @@
       "description": "Application-wide settings including a global prompt injected into all Claude Code sessions.",
       "priority": 0,
       "status": "done",
-      "position": 41,
+      "position": 57,
       "branchName": null,
       "user_stories": [
         {
@@ -1954,7 +2065,7 @@
       "description": "Chat panel integrated into project views, using Claude Code in plan mode for brainstorming, ideation, and project refinement.",
       "priority": 0,
       "status": "done",
-      "position": 42,
+      "position": 58,
       "branchName": null,
       "user_stories": [
         {
@@ -1989,7 +2100,7 @@
       "description": "Upload project documents (PDF, DOCX, Markdown, plain text), convert them to Markdown, and store them as project context for Claude Code sessions.",
       "priority": 0,
       "status": "done",
-      "position": 43,
+      "position": 59,
       "branchName": null,
       "user_stories": [
         {
@@ -2024,7 +2135,7 @@
       "description": "Track and monitor Claude Code agent sessions with real-time status updates, detailed logs, and session lifecycle management.",
       "priority": 0,
       "status": "done",
-      "position": 44,
+      "position": 60,
       "branchName": null,
       "user_stories": [
         {
@@ -2059,7 +2170,7 @@
       "description": "Publish Arij as an npm package with a CLI entry point so users can run it with `npx arij`.",
       "priority": 0,
       "status": "done",
-      "position": 45,
+      "position": 61,
       "branchName": null,
       "user_stories": [
         {
@@ -2078,7 +2189,7 @@
       "description": "Unit tests with Vitest and E2E tests with Playwright as specified in the tech stack.",
       "priority": 0,
       "status": "done",
-      "position": 46,
+      "position": 62,
       "branchName": null,
       "user_stories": [
         {
@@ -2105,7 +2216,7 @@
       "description": "Multi-project dashboard with project creation, listing, filtering, and detail views. Core project management lifecycle including archiving.",
       "priority": 0,
       "status": "done",
-      "position": 47,
+      "position": 63,
       "branchName": null,
       "user_stories": [
         {
@@ -2140,7 +2251,7 @@
       "description": "SQLite database with Drizzle ORM schema, migrations, and connection management.",
       "priority": 0,
       "status": "done",
-      "position": 48,
+      "position": 64,
       "branchName": null,
       "user_stories": [
         {
@@ -2159,7 +2270,7 @@
       "description": "Generate project specifications with epics and user stories using Claude Code in plan mode. Edit specs in a Markdown editor with preview.",
       "priority": 0,
       "status": "done",
-      "position": 49,
+      "position": 65,
       "branchName": null,
       "user_stories": [
         {
@@ -2186,7 +2297,7 @@
       "description": "Launch Claude Code in code mode to implement epics. Create git worktrees and branches per epic, compose structured prompts, manage build sessions.",
       "priority": 0,
       "status": "done",
-      "position": 50,
+      "position": 66,
       "branchName": null,
       "user_stories": [
         {
@@ -2221,7 +2332,7 @@
       "description": "Drag-and-drop kanban board for managing epics across workflow columns (Backlog, To Do, In Progress, Review, Done) with epic detail editing.",
       "priority": 0,
       "status": "done",
-      "position": 51,
+      "position": 67,
       "branchName": null,
       "user_stories": [
         {
@@ -2264,7 +2375,7 @@
       "description": "Improve project onboarding by updating documentation and refactor prompt construction to reduce duplication.",
       "priority": 0,
       "status": "done",
-      "position": 55,
+      "position": 68,
       "branchName": null,
       "user_stories": [
         {
@@ -2291,7 +2402,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 55,
+      "position": 69,
       "branchName": null,
       "user_stories": []
     },
@@ -2301,7 +2412,7 @@
       "description": null,
       "priority": 2,
       "status": "done",
-      "position": 56,
+      "position": 70,
       "branchName": null,
       "user_stories": []
     },
@@ -2311,7 +2422,7 @@
       "description": "Improve the application's security posture by validating external inputs and hardening the local API perimeter. This includes preventing path injection and ensuring API payloads match expected schemas.",
       "priority": 3,
       "status": "done",
-      "position": 57,
+      "position": 71,
       "branchName": null,
       "user_stories": [
         {
@@ -2346,7 +2457,7 @@
       "description": "Address SQL-level N+1 query patterns and inefficient persistence logic to improve API response times and database reliability.",
       "priority": 2,
       "status": "done",
-      "position": 58,
+      "position": 72,
       "branchName": null,
       "user_stories": [
         {
@@ -2373,7 +2484,7 @@
       "description": "Unify the internal data model and remove legacy code paths to simplify the codebase and improve maintainability.",
       "priority": 1,
       "status": "done",
-      "position": 59,
+      "position": 73,
       "branchName": null,
       "user_stories": [
         {
@@ -2400,7 +2511,7 @@
       "description": "Improve internal code reuse, documentation, and test isolation to support faster and more reliable development.",
       "priority": 0,
       "status": "done",
-      "position": 60,
+      "position": 74,
       "branchName": null,
       "user_stories": [
         {
@@ -2428,6 +2539,166 @@
           "position": 2
         }
       ]
+    },
+    {
+      "id": "SBumK12H9QtS",
+      "title": "Multi-Provider CLI Integration with Base Class Refactor",
+      "description": "Add 6 new CLI providers (Mistral Vibe, Qwen Code, OpenCode, DeepSeek, Kimi/Moonshot, Zai) and refactor the provider layer with a BaseCliProvider abstract class to reduce duplication. Updates the provider registry, named agents UI, and availability checks to support all 9 providers.\n\nNew providers:\n- Mistral Vibe (`vibe`): --prompt, --agent, --output json, --resume, --max-turns, --max-price\n- Qwen Code (`qwen`): -p, --yolo, --model, /resume\n- OpenCode (`opencode`): run \"...\", --format json, --session, --file\n- DeepSeek (`deepseek`): -q, --model, --no-stream, SQLite history\n- Kimi/Moonshot (`kimi`): --print, --continue, stream-json\n- Zai/Zhipu AI (`zai`): API-based via subprocess wrapper, GLM models\n\nArchitecture: BaseCliProvider abstract class handles 70% of shared spawn/kill/log/parse logic. Each provider is ~80-120 lines. Existing Claude Code, Codex, Gemini refactored onto base class first.",
+      "priority": 0,
+      "status": "in_progress",
+      "position": 0,
+      "branchName": "feature/epic-SBumK12H9QtS-multi-provider-cli-integration-with-base",
+      "user_stories": [
+        {
+          "id": "uxPj73UXIj4V",
+          "title": "As a developer, I want a BaseCliProvider abstract class so that adding new CLI providers requires minimal boilerplate",
+          "description": "Create lib/providers/base-provider.ts with an abstract class that encapsulates the shared provider lifecycle: child_process.spawn with stdio piping, stdout/stderr buffer collection, SIGTERM then SIGKILL kill logic, session ID extraction via extractCliSessionIdFromOutput, NDJSON session logging, endedWithQuestion detection, duration tracking, display command building, and exit code to success/error mapping.\n\nAbstract methods for subclasses:\n- get binaryName(): string\n- buildArgs(options: ProviderSpawnOptions): string[]\n- extractResult(stdout: string, stderr: string): string\n- Optional overrides: parseSessionId(), isAvailable(), buildEnv()\n\nAlso support chunk callbacks (onRawChunk, onOutputChunk, onResponseChunk) in the base for providers that stream.",
+          "acceptance_criteria": "- [ ] BaseCliProvider class exists in lib/providers/base-provider.ts\n- [ ] Handles spawn, collect, kill, log, extract session ID, detect questions\n- [ ] Supports optional chunk callbacks for streaming providers\n- [ ] Abstract methods: binaryName, buildArgs, extractResult\n- [ ] Default isAvailable() checks `which <binaryName>",
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "aCR9Kr8Jczay",
+          "title": "As a developer, I want existing providers refactored onto BaseCliProvider so that the abstraction is proven before adding new providers",
+          "description": "Refactor ClaudeCodeProvider, CodexProvider, and GeminiCliProvider to extend BaseCliProvider. Each should only implement buildArgs(), extractResult(), and any provider-specific overrides (e.g., Codex overrides isAvailable() for login check, Codex uses temp file output capture). The spawn logic in lib/claude/spawn.ts, lib/codex/spawn.ts, and lib/gemini/spawn.ts should be consolidated where possible.\n\nAll existing tests and behavior must remain identical after refactoring.",
+          "acceptance_criteria": "- [ ] ClaudeCodeProvider extends BaseCliProvider\n- [ ] CodexProvider extends BaseCliProvider\n- [ ] GeminiCliProvider extends BaseCliProvider\n- [ ] All existing provider behavior unchanged\n- [ ] Spawn files simplified to delegate to base class\n- [ ] No regression in session resume, chunk streaming, or kill logic",
+          "status": "in_progress",
+          "position": 1
+        },
+        {
+          "id": "ffmD8NNLZs7G",
+          "title": "As a developer, I want the ProviderType union and provider registry updated to support 9 providers",
+          "description": "Update lib/agent-config/constants.ts to add new provider types: 'mistral-vibe' | 'qwen-code' | 'opencode' | 'deepseek' | 'kimi' | 'zai'. Update lib/providers/index.ts provider registry to include all 9 providers. Update the providers/available API route to check CLI availability for all new providers.",
+          "acceptance_criteria": "- [ ] ProviderType union includes all 9 values\n- [ ] Provider factory returns correct instance for each type\n- [ ] /api/providers/available reports status for all 9 CLIs\n- [ ] Named agent creation UI shows all 9 providers in dropdown\n- [ ] Fallback to claude-code if unknown provider requested",
+          "status": "in_progress",
+          "position": 2
+        },
+        {
+          "id": "SU1GBhdGjcb7",
+          "title": "As a user, I want to use Mistral Vibe as an agent provider so that I can leverage Devstral models for build and review tasks",
+          "description": "Implement MistralVibeProvider extending BaseCliProvider.\n\nCLI: `vibe --prompt <PROMPT> --agent <auto-approve|accept-edits|plan> --output json [--model <model>] [--resume <ID>] [--max-turns 50]`\n\nMode mapping: plan -> --agent plan, code -> --agent auto-approve, analyze -> --agent accept-edits.\nResume: supported via --resume <ID>.\nOutput: JSON with full conversation and metadata.\nSession ID: extract from JSON output.\nAvailability: `which vibe`.",
+          "acceptance_criteria": "- [ ] MistralVibeProvider in lib/providers/mistral-vibe.ts\n- [ ] Spawn logic in lib/mistral-vibe/spawn.ts\n- [ ] Mode mapping: plan/code/analyze to --agent profiles\n- [ ] Resume support via --resume flag\n- [ ] JSON output parsing extracts result text\n- [ ] Session ID extraction from output\n- [ ] --max-turns default to prevent infinite loops\n- [ ] Provider availability check works",
+          "status": "in_progress",
+          "position": 3
+        },
+        {
+          "id": "ZV1qW3FCxkNc",
+          "title": "As a user, I want to use Qwen Code as an agent provider so that I can leverage Qwen3-Coder models with massive context windows",
+          "description": "Implement QwenCodeProvider extending BaseCliProvider.\n\nCLI: `qwen -p <PROMPT> [--yolo] [--model <model>]`\n\nMode mapping: plan -> no --yolo flag (read-only default), code -> --yolo, analyze -> no --yolo.\nResume: limited (no --resume flag; uses /resume internal command, not suitable for headless).\nOutput: plain text from stdout.\nVision: auto-switch to vision model when images detected (handled by CLI).\nAvailability: `which qwen`.",
+          "acceptance_criteria": "- [ ] QwenCodeProvider in lib/providers/qwen-code.ts\n- [ ] Spawn logic in lib/qwen-code/spawn.ts\n- [ ] Mode mapping: code uses --yolo for auto-approve\n- [ ] Model override via --model flag\n- [ ] Result extraction from stdout\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check works",
+          "status": "in_progress",
+          "position": 4
+        },
+        {
+          "id": "XXxSpJ2SUVJj",
+          "title": "As a user, I want to use OpenCode as an agent provider so that I can use its multi-provider backend (Ollama, Copilot, etc.)",
+          "description": "Implement OpenCodeProvider extending BaseCliProvider.\n\nCLI: `opencode run <PROMPT> [--format json] [--session <ID>] [--file <path>]`\n\nMode mapping: all modes use `run` subcommand (OpenCode handles permissions internally).\nResume: supported via --session <ID>.\nOutput: JSON events format.\nSpecial: supports --file for attaching context files.\nAvailability: `which opencode`.",
+          "acceptance_criteria": "- [ ] OpenCodeProvider in lib/providers/opencode.ts\n- [ ] Spawn logic in lib/opencode/spawn.ts\n- [ ] Uses `run` subcommand with prompt\n- [ ] JSON output format parsing\n- [ ] Session resume via --session flag\n- [ ] Session ID extraction from output\n- [ ] Provider availability check works",
+          "status": "in_progress",
+          "position": 5
+        },
+        {
+          "id": "Favf3D7IsMnu",
+          "title": "As a user, I want to use DeepSeek CLI as an agent provider so that I can leverage cost-efficient DeepSeek models with context caching",
+          "description": "Implement DeepSeekProvider extending BaseCliProvider.\n\nCLI: `deepseek -q <PROMPT> [--model <deepseek-chat|deepseek-coder|deepseek-reasoner>] [--no-stream]`\n\nMode mapping: all modes use -q (query mode). No permission system.\nResume: not supported (SQLite history is local to CLI, not exposable via flags).\nOutput: raw text (with --no-stream for complete capture).\nSpecial: --no-stream is mandatory for headless to avoid partial chunk handling.\nAvailability: `which deepseek`.",
+          "acceptance_criteria": "- [ ] DeepSeekProvider in lib/providers/deepseek.ts\n- [ ] Spawn logic in lib/deepseek/spawn.ts\n- [ ] Always uses --no-stream for reliable output capture\n- [ ] Model selection via --model flag\n- [ ] Result extraction from stdout\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check works",
+          "status": "in_progress",
+          "position": 6
+        },
+        {
+          "id": "1-Q4yEnPJW10",
+          "title": "As a user, I want to use Kimi CLI (Moonshot) as an agent provider so that I can leverage KimiSoul's sub-agent architecture",
+          "description": "Implement KimiProvider extending BaseCliProvider.\n\nCLI: `kimi --print -c <PROMPT>` (headless mode with context)\n\nMode mapping: all modes use --print. Kimi handles tool permissions via KimiSoul internally.\nResume: supported via --continue (resumes most recent context in current directory).\nOutput: stream-json format.\nSpecial: /init creates AGENTS.md (similar to CLAUDE.md). Can invoke web-search, excel, code_runner tools.\nAvailability: `which kimi`.",
+          "acceptance_criteria": "- [ ] KimiProvider in lib/providers/kimi.ts\n- [ ] Spawn logic in lib/kimi/spawn.ts\n- [ ] Uses --print for headless execution\n- [ ] Resume via --continue flag (directory-scoped)\n- [ ] Stream-JSON output parsing\n- [ ] Session ID extraction from stream events\n- [ ] Provider availability check works",
+          "status": "in_progress",
+          "position": 7
+        },
+        {
+          "id": "27MNluF-oAuA",
+          "title": "As a user, I want to use Zai (Zhipu AI) as an agent provider so that I can leverage GLM-4 models with hybrid reasoning",
+          "description": "Implement ZaiProvider extending BaseCliProvider.\n\nZai is API-based (no native CLI binary). Implementation wraps LiteLLM or a thin subprocess call to a bundled Python script that calls the Zai API.\n\nCLI wrapper: `python -m arji_zai_bridge --prompt <PROMPT> --model <zai/glm-4.7> --api-key <from env>`\n\nAlternatively, if a `zai` CLI exists at runtime, use it directly. The provider should check for both.\nMode mapping: all modes pass prompt to API. No permission system.\nResume: not supported (stateless API calls).\nOutput: JSON response from API.\nAvailability: check for ZHIPU_API_KEY env var OR `which zai`.",
+          "acceptance_criteria": "- [ ] ZaiProvider in lib/providers/zai.ts\n- [ ] API bridge script or direct CLI support\n- [ ] Model selection for GLM variants\n- [ ] API key validation from environment\n- [ ] Result extraction from API response JSON\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check (env var OR CLI binary)",
+          "status": "in_progress",
+          "position": 8
+        },
+        {
+          "id": "-schSTTxdG3s",
+          "title": "As a user, I want the resume validation to correctly handle all 9 providers so that only resumable providers offer session continuity",
+          "description": "Update lib/agent-sessions/validate-resume.ts and the resumable sessions API route to handle the resume capabilities of each provider:\n\n- Resumable: claude-code (--resume), gemini-cli (--resume), mistral-vibe (--resume), opencode (--session), kimi (--continue)\n- Non-resumable: codex, qwen-code, deepseek, zai\n\nThe /sessions/resumable endpoint should return empty arrays for non-resumable providers.",
+          "acceptance_criteria": "- [ ] Resume validation knows which providers support resume\n- [ ] Resumable sessions API returns [] for non-resumable providers\n- [ ] Resume flag is correctly mapped per provider (--resume vs --session vs --continue)\n- [ ] Non-resumable providers never attempt resume",
+          "status": "in_progress",
+          "position": 9
+        },
+        {
+          "id": "SFJkeMQz0uPY",
+          "title": "As a user, I want the provider settings UI to display all 9 providers with their availability status so that I can configure agents across all supported CLIs",
+          "description": "Update the agent configuration UI components (provider dropdowns, named agent forms, global/project settings) to include all 9 providers. Show availability status (installed/not installed, authenticated/not authenticated) next to each provider. Group providers logically: Tier 1 (Claude Code, Gemini, Codex), Tier 2 (Mistral Vibe, Qwen Code, OpenCode), Tier 3 (DeepSeek, Kimi, Zai).",
+          "acceptance_criteria": "- [ ] All 9 providers appear in provider dropdown menus\n- [ ] Availability status shown per provider (green/red indicator)\n- [ ] Named agent creation supports all 9 providers\n- [ ] Global and project-level agent defaults support all 9 providers\n- [ ] Unavailable providers are selectable but show a warning",
+          "status": "in_progress",
+          "position": 10
+        }
+      ]
+    },
+    {
+      "id": "uPs3EmgcWdTS",
+      "title": "Interactive Code Review & Context-Aware Rework Loop",
+      "description": "Implement a dedicated code review interface that allows users to inspect agent-generated changes via a line-by-line diff viewer. This epic enables granular feedback by allowing reviewers to comment on specific lines of code, which are then synchronized with the ticket activity. It also facilitates a 'rework loop' where tickets can be sent back to the agent with the review comments automatically formatted as context for the next development iteration.",
+      "priority": 0,
+      "status": "in_progress",
+      "position": 0,
+      "branchName": "feature/epic-uPs3EmgcWdTS-interactive-code-review-context-aware-re",
+      "user_stories": [
+        {
+          "id": "8YACnRETbfkJ",
+          "title": "Agent Worktree Diff Generation",
+          "description": "As a user, I want to view the changes made by an agent in its dedicated worktree compared to the main project branch.",
+          "acceptance_criteria": null,
+          "status": "in_progress",
+          "position": 0
+        },
+        {
+          "id": "SfXx7gWZ1qAn",
+          "title": "Line-by-Line Commenting Interface",
+          "description": "As a reviewer, I want to leave specific feedback on individual lines of code within the diff viewer.",
+          "acceptance_criteria": null,
+          "status": "in_progress",
+          "position": 1
+        },
+        {
+          "id": "Z-E8dGxWuLg8",
+          "title": "Review Action: 'Back to Dev' (Rework Loop)",
+          "description": "As a reviewer, I want to send a ticket back to the development agent with my feedback automatically included.",
+          "acceptance_criteria": null,
+          "status": "in_progress",
+          "position": 2
+        },
+        {
+          "id": "zCmtjbFjsAGw",
+          "title": "Automated Ticket Activity Integration",
+          "description": "As a user, I want review comments to appear in the ticket's general comment thread so the history is centralized.",
+          "acceptance_criteria": null,
+          "status": "in_progress",
+          "position": 3
+        },
+        {
+          "id": "mtU5Z-Rte_9h",
+          "title": "Review Completion & Approval",
+          "description": "As a reviewer, I want to approve the changes or close the review without further rework.",
+          "acceptance_criteria": null,
+          "status": "in_progress",
+          "position": 4
+        }
+      ]
+    },
+    {
+      "id": "XN8VCkVAyazy",
+      "title": "the button \"Create epic & generate stories\" should not be blocked for all chat is used in one",
+      "description": null,
+      "priority": 2,
+      "status": "review",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
     }
   ]
 }
