@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
     }
     if (!provider || !isAgentProvider(provider)) {
       return NextResponse.json(
-        { error: "provider must be 'claude-code', 'codex', or 'gemini-cli'" },
+        { error: "invalid provider" },
         { status: 400 },
       );
     }

@@ -13,15 +13,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Loader2, Plus, Trash2 } from "lucide-react";
-import { type AgentProvider } from "@/lib/agent-config/constants";
-
-const PROVIDERS: AgentProvider[] = ["claude-code", "codex", "gemini-cli"];
-
-const PROVIDER_LABELS: Record<AgentProvider, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  "gemini-cli": "Gemini CLI",
-};
+import {
+  PROVIDER_OPTIONS,
+  PROVIDER_LABELS,
+  type AgentProvider,
+} from "@/lib/agent-config/constants";
 
 function NamedAgentRow({
   agent,
@@ -74,7 +70,7 @@ function NamedAgentRow({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {PROVIDERS.map((p) => (
+            {PROVIDER_OPTIONS.map((p) => (
               <SelectItem key={p} value={p}>
                 {PROVIDER_LABELS[p]}
               </SelectItem>
@@ -162,7 +158,7 @@ export function NamedAgentsTab() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {PROVIDERS.map((p) => (
+              {PROVIDER_OPTIONS.map((p) => (
                 <SelectItem key={p} value={p}>
                   {PROVIDER_LABELS[p]}
                 </SelectItem>

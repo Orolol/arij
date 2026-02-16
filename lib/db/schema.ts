@@ -95,7 +95,7 @@ export const chatConversations = sqliteTable("chat_conversations", {
   label: text("label").notNull().default("Brainstorm"),
   status: text("status").default("active"), // active | generating | generated | error
   epicId: text("epic_id").references(() => epics.id),
-  provider: text("provider").default("claude-code"), // claude-code | codex | gemini-cli
+  provider: text("provider").default("claude-code"), // see PROVIDER_OPTIONS in lib/agent-config/constants.ts
   claudeSessionId: text("claude_session_id"),
   cliSessionId: text("cli_session_id"),
   namedAgentId: text("named_agent_id"),
@@ -134,7 +134,7 @@ export const agentSessions = sqliteTable("agent_sessions", {
   status: text("status").default("queued"), // queued | running | completed | failed | cancelled
   mode: text("mode").default("code"), // plan | code
   orchestrationMode: text("orchestration_mode").default("solo"), // solo | team
-  provider: text("provider").default("claude-code"), // claude-code | codex | gemini-cli
+  provider: text("provider").default("claude-code"), // see PROVIDER_OPTIONS in lib/agent-config/constants.ts
   prompt: text("prompt"),
   logsPath: text("logs_path"),
   branchName: text("branch_name"),
@@ -282,7 +282,7 @@ export const namedAgents = sqliteTable(
   {
     id: text("id").primaryKey(),
     name: text("name").notNull(),
-    provider: text("provider").notNull(), // 'claude-code' | 'codex' | 'gemini-cli'
+    provider: text("provider").notNull(), // see PROVIDER_OPTIONS in lib/agent-config/constants.ts
     model: text("model").notNull(),
     readableAgentName: text("readable_agent_name"), // Ancient Greek name
     createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
@@ -298,7 +298,7 @@ export const agentProviderDefaults = sqliteTable(
   {
     id: text("id").primaryKey(),
     agentType: text("agent_type").notNull(),
-    provider: text("provider").notNull(), // 'claude-code' | 'codex' | 'gemini-cli'
+    provider: text("provider").notNull(), // see PROVIDER_OPTIONS in lib/agent-config/constants.ts
     namedAgentId: text("named_agent_id").references(() => namedAgents.id, { onDelete: "set null" }),
     scope: text("scope").notNull(), // 'global' | projectId
     createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),

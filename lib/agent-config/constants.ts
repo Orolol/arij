@@ -62,9 +62,47 @@ export const BUILTIN_AGENT_PROMPTS: Record<AgentType, string> = {
   tech_check: "",
 };
 
-export type AgentProvider = "claude-code" | "codex" | "gemini-cli";
+export type AgentProvider =
+  | "claude-code"
+  | "codex"
+  | "gemini-cli"
+  | "mistral-vibe"
+  | "qwen-code"
+  | "opencode"
+  | "deepseek"
+  | "kimi"
+  | "zai";
 
-export const PROVIDER_OPTIONS: AgentProvider[] = ["claude-code", "codex", "gemini-cli"];
+export const PROVIDER_OPTIONS: AgentProvider[] = [
+  "claude-code",
+  "codex",
+  "gemini-cli",
+  "mistral-vibe",
+  "qwen-code",
+  "opencode",
+  "deepseek",
+  "kimi",
+  "zai",
+];
+
+export const PROVIDER_LABELS: Record<AgentProvider, string> = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  "gemini-cli": "Gemini CLI",
+  "mistral-vibe": "Mistral Vibe",
+  "qwen-code": "Qwen Code",
+  opencode: "OpenCode",
+  deepseek: "DeepSeek",
+  kimi: "Kimi",
+  zai: "Zai",
+};
+
+/** Providers grouped by tier for UI display. */
+export const PROVIDER_TIERS: { label: string; providers: AgentProvider[] }[] = [
+  { label: "Tier 1", providers: ["claude-code", "gemini-cli", "codex"] },
+  { label: "Tier 2", providers: ["mistral-vibe", "qwen-code", "opencode"] },
+  { label: "Tier 3", providers: ["deepseek", "kimi", "zai"] },
+];
 
 export function isAgentProvider(value: string): value is AgentProvider {
   return (PROVIDER_OPTIONS as readonly string[]).includes(value);

@@ -19,7 +19,11 @@ vi.mock("@/lib/agent-config/named-agents", () => ({
 
 vi.mock("@/lib/agent-config/constants", () => ({
   isAgentProvider: vi.fn(
-    (v: string) => ["claude-code", "codex", "gemini-cli"].includes(v)
+    (v: string) => [
+      "claude-code", "codex", "gemini-cli",
+      "mistral-vibe", "qwen-code", "opencode",
+      "deepseek", "kimi", "zai",
+    ].includes(v)
   ),
   isAgentType: vi.fn(() => true),
 }));

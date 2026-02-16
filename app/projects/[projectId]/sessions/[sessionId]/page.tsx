@@ -13,6 +13,7 @@ import {
   Clock,
   XCircle,
 } from "lucide-react";
+import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 
 interface SessionDetail {
   id: string;
@@ -169,7 +170,7 @@ export default function SessionDetailPage() {
               </Badge>
             ) : session.provider ? (
               <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                {session.provider === "claude-code" ? "CC" : session.provider === "codex" ? "Codex" : session.provider === "gemini-cli" ? "Gemini" : session.provider}
+                {PROVIDER_LABELS[session.provider as keyof typeof PROVIDER_LABELS] ?? session.provider}
               </Badge>
             ) : null}
             {session.model && (

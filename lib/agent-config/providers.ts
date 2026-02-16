@@ -39,6 +39,12 @@ export const GLOBAL_DEFAULT_AGENT_NAME = "Claude Code";
 function normalizeProvider(value: string | null | undefined): AgentProvider {
   if (value === "codex") return "codex";
   if (value === "gemini-cli") return "gemini-cli";
+  if (value === "mistral-vibe") return "mistral-vibe";
+  if (value === "qwen-code") return "qwen-code";
+  if (value === "opencode") return "opencode";
+  if (value === "deepseek") return "deepseek";
+  if (value === "kimi") return "kimi";
+  if (value === "zai") return "zai";
   return "claude-code";
 }
 

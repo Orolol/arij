@@ -34,7 +34,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     if (body.provider !== undefined) {
       if (!isAgentProvider(body.provider)) {
         return NextResponse.json(
-          { error: "provider must be 'claude-code', 'codex', or 'gemini-cli'" },
+          { error: "invalid provider" },
           { status: 400 },
         );
       }

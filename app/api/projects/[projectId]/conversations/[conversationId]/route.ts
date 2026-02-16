@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { chatConversations, namedAgents } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { resolveAgent } from "@/lib/agent-config/providers";
+import { isAgentProvider } from "@/lib/agent-config/constants";
 
 export async function GET(
   _request: NextRequest,
@@ -126,7 +127,7 @@ export async function PATCH(
     }
   } else if (
     typeof body.provider === "string" &&
-    ["claude-code", "codex", "gemini-cli"].includes(body.provider)
+    isAgentProvider(body.provider)
   ) {
     // Legacy compatibility: provider patching clears named-agent linkage.
     updates.provider = body.provider;

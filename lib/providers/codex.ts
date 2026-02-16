@@ -1,22 +1,42 @@
 /**
  * Codex provider — wraps the `codex` CLI behind the AgentProvider interface.
  *
- * Spawns `codex exec` as a child process (same pattern as Claude Code).
- * No API key required — the CLI uses the user's local login.
+ * Codex uses `codex exec` with a temp-file output capture (-o) and has
+ * a distinct resume subcommand (`codex exec resume <ID>`), so it
+ * overrides spawn() to delegate to spawnCodex() rather than using
+ * BaseCliProvider's generic spawn logic.
  */
 
 import { spawnCodex } from "@/lib/codex/spawn";
 import { CODEX_SUBAGENT_DEVELOPER_INSTRUCTIONS } from "@/lib/codex/constants";
 import { execSync } from "child_process";
+import { BaseCliProvider } from "./base-provider";
 import type {
-  AgentProvider,
   ProviderSpawnOptions,
   ProviderSession,
 } from "./types";
 
-export class CodexProvider implements AgentProvider {
+export class CodexProvider extends BaseCliProvider {
   readonly type = "codex" as const;
 
+  get binaryName(): string {
+    return "codex";
+  }
+
+  buildArgs(_options: ProviderSpawnOptions): string[] {
+    // Not used — Codex overrides spawn() entirely
+    return [];
+  }
+
+  extractResult(stdout: string): string {
+    // Not used — Codex overrides spawn() entirely
+    return stdout.trim();
+  }
+
+  /**
+   * Override spawn to delegate to spawnCodex() which handles
+   * temp-file output capture and the resume subcommand.
+   */
   spawn(options: ProviderSpawnOptions): ProviderSession {
     const { sessionId, prompt, cwd, mode, model, onChunk, logIdentifier, cliSessionId, resumeSession } =
       options;
@@ -59,11 +79,6 @@ export class CodexProvider implements AgentProvider {
       promise: spawned.promise,
       command: spawned.command,
     };
-  }
-
-  cancel(session: ProviderSession): boolean {
-    session.kill();
-    return true;
   }
 
   async isAvailable(): Promise<boolean> {

@@ -1,19 +1,42 @@
 /**
  * Claude Code provider — wraps the existing CLI spawn logic
  * behind the AgentProvider interface.
+ *
+ * Claude Code's spawn logic is kept in lib/claude/spawn.ts because it
+ * has unique features (streaming, --allowedTools, --permission-mode)
+ * that don't fit neatly into the base class spawn. The provider delegates
+ * to spawnClaude() rather than using BaseCliProvider.spawn().
  */
 
 import { spawnClaude } from "@/lib/claude/spawn";
+import { BaseCliProvider } from "./base-provider";
 import type {
-  AgentProvider,
   ProviderSpawnOptions,
   ProviderSession,
   ProviderResult,
 } from "./types";
 
-export class ClaudeCodeProvider implements AgentProvider {
+export class ClaudeCodeProvider extends BaseCliProvider {
   readonly type = "claude-code" as const;
 
+  get binaryName(): string {
+    return "claude";
+  }
+
+  buildArgs(_options: ProviderSpawnOptions): string[] {
+    // Not used — Claude Code overrides spawn() entirely
+    return [];
+  }
+
+  extractResult(stdout: string): string {
+    // Not used — Claude Code overrides spawn() entirely
+    return stdout.trim();
+  }
+
+  /**
+   * Override spawn to delegate to the existing spawnClaude() function,
+   * which handles Claude Code's unique CLI arguments and streaming.
+   */
   spawn(options: ProviderSpawnOptions): ProviderSession {
     const {
       prompt,
@@ -52,21 +75,5 @@ export class ClaudeCodeProvider implements AgentProvider {
       promise,
       command,
     };
-  }
-
-  cancel(session: ProviderSession): boolean {
-    session.kill();
-    return true;
-  }
-
-  async isAvailable(): Promise<boolean> {
-    // Check if the `claude` CLI is on PATH
-    const { execSync } = await import("child_process");
-    try {
-      execSync("which claude", { stdio: "ignore" });
-      return true;
-    } catch {
-      return false;
-    }
   }
 }

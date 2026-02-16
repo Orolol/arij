@@ -39,7 +39,7 @@ export async function PUT(request: NextRequest, { params }: Params) {
     namedAgentId = namedAgent.id;
   } else if (!isAgentProvider(provider)) {
     return NextResponse.json(
-      { error: "provider must be 'claude-code', 'codex', or 'gemini-cli'" },
+      { error: "invalid provider" },
       { status: 400 }
     );
   }

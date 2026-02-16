@@ -14,6 +14,7 @@ import {
   MessageSquare,
   Sparkles,
 } from "lucide-react";
+import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 
 // --- Discriminated union types ---
 
@@ -203,7 +204,7 @@ function AgentSessionCard({
                 </Badge>
               ) : session.provider && session.provider !== "claude-code" ? (
                 <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                  {session.provider === "codex" ? "Codex" : session.provider === "gemini-cli" ? "Gemini" : session.provider}
+                  {PROVIDER_LABELS[session.provider as keyof typeof PROVIDER_LABELS] ?? session.provider}
                 </Badge>
               ) : null}
               {session.model && (
@@ -282,7 +283,7 @@ function ChatSessionCard({
                 </Badge>
               ) : session.provider && session.provider !== "claude-code" ? (
                 <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                  {session.provider === "codex" ? "Codex" : session.provider === "gemini-cli" ? "Gemini" : session.provider}
+                  {PROVIDER_LABELS[session.provider as keyof typeof PROVIDER_LABELS] ?? session.provider}
                 </Badge>
               ) : null}
               {session.messageCount > 0 && (

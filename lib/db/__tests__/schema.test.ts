@@ -26,20 +26,32 @@ describe("Schema: namedAgents table and provider types", () => {
     expect(schema.namedAgents).toBeDefined();
   });
 
-  it("provider type union includes gemini-cli", async () => {
+  it("provider type union includes all providers", async () => {
     const { isAgentProvider } = await import("@/lib/agent-config/constants");
     expect(isAgentProvider("claude-code")).toBe(true);
     expect(isAgentProvider("codex")).toBe(true);
     expect(isAgentProvider("gemini-cli")).toBe(true);
+    expect(isAgentProvider("mistral-vibe")).toBe(true);
+    expect(isAgentProvider("qwen-code")).toBe(true);
+    expect(isAgentProvider("opencode")).toBe(true);
+    expect(isAgentProvider("deepseek")).toBe(true);
+    expect(isAgentProvider("kimi")).toBe(true);
+    expect(isAgentProvider("zai")).toBe(true);
     expect(isAgentProvider("invalid")).toBe(false);
   });
 
-  it("PROVIDER_OPTIONS includes all three providers", async () => {
+  it("PROVIDER_OPTIONS includes all providers", async () => {
     const { PROVIDER_OPTIONS } = await import("@/lib/agent-config/constants");
     expect(PROVIDER_OPTIONS).toContain("claude-code");
     expect(PROVIDER_OPTIONS).toContain("codex");
     expect(PROVIDER_OPTIONS).toContain("gemini-cli");
-    expect(PROVIDER_OPTIONS).toHaveLength(3);
+    expect(PROVIDER_OPTIONS).toContain("mistral-vibe");
+    expect(PROVIDER_OPTIONS).toContain("qwen-code");
+    expect(PROVIDER_OPTIONS).toContain("opencode");
+    expect(PROVIDER_OPTIONS).toContain("deepseek");
+    expect(PROVIDER_OPTIONS).toContain("kimi");
+    expect(PROVIDER_OPTIONS).toContain("zai");
+    expect(PROVIDER_OPTIONS).toHaveLength(9);
   });
 
   it("ProviderType in providers/types.ts includes gemini-cli", async () => {

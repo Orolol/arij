@@ -140,7 +140,7 @@ export async function updateNamedAgent(
   if (typeof updates.provider === "string") {
     const provider = normalizeProvider(updates.provider);
     if (!provider) {
-      return { data: null, error: "provider must be 'claude-code', 'codex', or 'gemini-cli'" };
+      return { data: null, error: "invalid provider" };
     }
     patch.provider = provider;
   }

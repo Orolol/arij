@@ -5,14 +5,19 @@ import {
   AGENT_TYPES,
   AGENT_TYPE_LABELS,
   PROVIDER_OPTIONS,
+  PROVIDER_LABELS,
+  PROVIDER_TIERS,
   type AgentType,
   type AgentProvider,
 } from "@/lib/agent-config/constants";
+import { useProvidersAvailable } from "@/hooks/useCodexAvailable";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -23,12 +28,6 @@ interface ProviderDefaultsTabProps {
   scope: "global" | "project";
   projectId?: string;
 }
-
-const PROVIDER_LABELS: Record<AgentProvider, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  "gemini-cli": "Gemini CLI",
-};
 
 function sourceBadgeVariant(source: string) {
   switch (source) {
@@ -47,6 +46,7 @@ export function ProviderDefaultsTab({
 }: ProviderDefaultsTabProps) {
   const { data, loading, updateProvider } = useAgentProviders(scope, projectId);
   const { data: namedAgents } = useNamedAgents();
+  const { providers: providerAvailability } = useProvidersAvailable();
 
   if (loading) {
     return (
@@ -70,7 +70,7 @@ export function ProviderDefaultsTab({
           return (
             <div
               key={agentType}
-              className="grid grid-cols-1 lg:grid-cols-[1fr_auto_140px_220px] items-center gap-3 px-4 py-3 rounded-lg border border-border"
+              className="grid grid-cols-1 lg:grid-cols-[1fr_auto_160px_220px] items-center gap-3 px-4 py-3 rounded-lg border border-border"
             >
               <span className="flex-1 text-sm font-medium">
                 {AGENT_TYPE_LABELS[agentType as AgentType]}
@@ -87,14 +87,31 @@ export function ProviderDefaultsTab({
                   updateProvider(agentType, value as AgentProvider, null)
                 }
               >
-                <SelectTrigger size="sm" className="w-36">
+                <SelectTrigger size="sm" className="w-40">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {PROVIDER_OPTIONS.map((provider) => (
-                    <SelectItem key={provider} value={provider}>
-                      {PROVIDER_LABELS[provider]}
-                    </SelectItem>
+                  {PROVIDER_TIERS.map((tier) => (
+                    <SelectGroup key={tier.label}>
+                      <SelectLabel className="text-xs text-muted-foreground">
+                        {tier.label}
+                      </SelectLabel>
+                      {tier.providers.map((provider) => {
+                        const isAvailable = providerAvailability[provider];
+                        return (
+                          <SelectItem key={provider} value={provider}>
+                            <span className="flex items-center gap-1.5">
+                              <span
+                                className={`inline-block w-1.5 h-1.5 rounded-full shrink-0 ${
+                                  isAvailable ? "bg-green-500" : "bg-red-500"
+                                }`}
+                              />
+                              {PROVIDER_LABELS[provider]}
+                            </span>
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>

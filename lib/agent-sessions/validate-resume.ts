@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
+import type { ProviderType } from "@/lib/providers/types";
 
 interface ValidateResumeInput {
   resumeSessionId: string | undefined;
@@ -13,7 +14,34 @@ interface ValidateResumeResult {
 }
 
 /**
- * Validates that a resume session belongs to the same scope (epic/story).
+ * Providers that support session resume.
+ *
+ * - claude-code: --resume <ID>
+ * - gemini-cli: --resume <ID>
+ * - mistral-vibe: --resume <ID>
+ * - opencode: --session <ID>
+ * - kimi: --continue (directory-scoped)
+ *
+ * Non-resumable: codex, qwen-code, deepseek, zai
+ */
+const RESUMABLE_PROVIDERS = new Set<ProviderType>([
+  "claude-code",
+  "gemini-cli",
+  "mistral-vibe",
+  "opencode",
+  "kimi",
+]);
+
+/**
+ * Returns true if the given provider supports session resume.
+ */
+export function isResumableProvider(provider: ProviderType | string): boolean {
+  return RESUMABLE_PROVIDERS.has(provider as ProviderType);
+}
+
+/**
+ * Validates that a resume session belongs to the same scope (epic/story)
+ * and that its provider supports resume.
  * Returns the cliSessionId if valid, null otherwise.
  */
 export function validateResumeSession(
@@ -29,12 +57,17 @@ export function validateResumeSession(
       claudeSessionId: agentSessions.claudeSessionId,
       epicId: agentSessions.epicId,
       userStoryId: agentSessions.userStoryId,
+      provider: agentSessions.provider,
     })
     .from(agentSessions)
     .where(eq(agentSessions.id, resumeSessionId))
     .get();
 
   if (!prevSession) return null;
+
+  // Check if the provider supports resume
+  const provider = prevSession.provider ?? "claude-code";
+  if (!isResumableProvider(provider)) return null;
 
   const previousCliSessionId =
     prevSession.cliSessionId ?? prevSession.claudeSessionId ?? null;

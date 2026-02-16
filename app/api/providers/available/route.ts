@@ -1,37 +1,63 @@
 import { NextResponse } from "next/server";
-import { execSync } from "child_process";
+import { getProvider, type ProviderType } from "@/lib/providers";
 
-function isOnPath(cmd: string): boolean {
-  try {
-    execSync(`which ${cmd}`, { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function isCodexLoggedIn(): boolean {
-  try {
-    // codex login status writes to stderr, not stdout
-    const output = execSync("codex login status 2>&1", {
-      encoding: "utf-8",
-      timeout: 5000,
-    });
-    return /logged in/i.test(output);
-  } catch {
-    return false;
-  }
-}
+const ALL_PROVIDERS: ProviderType[] = [
+  "claude-code",
+  "codex",
+  "gemini-cli",
+  "mistral-vibe",
+  "qwen-code",
+  "opencode",
+  "deepseek",
+  "kimi",
+  "zai",
+];
 
 export async function GET() {
-  const codexOnPath = isOnPath("codex");
+  const results: Record<string, boolean> = {};
+
+  // Check all providers in parallel
+  const checks = await Promise.all(
+    ALL_PROVIDERS.map(async (type) => {
+      const provider = getProvider(type);
+      try {
+        const available = await provider.isAvailable();
+        return { type, available };
+      } catch {
+        return { type, available: false };
+      }
+    }),
+  );
+
+  for (const { type, available } of checks) {
+    results[type] = available;
+  }
+
+  // Backwards compat: codexInstalled and geminiInstalled
+  // codexInstalled = binary is on PATH even if not logged in
+  let codexInstalled = false;
+  try {
+    const { execSync } = await import("child_process");
+    execSync("which codex", { stdio: "ignore" });
+    codexInstalled = true;
+  } catch {
+    // not installed
+  }
+
+  let geminiInstalled = false;
+  try {
+    const { execSync } = await import("child_process");
+    execSync("which gemini", { stdio: "ignore" });
+    geminiInstalled = true;
+  } catch {
+    // not installed
+  }
 
   return NextResponse.json({
     data: {
-      "claude-code": isOnPath("claude"),
-      codex: codexOnPath && isCodexLoggedIn(),
-      codexInstalled: codexOnPath,
-      "gemini-cli": isOnPath("gemini"),
+      ...results,
+      codexInstalled,
+      geminiInstalled,
     },
   });
 }

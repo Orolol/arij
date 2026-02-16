@@ -4,6 +4,7 @@ import { chatConversations, chatMessages, namedAgents } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveAgent } from "@/lib/agent-config/providers";
+import { isAgentProvider } from "@/lib/agent-config/constants";
 import { normalizeConversationAgentType } from "@/lib/chat/conversation-agent";
 import {
   normalizeLegacyConversationStatus,
@@ -114,7 +115,7 @@ export async function POST(
     provider = namedAgent.provider;
   }
 
-  if (!["claude-code", "codex", "gemini-cli"].includes(provider)) {
+  if (!isAgentProvider(provider)) {
     const resolved = resolveAgent("chat", projectId);
     provider = resolved.provider;
     if (!namedAgentId) {

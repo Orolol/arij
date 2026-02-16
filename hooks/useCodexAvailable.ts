@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import type { AgentProvider } from "@/lib/agent-config/constants";
 
 /**
  * Checks if the Codex CLI is installed, authenticated, and ready to use.
@@ -20,11 +21,25 @@ export interface ProvidersAvailability {
   codexInstalled: boolean;
   geminiAvailable: boolean;
   geminiInstalled: boolean;
+  /** Per-provider availability map for all 9 providers. */
+  providers: Record<AgentProvider, boolean>;
   loading: boolean;
 }
 
+const DEFAULT_PROVIDERS: Record<AgentProvider, boolean> = {
+  "claude-code": false,
+  codex: false,
+  "gemini-cli": false,
+  "mistral-vibe": false,
+  "qwen-code": false,
+  opencode: false,
+  deepseek: false,
+  kimi: false,
+  zai: false,
+};
+
 /**
- * Checks availability of all external CLI providers (Codex, Gemini CLI).
+ * Checks availability of all CLI providers.
  */
 export function useProvidersAvailable(): ProvidersAvailability {
   const [state, setState] = useState<Omit<ProvidersAvailability, "loading">>({
@@ -32,6 +47,7 @@ export function useProvidersAvailable(): ProvidersAvailability {
     codexInstalled: false,
     geminiAvailable: false,
     geminiInstalled: false,
+    providers: { ...DEFAULT_PROVIDERS },
   });
   const [loading, setLoading] = useState(true);
 
@@ -39,11 +55,23 @@ export function useProvidersAvailable(): ProvidersAvailability {
     fetch("/api/providers/available")
       .then((r) => r.json())
       .then((d) => {
+        const data = d.data ?? {};
         setState({
-          codexAvailable: !!d.data?.codex,
-          codexInstalled: !!d.data?.codexInstalled,
-          geminiAvailable: !!d.data?.["gemini-cli"],
-          geminiInstalled: !!d.data?.geminiInstalled,
+          codexAvailable: !!data.codex,
+          codexInstalled: !!data.codexInstalled,
+          geminiAvailable: !!data["gemini-cli"],
+          geminiInstalled: !!data.geminiInstalled,
+          providers: {
+            "claude-code": !!data["claude-code"],
+            codex: !!data.codex,
+            "gemini-cli": !!data["gemini-cli"],
+            "mistral-vibe": !!data["mistral-vibe"],
+            "qwen-code": !!data["qwen-code"],
+            opencode: !!data.opencode,
+            deepseek: !!data.deepseek,
+            kimi: !!data.kimi,
+            zai: !!data.zai,
+          },
         });
       })
       .catch(() => {
@@ -52,6 +80,7 @@ export function useProvidersAvailable(): ProvidersAvailability {
           codexInstalled: false,
           geminiAvailable: false,
           geminiInstalled: false,
+          providers: { ...DEFAULT_PROVIDERS },
         });
       })
       .finally(() => setLoading(false));

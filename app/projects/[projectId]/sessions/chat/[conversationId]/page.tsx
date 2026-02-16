@@ -16,6 +16,7 @@ import {
   Hash,
   Loader2,
 } from "lucide-react";
+import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 
 interface ConversationMeta {
   id: string;
@@ -158,7 +159,7 @@ export default function ChatDetailPage() {
             </Badge>
           ) : meta.provider && meta.provider !== "claude-code" ? (
             <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-              {meta.provider === "codex" ? "Codex" : meta.provider === "gemini-cli" ? "Gemini" : meta.provider}
+              {PROVIDER_LABELS[meta.provider as keyof typeof PROVIDER_LABELS] ?? meta.provider}
             </Badge>
           ) : null}
         </div>

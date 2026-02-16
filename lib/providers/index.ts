@@ -6,11 +6,23 @@ import type { AgentProvider, ProviderType } from "./types";
 import { ClaudeCodeProvider } from "./claude-code";
 import { CodexProvider } from "./codex";
 import { GeminiCliProvider } from "./gemini-cli";
+import { MistralVibeProvider } from "./mistral-vibe";
+import { QwenCodeProvider } from "./qwen-code";
+import { OpenCodeProvider } from "./opencode";
+import { DeepSeekProvider } from "./deepseek";
+import { KimiProvider } from "./kimi";
+import { ZaiProvider } from "./zai";
 
 const providers: Record<ProviderType, AgentProvider> = {
   "claude-code": new ClaudeCodeProvider(),
   codex: new CodexProvider(),
   "gemini-cli": new GeminiCliProvider(),
+  "mistral-vibe": new MistralVibeProvider(),
+  "qwen-code": new QwenCodeProvider(),
+  opencode: new OpenCodeProvider(),
+  deepseek: new DeepSeekProvider(),
+  kimi: new KimiProvider(),
+  zai: new ZaiProvider(),
 };
 
 /**

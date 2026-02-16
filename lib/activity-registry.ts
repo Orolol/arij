@@ -12,7 +12,7 @@ export interface Activity {
   projectId: string | null;
   type: ActivityType;
   label: string;
-  provider: "claude-code" | "codex" | "gemini-cli";
+  provider: string;
   namedAgentName?: string | null;
   startedAt: string;
   kill?: () => void;
