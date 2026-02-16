@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { epics, projects, qaReports, userStories } from "@/lib/db/schema";
+import { agentSessions, epics, projects, qaReports, userStories } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { extractJsonFromOutput } from "@/lib/claude/json-parser";
 import { getProvider } from "@/lib/providers";
+import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
 import type { AgentType } from "@/lib/agent-config/constants";
+import type { ProviderType } from "@/lib/providers/types";
 
 type Params = { params: Promise<{ projectId: string; reportId: string }> };
 
@@ -188,31 +190,79 @@ ${epicTypeRule}
 `;
 
   const agentType: AgentType = isE2e ? "e2e_test" : "tech_check";
+
+  // Look up the original QA session to reuse its provider, model, and CLI session
+  const originalSession = report.agentSessionId
+    ? db
+        .select({
+          provider: agentSessions.provider,
+          model: agentSessions.model,
+          cliSessionId: agentSessions.cliSessionId,
+          claudeSessionId: agentSessions.claudeSessionId,
+          namedAgentId: agentSessions.namedAgentId,
+        })
+        .from(agentSessions)
+        .where(eq(agentSessions.id, report.agentSessionId))
+        .get()
+    : null;
+
+  // Resolve agent: prefer original session's agent, fall back to report's namedAgentId
   const resolvedAgent = resolveAgentByNamedId(
     agentType,
     projectId,
-    report.namedAgentId ?? null,
+    originalSession?.namedAgentId ?? report.namedAgentId ?? null,
   );
 
+  // Determine if we can resume the original session
+  const provider = (originalSession?.provider ?? resolvedAgent.provider) as ProviderType;
+  const model = originalSession?.model ?? resolvedAgent.model;
+  const previousCliSessionId =
+    originalSession?.cliSessionId ?? originalSession?.claudeSessionId ?? null;
+  const canResume =
+    previousCliSessionId !== null && isResumableProvider(provider);
+
+  async function spawnEpicGeneration(
+    useResume: boolean,
+  ): Promise<{ success: boolean; result?: string; error?: string }> {
+    const cwd = project.gitRepoPath || process.cwd();
+    if (provider !== "claude-code") {
+      const dynamicProvider = getProvider(provider);
+      const session = dynamicProvider.spawn({
+        sessionId: `qa-epics-${createId()}`,
+        prompt,
+        cwd,
+        mode: "plan",
+        model,
+        cliSessionId: useResume ? previousCliSessionId! : undefined,
+        resumeSession: useResume,
+      });
+      return session.promise;
+    } else {
+      const run = spawnClaude({
+        mode: "plan",
+        prompt,
+        cwd,
+        model,
+        cliSessionId: useResume ? previousCliSessionId! : undefined,
+        resumeSession: useResume,
+      });
+      return run.promise;
+    }
+  }
+
+  // Try resume-first, fall back to fresh prompt on failure
   let result: { success: boolean; result?: string; error?: string };
-  if (resolvedAgent.provider === "codex" || resolvedAgent.provider === "gemini-cli") {
-    const dynamicProvider = getProvider(resolvedAgent.provider);
-    const session = dynamicProvider.spawn({
-      sessionId: `qa-epics-${createId()}`,
-      prompt,
-      cwd: project.gitRepoPath || process.cwd(),
-      mode: "plan",
-      model: resolvedAgent.model,
-    });
-    result = await session.promise;
+  if (canResume) {
+    result = await spawnEpicGeneration(true);
+    if (!result.success) {
+      console.warn(
+        "[qa/create-epics] Resume failed, falling back to fresh prompt",
+        { provider, cliSessionId: previousCliSessionId, error: result.error },
+      );
+      result = await spawnEpicGeneration(false);
+    }
   } else {
-    const run = spawnClaude({
-      mode: "plan",
-      prompt,
-      cwd: project.gitRepoPath || process.cwd(),
-      model: resolvedAgent.model,
-    });
-    result = await run.promise;
+    result = await spawnEpicGeneration(false);
   }
 
   if (!result.success || !result.result) {
