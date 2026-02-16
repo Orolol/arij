@@ -38,6 +38,7 @@ function makeEpic(overrides: Partial<KanbanEpic> = {}): KanbanEpic {
     type: "feature",
     linkedEpicId: null,
     images: null,
+    readableId: null,
     usCount: 3,
     usDone: 1,
     ...overrides,
