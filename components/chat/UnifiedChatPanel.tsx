@@ -160,8 +160,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
     const isBrainstorm = isBrainstormConversationAgentType(activeConversation?.type);
     const isEpicCreation = isEpicCreationConversationAgentType(activeConversation?.type);
     const hasUserMessage = messages.some((message) => message.role === "user");
-    const hasAssistantMessage = messages.some((message) => message.role === "assistant");
-    const canCreateEpic = isEpicCreation && hasUserMessage && hasAssistantMessage;
+    const canCreateEpic = isEpicCreation && hasUserMessage;
     const hasActiveAgents = conversations.some(
       (conversation) => isLegacyConversationGenerating(conversation.status),
     );
