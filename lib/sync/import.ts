@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { projects, epics, userStories, ticketComments } from "@/lib/db/schema";
+import { projects, epics, userStories, agentSessions, chatConversations } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { readArjiJson } from "./arji-json";
 import type { ArjiJsonComment } from "./arji-json";
@@ -45,20 +45,31 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
   let commentsUpserted = 0;
 
   const transaction = sqlite.transaction(() => {
-    // Get current epic IDs for this project
-    const currentEpics = db
-      .select({ id: epics.id })
-      .from(epics)
-      .where(eq(epics.projectId, projectId))
-      .all();
-    const currentEpicIds = new Set(currentEpics.map((e) => e.id));
+    // Get current epic/story IDs for deletion pass
+    const currentEpicIds = new Set(
+      db.select({ id: epics.id }).from(epics)
+        .where(eq(epics.projectId, projectId)).all().map((e) => e.id)
+    );
     const jsonEpicIds = new Set(data.epics.map((e) => e.id));
 
     // Upsert epics
     for (const epic of data.epics) {
-      if (currentEpicIds.has(epic.id)) {
-        db.update(epics)
-          .set({
+      db.insert(epics)
+        .values({
+          id: epic.id,
+          projectId,
+          title: epic.title,
+          description: epic.description,
+          priority: epic.priority,
+          status: epic.status,
+          position: epic.position,
+          branchName: epic.branchName,
+          createdAt: now,
+          updatedAt: now,
+        })
+        .onConflictDoUpdate({
+          target: epics.id,
+          set: {
             title: epic.title,
             description: epic.description,
             priority: epic.priority,
@@ -67,26 +78,9 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
             branchName: epic.branchName,
             type: epic.type ?? "feature",
             updatedAt: now,
-          })
-          .where(eq(epics.id, epic.id))
-          .run();
-      } else {
-        db.insert(epics)
-          .values({
-            id: epic.id,
-            projectId,
-            title: epic.title,
-            description: epic.description,
-            priority: epic.priority,
-            status: epic.status,
-            position: epic.position,
-            branchName: epic.branchName,
-            type: epic.type ?? "feature",
-            createdAt: now,
-            updatedAt: now,
-          })
-          .run();
-      }
+          },
+        })
+        .run();
       epicsUpserted++;
 
       // Sync epic comments
@@ -95,40 +89,35 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
       }
 
       // Sync user stories within this epic
-      const currentStories = db
-        .select({ id: userStories.id })
-        .from(userStories)
-        .where(eq(userStories.epicId, epic.id))
-        .all();
-      const currentStoryIds = new Set(currentStories.map((s) => s.id));
+      const currentStoryIds = new Set(
+        db.select({ id: userStories.id }).from(userStories)
+          .where(eq(userStories.epicId, epic.id)).all().map((s) => s.id)
+      );
       const jsonStoryIds = new Set(epic.user_stories.map((s) => s.id));
 
       for (const story of epic.user_stories) {
-        if (currentStoryIds.has(story.id)) {
-          db.update(userStories)
-            .set({
+        db.insert(userStories)
+          .values({
+            id: story.id,
+            epicId: epic.id,
+            title: story.title,
+            description: story.description,
+            acceptanceCriteria: story.acceptance_criteria,
+            status: story.status,
+            position: story.position,
+            createdAt: now,
+          })
+          .onConflictDoUpdate({
+            target: userStories.id,
+            set: {
               title: story.title,
               description: story.description,
               acceptanceCriteria: story.acceptance_criteria,
               status: story.status,
               position: story.position,
-            })
-            .where(eq(userStories.id, story.id))
-            .run();
-        } else {
-          db.insert(userStories)
-            .values({
-              id: story.id,
-              epicId: epic.id,
-              title: story.title,
-              description: story.description,
-              acceptanceCriteria: story.acceptance_criteria,
-              status: story.status,
-              position: story.position,
-              createdAt: now,
-            })
-            .run();
-        }
+            },
+          })
+          .run();
         storiesUpserted++;
 
         // Sync story comments
@@ -149,6 +138,9 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
     // Delete epics not in JSON
     for (const id of currentEpicIds) {
       if (!jsonEpicIds.has(id)) {
+        // Null out FK references that lack ON DELETE CASCADE
+        db.update(agentSessions).set({ epicId: null }).where(eq(agentSessions.epicId, id)).run();
+        db.update(chatConversations).set({ epicId: null }).where(eq(chatConversations.epicId, id)).run();
         db.delete(epics).where(eq(epics.id, id)).run();
         epicsRemoved++;
       }

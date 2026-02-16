@@ -52,6 +52,16 @@
       ]
     },
     {
+      "id": "9a4G7BgwWGyk",
+      "title": "Despite the output being in correct JSON format, the epic isn't created when chating",
+      "description": "We should automatically extract correct JSON format response",
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
       "id": "5Rf0X7ELSO5N",
       "title": "Sometimes the agent seem unable to generate epics",
       "description": "Please change the prompts to force the model to answer in the correct format. Below is a example of chat with agent : \n\n\n\n\nGenerate the final epic with user stories based on our discussion.\n\nplease providfe Epics and US in correct format\n\nThe plan is ready for your review. Here's the summary:\n\nEpic: Multi-Provider CLI Integration with Base Class Refactor\n\n11 User Stories across 4 phases:\n#\tUser Story\tKey Deliverable\n1\tBaseCliProvider abstract class\tlib/providers/base-provider.ts — shared spawn/kill/log/parse lifecycle\n2\tRefactor existing 3 providers onto base\tClaude Code, Codex, Gemini extend base class\n3\tProviderType registry update (9 providers)\tTypes, factory, availability API\n4\tMistral Vibe provider\t--prompt, --agent, --resume, --output json\n5\tQwen Code provider\t-p, --yolo, non-resumable\n6\tOpenCode provider\trun, --format json, --session resume\n7\tDeepSeek provider\t-q, --no-stream, non-resumable\n8\tKimi/Moonshot provider\t--print, --continue resume, stream-json\n9\tZai/Zhipu AI provider\tAPI-based wrapper, GLM models, non-resumable\n10\tResume validation for all 9\tResumable: CC, Gemini, Vibe, OpenCode, Kimi. Non-resumable: Codex, Qwen, DeepSeek, Zai\n11\tSettings UI for all 9 providers\tDropdowns, availability indicators, tiered grouping\n\nThe JSON block in the plan file is ready to be submitted directly to the Arij epic creation API. Should I proceed?\n\nGenerate the final epic with user stories based on our discussion.\n\nThe plan is ready for your approval. It contains the complete epic JSON with 11 user stories covering:\n\n    US 1-2: BaseCliProvider base class + refactor existing 3 providers onto it\n    US 3: ProviderType registry expansion to 9 providers\n    US 4-9: Six new provider implementations (Mistral Vibe, Qwen Code, OpenCode, DeepSeek, Kimi, Zai)\n    US 10: Resume validation for all 9 providers\n    US 11: Settings UI update with availability indicators",
@@ -82,9 +92,159 @@
       "user_stories": []
     },
     {
-      "id": "9a4G7BgwWGyk",
-      "title": "Despite the output being in correct JSON format, the epic isn't created when chating",
-      "description": "We should automatically extract correct JSON format response",
+      "id": "SBumK12H9QtS",
+      "title": "Multi-Provider CLI Integration with Base Class Refactor",
+      "description": "Add 6 new CLI providers (Mistral Vibe, Qwen Code, OpenCode, DeepSeek, Kimi/Moonshot, Zai) and refactor the provider layer with a BaseCliProvider abstract class to reduce duplication. Updates the provider registry, named agents UI, and availability checks to support all 9 providers.\n\nNew providers:\n- Mistral Vibe (`vibe`): --prompt, --agent, --output json, --resume, --max-turns, --max-price\n- Qwen Code (`qwen`): -p, --yolo, --model, /resume\n- OpenCode (`opencode`): run \"...\", --format json, --session, --file\n- DeepSeek (`deepseek`): -q, --model, --no-stream, SQLite history\n- Kimi/Moonshot (`kimi`): --print, --continue, stream-json\n- Zai/Zhipu AI (`zai`): API-based via subprocess wrapper, GLM models\n\nArchitecture: BaseCliProvider abstract class handles 70% of shared spawn/kill/log/parse logic. Each provider is ~80-120 lines. Existing Claude Code, Codex, Gemini refactored onto base class first.",
+      "priority": 0,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "uxPj73UXIj4V",
+          "title": "As a developer, I want a BaseCliProvider abstract class so that adding new CLI providers requires minimal boilerplate",
+          "description": "Create lib/providers/base-provider.ts with an abstract class that encapsulates the shared provider lifecycle: child_process.spawn with stdio piping, stdout/stderr buffer collection, SIGTERM then SIGKILL kill logic, session ID extraction via extractCliSessionIdFromOutput, NDJSON session logging, endedWithQuestion detection, duration tracking, display command building, and exit code to success/error mapping.\n\nAbstract methods for subclasses:\n- get binaryName(): string\n- buildArgs(options: ProviderSpawnOptions): string[]\n- extractResult(stdout: string, stderr: string): string\n- Optional overrides: parseSessionId(), isAvailable(), buildEnv()\n\nAlso support chunk callbacks (onRawChunk, onOutputChunk, onResponseChunk) in the base for providers that stream.",
+          "acceptance_criteria": "- [ ] BaseCliProvider class exists in lib/providers/base-provider.ts\n- [ ] Handles spawn, collect, kill, log, extract session ID, detect questions\n- [ ] Supports optional chunk callbacks for streaming providers\n- [ ] Abstract methods: binaryName, buildArgs, extractResult\n- [ ] Default isAvailable() checks `which <binaryName>",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "aCR9Kr8Jczay",
+          "title": "As a developer, I want existing providers refactored onto BaseCliProvider so that the abstraction is proven before adding new providers",
+          "description": "Refactor ClaudeCodeProvider, CodexProvider, and GeminiCliProvider to extend BaseCliProvider. Each should only implement buildArgs(), extractResult(), and any provider-specific overrides (e.g., Codex overrides isAvailable() for login check, Codex uses temp file output capture). The spawn logic in lib/claude/spawn.ts, lib/codex/spawn.ts, and lib/gemini/spawn.ts should be consolidated where possible.\n\nAll existing tests and behavior must remain identical after refactoring.",
+          "acceptance_criteria": "- [ ] ClaudeCodeProvider extends BaseCliProvider\n- [ ] CodexProvider extends BaseCliProvider\n- [ ] GeminiCliProvider extends BaseCliProvider\n- [ ] All existing provider behavior unchanged\n- [ ] Spawn files simplified to delegate to base class\n- [ ] No regression in session resume, chunk streaming, or kill logic",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "ffmD8NNLZs7G",
+          "title": "As a developer, I want the ProviderType union and provider registry updated to support 9 providers",
+          "description": "Update lib/agent-config/constants.ts to add new provider types: 'mistral-vibe' | 'qwen-code' | 'opencode' | 'deepseek' | 'kimi' | 'zai'. Update lib/providers/index.ts provider registry to include all 9 providers. Update the providers/available API route to check CLI availability for all new providers.",
+          "acceptance_criteria": "- [ ] ProviderType union includes all 9 values\n- [ ] Provider factory returns correct instance for each type\n- [ ] /api/providers/available reports status for all 9 CLIs\n- [ ] Named agent creation UI shows all 9 providers in dropdown\n- [ ] Fallback to claude-code if unknown provider requested",
+          "status": "review",
+          "position": 2
+        },
+        {
+          "id": "SU1GBhdGjcb7",
+          "title": "As a user, I want to use Mistral Vibe as an agent provider so that I can leverage Devstral models for build and review tasks",
+          "description": "Implement MistralVibeProvider extending BaseCliProvider.\n\nCLI: `vibe --prompt <PROMPT> --agent <auto-approve|accept-edits|plan> --output json [--model <model>] [--resume <ID>] [--max-turns 50]`\n\nMode mapping: plan -> --agent plan, code -> --agent auto-approve, analyze -> --agent accept-edits.\nResume: supported via --resume <ID>.\nOutput: JSON with full conversation and metadata.\nSession ID: extract from JSON output.\nAvailability: `which vibe`.",
+          "acceptance_criteria": "- [ ] MistralVibeProvider in lib/providers/mistral-vibe.ts\n- [ ] Spawn logic in lib/mistral-vibe/spawn.ts\n- [ ] Mode mapping: plan/code/analyze to --agent profiles\n- [ ] Resume support via --resume flag\n- [ ] JSON output parsing extracts result text\n- [ ] Session ID extraction from output\n- [ ] --max-turns default to prevent infinite loops\n- [ ] Provider availability check works",
+          "status": "review",
+          "position": 3
+        },
+        {
+          "id": "ZV1qW3FCxkNc",
+          "title": "As a user, I want to use Qwen Code as an agent provider so that I can leverage Qwen3-Coder models with massive context windows",
+          "description": "Implement QwenCodeProvider extending BaseCliProvider.\n\nCLI: `qwen -p <PROMPT> [--yolo] [--model <model>]`\n\nMode mapping: plan -> no --yolo flag (read-only default), code -> --yolo, analyze -> no --yolo.\nResume: limited (no --resume flag; uses /resume internal command, not suitable for headless).\nOutput: plain text from stdout.\nVision: auto-switch to vision model when images detected (handled by CLI).\nAvailability: `which qwen`.",
+          "acceptance_criteria": "- [ ] QwenCodeProvider in lib/providers/qwen-code.ts\n- [ ] Spawn logic in lib/qwen-code/spawn.ts\n- [ ] Mode mapping: code uses --yolo for auto-approve\n- [ ] Model override via --model flag\n- [ ] Result extraction from stdout\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check works",
+          "status": "review",
+          "position": 4
+        },
+        {
+          "id": "XXxSpJ2SUVJj",
+          "title": "As a user, I want to use OpenCode as an agent provider so that I can use its multi-provider backend (Ollama, Copilot, etc.)",
+          "description": "Implement OpenCodeProvider extending BaseCliProvider.\n\nCLI: `opencode run <PROMPT> [--format json] [--session <ID>] [--file <path>]`\n\nMode mapping: all modes use `run` subcommand (OpenCode handles permissions internally).\nResume: supported via --session <ID>.\nOutput: JSON events format.\nSpecial: supports --file for attaching context files.\nAvailability: `which opencode`.",
+          "acceptance_criteria": "- [ ] OpenCodeProvider in lib/providers/opencode.ts\n- [ ] Spawn logic in lib/opencode/spawn.ts\n- [ ] Uses `run` subcommand with prompt\n- [ ] JSON output format parsing\n- [ ] Session resume via --session flag\n- [ ] Session ID extraction from output\n- [ ] Provider availability check works",
+          "status": "review",
+          "position": 5
+        },
+        {
+          "id": "Favf3D7IsMnu",
+          "title": "As a user, I want to use DeepSeek CLI as an agent provider so that I can leverage cost-efficient DeepSeek models with context caching",
+          "description": "Implement DeepSeekProvider extending BaseCliProvider.\n\nCLI: `deepseek -q <PROMPT> [--model <deepseek-chat|deepseek-coder|deepseek-reasoner>] [--no-stream]`\n\nMode mapping: all modes use -q (query mode). No permission system.\nResume: not supported (SQLite history is local to CLI, not exposable via flags).\nOutput: raw text (with --no-stream for complete capture).\nSpecial: --no-stream is mandatory for headless to avoid partial chunk handling.\nAvailability: `which deepseek`.",
+          "acceptance_criteria": "- [ ] DeepSeekProvider in lib/providers/deepseek.ts\n- [ ] Spawn logic in lib/deepseek/spawn.ts\n- [ ] Always uses --no-stream for reliable output capture\n- [ ] Model selection via --model flag\n- [ ] Result extraction from stdout\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check works",
+          "status": "review",
+          "position": 6
+        },
+        {
+          "id": "1-Q4yEnPJW10",
+          "title": "As a user, I want to use Kimi CLI (Moonshot) as an agent provider so that I can leverage KimiSoul's sub-agent architecture",
+          "description": "Implement KimiProvider extending BaseCliProvider.\n\nCLI: `kimi --print -c <PROMPT>` (headless mode with context)\n\nMode mapping: all modes use --print. Kimi handles tool permissions via KimiSoul internally.\nResume: supported via --continue (resumes most recent context in current directory).\nOutput: stream-json format.\nSpecial: /init creates AGENTS.md (similar to CLAUDE.md). Can invoke web-search, excel, code_runner tools.\nAvailability: `which kimi`.",
+          "acceptance_criteria": "- [ ] KimiProvider in lib/providers/kimi.ts\n- [ ] Spawn logic in lib/kimi/spawn.ts\n- [ ] Uses --print for headless execution\n- [ ] Resume via --continue flag (directory-scoped)\n- [ ] Stream-JSON output parsing\n- [ ] Session ID extraction from stream events\n- [ ] Provider availability check works",
+          "status": "review",
+          "position": 7
+        },
+        {
+          "id": "27MNluF-oAuA",
+          "title": "As a user, I want to use Zai (Zhipu AI) as an agent provider so that I can leverage GLM-4 models with hybrid reasoning",
+          "description": "Implement ZaiProvider extending BaseCliProvider.\n\nZai is API-based (no native CLI binary). Implementation wraps LiteLLM or a thin subprocess call to a bundled Python script that calls the Zai API.\n\nCLI wrapper: `python -m arji_zai_bridge --prompt <PROMPT> --model <zai/glm-4.7> --api-key <from env>`\n\nAlternatively, if a `zai` CLI exists at runtime, use it directly. The provider should check for both.\nMode mapping: all modes pass prompt to API. No permission system.\nResume: not supported (stateless API calls).\nOutput: JSON response from API.\nAvailability: check for ZHIPU_API_KEY env var OR `which zai`.",
+          "acceptance_criteria": "- [ ] ZaiProvider in lib/providers/zai.ts\n- [ ] API bridge script or direct CLI support\n- [ ] Model selection for GLM variants\n- [ ] API key validation from environment\n- [ ] Result extraction from API response JSON\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check (env var OR CLI binary)",
+          "status": "review",
+          "position": 8
+        },
+        {
+          "id": "-schSTTxdG3s",
+          "title": "As a user, I want the resume validation to correctly handle all 9 providers so that only resumable providers offer session continuity",
+          "description": "Update lib/agent-sessions/validate-resume.ts and the resumable sessions API route to handle the resume capabilities of each provider:\n\n- Resumable: claude-code (--resume), gemini-cli (--resume), mistral-vibe (--resume), opencode (--session), kimi (--continue)\n- Non-resumable: codex, qwen-code, deepseek, zai\n\nThe /sessions/resumable endpoint should return empty arrays for non-resumable providers.",
+          "acceptance_criteria": "- [ ] Resume validation knows which providers support resume\n- [ ] Resumable sessions API returns [] for non-resumable providers\n- [ ] Resume flag is correctly mapped per provider (--resume vs --session vs --continue)\n- [ ] Non-resumable providers never attempt resume",
+          "status": "review",
+          "position": 9
+        },
+        {
+          "id": "SFJkeMQz0uPY",
+          "title": "As a user, I want the provider settings UI to display all 9 providers with their availability status so that I can configure agents across all supported CLIs",
+          "description": "Update the agent configuration UI components (provider dropdowns, named agent forms, global/project settings) to include all 9 providers. Show availability status (installed/not installed, authenticated/not authenticated) next to each provider. Group providers logically: Tier 1 (Claude Code, Gemini, Codex), Tier 2 (Mistral Vibe, Qwen Code, OpenCode), Tier 3 (DeepSeek, Kimi, Zai).",
+          "acceptance_criteria": "- [ ] All 9 providers appear in provider dropdown menus\n- [ ] Availability status shown per provider (green/red indicator)\n- [ ] Named agent creation supports all 9 providers\n- [ ] Global and project-level agent defaults support all 9 providers\n- [ ] Unavailable providers are selectable but show a warning",
+          "status": "review",
+          "position": 10
+        }
+      ]
+    },
+    {
+      "id": "uPs3EmgcWdTS",
+      "title": "Interactive Code Review & Context-Aware Rework Loop",
+      "description": "Implement a dedicated code review interface that allows users to inspect agent-generated changes via a line-by-line diff viewer. This epic enables granular feedback by allowing reviewers to comment on specific lines of code, which are then synchronized with the ticket activity. It also facilitates a 'rework loop' where tickets can be sent back to the agent with the review comments automatically formatted as context for the next development iteration.",
+      "priority": 0,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "8YACnRETbfkJ",
+          "title": "Agent Worktree Diff Generation",
+          "description": "As a user, I want to view the changes made by an agent in its dedicated worktree compared to the main project branch.",
+          "acceptance_criteria": null,
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "SfXx7gWZ1qAn",
+          "title": "Line-by-Line Commenting Interface",
+          "description": "As a reviewer, I want to leave specific feedback on individual lines of code within the diff viewer.",
+          "acceptance_criteria": null,
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "Z-E8dGxWuLg8",
+          "title": "Review Action: 'Back to Dev' (Rework Loop)",
+          "description": "As a reviewer, I want to send a ticket back to the development agent with my feedback automatically included.",
+          "acceptance_criteria": null,
+          "status": "review",
+          "position": 2
+        },
+        {
+          "id": "zCmtjbFjsAGw",
+          "title": "Automated Ticket Activity Integration",
+          "description": "As a user, I want review comments to appear in the ticket's general comment thread so the history is centralized.",
+          "acceptance_criteria": null,
+          "status": "review",
+          "position": 3
+        },
+        {
+          "id": "mtU5Z-Rte_9h",
+          "title": "Review Completion & Approval",
+          "description": "As a reviewer, I want to approve the changes or close the review without further rework.",
+          "acceptance_criteria": null,
+          "status": "review",
+          "position": 4
+        }
+      ]
+    },
+    {
+      "id": "XN8VCkVAyazy",
+      "title": "the button \"Create epic & generate stories\" should not be blocked for all chat is used in one",
+      "description": null,
       "priority": 2,
       "status": "done",
       "position": 0,
@@ -92,14 +252,63 @@
       "user_stories": []
     },
     {
-      "id": "Mch9mugZ4rd_",
-      "title": "La synchronisation par JSON ne préserve pas le type de ticket (bug ou epic) et ne garde pas les commentaires",
-      "description": null,
-      "priority": 2,
+      "id": "z4yXlKBwKySj",
+      "title": "E2E Test Check Type in QA Tab",
+      "description": "Add a new \"E2E Test\" check type alongside the existing Tech Check in the QA tab. Same overall flow (dialog → agent spawned → report → optional epic creation), but the agent is instructed to perform comprehensive end-to-end testing of all app features using browser automation, test runners, and HTTP clients. Reports from both types share one history list with type badges and a filter. A warning banner advises users to select an agent with browser automation / testing tool access. Epic creation from E2E reports generates bug-type tickets from test failures.",
+      "priority": 0,
       "status": "done",
       "position": 0,
       "branchName": null,
-      "user_stories": []
+      "user_stories": [
+        {
+          "id": "s-jarwsRPkk-",
+          "title": "Add checkType column to qaReports schema and register e2e_test agent type",
+          "description": "Add a `checkType` text column (default 'tech_check') to the `qaReports` table in `lib/db/schema.ts` with a corresponding migration file `lib/db/migrations/0017_qa_e2e_check_type.sql`. Register `\"e2e_test\"` in `AGENT_TYPES`, `AGENT_TYPE_LABELS`, and `BUILTIN_AGENT_PROMPTS` in `lib/agent-config/constants.ts`. Existing reports auto-default to 'tech_check'. Add `checkType: string` to the `QaReportListItem` interface in `hooks/useQaReports.ts`.",
+          "acceptance_criteria": "- [ ] `qaReports` table has a `check_type TEXT NOT NULL DEFAULT 'tech_check'` column in schema and migration\n- [ ] `npx drizzle-kit push` applies cleanly\n- [ ] Existing reports retain `check_type = 'tech_check'`\n- [ ] `\"e2e_test\"` is a valid `AgentType` with label \"E2E Test\"\n- [ ] `resolveAgentPrompt(\"e2e_test\", ...)` and `resolveAgentByNamedId(\"e2e_test\", ...)` work without changes to prompts.ts or providers.ts\n- [ ] `QaReportListItem` interface includes `checkType: string",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "wLEfV_IVFfai",
+          "title": "Build E2E test prompt and generalize the check API route",
+          "description": "Add `buildE2eTestPrompt()` in `lib/claude/prompt-builder.ts` after `buildTechCheckPrompt()`, same signature, reusing `systemSection()`, `projectHeader()`, `specSection()`, `documentsSection()`. Task section focuses on running the app: Core User Flows, API & Data Integrity, UI & Interaction, Navigation & Routing, Integration Points, Regression Checks. Output format: markdown with PASS/FAIL/SKIP per test. In `app/api/projects/[projectId]/qa/check/route.ts`, accept `checkType` from the request body (default `\"tech_check\"`), derive `agentType`, branch prompt building and agent resolution, pass `checkType` into the `qaReports` insert, and update fallback text dynamically.",
+          "acceptance_criteria": "- [ ] `buildE2eTestPrompt()` is exported and follows the same signature as `buildTechCheckPrompt()`\n- [ ] E2E prompt includes project spec + documents for feature context\n- [ ] E2E prompt task section covers all 6 testing areas with PASS/FAIL/SKIP output format\n- [ ] Check API route accepts `checkType` param, defaults to `\"tech_check\"`\n- [ ] Agent resolution uses dynamic `agentType` derived from `checkType`\n- [ ] `qaReports` insert includes `checkType` value\n- [ ] `createQueuedSession` uses dynamic `agentType`\n- [ ] Fallback text in completion handler is check-type-aware",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "B1adcMspCDjR",
+          "title": "Generalize start dialog with check type selector and E2E warning banner",
+          "description": "Rename `components/qa/StartTechCheckDialog.tsx` to `StartQaCheckDialog.tsx`. Add a check type `<Select>` at the top of the form ('Tech Check' / 'E2E Test'). When E2E is selected, show a yellow warning banner: \"E2E testing requires an agent with access to browser automation and testing tools (e.g. Playwright, Puppeteer). Ensure your selected agent has the appropriate tool permissions.\" Dynamic title (`Start Tech Check` / `Start E2E Test`), dynamic description, and include `checkType` in the POST body. Reset `checkType` in `resetForm()`.",
+          "acceptance_criteria": "- [ ] Dialog has a check type selector with 'Tech Check' and 'E2E Test' options\n- [ ] Selecting 'E2E Test' shows a yellow warning banner about browser automation requirements\n- [ ] Dialog title and description update dynamically based on selected check type\n- [ ] POST body includes `checkType` field\n- [ ] Form reset clears check type back to default\n- [ ] Old `StartTechCheckDialog` import in `page.tsx` is updated to `StartQaCheckDialog",
+          "status": "review",
+          "position": 2
+        },
+        {
+          "id": "r3srfL2OsASF",
+          "title": "Update QA page with report type filter, badges, and generic labels",
+          "description": "In `app/projects/[projectId]/qa/page.tsx`: add `filterCheckType` state (null = all). Add filter toggle buttons ('All', 'Tech Check', 'E2E Test') in the stats bar area. Filter the sidebar report list via `useMemo`. Add a small `<Badge variant=\"outline\">` on each report card showing 'Tech' or 'E2E'. Update hardcoded strings: button → 'New Check', heading → 'Report History', empty state → 'No QA reports yet...', action message → 'QA check started.', subtitle mentions both check types.",
+          "acceptance_criteria": "- [ ] Filter toggle buttons (All / Tech Check / E2E Test) appear in the stats bar\n- [ ] Clicking a filter button shows only reports of that type\n- [ ] Each report card shows a type badge ('Tech' or 'E2E')\n- [ ] 'All' filter shows all reports regardless of type\n- [ ] Hardcoded 'Tech Check' strings are replaced with generic labels\n- [ ] Page subtitle mentions both tech checks and E2E tests",
+          "status": "review",
+          "position": 3
+        },
+        {
+          "id": "6VHqGTc_NBQf",
+          "title": "Update ReportDetail with check-type-aware heading and messages",
+          "description": "In `components/qa/ReportDetail.tsx`: add `checkType?: string` to the `QaReport` interface. Update heading to show 'Tech Check #abc123' or 'E2E Test #abc123' based on `report.checkType`. Update running message from hardcoded 'Tech check is still running...' to a dynamic check-type-aware message.",
+          "acceptance_criteria": "- [ ] Report heading shows the correct check type label\n- [ ] Running message says 'E2E test is still running...' for E2E reports\n- [ ] Running message says 'Tech check is still running...' for tech check reports\n- [ ] Existing reports without `checkType` default to tech check display",
+          "status": "review",
+          "position": 4
+        },
+        {
+          "id": "9WNRu_vs3vUP",
+          "title": "Make epic creation from report check-type-aware",
+          "description": "In `app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route.ts`: read `report.checkType` from the DB query. Use dynamic prompt title ('# Tech Check Report' or '# E2E Test Report') and task description (E2E → 'generate bug-fix epics from test failures'). Update `GeneratedEpic.type` to accept `\"feature\" | \"bug\"`. For E2E reports, set epic type to `\"bug\"`; for tech check, keep `\"feature\"`. Use dynamic `agentType` in `resolveAgentByNamedId` call.",
+          "acceptance_criteria": "- [ ] E2E test reports generate epics with type `\"bug\"`\n- [ ] Tech check reports still generate epics with type `\"feature\"`\n- [ ] Prompt title and task description are dynamic based on check type\n- [ ] `GeneratedEpic` interface accepts `\"feature\" | \"bug\"` type\n- [ ] `resolveAgentByNamedId` uses the correct agent type from report's check type\n- [ ] Epic creation from existing tech check reports is unchanged",
+          "status": "review",
+          "position": 5
+        }
+      ]
     },
     {
       "id": "z8tXdz8DogmS",
@@ -2547,166 +2756,6 @@
           "acceptance_criteria": "- [ ] Include a high-level system diagram or architecture overview\n- [ ] Document the Provider and State Machine patterns used in the project\n- [ ] Provide clear steps for local development and database migrations",
           "status": "review",
           "position": 2
-        }
-      ]
-    },
-    {
-      "id": "XN8VCkVAyazy",
-      "title": "the button \"Create epic & generate stories\" should not be blocked for all chat is used in one",
-      "description": null,
-      "priority": 2,
-      "status": "review",
-      "position": 0,
-      "branchName": null,
-      "user_stories": []
-    },
-    {
-      "id": "SBumK12H9QtS",
-      "title": "Multi-Provider CLI Integration with Base Class Refactor",
-      "description": "Add 6 new CLI providers (Mistral Vibe, Qwen Code, OpenCode, DeepSeek, Kimi/Moonshot, Zai) and refactor the provider layer with a BaseCliProvider abstract class to reduce duplication. Updates the provider registry, named agents UI, and availability checks to support all 9 providers.\n\nNew providers:\n- Mistral Vibe (`vibe`): --prompt, --agent, --output json, --resume, --max-turns, --max-price\n- Qwen Code (`qwen`): -p, --yolo, --model, /resume\n- OpenCode (`opencode`): run \"...\", --format json, --session, --file\n- DeepSeek (`deepseek`): -q, --model, --no-stream, SQLite history\n- Kimi/Moonshot (`kimi`): --print, --continue, stream-json\n- Zai/Zhipu AI (`zai`): API-based via subprocess wrapper, GLM models\n\nArchitecture: BaseCliProvider abstract class handles 70% of shared spawn/kill/log/parse logic. Each provider is ~80-120 lines. Existing Claude Code, Codex, Gemini refactored onto base class first.",
-      "priority": 0,
-      "status": "review",
-      "position": 0,
-      "branchName": "feature/epic-SBumK12H9QtS-multi-provider-cli-integration-with-base",
-      "user_stories": [
-        {
-          "id": "uxPj73UXIj4V",
-          "title": "As a developer, I want a BaseCliProvider abstract class so that adding new CLI providers requires minimal boilerplate",
-          "description": "Create lib/providers/base-provider.ts with an abstract class that encapsulates the shared provider lifecycle: child_process.spawn with stdio piping, stdout/stderr buffer collection, SIGTERM then SIGKILL kill logic, session ID extraction via extractCliSessionIdFromOutput, NDJSON session logging, endedWithQuestion detection, duration tracking, display command building, and exit code to success/error mapping.\n\nAbstract methods for subclasses:\n- get binaryName(): string\n- buildArgs(options: ProviderSpawnOptions): string[]\n- extractResult(stdout: string, stderr: string): string\n- Optional overrides: parseSessionId(), isAvailable(), buildEnv()\n\nAlso support chunk callbacks (onRawChunk, onOutputChunk, onResponseChunk) in the base for providers that stream.",
-          "acceptance_criteria": "- [ ] BaseCliProvider class exists in lib/providers/base-provider.ts\n- [ ] Handles spawn, collect, kill, log, extract session ID, detect questions\n- [ ] Supports optional chunk callbacks for streaming providers\n- [ ] Abstract methods: binaryName, buildArgs, extractResult\n- [ ] Default isAvailable() checks `which <binaryName>",
-          "status": "review",
-          "position": 0
-        },
-        {
-          "id": "aCR9Kr8Jczay",
-          "title": "As a developer, I want existing providers refactored onto BaseCliProvider so that the abstraction is proven before adding new providers",
-          "description": "Refactor ClaudeCodeProvider, CodexProvider, and GeminiCliProvider to extend BaseCliProvider. Each should only implement buildArgs(), extractResult(), and any provider-specific overrides (e.g., Codex overrides isAvailable() for login check, Codex uses temp file output capture). The spawn logic in lib/claude/spawn.ts, lib/codex/spawn.ts, and lib/gemini/spawn.ts should be consolidated where possible.\n\nAll existing tests and behavior must remain identical after refactoring.",
-          "acceptance_criteria": "- [ ] ClaudeCodeProvider extends BaseCliProvider\n- [ ] CodexProvider extends BaseCliProvider\n- [ ] GeminiCliProvider extends BaseCliProvider\n- [ ] All existing provider behavior unchanged\n- [ ] Spawn files simplified to delegate to base class\n- [ ] No regression in session resume, chunk streaming, or kill logic",
-          "status": "review",
-          "position": 1
-        },
-        {
-          "id": "ffmD8NNLZs7G",
-          "title": "As a developer, I want the ProviderType union and provider registry updated to support 9 providers",
-          "description": "Update lib/agent-config/constants.ts to add new provider types: 'mistral-vibe' | 'qwen-code' | 'opencode' | 'deepseek' | 'kimi' | 'zai'. Update lib/providers/index.ts provider registry to include all 9 providers. Update the providers/available API route to check CLI availability for all new providers.",
-          "acceptance_criteria": "- [ ] ProviderType union includes all 9 values\n- [ ] Provider factory returns correct instance for each type\n- [ ] /api/providers/available reports status for all 9 CLIs\n- [ ] Named agent creation UI shows all 9 providers in dropdown\n- [ ] Fallback to claude-code if unknown provider requested",
-          "status": "review",
-          "position": 2
-        },
-        {
-          "id": "SU1GBhdGjcb7",
-          "title": "As a user, I want to use Mistral Vibe as an agent provider so that I can leverage Devstral models for build and review tasks",
-          "description": "Implement MistralVibeProvider extending BaseCliProvider.\n\nCLI: `vibe --prompt <PROMPT> --agent <auto-approve|accept-edits|plan> --output json [--model <model>] [--resume <ID>] [--max-turns 50]`\n\nMode mapping: plan -> --agent plan, code -> --agent auto-approve, analyze -> --agent accept-edits.\nResume: supported via --resume <ID>.\nOutput: JSON with full conversation and metadata.\nSession ID: extract from JSON output.\nAvailability: `which vibe`.",
-          "acceptance_criteria": "- [ ] MistralVibeProvider in lib/providers/mistral-vibe.ts\n- [ ] Spawn logic in lib/mistral-vibe/spawn.ts\n- [ ] Mode mapping: plan/code/analyze to --agent profiles\n- [ ] Resume support via --resume flag\n- [ ] JSON output parsing extracts result text\n- [ ] Session ID extraction from output\n- [ ] --max-turns default to prevent infinite loops\n- [ ] Provider availability check works",
-          "status": "review",
-          "position": 3
-        },
-        {
-          "id": "ZV1qW3FCxkNc",
-          "title": "As a user, I want to use Qwen Code as an agent provider so that I can leverage Qwen3-Coder models with massive context windows",
-          "description": "Implement QwenCodeProvider extending BaseCliProvider.\n\nCLI: `qwen -p <PROMPT> [--yolo] [--model <model>]`\n\nMode mapping: plan -> no --yolo flag (read-only default), code -> --yolo, analyze -> no --yolo.\nResume: limited (no --resume flag; uses /resume internal command, not suitable for headless).\nOutput: plain text from stdout.\nVision: auto-switch to vision model when images detected (handled by CLI).\nAvailability: `which qwen`.",
-          "acceptance_criteria": "- [ ] QwenCodeProvider in lib/providers/qwen-code.ts\n- [ ] Spawn logic in lib/qwen-code/spawn.ts\n- [ ] Mode mapping: code uses --yolo for auto-approve\n- [ ] Model override via --model flag\n- [ ] Result extraction from stdout\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check works",
-          "status": "review",
-          "position": 4
-        },
-        {
-          "id": "XXxSpJ2SUVJj",
-          "title": "As a user, I want to use OpenCode as an agent provider so that I can use its multi-provider backend (Ollama, Copilot, etc.)",
-          "description": "Implement OpenCodeProvider extending BaseCliProvider.\n\nCLI: `opencode run <PROMPT> [--format json] [--session <ID>] [--file <path>]`\n\nMode mapping: all modes use `run` subcommand (OpenCode handles permissions internally).\nResume: supported via --session <ID>.\nOutput: JSON events format.\nSpecial: supports --file for attaching context files.\nAvailability: `which opencode`.",
-          "acceptance_criteria": "- [ ] OpenCodeProvider in lib/providers/opencode.ts\n- [ ] Spawn logic in lib/opencode/spawn.ts\n- [ ] Uses `run` subcommand with prompt\n- [ ] JSON output format parsing\n- [ ] Session resume via --session flag\n- [ ] Session ID extraction from output\n- [ ] Provider availability check works",
-          "status": "review",
-          "position": 5
-        },
-        {
-          "id": "Favf3D7IsMnu",
-          "title": "As a user, I want to use DeepSeek CLI as an agent provider so that I can leverage cost-efficient DeepSeek models with context caching",
-          "description": "Implement DeepSeekProvider extending BaseCliProvider.\n\nCLI: `deepseek -q <PROMPT> [--model <deepseek-chat|deepseek-coder|deepseek-reasoner>] [--no-stream]`\n\nMode mapping: all modes use -q (query mode). No permission system.\nResume: not supported (SQLite history is local to CLI, not exposable via flags).\nOutput: raw text (with --no-stream for complete capture).\nSpecial: --no-stream is mandatory for headless to avoid partial chunk handling.\nAvailability: `which deepseek`.",
-          "acceptance_criteria": "- [ ] DeepSeekProvider in lib/providers/deepseek.ts\n- [ ] Spawn logic in lib/deepseek/spawn.ts\n- [ ] Always uses --no-stream for reliable output capture\n- [ ] Model selection via --model flag\n- [ ] Result extraction from stdout\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check works",
-          "status": "review",
-          "position": 6
-        },
-        {
-          "id": "1-Q4yEnPJW10",
-          "title": "As a user, I want to use Kimi CLI (Moonshot) as an agent provider so that I can leverage KimiSoul's sub-agent architecture",
-          "description": "Implement KimiProvider extending BaseCliProvider.\n\nCLI: `kimi --print -c <PROMPT>` (headless mode with context)\n\nMode mapping: all modes use --print. Kimi handles tool permissions via KimiSoul internally.\nResume: supported via --continue (resumes most recent context in current directory).\nOutput: stream-json format.\nSpecial: /init creates AGENTS.md (similar to CLAUDE.md). Can invoke web-search, excel, code_runner tools.\nAvailability: `which kimi`.",
-          "acceptance_criteria": "- [ ] KimiProvider in lib/providers/kimi.ts\n- [ ] Spawn logic in lib/kimi/spawn.ts\n- [ ] Uses --print for headless execution\n- [ ] Resume via --continue flag (directory-scoped)\n- [ ] Stream-JSON output parsing\n- [ ] Session ID extraction from stream events\n- [ ] Provider availability check works",
-          "status": "review",
-          "position": 7
-        },
-        {
-          "id": "27MNluF-oAuA",
-          "title": "As a user, I want to use Zai (Zhipu AI) as an agent provider so that I can leverage GLM-4 models with hybrid reasoning",
-          "description": "Implement ZaiProvider extending BaseCliProvider.\n\nZai is API-based (no native CLI binary). Implementation wraps LiteLLM or a thin subprocess call to a bundled Python script that calls the Zai API.\n\nCLI wrapper: `python -m arji_zai_bridge --prompt <PROMPT> --model <zai/glm-4.7> --api-key <from env>`\n\nAlternatively, if a `zai` CLI exists at runtime, use it directly. The provider should check for both.\nMode mapping: all modes pass prompt to API. No permission system.\nResume: not supported (stateless API calls).\nOutput: JSON response from API.\nAvailability: check for ZHIPU_API_KEY env var OR `which zai`.",
-          "acceptance_criteria": "- [ ] ZaiProvider in lib/providers/zai.ts\n- [ ] API bridge script or direct CLI support\n- [ ] Model selection for GLM variants\n- [ ] API key validation from environment\n- [ ] Result extraction from API response JSON\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check (env var OR CLI binary)",
-          "status": "review",
-          "position": 8
-        },
-        {
-          "id": "-schSTTxdG3s",
-          "title": "As a user, I want the resume validation to correctly handle all 9 providers so that only resumable providers offer session continuity",
-          "description": "Update lib/agent-sessions/validate-resume.ts and the resumable sessions API route to handle the resume capabilities of each provider:\n\n- Resumable: claude-code (--resume), gemini-cli (--resume), mistral-vibe (--resume), opencode (--session), kimi (--continue)\n- Non-resumable: codex, qwen-code, deepseek, zai\n\nThe /sessions/resumable endpoint should return empty arrays for non-resumable providers.",
-          "acceptance_criteria": "- [ ] Resume validation knows which providers support resume\n- [ ] Resumable sessions API returns [] for non-resumable providers\n- [ ] Resume flag is correctly mapped per provider (--resume vs --session vs --continue)\n- [ ] Non-resumable providers never attempt resume",
-          "status": "review",
-          "position": 9
-        },
-        {
-          "id": "SFJkeMQz0uPY",
-          "title": "As a user, I want the provider settings UI to display all 9 providers with their availability status so that I can configure agents across all supported CLIs",
-          "description": "Update the agent configuration UI components (provider dropdowns, named agent forms, global/project settings) to include all 9 providers. Show availability status (installed/not installed, authenticated/not authenticated) next to each provider. Group providers logically: Tier 1 (Claude Code, Gemini, Codex), Tier 2 (Mistral Vibe, Qwen Code, OpenCode), Tier 3 (DeepSeek, Kimi, Zai).",
-          "acceptance_criteria": "- [ ] All 9 providers appear in provider dropdown menus\n- [ ] Availability status shown per provider (green/red indicator)\n- [ ] Named agent creation supports all 9 providers\n- [ ] Global and project-level agent defaults support all 9 providers\n- [ ] Unavailable providers are selectable but show a warning",
-          "status": "review",
-          "position": 10
-        }
-      ]
-    },
-    {
-      "id": "uPs3EmgcWdTS",
-      "title": "Interactive Code Review & Context-Aware Rework Loop",
-      "description": "Implement a dedicated code review interface that allows users to inspect agent-generated changes via a line-by-line diff viewer. This epic enables granular feedback by allowing reviewers to comment on specific lines of code, which are then synchronized with the ticket activity. It also facilitates a 'rework loop' where tickets can be sent back to the agent with the review comments automatically formatted as context for the next development iteration.",
-      "priority": 0,
-      "status": "review",
-      "position": 0,
-      "branchName": "feature/epic-uPs3EmgcWdTS-interactive-code-review-context-aware-re",
-      "user_stories": [
-        {
-          "id": "8YACnRETbfkJ",
-          "title": "Agent Worktree Diff Generation",
-          "description": "As a user, I want to view the changes made by an agent in its dedicated worktree compared to the main project branch.",
-          "acceptance_criteria": null,
-          "status": "review",
-          "position": 0
-        },
-        {
-          "id": "SfXx7gWZ1qAn",
-          "title": "Line-by-Line Commenting Interface",
-          "description": "As a reviewer, I want to leave specific feedback on individual lines of code within the diff viewer.",
-          "acceptance_criteria": null,
-          "status": "review",
-          "position": 1
-        },
-        {
-          "id": "Z-E8dGxWuLg8",
-          "title": "Review Action: 'Back to Dev' (Rework Loop)",
-          "description": "As a reviewer, I want to send a ticket back to the development agent with my feedback automatically included.",
-          "acceptance_criteria": null,
-          "status": "review",
-          "position": 2
-        },
-        {
-          "id": "zCmtjbFjsAGw",
-          "title": "Automated Ticket Activity Integration",
-          "description": "As a user, I want review comments to appear in the ticket's general comment thread so the history is centralized.",
-          "acceptance_criteria": null,
-          "status": "review",
-          "position": 3
-        },
-        {
-          "id": "mtU5Z-Rte_9h",
-          "title": "Review Completion & Approval",
-          "description": "As a reviewer, I want to approve the changes or close the review without further rework.",
-          "acceptance_criteria": null,
-          "status": "review",
-          "position": 4
         }
       ]
     }

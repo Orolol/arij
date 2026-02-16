@@ -1,0 +1,86 @@
+{
+  "migrationId": "2026-02-16T15-32-24-947Z",
+  "projectId": "G-ZilHMeRGi8",
+  "capturedAt": "2026-02-16T15:32:24.947Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "VwFC2PdZXofS",
+        "project_id": "G-ZilHMeRGi8",
+        "type": "brainstorm",
+        "label": "Brainstorm",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-13T16:03:30.302Z"
+      },
+      {
+        "id": "FJSZtpn1PosU",
+        "project_id": "G-ZilHMeRGi8",
+        "type": "epic_creation",
+        "label": "End-to-End Test Check",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-16T14:23:22.865Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "OHNH0zgQ2oCy",
+        "project_id": "G-ZilHMeRGi8",
+        "conversation_id": "FJSZtpn1PosU",
+        "role": "user",
+        "content": "On va rajouter un nouveaux type de check dans le tab QA, le test E2E. Même fonctionnement global que le tech check, sauf qu'on va demander a l'agent de faire un test end to end, le plus complet possible, sur toutes les features de l'app. De la même façon, on peut ajouter des instructions supplémentaire pour cibler mieux le test.\nOn va ajouter un petit avertissement pour demander a l'utilisateur d'utiliser un agent qui aaccès a des outils de test, stylle browser automation, etc ...",
+        "metadata": null,
+        "created_at": "2026-02-16T14:25:35.990Z"
+      },
+      {
+        "id": "9s69OazZqrIY",
+        "project_id": "G-ZilHMeRGi8",
+        "conversation_id": "FJSZtpn1PosU",
+        "role": "assistant",
+        "content": "I have a thorough understanding of the current QA tab. Let me ask a few targeted questions to refine the scope of this epic:\n\n1. **Epic creation from report** — For tech check, the user can click \"Create Epics from Report\" to turn findings into bug-fix epics. Should the E2E test report also have this capability (e.g., turn failed tests into bug tickets)?\n\n2. **Report history layout** — Currently the QA page has a single list of tech check reports. With a new check type, should they share the same list (with a type badge/filter), or would you prefer separate sub-tabs within the QA page (one for Tech Check, one for E2E)?\n\n3. **Agent context** — The tech check prompt includes the project spec + uploaded documents so the agent knows the codebase. Should the E2E prompt also include spec + docs so the agent knows what features to test, or should it rely on codebase discovery?\n\n4. **Warning placement** — For the \"use an agent with browser automation tools\" warning, should it appear in the Start dialog (before triggering), or as a persistent banner on the QA page?\n\nThese answers will help me scope the epic tightly and avoid overlap with existing ones. What are your thoughts?",
+        "metadata": null,
+        "created_at": "2026-02-16T14:27:47.130Z"
+      },
+      {
+        "id": "N7HslY7AJuhY",
+        "project_id": "G-ZilHMeRGi8",
+        "conversation_id": "FJSZtpn1PosU",
+        "role": "user",
+        "content": "Generate the final epic with user stories based on our discussion.",
+        "metadata": null,
+        "created_at": "2026-02-16T14:39:54.479Z"
+      },
+      {
+        "id": "2VVYYewx4Gc6",
+        "project_id": "G-ZilHMeRGi8",
+        "conversation_id": "FJSZtpn1PosU",
+        "role": "assistant",
+        "content": "The plan covers 9 steps across 10 files:\n\n1. **Schema** — new `checkType` column on `qaReports` (defaults existing rows to `\"tech_check\"`)\n2. **Agent config** — register `\"e2e_test\"` in `AGENT_TYPES`, labels, and builtin prompts\n3. **Prompt builder** — new `buildE2eTestPrompt()` focused on running/testing the app (PASS/FAIL per test)\n4. **API check route** — accept `checkType` param, branch prompt building and agent resolution\n5. **Hook** — add `checkType` to the `QaReportListItem` interface\n6. **Start dialog** — rename to `StartQaCheckDialog`, add check type selector + yellow warning banner for E2E\n7. **QA page** — filter buttons (All/Tech Check/E2E Test), type badges on report cards, updated labels\n8. **Report detail** — dynamic heading and running message based on check type\n9. **Epic creation** — E2E reports generate `\"bug\"` type epics, tech check stays `\"feature\"`",
+        "metadata": null,
+        "created_at": "2026-02-16T14:46:16.490Z"
+      },
+      {
+        "id": "10D7pRhdSqTY",
+        "project_id": "G-ZilHMeRGi8",
+        "conversation_id": "FJSZtpn1PosU",
+        "role": "user",
+        "content": "Output ONLY the JSON code block for the epic. Start your response with ```json and end with ```. No other text.",
+        "metadata": null,
+        "created_at": "2026-02-16T14:46:17.123Z"
+      },
+      {
+        "id": "XuANVF5u2Oxu",
+        "project_id": "G-ZilHMeRGi8",
+        "conversation_id": "FJSZtpn1PosU",
+        "role": "assistant",
+        "content": "```json\n{\n  \"title\": \"E2E Test Check Type in QA Tab\",\n  \"description\": \"Add a new \\\"E2E Test\\\" check type alongside the existing Tech Check in the QA tab. Same overall flow (dialog → agent spawned → report → optional epic creation), but the agent is instructed to perform comprehensive end-to-end testing of all app features using browser automation, test runners, and HTTP clients. Reports from both types share one history list with type badges and a filter. A warning banner advises users to select an agent with browser automation / testing tool access. Epic creation from E2E reports generates bug-type tickets from test failures.\",\n  \"priority\": 1,\n  \"userStories\": [\n    {\n      \"title\": \"Add checkType column to qaReports schema and register e2e_test agent type\",\n      \"description\": \"Add a `checkType` text column (default 'tech_check') to the `qaReports` table in `lib/db/schema.ts` with a corresponding migration file `lib/db/migrations/0017_qa_e2e_check_type.sql`. Register `\\\"e2e_test\\\"` in `AGENT_TYPES`, `AGENT_TYPE_LABELS`, and `BUILTIN_AGENT_PROMPTS` in `lib/agent-config/constants.ts`. Existing reports auto-default to 'tech_check'. Add `checkType: string` to the `QaReportListItem` interface in `hooks/useQaReports.ts`.\",\n      \"acceptanceCriteria\": \"- [ ] `qaReports` table has a `check_type TEXT NOT NULL DEFAULT 'tech_check'` column in schema and migration\\n- [ ] `npx drizzle-kit push` applies cleanly\\n- [ ] Existing reports retain `check_type = 'tech_check'`\\n- [ ] `\\\"e2e_test\\\"` is a valid `AgentType` with label \\\"E2E Test\\\"\\n- [ ] `resolveAgentPrompt(\\\"e2e_test\\\", ...)` and `resolveAgentByNamedId(\\\"e2e_test\\\", ...)` work without changes to prompts.ts or providers.ts\\n- [ ] `QaReportListItem` interface includes `checkType: string`\"\n    },\n    {\n      \"title\": \"Build E2E test prompt and generalize the check API route\",\n      \"description\": \"Add `buildE2eTestPrompt()` in `lib/claude/prompt-builder.ts` after `buildTechCheckPrompt()`, same signature, reusing `systemSection()`, `projectHeader()`, `specSection()`, `documentsSection()`. Task section focuses on running the app: Core User Flows, API & Data Integrity, UI & Interaction, Navigation & Routing, Integration Points, Regression Checks. Output format: markdown with PASS/FAIL/SKIP per test. In `app/api/projects/[projectId]/qa/check/route.ts`, accept `checkType` from the request body (default `\\\"tech_check\\\"`), derive `agentType`, branch prompt building and agent resolution, pass `checkType` into the `qaReports` insert, and update fallback text dynamically.\",\n      \"acceptanceCriteria\": \"- [ ] `buildE2eTestPrompt()` is exported and follows the same signature as `buildTechCheckPrompt()`\\n- [ ] E2E prompt includes project spec + documents for feature context\\n- [ ] E2E prompt task section covers all 6 testing areas with PASS/FAIL/SKIP output format\\n- [ ] Check API route accepts `checkType` param, defaults to `\\\"tech_check\\\"`\\n- [ ] Agent resolution uses dynamic `agentType` derived from `checkType`\\n- [ ] `qaReports` insert includes `checkType` value\\n- [ ] `createQueuedSession` uses dynamic `agentType`\\n- [ ] Fallback text in completion handler is check-type-aware\"\n    },\n    {\n      \"title\": \"Generalize start dialog with check type selector and E2E warning banner\",\n      \"description\": \"Rename `components/qa/StartTechCheckDialog.tsx` to `StartQaCheckDialog.tsx`. Add a check type `<Select>` at the top of the form ('Tech Check' / 'E2E Test'). When E2E is selected, show a yellow warning banner: \\\"E2E testing requires an agent with access to browser automation and testing tools (e.g. Playwright, Puppeteer). Ensure your selected agent has the appropriate tool permissions.\\\" Dynamic title (`Start Tech Check` / `Start E2E Test`), dynamic description, and include `checkType` in the POST body. Reset `checkType` in `resetForm()`.\",\n      \"acceptanceCriteria\": \"- [ ] Dialog has a check type selector with 'Tech Check' and 'E2E Test' options\\n- [ ] Selecting 'E2E Test' shows a yellow warning banner about browser automation requirements\\n- [ ] Dialog title and description update dynamically based on selected check type\\n- [ ] POST body includes `checkType` field\\n- [ ] Form reset clears check type back to default\\n- [ ] Old `StartTechCheckDialog` import in `page.tsx` is updated to `StartQaCheckDialog`\"\n    },\n    {\n      \"title\": \"Update QA page with report type filter, badges, and generic labels\",\n      \"description\": \"In `app/projects/[projectId]/qa/page.tsx`: add `filterCheckType` state (null = all). Add filter toggle buttons ('All', 'Tech Check', 'E2E Test') in the stats bar area. Filter the sidebar report list via `useMemo`. Add a small `<Badge variant=\\\"outline\\\">` on each report card showing 'Tech' or 'E2E'. Update hardcoded strings: button → 'New Check', heading → 'Report History', empty state → 'No QA reports yet...', action message → 'QA check started.', subtitle mentions both check types.\",\n      \"acceptanceCriteria\": \"- [ ] Filter toggle buttons (All / Tech Check / E2E Test) appear in the stats bar\\n- [ ] Clicking a filter button shows only reports of that type\\n- [ ] Each report card shows a type badge ('Tech' or 'E2E')\\n- [ ] 'All' filter shows all reports regardless of type\\n- [ ] Hardcoded 'Tech Check' strings are replaced with generic labels\\n- [ ] Page subtitle mentions both tech checks and E2E tests\"\n    },\n    {\n      \"title\": \"Update ReportDetail with check-type-aware heading and messages\",\n      \"description\": \"In `components/qa/ReportDetail.tsx`: add `checkType?: string` to the `QaReport` interface. Update heading to show 'Tech Check #abc123' or 'E2E Test #abc123' based on `report.checkType`. Update running message from hardcoded 'Tech check is still running...' to a dynamic check-type-aware message.\",\n      \"acceptanceCriteria\": \"- [ ] Report heading shows the correct check type label\\n- [ ] Running message says 'E2E test is still running...' for E2E reports\\n- [ ] Running message says 'Tech check is still running...' for tech check reports\\n- [ ] Existing reports without `checkType` default to tech check display\"\n    },\n    {\n      \"title\": \"Make epic creation from report check-type-aware\",\n      \"description\": \"In `app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route.ts`: read `report.checkType` from the DB query. Use dynamic prompt title ('# Tech Check Report' or '# E2E Test Report') and task description (E2E → 'generate bug-fix epics from test failures'). Update `GeneratedEpic.type` to accept `\\\"feature\\\" | \\\"bug\\\"`. For E2E reports, set epic type to `\\\"bug\\\"`; for tech check, keep `\\\"feature\\\"`. Use dynamic `agentType` in `resolveAgentByNamedId` call.\",\n      \"acceptanceCriteria\": \"- [ ] E2E test reports generate epics with type `\\\"bug\\\"`\\n- [ ] Tech check reports still generate epics with type `\\\"feature\\\"`\\n- [ ] Prompt title and task description are dynamic based on check type\\n- [ ] `GeneratedEpic` interface accepts `\\\"feature\\\" | \\\"bug\\\"` type\\n- [ ] `resolveAgentByNamedId` uses the correct agent type from report's check type\\n- [ ] Epic creation from existing tech check reports is unchanged\"\n    }\n  ]\n}\n```",
+        "metadata": null,
+        "created_at": "2026-02-16T14:47:08.770Z"
+      }
+    ],
+    "attachments": []
+  }
+}
