@@ -11,6 +11,8 @@ const mockSpawnClaude = vi.hoisted(() => vi.fn());
 const mockExtractJson = vi.hoisted(() => vi.fn());
 const mockResolveAgent = vi.hoisted(() => vi.fn());
 const mockCreateId = vi.hoisted(() => vi.fn());
+const mockGetProvider = vi.hoisted(() => vi.fn());
+const mockIsResumableProvider = vi.hoisted(() => vi.fn());
 
 vi.mock("drizzle-orm", () => ({
   eq: vi.fn(() => ({})),
@@ -47,6 +49,7 @@ vi.mock("@/lib/db/schema", () => ({
   qaReports: { id: "id", projectId: "projectId" },
   epics: { position: "position", projectId: "projectId" },
   userStories: { id: "id" },
+  agentSessions: { id: "id", provider: "provider", model: "model", cliSessionId: "cli_session_id", claudeSessionId: "claude_session_id", namedAgentId: "named_agent_id" },
 }));
 
 vi.mock("@/lib/agent-config/providers", () => ({
@@ -66,12 +69,11 @@ vi.mock("@/lib/utils/nanoid", () => ({
 }));
 
 vi.mock("@/lib/providers", () => ({
-  getProvider: vi.fn(() => ({
-    spawn: vi.fn(() => ({
-      promise: Promise.resolve({ success: true, result: "[]" }),
-      kill: vi.fn(),
-    })),
-  })),
+  getProvider: mockGetProvider,
+}));
+
+vi.mock("@/lib/agent-sessions/validate-resume", () => ({
+  isResumableProvider: mockIsResumableProvider,
 }));
 
 describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", () => {
@@ -102,9 +104,17 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
         ],
       },
     ]);
+    mockIsResumableProvider.mockReturnValue(false);
+    mockGetProvider.mockReturnValue({
+      spawn: vi.fn(() => ({
+        promise: Promise.resolve({ success: true, result: "[]" }),
+        kill: vi.fn(),
+      })),
+    });
   });
 
   it("returns 404 when report is missing or empty", async () => {
+    // getQueue: project, report (null)
     mockDb.getQueue = [{ id: "proj-1", gitRepoPath: "/tmp/repo" }, null];
 
     const { POST } = await import(
@@ -120,9 +130,11 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
   });
 
   it("creates epics and stories from parsed QA output", async () => {
+    // getQueue: project, report, originalSession (null - no session), maxPosition
     mockDb.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
-      { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null },
+      { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null, agentSessionId: null },
+      // no originalSession lookup since agentSessionId is null
       { max: 3 },
     ];
 
@@ -162,7 +174,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     mockExtractJson.mockReturnValue("just text");
     mockDb.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
-      { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null },
+      { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null, agentSessionId: null },
     ];
 
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -200,7 +212,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     ]);
     mockDb.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
-      { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null },
+      { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null, agentSessionId: null },
       { max: 0 },
     ];
 
@@ -242,7 +254,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     });
     mockDb.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
-      { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null },
+      { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null, agentSessionId: null },
       { max: 0 },
     ];
 
@@ -271,6 +283,235 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
         title: "Handle expired resume sessions",
         description: "fallback to fresh prompt",
         acceptanceCriteria: "- [ ] Retry with fresh prompt",
+      }),
+    );
+  });
+
+  it("uses the same agent and resumes session from the QA report's original session", async () => {
+    mockIsResumableProvider.mockReturnValue(true);
+    // getQueue: project, report, originalSession, maxPosition
+    mockDb.getQueue = [
+      { id: "proj-1", gitRepoPath: "/tmp/repo" },
+      {
+        id: "report-1",
+        projectId: "proj-1",
+        reportContent: "# Findings\nSome issues found.",
+        namedAgentId: "agent-42",
+        agentSessionId: "session-original",
+        checkType: "tech_check",
+      },
+      // originalSession lookup
+      {
+        provider: "claude-code",
+        model: "claude-opus-4",
+        cliSessionId: "cli-sess-abc",
+        claudeSessionId: "claude-sess-abc",
+        namedAgentId: "agent-42",
+      },
+      { max: 0 },
+    ];
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
+    );
+    const res = await POST({} as never, {
+      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.epics).toHaveLength(1);
+
+    // Verify spawnClaude was called with resume options
+    expect(mockSpawnClaude).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "plan",
+        model: "claude-opus-4",
+        cliSessionId: "cli-sess-abc",
+        resumeSession: true,
+      }),
+    );
+
+    // Verify the agent was resolved with the original session's namedAgentId
+    expect(mockResolveAgent).toHaveBeenCalledWith(
+      "tech_check",
+      "proj-1",
+      "agent-42",
+    );
+  });
+
+  it("falls back to fresh prompt when resume fails", async () => {
+    mockIsResumableProvider.mockReturnValue(true);
+    // First call (resume) fails, second call (fresh) succeeds
+    mockSpawnClaude
+      .mockReturnValueOnce({
+        promise: Promise.resolve({ success: false, error: "Session expired" }),
+      })
+      .mockReturnValueOnce({
+        promise: Promise.resolve({ success: true, result: "AI JSON" }),
+      });
+
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // getQueue: project, report, originalSession, maxPosition
+    mockDb.getQueue = [
+      { id: "proj-1", gitRepoPath: "/tmp/repo" },
+      {
+        id: "report-1",
+        projectId: "proj-1",
+        reportContent: "# Findings",
+        namedAgentId: "agent-42",
+        agentSessionId: "session-original",
+      },
+      {
+        provider: "claude-code",
+        model: "claude-opus-4",
+        cliSessionId: "cli-sess-expired",
+        claudeSessionId: null,
+        namedAgentId: "agent-42",
+      },
+      { max: 0 },
+    ];
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
+    );
+    const res = await POST({} as never, {
+      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.epics).toHaveLength(1);
+
+    // Should have been called twice: once with resume, once without
+    expect(mockSpawnClaude).toHaveBeenCalledTimes(2);
+    expect(mockSpawnClaude).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        cliSessionId: "cli-sess-expired",
+        resumeSession: true,
+      }),
+    );
+    expect(mockSpawnClaude).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        cliSessionId: undefined,
+        resumeSession: false,
+      }),
+    );
+
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "[qa/create-epics] Resume failed, falling back to fresh prompt",
+      expect.objectContaining({
+        provider: "claude-code",
+        cliSessionId: "cli-sess-expired",
+      }),
+    );
+  });
+
+  it("skips resume for non-resumable providers", async () => {
+    mockIsResumableProvider.mockReturnValue(false);
+    mockResolveAgent.mockReturnValue({ provider: "codex", model: "gpt-4o" });
+
+    const mockProviderSpawn = vi.fn(() => ({
+      promise: Promise.resolve({ success: true, result: "AI JSON" }),
+      kill: vi.fn(),
+    }));
+    mockGetProvider.mockReturnValue({ spawn: mockProviderSpawn });
+
+    // getQueue: project, report, originalSession, maxPosition
+    mockDb.getQueue = [
+      { id: "proj-1", gitRepoPath: "/tmp/repo" },
+      {
+        id: "report-1",
+        projectId: "proj-1",
+        reportContent: "# Findings",
+        namedAgentId: null,
+        agentSessionId: "session-codex",
+      },
+      {
+        provider: "codex",
+        model: "gpt-4o",
+        cliSessionId: "codex-sess-123",
+        claudeSessionId: null,
+        namedAgentId: null,
+      },
+      { max: 0 },
+    ];
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
+    );
+    const res = await POST({} as never, {
+      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+
+    // Should use the dynamic provider (codex), not spawnClaude
+    expect(mockSpawnClaude).not.toHaveBeenCalled();
+    expect(mockGetProvider).toHaveBeenCalledWith("codex");
+    expect(mockProviderSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "plan",
+        model: "gpt-4o",
+        resumeSession: false,
+      }),
+    );
+  });
+
+  it("uses original session's provider and model even if different from resolved agent", async () => {
+    mockIsResumableProvider.mockReturnValue(true);
+    // resolveAgent returns default claude-code, but original session used gemini-cli
+    mockResolveAgent.mockReturnValue({ provider: "claude-code", model: "claude-opus" });
+
+    const mockProviderSpawn = vi.fn(() => ({
+      promise: Promise.resolve({ success: true, result: "AI JSON" }),
+      kill: vi.fn(),
+    }));
+    mockGetProvider.mockReturnValue({ spawn: mockProviderSpawn });
+
+    // getQueue: project, report, originalSession, maxPosition
+    mockDb.getQueue = [
+      { id: "proj-1", gitRepoPath: "/tmp/repo" },
+      {
+        id: "report-1",
+        projectId: "proj-1",
+        reportContent: "# Findings",
+        namedAgentId: "agent-gemini",
+        agentSessionId: "session-gemini",
+      },
+      {
+        provider: "gemini-cli",
+        model: "gemini-2.0-flash",
+        cliSessionId: "gemini-sess-xyz",
+        claudeSessionId: null,
+        namedAgentId: "agent-gemini",
+      },
+      { max: 0 },
+    ];
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
+    );
+    const res = await POST({} as never, {
+      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+
+    // Should use gemini-cli provider (from original session), not claude-code
+    expect(mockSpawnClaude).not.toHaveBeenCalled();
+    expect(mockGetProvider).toHaveBeenCalledWith("gemini-cli");
+    expect(mockProviderSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        mode: "plan",
+        model: "gemini-2.0-flash",
+        cliSessionId: "gemini-sess-xyz",
+        resumeSession: true,
       }),
     );
   });
