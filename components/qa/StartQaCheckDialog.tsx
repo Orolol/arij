@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Play, Save, X } from "lucide-react";
+import { AlertTriangle, Loader2, Play, Save, X } from "lucide-react";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,25 +22,39 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 
+type CheckType = "tech_check" | "e2e_test";
+
 interface QaPrompt {
   id: string;
   name: string;
   prompt: string;
 }
 
-interface StartTechCheckDialogProps {
+interface StartQaCheckDialogProps {
   projectId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onStarted?: (data: { reportId: string; sessionId: string }) => void;
 }
 
-export function StartTechCheckDialog({
+const CHECK_TYPE_CONFIG: Record<CheckType, { title: string; description: string }> = {
+  tech_check: {
+    title: "Start Tech Check",
+    description: "Launch a full project QA audit and generate a markdown report.",
+  },
+  e2e_test: {
+    title: "Start E2E Test",
+    description: "Run comprehensive end-to-end tests across all app features.",
+  },
+};
+
+export function StartQaCheckDialog({
   projectId,
   open,
   onOpenChange,
   onStarted,
-}: StartTechCheckDialogProps) {
+}: StartQaCheckDialogProps) {
+  const [checkType, setCheckType] = useState<CheckType>("tech_check");
   const [namedAgentId, setNamedAgentId] = useState<string | null>(null);
   const [customPrompt, setCustomPrompt] = useState("");
   const [customPromptId, setCustomPromptId] = useState<string | null>(null);
@@ -75,6 +89,7 @@ export function StartTechCheckDialog({
   }, [open]);
 
   function resetForm() {
+    setCheckType("tech_check");
     setNamedAgentId(null);
     setCustomPrompt("");
     setCustomPromptId(null);
@@ -140,12 +155,13 @@ export function StartTechCheckDialog({
           namedAgentId,
           customPrompt,
           customPromptId,
+          checkType,
         }),
       });
       const json = await res.json().catch(() => ({}));
 
       if (!res.ok || !json.data) {
-        setError(json.error || "Failed to start tech check");
+        setError(json.error || `Failed to start ${checkType === "e2e_test" ? "E2E test" : "tech check"}`);
         return;
       }
 
@@ -153,11 +169,13 @@ export function StartTechCheckDialog({
       onOpenChange(false);
       resetForm();
     } catch {
-      setError("Failed to start tech check");
+      setError(`Failed to start ${checkType === "e2e_test" ? "E2E test" : "tech check"}`);
     } finally {
       setStarting(false);
     }
   }
+
+  const config = CHECK_TYPE_CONFIG[checkType];
 
   return (
     <Dialog
@@ -171,13 +189,38 @@ export function StartTechCheckDialog({
     >
       <DialogContent className="sm:max-w-[680px]">
         <DialogHeader>
-          <DialogTitle>Start Tech Check</DialogTitle>
-          <DialogDescription>
-            Launch a full project QA audit and generate a markdown report.
-          </DialogDescription>
+          <DialogTitle>{config.title}</DialogTitle>
+          <DialogDescription>{config.description}</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-1">
+          <div className="space-y-1.5">
+            <label className="text-xs text-muted-foreground">Check Type</label>
+            <Select
+              value={checkType}
+              onValueChange={(value) => setCheckType(value as CheckType)}
+            >
+              <SelectTrigger className="h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="tech_check">Tech Check</SelectItem>
+                <SelectItem value="e2e_test">E2E Test</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {checkType === "e2e_test" && (
+            <div className="flex items-start gap-2 rounded-md border border-yellow-500/50 bg-yellow-500/10 p-3">
+              <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+              <p className="text-xs text-yellow-700 dark:text-yellow-400">
+                E2E testing requires an agent with access to browser automation and testing tools
+                (e.g. Playwright, Puppeteer). Ensure your selected agent has the appropriate tool
+                permissions.
+              </p>
+            </div>
+          )}
+
           <div className="space-y-1.5">
             <label className="text-xs text-muted-foreground">Named Agent (optional)</label>
             <div className="flex items-center gap-2">
@@ -284,7 +327,7 @@ export function StartTechCheckDialog({
             ) : (
               <Play className="h-4 w-4 mr-1" />
             )}
-            Start Tech Check
+            {config.title}
           </Button>
         </DialogFooter>
       </DialogContent>

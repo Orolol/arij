@@ -4,11 +4,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { Activity, Plus, RefreshCw } from "lucide-react";
 import { ReportDetail } from "@/components/qa/ReportDetail";
-import { StartTechCheckDialog } from "@/components/qa/StartTechCheckDialog";
+import { StartQaCheckDialog } from "@/components/qa/StartQaCheckDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useQaReports } from "@/hooks/useQaReports";
+
+type FilterCheckType = "tech_check" | "e2e_test" | null;
 
 function formatDate(value: string | null): string {
   if (!value) return "-";
@@ -24,6 +26,10 @@ function statusVariant(status: string): "default" | "secondary" | "destructive" 
   return "secondary";
 }
 
+function checkTypeBadgeLabel(checkType: string): string {
+  return checkType === "e2e_test" ? "E2E" : "Tech";
+}
+
 export default function QAPage() {
   const params = useParams();
   const projectId = params.projectId as string;
@@ -31,21 +37,27 @@ export default function QAPage() {
   const [startDialogOpen, setStartDialogOpen] = useState(false);
   const [selectedReportId, setSelectedReportId] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [filterCheckType, setFilterCheckType] = useState<FilterCheckType>(null);
+
+  const filteredReports = useMemo(() => {
+    if (!filterCheckType) return reports;
+    return reports.filter((report) => report.checkType === filterCheckType);
+  }, [reports, filterCheckType]);
 
   useEffect(() => {
-    if (reports.length === 0) {
+    if (filteredReports.length === 0) {
       setSelectedReportId(null);
       return;
     }
 
     setSelectedReportId((prev) => {
-      if (prev && reports.some((report) => report.id === prev)) return prev;
-      return reports[0].id;
+      if (prev && filteredReports.some((report) => report.id === prev)) return prev;
+      return filteredReports[0].id;
     });
-  }, [reports]);
+  }, [filteredReports]);
 
   const handleStarted = useCallback((data: { reportId: string; sessionId: string }) => {
-    setActionMessage("Tech check started.");
+    setActionMessage("QA check started.");
     setSelectedReportId(data.reportId);
     void refresh();
   }, [refresh]);
@@ -69,7 +81,7 @@ export default function QAPage() {
         <div>
           <h2 className="text-xl font-bold">QA</h2>
           <p className="text-xs text-muted-foreground mt-1">
-            Run comprehensive tech checks, review report history, and create epics from findings.
+            Run tech checks and E2E tests, review report history, and create epics from findings.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -84,7 +96,7 @@ export default function QAPage() {
           </Button>
           <Button size="sm" className="h-8" onClick={() => setStartDialogOpen(true)}>
             <Plus className="h-3.5 w-3.5 mr-1" />
-            Start Tech Check
+            New Check
           </Button>
         </div>
       </div>
@@ -93,6 +105,31 @@ export default function QAPage() {
         <Badge variant="secondary">{stats.running} running</Badge>
         <Badge variant="outline">{stats.completed} completed</Badge>
         <Badge variant="outline">{stats.failed} failed</Badge>
+        <span className="mx-1 text-border">|</span>
+        <Button
+          variant={filterCheckType === null ? "default" : "outline"}
+          size="sm"
+          className="h-6 text-[11px] px-2"
+          onClick={() => setFilterCheckType(null)}
+        >
+          All
+        </Button>
+        <Button
+          variant={filterCheckType === "tech_check" ? "default" : "outline"}
+          size="sm"
+          className="h-6 text-[11px] px-2"
+          onClick={() => setFilterCheckType("tech_check")}
+        >
+          Tech Check
+        </Button>
+        <Button
+          variant={filterCheckType === "e2e_test" ? "default" : "outline"}
+          size="sm"
+          className="h-6 text-[11px] px-2"
+          onClick={() => setFilterCheckType("e2e_test")}
+        >
+          E2E Test
+        </Button>
       </div>
 
       {actionMessage && (
@@ -104,7 +141,7 @@ export default function QAPage() {
       <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 flex-1 min-h-0">
         <Card className="h-full flex flex-col">
           <div className="border-b border-border px-4 py-3">
-            <h3 className="text-sm font-semibold">Tech Check History</h3>
+            <h3 className="text-sm font-semibold">Report History</h3>
           </div>
           <div className="flex-1 overflow-auto p-3 space-y-2">
             {loading && (
@@ -116,13 +153,13 @@ export default function QAPage() {
             {!loading && error && (
               <p className="text-xs text-destructive">{error}</p>
             )}
-            {!loading && !error && reports.length === 0 && (
+            {!loading && !error && filteredReports.length === 0 && (
               <p className="text-xs text-muted-foreground">
-                No tech checks yet. Start one to generate a project QA report.
+                No QA reports yet. Start a tech check or E2E test to generate a report.
               </p>
             )}
 
-            {reports.map((report) => (
+            {filteredReports.map((report) => (
               <button
                 key={report.id}
                 type="button"
@@ -134,7 +171,12 @@ export default function QAPage() {
                 }`}
               >
                 <div className="flex items-center justify-between gap-2 mb-1">
-                  <span className="text-xs font-medium">#{report.id.slice(0, 8)}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-xs font-medium">#{report.id.slice(0, 8)}</span>
+                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">
+                      {checkTypeBadgeLabel(report.checkType)}
+                    </Badge>
+                  </div>
                   <Badge variant={statusVariant(report.status)} className="text-[10px]">
                     {report.status}
                   </Badge>
@@ -160,7 +202,7 @@ export default function QAPage() {
         />
       </div>
 
-      <StartTechCheckDialog
+      <StartQaCheckDialog
         projectId={projectId}
         open={startDialogOpen}
         onOpenChange={setStartDialogOpen}

@@ -7,10 +7,11 @@ import { projects, qaReports } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 import { processManager } from "@/lib/claude/process-manager";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
-import { buildTechCheckPrompt } from "@/lib/claude/prompt-builder";
+import { buildTechCheckPrompt, buildE2eTestPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
 import { listProjectTextDocuments } from "@/lib/documents/query";
+import type { AgentType } from "@/lib/agent-config/constants";
 import {
   createQueuedSession,
   isSessionLifecycleConflictError,
@@ -20,6 +21,18 @@ import {
 
 type Params = { params: Promise<{ projectId: string }> };
 
+type CheckType = "tech_check" | "e2e_test";
+
+const CHECK_TYPE_TO_AGENT_TYPE: Record<CheckType, AgentType> = {
+  tech_check: "tech_check",
+  e2e_test: "e2e_test",
+};
+
+const CHECK_TYPE_LABELS: Record<CheckType, string> = {
+  tech_check: "Tech check",
+  e2e_test: "E2E test",
+};
+
 const POLL_INTERVAL_MS = 2000;
 
 function toNullableTrimmedString(value: unknown): string | null {
@@ -28,10 +41,15 @@ function toNullableTrimmedString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function extractSummary(content: string): string {
+function parseCheckType(value: unknown): CheckType {
+  if (value === "e2e_test") return "e2e_test";
+  return "tech_check";
+}
+
+function extractSummary(content: string, checkType: CheckType): string {
   const normalized = content.trim();
   if (!normalized) {
-    return "Tech check completed without output.";
+    return `${CHECK_TYPE_LABELS[checkType]} completed without output.`;
   }
 
   const paragraphs = normalized
@@ -52,6 +70,8 @@ export async function POST(request: NextRequest, { params }: Params) {
   const namedAgentId = toNullableTrimmedString(body.namedAgentId);
   const customPrompt = toNullableTrimmedString(body.customPrompt);
   const customPromptId = toNullableTrimmedString(body.customPromptId);
+  const checkType = parseCheckType(body.checkType);
+  const agentType = CHECK_TYPE_TO_AGENT_TYPE[checkType];
 
   const project = db
     .select()
@@ -71,14 +91,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   const docs = listProjectTextDocuments(projectId);
-  const techCheckSystemPrompt = await resolveAgentPrompt("tech_check", projectId);
-  const resolvedAgent = resolveAgentByNamedId("tech_check", projectId, namedAgentId);
-  const prompt = buildTechCheckPrompt(
-    project,
-    docs,
-    customPrompt,
-    techCheckSystemPrompt,
-  );
+  const systemPrompt = await resolveAgentPrompt(agentType, projectId);
+  const resolvedAgent = resolveAgentByNamedId(agentType, projectId, namedAgentId);
+
+  const prompt =
+    checkType === "e2e_test"
+      ? buildE2eTestPrompt(project, docs, customPrompt, systemPrompt)
+      : buildTechCheckPrompt(project, docs, customPrompt, systemPrompt);
 
   const sessionId = createId();
   const reportId = createId();
@@ -96,7 +115,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     prompt,
     logsPath,
     claudeSessionId,
-    agentType: "tech_check",
+    agentType,
     createdAt: now,
   });
 
@@ -109,6 +128,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       namedAgentId,
       promptUsed: prompt,
       customPromptId,
+      checkType,
       createdAt: now,
     })
     .run();
@@ -155,9 +175,10 @@ export async function POST(request: NextRequest, { params }: Params) {
       }
     }
 
+    const fallbackLabel = CHECK_TYPE_LABELS[checkType];
     const output = result?.result
       ? parseClaudeOutput(result.result).content
-      : result?.error || "Tech check completed without output.";
+      : result?.error || `${fallbackLabel} completed without output.`;
 
     const reportStatus =
       info?.status === "cancelled"
@@ -170,7 +191,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       .set({
         status: reportStatus,
         reportContent: output,
-        summary: extractSummary(output),
+        summary: extractSummary(output, checkType),
         completedAt,
       })
       .where(eq(qaReports.id, reportId))

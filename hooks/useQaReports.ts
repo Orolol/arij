@@ -12,6 +12,7 @@ export interface QaReportListItem {
   customPromptId: string | null;
   reportContent: string | null;
   summary: string | null;
+  checkType: string;
   createdAt: string | null;
   completedAt: string | null;
 }

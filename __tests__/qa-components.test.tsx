@@ -1,14 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
-import { StartTechCheckDialog } from "@/components/qa/StartTechCheckDialog";
+import { StartQaCheckDialog } from "@/components/qa/StartQaCheckDialog";
 import { ReportDetail } from "@/components/qa/ReportDetail";
 
 vi.mock("@/components/shared/NamedAgentSelect", () => ({
   NamedAgentSelect: () => <div data-testid="named-agent-select">NamedAgentSelect</div>,
 }));
 
-describe("StartTechCheckDialog", () => {
+describe("StartQaCheckDialog", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     global.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
@@ -44,7 +44,7 @@ describe("StartTechCheckDialog", () => {
     const onStarted = vi.fn();
 
     render(
-      <StartTechCheckDialog
+      <StartQaCheckDialog
         projectId="proj-1"
         open
         onOpenChange={vi.fn()}

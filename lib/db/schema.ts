@@ -366,6 +366,7 @@ export const qaReports = sqliteTable("qa_reports", {
   customPromptId: text("custom_prompt_id"),
   reportContent: text("report_content"),
   summary: text("summary"),
+  checkType: text("check_type").notNull().default("tech_check"), // tech_check | e2e_test
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
   completedAt: text("completed_at"),
 });

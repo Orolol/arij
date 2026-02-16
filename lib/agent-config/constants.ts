@@ -10,6 +10,7 @@ export const AGENT_TYPES = [
   "ticket_build",
   "merge",
   "tech_check",
+  "e2e_test",
 ] as const;
 
 export type AgentType = (typeof AGENT_TYPES)[number];
@@ -35,6 +36,7 @@ export const AGENT_TYPE_LABELS: Record<AgentType, string> = {
   ticket_build: "Ticket Build",
   merge: "Merge",
   tech_check: "Tech Check",
+  e2e_test: "E2E Test",
 };
 
 export function isAgentType(value: string): value is AgentType {
@@ -60,6 +62,7 @@ export const BUILTIN_AGENT_PROMPTS: Record<AgentType, string> = {
   ticket_build: "",
   merge: "",
   tech_check: "",
+  e2e_test: "",
 };
 
 export type AgentProvider =

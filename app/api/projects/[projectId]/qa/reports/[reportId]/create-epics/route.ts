@@ -7,6 +7,7 @@ import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { extractJsonFromOutput } from "@/lib/claude/json-parser";
 import { getProvider } from "@/lib/providers";
+import type { AgentType } from "@/lib/agent-config/constants";
 
 type Params = { params: Promise<{ projectId: string; reportId: string }> };
 
@@ -20,7 +21,7 @@ interface GeneratedEpic {
   title: string;
   description: string;
   priority: number;
-  type: "feature";
+  type: "feature" | "bug";
   userStories: GeneratedStory[];
 }
 
@@ -79,7 +80,7 @@ function normalizePriority(value: unknown): number {
   return clamped;
 }
 
-function toGeneratedEpics(value: unknown): GeneratedEpic[] {
+function toGeneratedEpics(value: unknown, epicType: "feature" | "bug" = "feature"): GeneratedEpic[] {
   const rows =
     Array.isArray(value)
       ? value
@@ -111,7 +112,7 @@ function toGeneratedEpics(value: unknown): GeneratedEpic[] {
             ? row.description.trim()
             : "Epic generated from QA report findings.",
         priority: normalizePriority(row.priority),
-        type: "feature" as const,
+        type: epicType,
         userStories: stories,
       } satisfies GeneratedEpic;
     })
@@ -142,13 +143,22 @@ export async function POST(_request: NextRequest, { params }: Params) {
     );
   }
 
-  const prompt = `# Tech Check Report
+  const isE2e = report.checkType === "e2e_test";
+  const reportTitle = isE2e ? "# E2E Test Report" : "# Tech Check Report";
+  const taskDescription = isE2e
+    ? "Based on the E2E test report above, generate bug-fix epics from test failures. Group related failures into cohesive epics. Prioritize by severity."
+    : "Based on the tech check report above, generate a list of epics to address the findings. Group related findings into cohesive epics. Prioritize by severity.";
+  const epicTypeRule = isE2e
+    ? '- All items are bug-fix epics (type "bug") — create bug tickets from test failures'
+    : '- All items are epics (type "feature") — do NOT create bug tickets';
+
+  const prompt = `${reportTitle}
 
 ${report.reportContent}
 
 # Task
 
-Based on the tech check report above, generate a list of epics to address the findings. Group related findings into cohesive epics. Prioritize by severity.
+${taskDescription}
 
 Return ONLY a JSON array with the following structure:
 
@@ -171,14 +181,15 @@ Return ONLY a JSON array with the following structure:
 
 Rules:
 - Priority: 0=low, 1=medium, 2=high, 3=critical
-- All items are epics (type "feature") — do NOT create bug tickets
-- Group related findings (including bug fixes) into cohesive epics with user stories
+${epicTypeRule}
+- Group related findings into cohesive epics with user stories
 - Each epic should have 1-5 user stories
 - Be specific and reference file paths and concrete changes
 `;
 
+  const agentType: AgentType = isE2e ? "e2e_test" : "tech_check";
   const resolvedAgent = resolveAgentByNamedId(
-    "tech_check",
+    agentType,
     projectId,
     report.namedAgentId ?? null,
   );
@@ -227,7 +238,7 @@ Rules:
     );
   }
 
-  const generatedEpics = toGeneratedEpics(extracted);
+  const generatedEpics = toGeneratedEpics(extracted, isE2e ? "bug" : "feature");
   if (generatedEpics.length === 0) {
     const rawSnippet = toSnippet(result.result);
     console.error("[qa/create-epics] JSON payload could not be normalized into epics", {

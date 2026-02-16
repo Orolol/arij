@@ -286,6 +286,93 @@ Your response should be a well-formatted markdown report.
 }
 
 // ---------------------------------------------------------------------------
+// 2c. E2E Test Prompt
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds the prompt for a comprehensive end-to-end test run (QA).
+ */
+export function buildE2eTestPrompt(
+  project: PromptProject,
+  documents: PromptDocument[],
+  customPrompt?: string | null,
+  systemPrompt?: string | null,
+): string {
+  const parts: string[] = [];
+
+  parts.push(systemSection(systemPrompt));
+  parts.push(projectHeader(project.name));
+  parts.push(specSection(project.spec));
+  parts.push(documentsSection(documents));
+
+  if (customPrompt && customPrompt.trim()) {
+    parts.push(`## Additional Instructions\n\n${customPrompt.trim()}\n`);
+  }
+
+  parts.push(`## Task: Comprehensive E2E Test
+
+Perform thorough end-to-end testing of the entire application. Use browser automation, test runners, and HTTP clients to verify all features work correctly from the user's perspective.
+
+### Testing Areas
+
+1. **Core User Flows**
+   - Authentication and authorization flows
+   - Primary CRUD operations
+   - Multi-step workflows end-to-end
+   - Form submissions and validations
+   - File uploads and processing
+
+2. **API & Data Integrity**
+   - API endpoints return correct responses
+   - Data persistence across operations
+   - Error responses for invalid inputs
+   - Pagination, filtering, and sorting
+   - Concurrent operation handling
+
+3. **UI & Interaction**
+   - Interactive components respond correctly (buttons, dialogs, dropdowns)
+   - Drag-and-drop functionality
+   - Keyboard navigation and shortcuts
+   - Responsive layout across breakpoints
+   - Loading states and transitions
+
+4. **Navigation & Routing**
+   - All routes load without errors
+   - Deep linking and URL parameters
+   - Back/forward browser navigation
+   - Redirect flows work correctly
+   - 404 and error pages display properly
+
+5. **Integration Points**
+   - Third-party service integrations
+   - WebSocket or real-time connections
+   - Background job triggers and results
+   - Notification delivery
+   - External API callbacks
+
+6. **Regression Checks**
+   - Previously fixed bugs remain resolved
+   - Feature interactions don't break each other
+   - Data migrations haven't corrupted state
+   - Performance hasn't degraded noticeably
+   - Edge cases and boundary conditions
+
+### Output Format
+
+Produce a detailed markdown report with:
+- An executive summary (2-3 paragraphs)
+- Test results organized by the categories above
+- Each test should include: status (PASS/FAIL/SKIP), test description, steps performed, and details on failures
+- A summary table at the end with total PASS/FAIL/SKIP counts
+- A prioritized list of failures and recommended fixes
+
+Your response should be a well-formatted markdown report.
+`);
+
+  return parts.filter(Boolean).join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // 3. Import Prompt
 // ---------------------------------------------------------------------------
 

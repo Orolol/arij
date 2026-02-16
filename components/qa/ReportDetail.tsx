@@ -13,6 +13,7 @@ interface QaReport {
   status: string;
   summary: string | null;
   reportContent: string | null;
+  checkType?: string;
   createdAt: string | null;
   completedAt: string | null;
 }
@@ -123,7 +124,8 @@ export function ReportDetail({
 
   const heading = useMemo(() => {
     if (!report) return "Report";
-    return `Report #${report.id.slice(0, 8)}`;
+    const label = report.checkType === "e2e_test" ? "E2E Test" : "Tech Check";
+    return `${label} #${report.id.slice(0, 8)}`;
   }, [report]);
 
   if (!reportId) {
@@ -214,7 +216,9 @@ export function ReportDetail({
         {report.status === "running" && (
           <div className="mb-3 inline-flex items-center gap-2 text-xs text-muted-foreground">
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Tech check is still running...
+            {report.checkType === "e2e_test"
+              ? "E2E test is still running..."
+              : "Tech check is still running..."}
           </div>
         )}
 
