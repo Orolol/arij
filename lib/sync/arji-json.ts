@@ -5,6 +5,13 @@ const ARJI_JSON = "arji.json";
 
 // --- Types ---
 
+export interface ArjiJsonComment {
+  id: string;
+  author: string;
+  content: string;
+  createdAt: string | null;
+}
+
 export interface ArjiJsonUserStory {
   id: string;
   title: string;
@@ -12,6 +19,7 @@ export interface ArjiJsonUserStory {
   acceptance_criteria: string | null;
   status: string;
   position: number;
+  comments?: ArjiJsonComment[];
 }
 
 export interface ArjiJsonEpic {
@@ -22,7 +30,9 @@ export interface ArjiJsonEpic {
   status: string;
   position: number;
   branchName: string | null;
+  type?: string;
   user_stories: ArjiJsonUserStory[];
+  comments?: ArjiJsonComment[];
 }
 
 export interface ArjiJsonProject {
