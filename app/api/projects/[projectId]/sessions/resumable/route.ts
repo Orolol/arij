@@ -51,11 +51,6 @@ export async function GET(request: NextRequest, { params }: Params) {
     resolvedNamedAgentId = namedAgent.id;
   }
 
-  // Codex `exec` does not support resume; do not surface resumable sessions for it.
-  if (resolvedProvider === "codex") {
-    return NextResponse.json({ data: [] });
-  }
-
   const conditions = [
     eq(agentSessions.projectId, projectId),
     eq(agentSessions.status, "completed"),

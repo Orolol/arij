@@ -575,4 +575,72 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     expect(assistantInsert.content).toContain("Resumed session output with epic details");
     expect(assistantInsert.content).not.toContain('"type":"result"');
   });
+
+  it("falls back to fresh Codex run when resume session is expired", async () => {
+    mockResolveAgentByNamedId.mockReturnValue({
+      provider: "codex",
+      model: undefined,
+      namedAgentId: null,
+    });
+
+    const firstSession = {
+      promise: Promise.resolve({
+        success: false,
+        error: "session not found",
+        cliSessionId: "expired-codex",
+      }),
+      kill: vi.fn(),
+    };
+    const secondSession = {
+      promise: Promise.resolve({
+        success: true,
+        result: "Fresh codex fallback",
+        cliSessionId: "new-codex-session",
+      }),
+      kill: vi.fn(),
+    };
+
+    mockDynamicProviderSpawn
+      .mockReturnValueOnce(firstSession)
+      .mockReturnValueOnce(secondSession);
+
+    mockDbState.getQueue = [
+      { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
+      {
+        id: "conv-codex",
+        type: "brainstorm",
+        provider: "codex",
+        namedAgentId: null,
+        cliSessionId: "expired-codex",
+        label: "Chat",
+      },
+    ];
+    mockDbState.allQueue = [
+      [{ role: "user", content: "Previous", createdAt: "2026-01-01T10:00:00.000Z" }],
+    ];
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockRequest({ content: "Continue", conversationId: "conv-codex" }),
+      { params: Promise.resolve({ projectId: "proj1" }) },
+    );
+
+    expect(response.status).toBe(200);
+    const events = await readSseEvents(response as unknown as Response);
+    expect(events.some((e) => e.delta === "Fresh codex fallback")).toBe(true);
+    expect(mockDynamicProviderSpawn).toHaveBeenCalledTimes(2);
+    expect(mockDynamicProviderSpawn.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        prompt: "Continue",
+        cliSessionId: "expired-codex",
+        resumeSession: true,
+      }),
+    );
+    expect(mockDynamicProviderSpawn.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        prompt: "CHAT_PROMPT",
+        resumeSession: false,
+      }),
+    );
+  });
 });

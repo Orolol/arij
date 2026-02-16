@@ -20,6 +20,7 @@ import {
 const RESUME_CAPABLE_PROVIDERS = new Set<ProviderType>([
   "claude-code",
   "gemini-cli",
+  "codex",
 ]);
 
 function normalizeProvider(value: string | null | undefined): ProviderType | null {
