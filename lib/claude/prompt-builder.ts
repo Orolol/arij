@@ -41,6 +41,7 @@ export interface PromptMessage {
 export interface PromptEpic {
   title: string;
   description?: string | null;
+  type?: string | null;
 }
 
 export interface PromptUserStory {
@@ -881,6 +882,36 @@ For each criterion, specify:
 - **Details**: Description of what works or what's missing`,
 };
 
+const BUG_REVIEW_CHECKLIST = `## Bug Fix Verification Checklist
+
+Verify that the bug fix correctly addresses the reported issue without introducing regressions. Use ALL available tools — browser, shell commands, test runners, etc. — to validate each point.
+
+1. **Bug Fix Verification**:
+   - Reproduce the original bug scenario (or confirm the conditions that triggered it)
+   - Verify the fix resolves the reported issue
+   - Check that the root cause is addressed, not just the symptom
+   - Document PASS/FAIL with evidence (screenshots, command output, etc.)
+
+2. **Regression Check**:
+   - Verify that adjacent functionality is not broken by the fix
+   - Test related features and flows that might be affected
+   - Check edge cases around the fix area
+
+3. **Code Quality**:
+   - The fix is minimal and focused on the bug
+   - No unrelated changes are included
+   - Error handling is appropriate for the fix area
+
+4. **Tests**:
+   - Tests exist that cover the bug scenario
+   - Run the test suite and verify tests pass
+   - Report any failing tests with details
+
+For each criterion, specify:
+- **Status**: PASS / FAIL / PARTIAL
+- **Evidence**: What you did to verify (command run, URL visited, screenshot taken)
+- **Details**: Description of what works or what's missing`;
+
 /**
  * Builds the prompt for a review agent (plan mode). Each review type gets a
  * specialized checklist. The agent reads the code and posts findings as a
@@ -1144,6 +1175,8 @@ Do NOT abort the merge. Do NOT create a new branch. Work only in this worktree.
 /**
  * Builds the prompt for an epic-level review agent (plan mode).
  * Scoped to the entire epic and all its user stories.
+ * When epic.type is "bug", adapts labels, checklist, and instructions
+ * so the agent reviews a bug fix instead of a feature.
  */
 export function buildEpicReviewPrompt(
   project: PromptProject,
@@ -1154,6 +1187,7 @@ export function buildEpicReviewPrompt(
   systemPrompt?: string | null,
   comments?: PromptComment[],
 ): string {
+  const isBug = epic.type === "bug";
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
@@ -1161,15 +1195,17 @@ export function buildEpicReviewPrompt(
   parts.push(specSection(project.spec));
   parts.push(documentsSection(documents));
 
-  // Epic details
-  parts.push(`## Epic Under Review\n`);
+  // Epic / Bug details — use appropriate label
+  parts.push(`## ${isBug ? "Bug Under Review" : "Epic Under Review"}\n`);
   parts.push(`### ${epic.title}\n`);
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
 
-  // All user stories in this epic
-  parts.push(userStoriesSection(userStories, { checkmark: false }));
+  // Skip user stories section for bug tickets (they have none)
+  if (!isBug) {
+    parts.push(userStoriesSection(userStories, { checkmark: false }));
+  }
 
   // Comment history
   if (comments && comments.length > 0) {
@@ -1181,11 +1217,37 @@ export function buildEpicReviewPrompt(
     parts.push(formatted.join("\n\n") + "\n");
   }
 
-  // Review checklist
-  parts.push(REVIEW_CHECKLISTS[reviewType]);
+  // Review checklist — bug tickets get a dedicated checklist for feature_review
+  if (isBug && reviewType === "feature_review") {
+    parts.push(BUG_REVIEW_CHECKLIST);
+  } else {
+    parts.push(REVIEW_CHECKLISTS[reviewType]);
+  }
 
   if (reviewType === "feature_review") {
-    parts.push(`\n## Instructions
+    if (isBug) {
+      parts.push(`\n## Instructions
+
+You are performing a **bug fix verification** on the bug described above. You have full access to all tools — browser, shell, file system, test runners, etc.
+
+**IMPORTANT: This is a BUG FIX review, not a feature review.** Focus exclusively on verifying the bug fix described in this ticket. Do NOT review unrelated features or changes from other tickets.
+
+1. Read the bug description and understand the reported issue.
+2. Read the relevant source files to understand the fix.
+3. **Actively test the fix**: launch the app if needed, use the browser, run commands, execute tests.
+4. Verify the fix addresses the root cause, not just the symptom.
+5. Check for regressions in adjacent functionality.
+6. Produce a structured report with PASS/FAIL/PARTIAL for each verification criterion.
+
+**IMPORTANT — Final Verdict:** Your report MUST end with exactly one of these lines:
+- \`**Overall Verdict: Bug Fixed**\` — if the fix correctly addresses the reported issue
+- \`**Overall Verdict: Partially Complete**\` — if the fix is incomplete or introduces issues
+- \`**Overall Verdict: Not Complete**\` — if the bug is not resolved
+
+Your response should be a well-formatted markdown report. Do NOT just read the code — actually run and test the fix.
+`);
+    } else {
+      parts.push(`\n## Instructions
 
 You are performing a **feature completeness review** on the entire epic described above, covering all user stories. You have full access to all tools — browser, shell, file system, test runners, etc.
 
@@ -1202,12 +1264,16 @@ You are performing a **feature completeness review** on the entire epic describe
 
 Your response should be a well-formatted markdown report. Do NOT just read the code — actually run and test the features.
 `);
+    }
   } else {
+    const reviewLabel = isBug
+      ? `${reviewType.replace("_", " ")} (bug fix)`
+      : reviewType.replace("_", " ");
     parts.push(`\n## Instructions
 
-You are performing a **${reviewType.replace("_", " ")}** on the entire epic described above, covering all user stories.
+You are performing a **${reviewLabel}** on the ${isBug ? "bug fix" : "entire epic"} described above${isBug ? "" : ", covering all user stories"}.
 
-1. Read the relevant source files in the current working directory.
+${isBug ? "**IMPORTANT: This is a BUG FIX review.** Focus exclusively on the bug fix described in this ticket. Do NOT review unrelated features or changes from other tickets.\n" : ""}1. Read the relevant source files in the current working directory.
 2. Evaluate the code against every item in the checklist above.
 3. Produce a structured report with your findings.
 4. If no issues are found for a category, state "No issues found."

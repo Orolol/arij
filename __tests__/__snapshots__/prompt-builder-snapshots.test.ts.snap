@@ -469,6 +469,179 @@ You are helping define a new epic for this project. Based on the conversation so
 "
 `;
 
+exports[`Prompt builder snapshot regression > buildEpicReviewPrompt - bug ticket code_review 1`] = `
+"# System Instructions
+
+Follow strict TypeScript conventions
+
+
+# Project: TestProject
+
+## Project Specification
+
+## Spec
+Use Next.js and SQLite
+
+## Reference Documents
+
+### README.md
+
+# Readme
+Project docs
+
+---
+
+### design.md
+
+# Design
+Architecture notes
+
+## Bug Under Review
+
+### Review agent reviews wrong epic
+
+When asking for a review on a bug ticket, the agent reviews a previous epic instead of the bug fix
+
+## Comment History
+
+**User:**
+Please focus on security
+
+**Agent:**
+Will add input validation
+
+## Code Review Checklist
+
+Review the code changes for this ticket against the following quality criteria:
+
+1. **Readability**: Code is clear, well-structured, and easy to understand. Variable/function names are descriptive. Complex logic is commented.
+2. **DRY Principle**: No significant code duplication. Shared logic is properly abstracted.
+3. **Error Handling**: All error paths are handled gracefully. No unhandled promise rejections. Proper error messages for users.
+4. **Performance**: No obvious performance issues (N+1 queries, unnecessary re-renders, missing indexes, large payloads). Efficient algorithms for the data sizes involved.
+5. **Naming Conventions**: Consistent naming (camelCase for JS/TS, proper component naming for React). File names match conventions.
+6. **Type Safety**: Full TypeScript types, no \`any\` types. Proper interfaces for data structures.
+7. **Testing**: Adequate test coverage. Edge cases considered. Tests are maintainable and descriptive.
+8. **API Design**: Consistent REST conventions. Proper HTTP status codes. Clear request/response shapes.
+
+For each finding, specify:
+- **Severity**: Critical / Major / Minor / Suggestion
+- **Location**: File path and line number
+- **Description**: What the issue is
+- **Recommendation**: How to improve it
+
+## Instructions
+
+You are performing a **code review (bug fix)** on the bug fix described above.
+
+**IMPORTANT: This is a BUG FIX review.** Focus exclusively on the bug fix described in this ticket. Do NOT review unrelated features or changes from other tickets.
+1. Read the relevant source files in the current working directory.
+2. Evaluate the code against every item in the checklist above.
+3. Produce a structured report with your findings.
+4. If no issues are found for a category, state "No issues found."
+5. End with a summary: total findings by severity, and an overall verdict.
+
+**IMPORTANT — Final Verdict:** Your report MUST end with exactly one of these lines:
+- \`**Overall Verdict: Approved**\` — no blocking issues found
+- \`**Overall Verdict: Approved with Minor Issues**\` — minor suggestions only
+- \`**Overall Verdict: Changes Requested**\` — blocking issues that must be fixed
+
+Your response should be a well-formatted markdown report.
+"
+`;
+
+exports[`Prompt builder snapshot regression > buildEpicReviewPrompt - bug ticket feature_review 1`] = `
+"# System Instructions
+
+Follow strict TypeScript conventions
+
+
+# Project: TestProject
+
+## Project Specification
+
+## Spec
+Use Next.js and SQLite
+
+## Reference Documents
+
+### README.md
+
+# Readme
+Project docs
+
+---
+
+### design.md
+
+# Design
+Architecture notes
+
+## Bug Under Review
+
+### Review agent reviews wrong epic
+
+When asking for a review on a bug ticket, the agent reviews a previous epic instead of the bug fix
+
+## Comment History
+
+**User:**
+Please focus on security
+
+**Agent:**
+Will add input validation
+
+## Bug Fix Verification Checklist
+
+Verify that the bug fix correctly addresses the reported issue without introducing regressions. Use ALL available tools — browser, shell commands, test runners, etc. — to validate each point.
+
+1. **Bug Fix Verification**:
+   - Reproduce the original bug scenario (or confirm the conditions that triggered it)
+   - Verify the fix resolves the reported issue
+   - Check that the root cause is addressed, not just the symptom
+   - Document PASS/FAIL with evidence (screenshots, command output, etc.)
+
+2. **Regression Check**:
+   - Verify that adjacent functionality is not broken by the fix
+   - Test related features and flows that might be affected
+   - Check edge cases around the fix area
+
+3. **Code Quality**:
+   - The fix is minimal and focused on the bug
+   - No unrelated changes are included
+   - Error handling is appropriate for the fix area
+
+4. **Tests**:
+   - Tests exist that cover the bug scenario
+   - Run the test suite and verify tests pass
+   - Report any failing tests with details
+
+For each criterion, specify:
+- **Status**: PASS / FAIL / PARTIAL
+- **Evidence**: What you did to verify (command run, URL visited, screenshot taken)
+- **Details**: Description of what works or what's missing
+
+## Instructions
+
+You are performing a **bug fix verification** on the bug described above. You have full access to all tools — browser, shell, file system, test runners, etc.
+
+**IMPORTANT: This is a BUG FIX review, not a feature review.** Focus exclusively on verifying the bug fix described in this ticket. Do NOT review unrelated features or changes from other tickets.
+
+1. Read the bug description and understand the reported issue.
+2. Read the relevant source files to understand the fix.
+3. **Actively test the fix**: launch the app if needed, use the browser, run commands, execute tests.
+4. Verify the fix addresses the root cause, not just the symptom.
+5. Check for regressions in adjacent functionality.
+6. Produce a structured report with PASS/FAIL/PARTIAL for each verification criterion.
+
+**IMPORTANT — Final Verdict:** Your report MUST end with exactly one of these lines:
+- \`**Overall Verdict: Bug Fixed**\` — if the fix correctly addresses the reported issue
+- \`**Overall Verdict: Partially Complete**\` — if the fix is incomplete or introduces issues
+- \`**Overall Verdict: Not Complete**\` — if the bug is not resolved
+
+Your response should be a well-formatted markdown report. Do NOT just read the code — actually run and test the fix.
+"
+`;
+
 exports[`Prompt builder snapshot regression > buildEpicReviewPrompt - code_review 1`] = `
 "# System Instructions
 

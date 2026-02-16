@@ -46,6 +46,12 @@ const epic: PromptEpic = {
   description: "Add agent config side panel",
 };
 
+const bugEpic: PromptEpic = {
+  title: "Review agent reviews wrong epic",
+  description: "When asking for a review on a bug ticket, the agent reviews a previous epic instead of the bug fix",
+  type: "bug",
+};
+
 const story: PromptUserStory = {
   title: "As a dev I can configure prompts",
   description: "Add prompt editors for agent types",
@@ -148,5 +154,13 @@ describe("Prompt builder snapshot regression", () => {
 
   it("buildEpicReviewPrompt - feature_review", () => {
     expect(buildEpicReviewPrompt(project, docs, epic, [story], "feature_review", systemPrompt)).toMatchSnapshot();
+  });
+
+  it("buildEpicReviewPrompt - bug ticket feature_review", () => {
+    expect(buildEpicReviewPrompt(project, docs, bugEpic, [], "feature_review", systemPrompt, comments)).toMatchSnapshot();
+  });
+
+  it("buildEpicReviewPrompt - bug ticket code_review", () => {
+    expect(buildEpicReviewPrompt(project, docs, bugEpic, [], "code_review", systemPrompt, comments)).toMatchSnapshot();
   });
 });

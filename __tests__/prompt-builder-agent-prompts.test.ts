@@ -146,4 +146,114 @@ describe("Prompt builders with resolved system prompts", () => {
     expect(epicReview).toContain("## Reference Documents");
     expect(epicReview).toContain("- **As a dev I want tests**");
   });
+
+  it("bug ticket review uses bug-specific labels and skips user stories", () => {
+    const bugEpic = {
+      title: "Fix login crash",
+      description: "App crashes when user logs in with empty password",
+      type: "bug" as const,
+    };
+
+    const featureReview = buildEpicReviewPrompt(
+      project,
+      docs,
+      bugEpic,
+      [story],
+      "feature_review",
+      "System prompt"
+    );
+
+    // Uses "Bug Under Review" instead of "Epic Under Review"
+    expect(featureReview).toContain("## Bug Under Review");
+    expect(featureReview).not.toContain("## Epic Under Review");
+
+    // Uses bug fix verification instead of feature review
+    expect(featureReview).toContain("bug fix verification");
+    expect(featureReview).not.toContain("feature completeness review");
+
+    // Uses bug-specific checklist
+    expect(featureReview).toContain("Bug Fix Verification Checklist");
+    expect(featureReview).not.toContain("Feature Completeness Checklist");
+
+    // Skips user stories section (bug tickets have no stories)
+    expect(featureReview).not.toContain("## User Stories");
+
+    // Uses bug-specific verdict
+    expect(featureReview).toContain("Bug Fixed");
+
+    // Warns agent to focus on this bug only
+    expect(featureReview).toContain("This is a BUG FIX review");
+    expect(featureReview).toContain("Do NOT review unrelated features");
+  });
+
+  it("bug ticket non-feature review adapts instructions but keeps standard checklist", () => {
+    const bugEpic = {
+      title: "Fix XSS vulnerability",
+      description: "User input not sanitized in search field",
+      type: "bug" as const,
+    };
+
+    const securityReview = buildEpicReviewPrompt(
+      project,
+      docs,
+      bugEpic,
+      [],
+      "security",
+      "System prompt"
+    );
+
+    // Uses "Bug Under Review" label
+    expect(securityReview).toContain("## Bug Under Review");
+    expect(securityReview).not.toContain("## Epic Under Review");
+
+    // Still uses the standard security checklist
+    expect(securityReview).toContain("Security Audit Checklist");
+
+    // Adapts the instructions to mention bug fix
+    expect(securityReview).toContain("bug fix");
+    expect(securityReview).toContain("This is a BUG FIX review");
+  });
+
+  it("feature epic review is unchanged (backward compatible)", () => {
+    const featureEpic = {
+      title: "Add dark mode",
+      description: "Implement dark mode toggle",
+      type: "feature" as const,
+    };
+
+    const review = buildEpicReviewPrompt(
+      project,
+      docs,
+      featureEpic,
+      [story],
+      "feature_review",
+      "System prompt"
+    );
+
+    expect(review).toContain("## Epic Under Review");
+    expect(review).not.toContain("## Bug Under Review");
+    expect(review).toContain("feature completeness review");
+    expect(review).toContain("Feature Completeness Checklist");
+    expect(review).toContain("## User Stories");
+  });
+
+  it("epic without type defaults to feature behavior", () => {
+    const noTypeEpic = {
+      title: "Some epic",
+      description: "No type specified",
+    };
+
+    const review = buildEpicReviewPrompt(
+      project,
+      docs,
+      noTypeEpic,
+      [story],
+      "feature_review",
+      "System prompt"
+    );
+
+    expect(review).toContain("## Epic Under Review");
+    expect(review).toContain("feature completeness review");
+    expect(review).toContain("## User Stories");
+  });
 });
