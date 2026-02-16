@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastSyncedAt": "2026-02-15T13:21:16.663Z",
+  "lastSyncedAt": "2026-02-15T18:10:02.946Z",
   "project": {
     "name": "Arij",
     "description": "A local, AI-first project orchestrator that provides a web interface for managing multi-project workflows with Claude Code as the execution engine. It covers the full project lifecycle: ideation, specification, kanban-based planning, automated code generation via Claude Code CLI, real-time agent monitoring, and release management.",
@@ -8,16 +8,6 @@
     "spec": "The plan is ready for your review. It covers 5 phases:\n\n1. **Schema** — 4 new nullable columns across `agentSessions` and `chatConversations`\n2. **Provider Layer** — Capture CLI session IDs from output, inject `--resume` flag for Claude Code and Gemini CLI\n3. **Process Manager** — Persist `cliSessionId` to DB on session completion\n4. **Chat Continuity** — Resume-first logic with automatic fallback to fresh prompt if the session expired\n5. **Work Session Resume** — New API endpoint, session picker dialog, and integration into build/review hooks\n\nKey design decisions:\n- Codex is marked non-resumable (its `exec` mode doesn't support `--resume`)\n- `resolveAgent()` is extended to return `namedAgentId` for session filtering\n- Resume failures fall back gracefully to full-prompt mode"
   },
   "epics": [
-    {
-      "id": "d2aCCPhrsiXc",
-      "title": "While creating an epic, the response model was the whole JSON instead of markdown",
-      "description": null,
-      "priority": 2,
-      "status": "backlog",
-      "position": 0,
-      "branchName": null,
-      "user_stories": []
-    },
     {
       "id": "7FFiclGUqPE-",
       "title": "GitHub Release Lifecycle",
@@ -201,6 +191,95 @@
       "user_stories": []
     },
     {
+      "id": "0b--_UcXJvgN",
+      "title": "Non-Modal Kanban Ticket Details with Persistent Multi-Select",
+      "description": "Rework Kanban ticket detail behavior from a blocking right-side modal to a non-modal experience in the shared left panel area. Clicking a ticket must both select it and open its details, while the board remains fully interactive for additional selections and quick actions.\n\nImplementation plan:\n1. Refactor board UI state to keep ordered selection (`selectedTicketIds`) and derive `activeDetailTicketId` from the first selected ticket.\n2. Update card interaction so primary ticket click selects the ticket and opens details in the shared left panel container (same area used by chat/epic panels).\n3. Keep multi-select active while details are open using existing additive selection controls; additional selections must not block board interaction.\n4. Enforce first-selected anchoring: detail content follows the first selected ticket; adding more tickets does not switch detail; if the first selected ticket is removed, promote the next oldest selected ticket; if none remain, close details.\n5. Remove all modal mechanics across desktop/tablet/mobile: no dim layer, no pointer-event lock, no focus trap, no modal fallback.\n6. Increase detail panel width for readability using responsive sizing target `clamp(420px, 34vw, 560px)` and preserve usable board space.\n7. Add/adjust tests for selection-order logic, non-modal interactivity, quick-action continuity, and responsive rendering. No DB/schema/API/provider changes are expected.",
+      "priority": 0,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": [
+        {
+          "id": "1L1ELIrQdPmc",
+          "title": "As a project manager, I want ticket details to open in the shared left panel so that I can review details without leaving the board context.",
+          "description": "Replace the current blocking right-side modal flow with a shared left-panel detail view that reuses the existing left-panel container pattern.",
+          "acceptance_criteria": "- [ ] Clicking a ticket opens its detail view in the shared left panel container.\n- [ ] The right-side modal behavior is removed for ticket details.\n- [ ] Closing the detail panel does not force navigation away from the Kanban board.\n- [ ] The panel integration does not break existing chat/epic panel mounting behavior.",
+          "status": "review",
+          "position": 0
+        },
+        {
+          "id": "7AO2AagJrMtA",
+          "title": "As a project manager, I want clicking a ticket to automatically select it so that quick actions are immediately available.",
+          "description": "Unify ticket open and selection into one primary action to reduce clicks and enable faster bulk operations.",
+          "acceptance_criteria": "- [ ] Primary click on a ticket marks it as selected.\n- [ ] Primary click on a ticket opens its detail panel in the same action.\n- [ ] Quick action controls appear as soon as at least one ticket is selected.\n- [ ] Existing additive multi-select interactions remain available while detail is open.",
+          "status": "review",
+          "position": 1
+        },
+        {
+          "id": "TB_ejoBMibBc",
+          "title": "As a project manager, I want detail content anchored to the first-selected ticket so that multi-select does not disrupt what I am reading.",
+          "description": "Selection order must be preserved and used as the source of truth for which ticket is shown in detail.",
+          "acceptance_criteria": "- [ ] When multiple tickets are selected, the detail panel shows the first-selected ticket.\n- [ ] Selecting additional tickets does not change the currently shown detail ticket.\n- [ ] If the first-selected ticket is deselected and others remain, detail switches to the next oldest selected ticket.\n- [ ] If no tickets remain selected, the detail panel closes.",
+          "status": "review",
+          "position": 2
+        },
+        {
+          "id": "HatGN0m5zXdf",
+          "title": "As a project manager, I want the board to remain fully clickable while details are open so that I can continue selecting and managing tickets.",
+          "description": "Remove blocking UX from the detail experience so users can keep interacting with cards, lanes, and quick actions in parallel.",
+          "acceptance_criteria": "- [ ] No backdrop or greyed overlay appears when ticket details are open.\n- [ ] Pointer interaction with board cards and lane controls remains enabled while details are open.\n- [ ] Users can continue adding/removing selected tickets without closing the detail panel.\n- [ ] Quick actions always apply to the current selected set.",
+          "status": "review",
+          "position": 3
+        },
+        {
+          "id": "wRK078pRWx6P",
+          "title": "As a project manager, I want a slightly wider detail panel on all screen sizes so that ticket content is easier to read.",
+          "description": "Increase panel width with responsive constraints while preserving board usability and keeping non-modal behavior on desktop, tablet, and mobile.",
+          "acceptance_criteria": "- [ ] Detail panel width follows a responsive target of `clamp(420px, 34vw, 560px)` on larger viewports.\n- [ ] Non-modal behavior is preserved on desktop, tablet, and mobile (no modal fallback).\n- [ ] Board remains usable and scrollable while the panel is open at each breakpoint.\n- [ ] Overflow and truncation issues in ticket detail content are resolved at the new width.",
+          "status": "review",
+          "position": 4
+        },
+        {
+          "id": "7p3YJoO2-pkQ",
+          "title": "As a developer, I want automated coverage for the new selection and panel behavior so that regressions are caught early.",
+          "description": "Add reducer/state and UI integration tests validating non-modal interactions, selection order, and detail anchoring.",
+          "acceptance_criteria": "- [ ] Unit tests cover selection ordering and first-selected promotion logic.\n- [ ] Integration tests verify no overlay/board-lock behavior when details are open.\n- [ ] Integration tests verify click-to-select-and-open behavior and multi-select continuity.\n- [ ] Regression tests confirm no backend/API contract changes are required for this epic.",
+          "status": "review",
+          "position": 5
+        }
+      ]
+    },
+    {
+      "id": "Uo3wLP9kEkTd",
+      "title": "The existing project list is e;pty",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "LwHYywE6AfVb",
+      "title": "Add a codex special prompt to tell the model to always prefer subagents,",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "SqSVkY_RCXk6",
+      "title": "WHen chatting to create new epic, lot of empty responses",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
       "id": "agJ6EuLOQFEs",
       "title": "Dependency-Aware Batch Ticket Orchestration",
       "description": "Build an orchestration epic for Arij that adds ticket dependencies and batch actions while reusing existing PR/Git/review flows. Scope is limited to dependencies inside one project (including tickets across different epics in that project), with schema designed for future cross-project expansion.\n\nImplementation plan:\n1. Dependency domain model\n- Add dependency edges (`ticket_id`, `depends_on_ticket_id`, `project_id`) plus extensibility fields (`scope_type`, `scope_id`) for future scope expansion.\n- Enforce current business rule: dependencies are valid only within the same project.\n- Persist dependency metadata generated by the ticket-creation agent.\n2. Ticket detail dependency management\n- Add dependency editor in ticket detail to add/remove predecessors.\n- Validate DAG integrity on every update (cycle detection with explicit error path).\n3. Batch selection UX\n- On ticket selection, auto-include all transitive prerequisites.\n- Mark auto-included tickets as required and non-deselectable while dependents remain selected.\n- Show batch actions `Review all` and `Merge all` when multiple tickets are selected.\n4. DAG scheduler and execution engine\n- Implement topological planning for batch `build`, `review`, and `merge` actions.\n- Run dependent chains sequentially and independent branches in parallel, while respecting existing agent concurrency guardrails.\n- Track per-ticket states: `ready`, `running`, `blocked`, `failed`, `success`.\n5. Failure policy and remediation\n- If a ticket fails, block descendants and continue all independent branches.\n- For `Merge all`, add a batch toggle to auto-launch a merge agent on first failure for every failed ticket (including auto-included tickets), with no retry limit; rely on existing manual agent stop controls.\n6. Integration and quality\n- Reuse existing single-ticket PR/Git/review/build pathways; do not duplicate core Git/PR logic.\n- Add tests for transitive auto-inclusion, DAG validation, topological execution, failure propagation, and auto-merge triggering.",
@@ -258,6 +337,16 @@
           "position": 5
         }
       ]
+    },
+    {
+      "id": "d2aCCPhrsiXc",
+      "title": "While creating an epic, the response model was the whole JSON instead of markdown",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 1,
+      "branchName": null,
+      "user_stories": []
     },
     {
       "id": "L603hggiADs2",
@@ -2337,65 +2426,6 @@
           "acceptance_criteria": "- [ ] Include a high-level system diagram or architecture overview\n- [ ] Document the Provider and State Machine patterns used in the project\n- [ ] Provide clear steps for local development and database migrations",
           "status": "review",
           "position": 2
-        }
-      ]
-    },
-    {
-      "id": "0b--_UcXJvgN",
-      "title": "Non-Modal Kanban Ticket Details with Persistent Multi-Select",
-      "description": "Rework Kanban ticket detail behavior from a blocking right-side modal to a non-modal experience in the shared left panel area. Clicking a ticket must both select it and open its details, while the board remains fully interactive for additional selections and quick actions.\n\nImplementation plan:\n1. Refactor board UI state to keep ordered selection (`selectedTicketIds`) and derive `activeDetailTicketId` from the first selected ticket.\n2. Update card interaction so primary ticket click selects the ticket and opens details in the shared left panel container (same area used by chat/epic panels).\n3. Keep multi-select active while details are open using existing additive selection controls; additional selections must not block board interaction.\n4. Enforce first-selected anchoring: detail content follows the first selected ticket; adding more tickets does not switch detail; if the first selected ticket is removed, promote the next oldest selected ticket; if none remain, close details.\n5. Remove all modal mechanics across desktop/tablet/mobile: no dim layer, no pointer-event lock, no focus trap, no modal fallback.\n6. Increase detail panel width for readability using responsive sizing target `clamp(420px, 34vw, 560px)` and preserve usable board space.\n7. Add/adjust tests for selection-order logic, non-modal interactivity, quick-action continuity, and responsive rendering. No DB/schema/API/provider changes are expected.",
-      "priority": 0,
-      "status": "in_progress",
-      "position": 0,
-      "branchName": "feature/epic-0b--_UcXJvgN-non-modal-kanban-ticket-details-with-per",
-      "user_stories": [
-        {
-          "id": "1L1ELIrQdPmc",
-          "title": "As a project manager, I want ticket details to open in the shared left panel so that I can review details without leaving the board context.",
-          "description": "Replace the current blocking right-side modal flow with a shared left-panel detail view that reuses the existing left-panel container pattern.",
-          "acceptance_criteria": "- [ ] Clicking a ticket opens its detail view in the shared left panel container.\n- [ ] The right-side modal behavior is removed for ticket details.\n- [ ] Closing the detail panel does not force navigation away from the Kanban board.\n- [ ] The panel integration does not break existing chat/epic panel mounting behavior.",
-          "status": "in_progress",
-          "position": 0
-        },
-        {
-          "id": "7AO2AagJrMtA",
-          "title": "As a project manager, I want clicking a ticket to automatically select it so that quick actions are immediately available.",
-          "description": "Unify ticket open and selection into one primary action to reduce clicks and enable faster bulk operations.",
-          "acceptance_criteria": "- [ ] Primary click on a ticket marks it as selected.\n- [ ] Primary click on a ticket opens its detail panel in the same action.\n- [ ] Quick action controls appear as soon as at least one ticket is selected.\n- [ ] Existing additive multi-select interactions remain available while detail is open.",
-          "status": "in_progress",
-          "position": 1
-        },
-        {
-          "id": "TB_ejoBMibBc",
-          "title": "As a project manager, I want detail content anchored to the first-selected ticket so that multi-select does not disrupt what I am reading.",
-          "description": "Selection order must be preserved and used as the source of truth for which ticket is shown in detail.",
-          "acceptance_criteria": "- [ ] When multiple tickets are selected, the detail panel shows the first-selected ticket.\n- [ ] Selecting additional tickets does not change the currently shown detail ticket.\n- [ ] If the first-selected ticket is deselected and others remain, detail switches to the next oldest selected ticket.\n- [ ] If no tickets remain selected, the detail panel closes.",
-          "status": "in_progress",
-          "position": 2
-        },
-        {
-          "id": "HatGN0m5zXdf",
-          "title": "As a project manager, I want the board to remain fully clickable while details are open so that I can continue selecting and managing tickets.",
-          "description": "Remove blocking UX from the detail experience so users can keep interacting with cards, lanes, and quick actions in parallel.",
-          "acceptance_criteria": "- [ ] No backdrop or greyed overlay appears when ticket details are open.\n- [ ] Pointer interaction with board cards and lane controls remains enabled while details are open.\n- [ ] Users can continue adding/removing selected tickets without closing the detail panel.\n- [ ] Quick actions always apply to the current selected set.",
-          "status": "in_progress",
-          "position": 3
-        },
-        {
-          "id": "wRK078pRWx6P",
-          "title": "As a project manager, I want a slightly wider detail panel on all screen sizes so that ticket content is easier to read.",
-          "description": "Increase panel width with responsive constraints while preserving board usability and keeping non-modal behavior on desktop, tablet, and mobile.",
-          "acceptance_criteria": "- [ ] Detail panel width follows a responsive target of `clamp(420px, 34vw, 560px)` on larger viewports.\n- [ ] Non-modal behavior is preserved on desktop, tablet, and mobile (no modal fallback).\n- [ ] Board remains usable and scrollable while the panel is open at each breakpoint.\n- [ ] Overflow and truncation issues in ticket detail content are resolved at the new width.",
-          "status": "in_progress",
-          "position": 4
-        },
-        {
-          "id": "7p3YJoO2-pkQ",
-          "title": "As a developer, I want automated coverage for the new selection and panel behavior so that regressions are caught early.",
-          "description": "Add reducer/state and UI integration tests validating non-modal interactions, selection order, and detail anchoring.",
-          "acceptance_criteria": "- [ ] Unit tests cover selection ordering and first-selected promotion logic.\n- [ ] Integration tests verify no overlay/board-lock behavior when details are open.\n- [ ] Integration tests verify click-to-select-and-open behavior and multi-select continuity.\n- [ ] Regression tests confirm no backend/API contract changes are required for this epic.",
-          "status": "in_progress",
-          "position": 5
         }
       ]
     }
