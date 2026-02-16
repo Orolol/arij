@@ -140,6 +140,39 @@ describe("parseEpicFromConversation", () => {
     expect(result!.userStories.length).toBe(1);
   });
 
+  it("handles acceptanceCriteria as an array of strings", () => {
+    const messages = [
+      { role: "user", content: "Create an epic" },
+      {
+        role: "assistant",
+        content:
+          '```json\n{"title": "Auth", "description": "desc", "userStories": [{"title": "As a user, I want login so that I can log in", "description": "desc", "acceptanceCriteria": ["Login form exists", "Password is validated", "Session is created"]}]}\n```',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.title).toBe("Auth");
+    expect(result!.userStories.length).toBe(1);
+    expect(result!.userStories[0].acceptanceCriteria).toContain("- [ ] Login form exists");
+    expect(result!.userStories[0].acceptanceCriteria).toContain("- [ ] Password is validated");
+    expect(result!.userStories[0].acceptanceCriteria).toContain("- [ ] Session is created");
+  });
+
+  it("handles acceptance_criteria as an array (snake_case)", () => {
+    const messages = [
+      { role: "user", content: "Create an epic" },
+      {
+        role: "assistant",
+        content:
+          '```json\n{"title": "Auth", "description": "desc", "user_stories": [{"title": "As a user, I want login so that I can log in", "acceptance_criteria": ["Criterion A", "Criterion B"]}]}\n```',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.userStories[0].acceptanceCriteria).toContain("- [ ] Criterion A");
+    expect(result!.userStories[0].acceptanceCriteria).toContain("- [ ] Criterion B");
+  });
+
   it("prefers the latest assistant message", () => {
     const messages = [
       { role: "user", content: "Create an epic" },

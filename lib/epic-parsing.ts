@@ -240,9 +240,15 @@ function toParsedEpicFromJson(raw: unknown): ParsedEpic | null {
         return null;
       }
 
+      const rawAcceptance = storyInput.acceptanceCriteria ?? storyInput.acceptance_criteria;
       const acceptance =
-        normalizeAcceptanceCriteria(storyInput.acceptanceCriteria) ??
-        normalizeAcceptanceCriteria(storyInput.acceptance_criteria);
+        typeof rawAcceptance === "string"
+          ? rawAcceptance
+          : Array.isArray(rawAcceptance)
+            ? normalizeChecklist(
+                rawAcceptance.filter((item): item is string => typeof item === "string"),
+              )
+            : null;
 
       return {
         title,

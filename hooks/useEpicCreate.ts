@@ -49,10 +49,15 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
           return null;
         }
 
-        // Try up to 2 finalization attempts — second attempt uses a stronger nudge.
-        const MAX_ATTEMPTS = 2;
-        for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-          if (sendMessage) {
+        // First, try to extract an epic from existing messages without sending
+        // additional finalization prompts. This handles the common case where the
+        // AI has already responded with valid JSON during the conversation.
+        let parsedEpic = parseEpicFromConversation(messages);
+
+        // If no epic found in existing messages, try up to 2 finalization attempts.
+        if (!parsedEpic && sendMessage) {
+          const MAX_ATTEMPTS = 2;
+          for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
             const prompt =
               attempt === 0
                 ? "Generate the final epic with user stories based on our discussion."
@@ -70,46 +75,48 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
                 messages = updatedMessages;
               }
             }
+
+            parsedEpic = parseEpicFromConversation(messages);
+            if (parsedEpic) break;
+          }
+        }
+
+        if (parsedEpic) {
+          const res = await fetch(`/api/projects/${projectId}/epics`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: parsedEpic.title,
+              description: parsedEpic.description,
+              status: "backlog",
+              userStories: parsedEpic.userStories,
+            }),
+          });
+
+          const json = await res.json();
+
+          if (!res.ok || json.error) {
+            setError(json.error || "Failed to create epic");
+            return null;
           }
 
-          const parsedEpic = parseEpicFromConversation(messages);
-          if (parsedEpic) {
-            const res = await fetch(`/api/projects/${projectId}/epics`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                title: parsedEpic.title,
-                description: parsedEpic.description,
-                status: "backlog",
-                userStories: parsedEpic.userStories,
-              }),
-            });
+          const result: EpicCreateResult = {
+            epicId: json.data?.id || json.data?.epicId,
+            title: json.data?.title || parsedEpic.title,
+            userStoriesCreated:
+              typeof json.data?.userStoriesCreated === "number"
+                ? json.data.userStoriesCreated
+                : parsedEpic.userStories.length,
+          };
 
-            const json = await res.json();
-
-            if (!res.ok || json.error) {
-              setError(json.error || "Failed to create epic");
-              return null;
-            }
-
-            const result: EpicCreateResult = {
-              epicId: json.data?.id || json.data?.epicId,
-              title: json.data?.title || parsedEpic.title,
-              userStoriesCreated:
-                typeof json.data?.userStoriesCreated === "number"
-                  ? json.data.userStoriesCreated
-                  : parsedEpic.userStories.length,
-            };
-
-            if (!result.epicId) {
-              setError("Epic was created but no epic ID was returned.");
-              return null;
-            }
-
-            setCreatedEpic(result);
-            onEpicCreated?.(result);
-            return result.epicId;
+          if (!result.epicId) {
+            setError("Epic was created but no epic ID was returned.");
+            return null;
           }
+
+          setCreatedEpic(result);
+          onEpicCreated?.(result);
+          return result.epicId;
         }
 
         setError(
