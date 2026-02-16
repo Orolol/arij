@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "lastSyncedAt": "2026-02-16T10:30:56.290Z",
+  "lastSyncedAt": "2026-02-16T15:47:35.559Z",
   "project": {
     "name": "Arij",
     "description": "A local, AI-first project orchestrator that provides a web interface for managing multi-project workflows with Claude Code as the execution engine. It covers the full project lifecycle: ideation, specification, kanban-based planning, automated code generation via Claude Code CLI, real-time agent monitoring, and release management.",
@@ -8,16 +8,6 @@
     "spec": "The plan is ready for your review. It covers 5 phases:\n\n1. **Schema** — 4 new nullable columns across `agentSessions` and `chatConversations`\n2. **Provider Layer** — Capture CLI session IDs from output, inject `--resume` flag for Claude Code and Gemini CLI\n3. **Process Manager** — Persist `cliSessionId` to DB on session completion\n4. **Chat Continuity** — Resume-first logic with automatic fallback to fresh prompt if the session expired\n5. **Work Session Resume** — New API endpoint, session picker dialog, and integration into build/review hooks\n\nKey design decisions:\n- Codex is marked non-resumable (its `exec` mode doesn't support `--resume`)\n- `resolveAgent()` is extended to return `namedAgentId` for session filtering\n- Resume failures fall back gracefully to full-prompt mode"
   },
   "epics": [
-    {
-      "id": "9a4G7BgwWGyk",
-      "title": "Despite the output being in correct JSON format, the epic isn't created when chating",
-      "description": "We should automatically extract correct JSON format response",
-      "priority": 2,
-      "status": "backlog",
-      "position": 0,
-      "branchName": null,
-      "user_stories": []
-    },
     {
       "id": "7FFiclGUqPE-",
       "title": "GitHub Release Lifecycle",
@@ -84,6 +74,26 @@
     {
       "id": "ab3656k4iX4O",
       "title": "when asking for a review on a bug ticket, the agent instead do a review of a porevious epic",
+      "description": null,
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "9a4G7BgwWGyk",
+      "title": "Despite the output being in correct JSON format, the epic isn't created when chating",
+      "description": "We should automatically extract correct JSON format response",
+      "priority": 2,
+      "status": "done",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
+      "id": "Mch9mugZ4rd_",
+      "title": "La synchronisation par JSON ne préserve pas le type de ticket (bug ou epic) et ne garde pas les commentaires",
       "description": null,
       "priority": 2,
       "status": "done",
@@ -2541,11 +2551,21 @@
       ]
     },
     {
+      "id": "XN8VCkVAyazy",
+      "title": "the button \"Create epic & generate stories\" should not be blocked for all chat is used in one",
+      "description": null,
+      "priority": 2,
+      "status": "review",
+      "position": 0,
+      "branchName": null,
+      "user_stories": []
+    },
+    {
       "id": "SBumK12H9QtS",
       "title": "Multi-Provider CLI Integration with Base Class Refactor",
       "description": "Add 6 new CLI providers (Mistral Vibe, Qwen Code, OpenCode, DeepSeek, Kimi/Moonshot, Zai) and refactor the provider layer with a BaseCliProvider abstract class to reduce duplication. Updates the provider registry, named agents UI, and availability checks to support all 9 providers.\n\nNew providers:\n- Mistral Vibe (`vibe`): --prompt, --agent, --output json, --resume, --max-turns, --max-price\n- Qwen Code (`qwen`): -p, --yolo, --model, /resume\n- OpenCode (`opencode`): run \"...\", --format json, --session, --file\n- DeepSeek (`deepseek`): -q, --model, --no-stream, SQLite history\n- Kimi/Moonshot (`kimi`): --print, --continue, stream-json\n- Zai/Zhipu AI (`zai`): API-based via subprocess wrapper, GLM models\n\nArchitecture: BaseCliProvider abstract class handles 70% of shared spawn/kill/log/parse logic. Each provider is ~80-120 lines. Existing Claude Code, Codex, Gemini refactored onto base class first.",
       "priority": 0,
-      "status": "in_progress",
+      "status": "review",
       "position": 0,
       "branchName": "feature/epic-SBumK12H9QtS-multi-provider-cli-integration-with-base",
       "user_stories": [
@@ -2554,7 +2574,7 @@
           "title": "As a developer, I want a BaseCliProvider abstract class so that adding new CLI providers requires minimal boilerplate",
           "description": "Create lib/providers/base-provider.ts with an abstract class that encapsulates the shared provider lifecycle: child_process.spawn with stdio piping, stdout/stderr buffer collection, SIGTERM then SIGKILL kill logic, session ID extraction via extractCliSessionIdFromOutput, NDJSON session logging, endedWithQuestion detection, duration tracking, display command building, and exit code to success/error mapping.\n\nAbstract methods for subclasses:\n- get binaryName(): string\n- buildArgs(options: ProviderSpawnOptions): string[]\n- extractResult(stdout: string, stderr: string): string\n- Optional overrides: parseSessionId(), isAvailable(), buildEnv()\n\nAlso support chunk callbacks (onRawChunk, onOutputChunk, onResponseChunk) in the base for providers that stream.",
           "acceptance_criteria": "- [ ] BaseCliProvider class exists in lib/providers/base-provider.ts\n- [ ] Handles spawn, collect, kill, log, extract session ID, detect questions\n- [ ] Supports optional chunk callbacks for streaming providers\n- [ ] Abstract methods: binaryName, buildArgs, extractResult\n- [ ] Default isAvailable() checks `which <binaryName>",
-          "status": "in_progress",
+          "status": "review",
           "position": 0
         },
         {
@@ -2562,7 +2582,7 @@
           "title": "As a developer, I want existing providers refactored onto BaseCliProvider so that the abstraction is proven before adding new providers",
           "description": "Refactor ClaudeCodeProvider, CodexProvider, and GeminiCliProvider to extend BaseCliProvider. Each should only implement buildArgs(), extractResult(), and any provider-specific overrides (e.g., Codex overrides isAvailable() for login check, Codex uses temp file output capture). The spawn logic in lib/claude/spawn.ts, lib/codex/spawn.ts, and lib/gemini/spawn.ts should be consolidated where possible.\n\nAll existing tests and behavior must remain identical after refactoring.",
           "acceptance_criteria": "- [ ] ClaudeCodeProvider extends BaseCliProvider\n- [ ] CodexProvider extends BaseCliProvider\n- [ ] GeminiCliProvider extends BaseCliProvider\n- [ ] All existing provider behavior unchanged\n- [ ] Spawn files simplified to delegate to base class\n- [ ] No regression in session resume, chunk streaming, or kill logic",
-          "status": "in_progress",
+          "status": "review",
           "position": 1
         },
         {
@@ -2570,7 +2590,7 @@
           "title": "As a developer, I want the ProviderType union and provider registry updated to support 9 providers",
           "description": "Update lib/agent-config/constants.ts to add new provider types: 'mistral-vibe' | 'qwen-code' | 'opencode' | 'deepseek' | 'kimi' | 'zai'. Update lib/providers/index.ts provider registry to include all 9 providers. Update the providers/available API route to check CLI availability for all new providers.",
           "acceptance_criteria": "- [ ] ProviderType union includes all 9 values\n- [ ] Provider factory returns correct instance for each type\n- [ ] /api/providers/available reports status for all 9 CLIs\n- [ ] Named agent creation UI shows all 9 providers in dropdown\n- [ ] Fallback to claude-code if unknown provider requested",
-          "status": "in_progress",
+          "status": "review",
           "position": 2
         },
         {
@@ -2578,7 +2598,7 @@
           "title": "As a user, I want to use Mistral Vibe as an agent provider so that I can leverage Devstral models for build and review tasks",
           "description": "Implement MistralVibeProvider extending BaseCliProvider.\n\nCLI: `vibe --prompt <PROMPT> --agent <auto-approve|accept-edits|plan> --output json [--model <model>] [--resume <ID>] [--max-turns 50]`\n\nMode mapping: plan -> --agent plan, code -> --agent auto-approve, analyze -> --agent accept-edits.\nResume: supported via --resume <ID>.\nOutput: JSON with full conversation and metadata.\nSession ID: extract from JSON output.\nAvailability: `which vibe`.",
           "acceptance_criteria": "- [ ] MistralVibeProvider in lib/providers/mistral-vibe.ts\n- [ ] Spawn logic in lib/mistral-vibe/spawn.ts\n- [ ] Mode mapping: plan/code/analyze to --agent profiles\n- [ ] Resume support via --resume flag\n- [ ] JSON output parsing extracts result text\n- [ ] Session ID extraction from output\n- [ ] --max-turns default to prevent infinite loops\n- [ ] Provider availability check works",
-          "status": "in_progress",
+          "status": "review",
           "position": 3
         },
         {
@@ -2586,7 +2606,7 @@
           "title": "As a user, I want to use Qwen Code as an agent provider so that I can leverage Qwen3-Coder models with massive context windows",
           "description": "Implement QwenCodeProvider extending BaseCliProvider.\n\nCLI: `qwen -p <PROMPT> [--yolo] [--model <model>]`\n\nMode mapping: plan -> no --yolo flag (read-only default), code -> --yolo, analyze -> no --yolo.\nResume: limited (no --resume flag; uses /resume internal command, not suitable for headless).\nOutput: plain text from stdout.\nVision: auto-switch to vision model when images detected (handled by CLI).\nAvailability: `which qwen`.",
           "acceptance_criteria": "- [ ] QwenCodeProvider in lib/providers/qwen-code.ts\n- [ ] Spawn logic in lib/qwen-code/spawn.ts\n- [ ] Mode mapping: code uses --yolo for auto-approve\n- [ ] Model override via --model flag\n- [ ] Result extraction from stdout\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check works",
-          "status": "in_progress",
+          "status": "review",
           "position": 4
         },
         {
@@ -2594,7 +2614,7 @@
           "title": "As a user, I want to use OpenCode as an agent provider so that I can use its multi-provider backend (Ollama, Copilot, etc.)",
           "description": "Implement OpenCodeProvider extending BaseCliProvider.\n\nCLI: `opencode run <PROMPT> [--format json] [--session <ID>] [--file <path>]`\n\nMode mapping: all modes use `run` subcommand (OpenCode handles permissions internally).\nResume: supported via --session <ID>.\nOutput: JSON events format.\nSpecial: supports --file for attaching context files.\nAvailability: `which opencode`.",
           "acceptance_criteria": "- [ ] OpenCodeProvider in lib/providers/opencode.ts\n- [ ] Spawn logic in lib/opencode/spawn.ts\n- [ ] Uses `run` subcommand with prompt\n- [ ] JSON output format parsing\n- [ ] Session resume via --session flag\n- [ ] Session ID extraction from output\n- [ ] Provider availability check works",
-          "status": "in_progress",
+          "status": "review",
           "position": 5
         },
         {
@@ -2602,7 +2622,7 @@
           "title": "As a user, I want to use DeepSeek CLI as an agent provider so that I can leverage cost-efficient DeepSeek models with context caching",
           "description": "Implement DeepSeekProvider extending BaseCliProvider.\n\nCLI: `deepseek -q <PROMPT> [--model <deepseek-chat|deepseek-coder|deepseek-reasoner>] [--no-stream]`\n\nMode mapping: all modes use -q (query mode). No permission system.\nResume: not supported (SQLite history is local to CLI, not exposable via flags).\nOutput: raw text (with --no-stream for complete capture).\nSpecial: --no-stream is mandatory for headless to avoid partial chunk handling.\nAvailability: `which deepseek`.",
           "acceptance_criteria": "- [ ] DeepSeekProvider in lib/providers/deepseek.ts\n- [ ] Spawn logic in lib/deepseek/spawn.ts\n- [ ] Always uses --no-stream for reliable output capture\n- [ ] Model selection via --model flag\n- [ ] Result extraction from stdout\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check works",
-          "status": "in_progress",
+          "status": "review",
           "position": 6
         },
         {
@@ -2610,7 +2630,7 @@
           "title": "As a user, I want to use Kimi CLI (Moonshot) as an agent provider so that I can leverage KimiSoul's sub-agent architecture",
           "description": "Implement KimiProvider extending BaseCliProvider.\n\nCLI: `kimi --print -c <PROMPT>` (headless mode with context)\n\nMode mapping: all modes use --print. Kimi handles tool permissions via KimiSoul internally.\nResume: supported via --continue (resumes most recent context in current directory).\nOutput: stream-json format.\nSpecial: /init creates AGENTS.md (similar to CLAUDE.md). Can invoke web-search, excel, code_runner tools.\nAvailability: `which kimi`.",
           "acceptance_criteria": "- [ ] KimiProvider in lib/providers/kimi.ts\n- [ ] Spawn logic in lib/kimi/spawn.ts\n- [ ] Uses --print for headless execution\n- [ ] Resume via --continue flag (directory-scoped)\n- [ ] Stream-JSON output parsing\n- [ ] Session ID extraction from stream events\n- [ ] Provider availability check works",
-          "status": "in_progress",
+          "status": "review",
           "position": 7
         },
         {
@@ -2618,7 +2638,7 @@
           "title": "As a user, I want to use Zai (Zhipu AI) as an agent provider so that I can leverage GLM-4 models with hybrid reasoning",
           "description": "Implement ZaiProvider extending BaseCliProvider.\n\nZai is API-based (no native CLI binary). Implementation wraps LiteLLM or a thin subprocess call to a bundled Python script that calls the Zai API.\n\nCLI wrapper: `python -m arji_zai_bridge --prompt <PROMPT> --model <zai/glm-4.7> --api-key <from env>`\n\nAlternatively, if a `zai` CLI exists at runtime, use it directly. The provider should check for both.\nMode mapping: all modes pass prompt to API. No permission system.\nResume: not supported (stateless API calls).\nOutput: JSON response from API.\nAvailability: check for ZHIPU_API_KEY env var OR `which zai`.",
           "acceptance_criteria": "- [ ] ZaiProvider in lib/providers/zai.ts\n- [ ] API bridge script or direct CLI support\n- [ ] Model selection for GLM variants\n- [ ] API key validation from environment\n- [ ] Result extraction from API response JSON\n- [ ] Marked as non-resumable in resume validation\n- [ ] Provider availability check (env var OR CLI binary)",
-          "status": "in_progress",
+          "status": "review",
           "position": 8
         },
         {
@@ -2626,7 +2646,7 @@
           "title": "As a user, I want the resume validation to correctly handle all 9 providers so that only resumable providers offer session continuity",
           "description": "Update lib/agent-sessions/validate-resume.ts and the resumable sessions API route to handle the resume capabilities of each provider:\n\n- Resumable: claude-code (--resume), gemini-cli (--resume), mistral-vibe (--resume), opencode (--session), kimi (--continue)\n- Non-resumable: codex, qwen-code, deepseek, zai\n\nThe /sessions/resumable endpoint should return empty arrays for non-resumable providers.",
           "acceptance_criteria": "- [ ] Resume validation knows which providers support resume\n- [ ] Resumable sessions API returns [] for non-resumable providers\n- [ ] Resume flag is correctly mapped per provider (--resume vs --session vs --continue)\n- [ ] Non-resumable providers never attempt resume",
-          "status": "in_progress",
+          "status": "review",
           "position": 9
         },
         {
@@ -2634,7 +2654,7 @@
           "title": "As a user, I want the provider settings UI to display all 9 providers with their availability status so that I can configure agents across all supported CLIs",
           "description": "Update the agent configuration UI components (provider dropdowns, named agent forms, global/project settings) to include all 9 providers. Show availability status (installed/not installed, authenticated/not authenticated) next to each provider. Group providers logically: Tier 1 (Claude Code, Gemini, Codex), Tier 2 (Mistral Vibe, Qwen Code, OpenCode), Tier 3 (DeepSeek, Kimi, Zai).",
           "acceptance_criteria": "- [ ] All 9 providers appear in provider dropdown menus\n- [ ] Availability status shown per provider (green/red indicator)\n- [ ] Named agent creation supports all 9 providers\n- [ ] Global and project-level agent defaults support all 9 providers\n- [ ] Unavailable providers are selectable but show a warning",
-          "status": "in_progress",
+          "status": "review",
           "position": 10
         }
       ]
@@ -2644,7 +2664,7 @@
       "title": "Interactive Code Review & Context-Aware Rework Loop",
       "description": "Implement a dedicated code review interface that allows users to inspect agent-generated changes via a line-by-line diff viewer. This epic enables granular feedback by allowing reviewers to comment on specific lines of code, which are then synchronized with the ticket activity. It also facilitates a 'rework loop' where tickets can be sent back to the agent with the review comments automatically formatted as context for the next development iteration.",
       "priority": 0,
-      "status": "in_progress",
+      "status": "review",
       "position": 0,
       "branchName": "feature/epic-uPs3EmgcWdTS-interactive-code-review-context-aware-re",
       "user_stories": [
@@ -2653,7 +2673,7 @@
           "title": "Agent Worktree Diff Generation",
           "description": "As a user, I want to view the changes made by an agent in its dedicated worktree compared to the main project branch.",
           "acceptance_criteria": null,
-          "status": "in_progress",
+          "status": "review",
           "position": 0
         },
         {
@@ -2661,7 +2681,7 @@
           "title": "Line-by-Line Commenting Interface",
           "description": "As a reviewer, I want to leave specific feedback on individual lines of code within the diff viewer.",
           "acceptance_criteria": null,
-          "status": "in_progress",
+          "status": "review",
           "position": 1
         },
         {
@@ -2669,7 +2689,7 @@
           "title": "Review Action: 'Back to Dev' (Rework Loop)",
           "description": "As a reviewer, I want to send a ticket back to the development agent with my feedback automatically included.",
           "acceptance_criteria": null,
-          "status": "in_progress",
+          "status": "review",
           "position": 2
         },
         {
@@ -2677,7 +2697,7 @@
           "title": "Automated Ticket Activity Integration",
           "description": "As a user, I want review comments to appear in the ticket's general comment thread so the history is centralized.",
           "acceptance_criteria": null,
-          "status": "in_progress",
+          "status": "review",
           "position": 3
         },
         {
@@ -2685,20 +2705,10 @@
           "title": "Review Completion & Approval",
           "description": "As a reviewer, I want to approve the changes or close the review without further rework.",
           "acceptance_criteria": null,
-          "status": "in_progress",
+          "status": "review",
           "position": 4
         }
       ]
-    },
-    {
-      "id": "XN8VCkVAyazy",
-      "title": "the button \"Create epic & generate stories\" should not be blocked for all chat is used in one",
-      "description": null,
-      "priority": 2,
-      "status": "review",
-      "position": 0,
-      "branchName": null,
-      "user_stories": []
     }
   ]
 }
