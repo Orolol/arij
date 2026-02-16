@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, epics, userStories } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { projects, epics, userStories, reviewComments, ticketComments } from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
+import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import simpleGit from "simple-git";
 
@@ -23,6 +24,28 @@ export async function POST(_request: NextRequest, { params }: Params) {
   }
 
   const now = new Date().toISOString();
+
+  // Bulk-resolve all open review comments
+  db.update(reviewComments)
+    .set({ status: "resolved", updatedAt: now })
+    .where(
+      and(
+        eq(reviewComments.epicId, epicId),
+        eq(reviewComments.status, "open")
+      )
+    )
+    .run();
+
+  // Post approval activity comment
+  db.insert(ticketComments)
+    .values({
+      id: createId(),
+      epicId,
+      author: "user",
+      content: "**Review approved.** All review comments resolved.",
+      createdAt: now,
+    })
+    .run();
 
   // Epic -> done
   db.update(epics)

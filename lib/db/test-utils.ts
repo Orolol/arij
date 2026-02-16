@@ -293,9 +293,23 @@ const CREATE_TABLES_SQL = `
     custom_prompt_id TEXT,
     report_content TEXT,
     summary TEXT,
+    check_type TEXT NOT NULL DEFAULT 'tech_check',
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     completed_at TEXT
   );
+
+  CREATE TABLE review_comments (
+    id TEXT PRIMARY KEY,
+    epic_id TEXT NOT NULL REFERENCES epics(id) ON DELETE CASCADE,
+    file_path TEXT NOT NULL,
+    line_number INTEGER NOT NULL,
+    body TEXT NOT NULL,
+    author TEXT NOT NULL DEFAULT 'user',
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX review_comments_epic_file_idx ON review_comments (epic_id, file_path);
 `;
 
 /**

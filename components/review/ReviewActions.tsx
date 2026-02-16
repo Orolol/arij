@@ -1,0 +1,228 @@
+"use client";
+
+import { useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Badge } from "@/components/ui/badge";
+import { Hammer, CheckCircle2, Loader2, MessageSquare, CheckCheck } from "lucide-react";
+import type { ReviewComment } from "@/hooks/useReviewComments";
+
+interface ReviewActionsProps {
+  projectId: string;
+  epicId: string;
+  epicStatus: string;
+  openCount: number;
+  comments: ReviewComment[];
+  onBackToDev: (comment: string) => Promise<unknown>;
+  onApprove: () => Promise<unknown>;
+  onResolveAll: () => Promise<unknown>;
+  dispatching?: boolean;
+  isRunning?: boolean;
+}
+
+export function ReviewActions({
+  projectId,
+  epicId,
+  epicStatus,
+  openCount,
+  comments,
+  onBackToDev,
+  onApprove,
+  onResolveAll,
+  dispatching,
+  isRunning,
+}: ReviewActionsProps) {
+  const [backToDevOpen, setBackToDevOpen] = useState(false);
+  const [additionalComment, setAdditionalComment] = useState("");
+  const [sendingBack, setSendingBack] = useState(false);
+  const [approving, setApproving] = useState(false);
+  const [resolvingAll, setResolvingAll] = useState(false);
+
+  const actionsLocked = dispatching || isRunning;
+  const canBackToDev = ["review", "in_progress", "todo", "backlog"].includes(epicStatus);
+  const canApprove = epicStatus === "review";
+
+  async function handleBackToDev() {
+    setSendingBack(true);
+    try {
+      // Build the rework comment from open review comments
+      const openComments = comments.filter((c) => c.status === "open");
+      const parts: string[] = [];
+
+      if (openComments.length > 0) {
+        parts.push("## Review Comments\n");
+        // Group by file
+        const byFile = new Map<string, ReviewComment[]>();
+        for (const c of openComments) {
+          const existing = byFile.get(c.filePath) || [];
+          existing.push(c);
+          byFile.set(c.filePath, existing);
+        }
+        for (const [filePath, fileComments] of byFile) {
+          parts.push(`### ${filePath}`);
+          for (const c of fileComments) {
+            parts.push(`- **Line ${c.lineNumber}**: ${c.body}`);
+          }
+          parts.push("");
+        }
+      }
+
+      if (additionalComment.trim()) {
+        parts.push("## Additional Instructions\n");
+        parts.push(additionalComment.trim());
+      }
+
+      const fullComment = parts.join("\n");
+      await onBackToDev(fullComment);
+      setBackToDevOpen(false);
+      setAdditionalComment("");
+    } finally {
+      setSendingBack(false);
+    }
+  }
+
+  async function handleApprove() {
+    setApproving(true);
+    try {
+      // Resolve all open comments before approving
+      if (openCount > 0) {
+        await onResolveAll();
+      }
+      await onApprove();
+    } finally {
+      setApproving(false);
+    }
+  }
+
+  async function handleResolveAll() {
+    setResolvingAll(true);
+    try {
+      await onResolveAll();
+    } finally {
+      setResolvingAll(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="flex items-center gap-2 flex-wrap border border-border rounded-lg p-3 bg-muted/30">
+        {openCount > 0 && (
+          <Badge variant="outline" className="gap-1 text-xs text-blue-500 border-blue-500/30">
+            <MessageSquare className="h-3 w-3" />
+            {openCount} open
+          </Badge>
+        )}
+
+        <div className="flex-1" />
+
+        {openCount > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={handleResolveAll}
+            disabled={resolvingAll}
+            className="h-7 text-xs"
+          >
+            {resolvingAll ? (
+              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+            ) : (
+              <CheckCheck className="h-3 w-3 mr-1" />
+            )}
+            Resolve All
+          </Button>
+        )}
+
+        {canBackToDev && openCount > 0 && (
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => {
+              setAdditionalComment("");
+              setBackToDevOpen(true);
+            }}
+            disabled={actionsLocked}
+            className="h-7 text-xs"
+          >
+            <Hammer className="h-3 w-3 mr-1" />
+            Back to Dev
+          </Button>
+        )}
+
+        {canApprove && (
+          <Button
+            size="sm"
+            onClick={handleApprove}
+            disabled={approving || actionsLocked}
+            className="h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
+          >
+            {approving ? (
+              <Loader2 className="h-3 w-3 animate-spin mr-1" />
+            ) : (
+              <CheckCircle2 className="h-3 w-3 mr-1" />
+            )}
+            Approve
+          </Button>
+        )}
+      </div>
+
+      {/* Back to Dev Dialog */}
+      <Dialog open={backToDevOpen} onOpenChange={setBackToDevOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Send Back to Dev</DialogTitle>
+            <DialogDescription>
+              {openCount} open review comment{openCount !== 1 ? "s" : ""} will be
+              formatted and sent to the agent as context for the next iteration.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="max-h-48 overflow-y-auto border rounded-lg p-3 bg-muted/30 text-xs space-y-2">
+            {comments
+              .filter((c) => c.status === "open")
+              .map((c) => (
+                <div key={c.id} className="flex gap-2">
+                  <span className="text-muted-foreground font-mono shrink-0">
+                    {c.filePath}:{c.lineNumber}
+                  </span>
+                  <span>{c.body}</span>
+                </div>
+              ))}
+          </div>
+
+          <Textarea
+            value={additionalComment}
+            onChange={(e) => setAdditionalComment(e.target.value)}
+            placeholder="Additional instructions (optional)..."
+            rows={3}
+            className="text-sm"
+          />
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBackToDevOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleBackToDev}
+              disabled={sendingBack || actionsLocked}
+            >
+              {sendingBack ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+              ) : (
+                <Hammer className="h-4 w-4 mr-1" />
+              )}
+              Send to Dev
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}

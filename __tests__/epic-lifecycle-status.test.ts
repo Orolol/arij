@@ -125,6 +125,12 @@ vi.mock("@/lib/db/schema", () => ({
     createdAt: "createdAt",
   },
   agentSessions: { _name: "agentSessions" },
+  reviewComments: {
+    _name: "reviewComments",
+    id: "id",
+    epicId: "epicId",
+    status: "status",
+  },
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({ createId: vi.fn(() => "test-id") }));

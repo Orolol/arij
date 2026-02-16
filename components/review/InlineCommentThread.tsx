@@ -1,0 +1,84 @@
+"use client";
+
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Check, Trash2, User, Bot } from "lucide-react";
+import type { ReviewComment } from "@/hooks/useReviewComments";
+
+interface InlineCommentThreadProps {
+  comments: ReviewComment[];
+  onUpdate: (id: string, updates: { body?: string; status?: string }) => Promise<unknown>;
+  onDelete: (id: string) => Promise<unknown>;
+}
+
+function formatTime(dateStr: string) {
+  const d = new Date(dateStr);
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+export function InlineCommentThread({
+  comments,
+  onUpdate,
+  onDelete,
+}: InlineCommentThreadProps) {
+  return (
+    <div className="space-y-1">
+      {comments.map((comment) => (
+        <div
+          key={comment.id}
+          className={`border rounded-lg p-2 text-xs ${
+            comment.status === "resolved"
+              ? "border-border/50 bg-muted/30 opacity-60"
+              : "border-blue-500/30 bg-blue-500/5"
+          }`}
+        >
+          <div className="flex items-center gap-2 mb-1">
+            {comment.author === "agent" ? (
+              <Bot className="h-3 w-3 text-blue-500" />
+            ) : (
+              <User className="h-3 w-3 text-muted-foreground" />
+            )}
+            <span className="font-medium">
+              {comment.author === "agent" ? "Agent" : "You"}
+            </span>
+            <span className="text-muted-foreground">
+              {formatTime(comment.createdAt)}
+            </span>
+            {comment.status === "resolved" && (
+              <Badge variant="outline" className="text-[10px] h-4 px-1">
+                Resolved
+              </Badge>
+            )}
+            <div className="flex-1" />
+            {comment.status === "open" && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-5 w-5"
+                onClick={() => onUpdate(comment.id, { status: "resolved" })}
+                title="Resolve"
+              >
+                <Check className="h-3 w-3" />
+              </Button>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5 text-destructive"
+              onClick={() => onDelete(comment.id)}
+              title="Delete"
+            >
+              <Trash2 className="h-3 w-3" />
+            </Button>
+          </div>
+          <p className="whitespace-pre-wrap">{comment.body}</p>
+        </div>
+      ))}
+    </div>
+  );
+}

@@ -41,6 +41,9 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { DependencyEditor } from "@/components/dependencies/DependencyEditor";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { DiffViewer } from "@/components/review/DiffViewer";
+import { FileCode } from "lucide-react";
 
 interface EpicDetailProps {
   projectId: string;
@@ -197,6 +200,12 @@ export function EpicDetail({
     refresh();
   }
 
+  async function handleBackToDev(reviewComment: string) {
+    // Post the review summary as a ticket comment, then dispatch build
+    await sendToDev(reviewComment);
+    refresh();
+  }
+
   async function handleSendToReview(types: string[], namedAgentId?: string | null, resumeSessionId?: string) {
     await sendToReview(types, namedAgentId, resumeSessionId);
     refresh();
@@ -313,6 +322,19 @@ export function EpicDetail({
               }}
             />
 
+            <Tabs defaultValue="details">
+              <TabsList className="w-full">
+                <TabsTrigger value="details" className="flex-1 text-xs">Details</TabsTrigger>
+                {epic.branchName && (
+                  <TabsTrigger value="review" className="flex-1 text-xs gap-1">
+                    <FileCode className="h-3 w-3" />
+                    Code Review
+                  </TabsTrigger>
+                )}
+                <TabsTrigger value="activity" className="flex-1 text-xs">Activity</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="details" className="space-y-4 mt-4">
             <div>
               <label className="text-xs text-muted-foreground block mb-1">
                 Description
@@ -623,37 +645,6 @@ export function EpicDetail({
 
             <Separator />
 
-            {/* Comment Thread */}
-            <div className="min-h-[200px]">
-                <CommentThread
-                  projectId={projectId}
-                  comments={comments}
-                  loading={commentsLoading}
-                  onAddComment={addComment}
-                  onSendToDev={
-                    epic && ["backlog", "todo", "in_progress", "review"].includes(epic.status)
-                      ? async () => {
-                          try {
-                            await sendToDev();
-                            refresh();
-                          } catch (error) {
-                            if (isAgentAlreadyRunningError(error)) {
-                              onAgentConflict?.({
-                                message: error.message,
-                                sessionUrl: error.sessionUrl || `/projects/${projectId}/sessions/${error.activeSessionId}`,
-                              });
-                            }
-                          }
-                        }
-                      : undefined
-                  }
-                  sendToDevDisabled={dispatching || isRunning}
-                  sendToDevLoading={dispatching}
-              />
-            </div>
-
-            <Separator />
-
             <div className="space-y-2">
               <h4 className="text-sm font-medium text-destructive">Danger Zone</h4>
               <p className="text-xs text-muted-foreground">
@@ -673,6 +664,54 @@ export function EpicDetail({
                 Delete Epic
               </Button>
             </div>
+              </TabsContent>
+
+              {/* Code Review Tab */}
+              {epic.branchName && epicId && (
+                <TabsContent value="review" className="mt-4">
+                  <DiffViewer
+                    projectId={projectId}
+                    epicId={epicId}
+                    epicStatus={epic.status}
+                    onBackToDev={handleBackToDev}
+                    onApprove={handleApprove}
+                    dispatching={dispatching}
+                    isRunning={isRunning}
+                  />
+                </TabsContent>
+              )}
+
+              {/* Activity Tab */}
+              <TabsContent value="activity" className="mt-4">
+                <div className="min-h-[200px]">
+                  <CommentThread
+                    projectId={projectId}
+                    comments={comments}
+                    loading={commentsLoading}
+                    onAddComment={addComment}
+                    onSendToDev={
+                      epic && ["backlog", "todo", "in_progress", "review"].includes(epic.status)
+                        ? async () => {
+                            try {
+                              await sendToDev();
+                              refresh();
+                            } catch (error) {
+                              if (isAgentAlreadyRunningError(error)) {
+                                onAgentConflict?.({
+                                  message: error.message,
+                                  sessionUrl: error.sessionUrl || `/projects/${projectId}/sessions/${error.activeSessionId}`,
+                                });
+                              }
+                            }
+                          }
+                        : undefined
+                    }
+                    sendToDevDisabled={dispatching || isRunning}
+                    sendToDevLoading={dispatching}
+                  />
+                </div>
+              </TabsContent>
+            </Tabs>
           </div>
         </>
       )}

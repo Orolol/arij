@@ -342,6 +342,29 @@ export const ticketDependencies = sqliteTable(
   })
 );
 
+export const reviewComments = sqliteTable(
+  "review_comments",
+  {
+    id: text("id").primaryKey(),
+    epicId: text("epic_id")
+      .notNull()
+      .references(() => epics.id, { onDelete: "cascade" }),
+    filePath: text("file_path").notNull(),
+    lineNumber: integer("line_number").notNull(),
+    body: text("body").notNull(),
+    author: text("author").notNull().default("user"), // user | agent
+    status: text("status").notNull().default("open"), // open | resolved
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    epicFileIdx: index("review_comments_epic_file_idx").on(
+      table.epicId,
+      table.filePath
+    ),
+  })
+);
+
 export const gitSyncLog = sqliteTable("git_sync_log", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
@@ -414,3 +437,6 @@ export type NewRelease = typeof releases.$inferInsert;
 
 export type TicketDependency = typeof ticketDependencies.$inferSelect;
 export type NewTicketDependency = typeof ticketDependencies.$inferInsert;
+
+export type ReviewComment = typeof reviewComments.$inferSelect;
+export type NewReviewComment = typeof reviewComments.$inferInsert;

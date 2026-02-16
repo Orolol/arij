@@ -5,6 +5,7 @@ import {
   epics,
   userStories,
   ticketComments,
+  reviewComments,
 } from "@/lib/db/schema";
 import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
@@ -126,6 +127,39 @@ export async function POST(request: NextRequest, { params }: Params) {
     createdAt: c.createdAt ?? "",
   }));
 
+  // Load open review comments (code review feedback)
+  const openReviewComments = db
+    .select()
+    .from(reviewComments)
+    .where(
+      and(
+        eq(reviewComments.epicId, epicId),
+        eq(reviewComments.status, "open")
+      )
+    )
+    .orderBy(reviewComments.createdAt)
+    .all();
+
+  // Format review comments as additional prompt context
+  let reviewContext = "";
+  if (openReviewComments.length > 0) {
+    const byFile = new Map<string, typeof openReviewComments>();
+    for (const rc of openReviewComments) {
+      const existing = byFile.get(rc.filePath) || [];
+      existing.push(rc);
+      byFile.set(rc.filePath, existing);
+    }
+    const parts = ["## Code Review Feedback\n\nThe following review comments were left on your previous changes. Address each one:\n"];
+    for (const [filePath, fileComments] of byFile) {
+      parts.push(`### ${filePath}`);
+      for (const rc of fileComments) {
+        parts.push(`- **Line ${rc.lineNumber}**: ${rc.body}`);
+      }
+      parts.push("");
+    }
+    reviewContext = parts.join("\n");
+  }
+
   const buildSystemPrompt = await resolveAgentPrompt("build", projectId);
 
   // Create worktree
@@ -135,8 +169,11 @@ export async function POST(request: NextRequest, { params }: Params) {
     epic.title
   );
 
-  // Build prompt
-  const prompt = buildBuildPrompt(project, [], epic, us, buildSystemPrompt, promptComments);
+  // Build prompt — append review context if present
+  let prompt = buildBuildPrompt(project, [], epic, us, buildSystemPrompt, promptComments);
+  if (reviewContext) {
+    prompt = prompt + "\n\n" + reviewContext;
+  }
 
   let enrichedPrompt = prompt;
   try {

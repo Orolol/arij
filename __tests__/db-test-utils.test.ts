@@ -39,6 +39,7 @@ describe("createTestDb", () => {
     expect(tableNames).toContain("agent_session_sequences");
     expect(tableNames).toContain("agent_session_chunks");
     expect(tableNames).toContain("ticket_comments");
+    expect(tableNames).toContain("review_comments");
     sqlite.close();
   });
 
