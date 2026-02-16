@@ -14,10 +14,10 @@ const drizzle = vi.hoisted(() => ({
 }));
 
 const mockResolveAgent = vi.hoisted(() =>
-  vi.fn(() => ({ provider: "claude-code", namedAgentId: null })),
+  vi.fn(() => ({ provider: "claude-code", namedAgentId: null as string | null })),
 );
 const mockResolveAgentByNamedId = vi.hoisted(() =>
-  vi.fn(() => ({ provider: "claude-code", namedAgentId: null })),
+  vi.fn(() => ({ provider: "claude-code", namedAgentId: null as string | null })),
 );
 
 vi.mock("drizzle-orm", () => drizzle);

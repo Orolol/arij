@@ -113,6 +113,13 @@
       "when": 1771075794456,
       "tag": "0015_cli_session_resume",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1771162200000,
+      "tag": "0016_readable_ids_and_agent_names",
+      "breakpoints": true
     }
   ]
 }

@@ -35,3 +35,17 @@ export const db = drizzle(sqlite, { schema });
       .run(nanoid(12), "Claude Code", "claude-code", "claude-opus-4-6");
   }
 }
+
+// ---------------------------------------------------------------------------
+// Backfill readable IDs and agent names (idempotent, no-op when already done)
+// ---------------------------------------------------------------------------
+{
+  try {
+    const { backfillReadableIds } = require("./backfill");
+    const { backfillAgentNames } = require("../identity");
+    backfillReadableIds();
+    backfillAgentNames();
+  } catch {
+    // Silently ignore — columns may not exist during build or before migration
+  }
+}

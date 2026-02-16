@@ -85,6 +85,7 @@ function makeEpic(overrides?: Partial<KanbanEpic>): KanbanEpic {
     type: "feature",
     linkedEpicId: null,
     images: null,
+    readableId: null,
     usCount: 1,
     usDone: 0,
     latestCommentId: "comment-1",

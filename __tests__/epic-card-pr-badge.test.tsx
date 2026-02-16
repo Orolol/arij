@@ -43,6 +43,10 @@ function makeEpic(overrides?: Partial<KanbanEpic>): KanbanEpic {
     updatedAt: "2025-01-01",
     usCount: 3,
     usDone: 1,
+    type: "feature",
+    linkedEpicId: null,
+    images: null,
+    readableId: null,
     ...overrides,
   };
 }
