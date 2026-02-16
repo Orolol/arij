@@ -19,6 +19,10 @@ let mockConversations = [
 ];
 let mockActiveId: string | null = "conv1";
 let mockSending = false;
+let mockMessages = [
+  { id: "m1", projectId: "proj1", role: "user", content: "Create auth epic", createdAt: "2024-01-01" },
+  { id: "m2", projectId: "proj1", role: "assistant", content: "Here is the epic", createdAt: "2024-01-01" },
+];
 
 vi.mock("@/hooks/useConversations", () => ({
   useConversations: () => ({
@@ -35,10 +39,7 @@ vi.mock("@/hooks/useConversations", () => ({
 
 vi.mock("@/hooks/useChat", () => ({
   useChat: () => ({
-    messages: [
-      { id: "m1", projectId: "proj1", role: "user", content: "Create auth epic", createdAt: "2024-01-01" },
-      { id: "m2", projectId: "proj1", role: "assistant", content: "Here is the epic", createdAt: "2024-01-01" },
-    ],
+    messages: mockMessages,
     loading: false,
     sending: mockSending,
     pendingQuestions: null,
@@ -97,6 +98,10 @@ describe("Epic button not blocked by chat activity", () => {
     ];
     mockActiveId = "conv1";
     mockSending = false;
+    mockMessages = [
+      { id: "m1", projectId: "proj1", role: "user", content: "Create auth epic", createdAt: "2024-01-01" },
+      { id: "m2", projectId: "proj1", role: "assistant", content: "Here is the epic", createdAt: "2024-01-01" },
+    ];
 
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
@@ -120,6 +125,23 @@ describe("Epic button not blocked by chat activity", () => {
 
   it("epic button is enabled even when useChat sending is true", () => {
     mockSending = true;
+
+    render(
+      <UnifiedChatPanel projectId="proj1">
+        <div>board</div>
+      </UnifiedChatPanel>,
+    );
+
+    fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
+
+    const button = screen.getByText("Create Epic & Generate Stories");
+    expect(button).not.toBeDisabled();
+  });
+
+  it("epic button is enabled when only user messages exist", () => {
+    mockMessages = [
+      { id: "m1", projectId: "proj1", role: "user", content: "Create auth epic", createdAt: "2024-01-01" },
+    ];
 
     render(
       <UnifiedChatPanel projectId="proj1">
