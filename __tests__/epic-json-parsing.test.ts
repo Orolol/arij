@@ -1,0 +1,161 @@
+import { describe, it, expect } from "vitest";
+import {
+  parseEpicFromConversation,
+  extractJsonCandidates,
+} from "@/lib/epic-parsing";
+
+describe("extractJsonCandidates", () => {
+  it("extracts JSON from standard code fence", () => {
+    const content = '```json\n{"title": "Auth"}\n```';
+    const candidates = extractJsonCandidates(content);
+    expect(candidates).toContainEqual('{"title": "Auth"}');
+  });
+
+  it("extracts JSON from code fence without json tag", () => {
+    const content = '```\n{"title": "Auth"}\n```';
+    const candidates = extractJsonCandidates(content);
+    expect(candidates).toContainEqual('{"title": "Auth"}');
+  });
+
+  it("extracts JSON when surrounded by preamble text", () => {
+    const content =
+      'Here is the epic:\n\n```json\n{"title": "Auth", "userStories": [{"title": "As a user, I want login"}]}\n```\n\nLet me know if this looks good.';
+    const candidates = extractJsonCandidates(content);
+    expect(candidates.length).toBeGreaterThanOrEqual(1);
+    const parsed = JSON.parse(candidates[0]);
+    expect(parsed.title).toBe("Auth");
+  });
+
+  it("extracts raw JSON when entire content is a JSON object", () => {
+    const content = '{"title": "Auth", "userStories": []}';
+    const candidates = extractJsonCandidates(content);
+    expect(candidates).toContainEqual(content);
+  });
+
+  it("finds JSON object embedded in conversational text without code fences", () => {
+    const content =
+      'The plan is ready. Here it is:\n{"title": "Auth", "description": "desc", "userStories": [{"title": "As a dev, I want auth"}]}\nShould I proceed?';
+    const candidates = extractJsonCandidates(content);
+    expect(candidates.length).toBeGreaterThanOrEqual(1);
+    const hasTitle = candidates.some((c) => {
+      try {
+        return JSON.parse(c).title === "Auth";
+      } catch {
+        return false;
+      }
+    });
+    expect(hasTitle).toBe(true);
+  });
+
+  it("returns empty array for text with no JSON at all", () => {
+    const content = "The plan is ready for your review. Should I proceed?";
+    const candidates = extractJsonCandidates(content);
+    expect(candidates).toEqual([]);
+  });
+});
+
+describe("parseEpicFromConversation", () => {
+  it("parses a well-formed JSON response", () => {
+    const messages = [
+      { role: "user", content: "Create an epic" },
+      {
+        role: "assistant",
+        content:
+          '```json\n{"title": "Authentication System", "description": "Implement auth", "userStories": [{"title": "As a user, I want to log in so that I can access my account", "description": "Login flow", "acceptanceCriteria": "- [ ] Login form exists"}]}\n```',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.title).toBe("Authentication System");
+    expect(result!.userStories.length).toBe(1);
+  });
+
+  it("parses epic from text format when JSON is absent", () => {
+    const messages = [
+      { role: "user", content: "Create an epic" },
+      {
+        role: "assistant",
+        content:
+          "# Authentication System\n\nImplement user authentication.\n\n## User Stories\n\n- As a user, I want to register an account so that I can use the service\n  Acceptance criteria:\n  - [ ] Registration form validates email\n  - [ ] Password is hashed",
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.title).toContain("Authentication");
+    expect(result!.userStories.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("returns null for purely conversational text with no structure", () => {
+    const messages = [
+      { role: "user", content: "Create an epic" },
+      {
+        role: "assistant",
+        content: "The plan is ready for your review. Should I proceed?",
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).toBeNull();
+  });
+
+  it("handles JSON embedded in conversational preamble", () => {
+    const messages = [
+      { role: "user", content: "Generate the final epic" },
+      {
+        role: "assistant",
+        content:
+          'Here is the epic:\n\n```json\n{"title": "Auth", "description": "desc", "userStories": [{"title": "As a user, I want login so that I can access the app", "description": "Login", "acceptanceCriteria": "- [ ] works"}]}\n```\n\nLet me know!',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.title).toBe("Auth");
+  });
+
+  it("handles JSON without code fences embedded in conversational text", () => {
+    const messages = [
+      { role: "user", content: "Generate the final epic" },
+      {
+        role: "assistant",
+        content:
+          'The plan is ready. Here it is:\n{"title": "Auth", "description": "desc", "userStories": [{"title": "As a dev, I want auth so that security works", "description": "Auth flow", "acceptanceCriteria": "- [ ] works"}]}\nShould I proceed?',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.title).toBe("Auth");
+  });
+
+  it("handles user_stories snake_case key", () => {
+    const messages = [
+      { role: "user", content: "Create an epic" },
+      {
+        role: "assistant",
+        content:
+          '```json\n{"title": "Auth", "description": "desc", "user_stories": [{"title": "As a user, I want login so that I can log in", "description": "desc", "acceptance_criteria": "- [ ] works"}]}\n```',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.title).toBe("Auth");
+    expect(result!.userStories.length).toBe(1);
+  });
+
+  it("prefers the latest assistant message", () => {
+    const messages = [
+      { role: "user", content: "Create an epic" },
+      {
+        role: "assistant",
+        content: "Let me think about this...",
+      },
+      { role: "user", content: "Generate the JSON" },
+      {
+        role: "assistant",
+        content:
+          '```json\n{"title": "Final Auth", "description": "desc", "userStories": [{"title": "As a user, I want login so that access", "description": "d", "acceptanceCriteria": "- [ ] ok"}]}\n```',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.title).toBe("Final Auth");
+  });
+});

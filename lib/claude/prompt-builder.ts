@@ -149,11 +149,22 @@ export function buildSpecGenerationPrompt(
 
 Based on the project description, uploaded documents, and conversation history above, produce a comprehensive project specification with an implementation plan.
 
-## Output Format (JSON)
+## Rules
 
-Return a single JSON object with the following structure:
+- The \`spec\` field should be a detailed markdown document covering: project overview, objectives, constraints, technical stack recommendations, architecture, and key decisions.
+- Order epics by implementation priority (most foundational first).
+- Priority values: 0 = low, 1 = medium, 2 = high, 3 = critical.
+- Each epic should have 2-8 user stories with clear acceptance criteria.
+- User stories should follow the "As a [role], I want [feature] so that [benefit]" format.
+- Acceptance criteria should be a markdown checklist.
+- Be specific and actionable -- avoid vague descriptions.
+- If a current specification exists, refine and improve it rather than starting from scratch.
+- Incorporate any relevant details from the reference documents and conversation history.
 
-\`\`\`json
+## CRITICAL OUTPUT FORMAT — YOU MUST FOLLOW THIS EXACTLY
+
+Your ENTIRE response must be ONLY the raw JSON object below. Nothing else.
+
 {
   "spec": "Full project specification in markdown...",
   "epics": [
@@ -171,23 +182,14 @@ Return a single JSON object with the following structure:
     }
   ]
 }
-\`\`\`
 
-## Rules
-
-- The \`spec\` field should be a detailed markdown document covering: project overview, objectives, constraints, technical stack recommendations, architecture, and key decisions.
-- Order epics by implementation priority (most foundational first).
-- Priority values: 0 = low, 1 = medium, 2 = high, 3 = critical.
-- Each epic should have 2-8 user stories with clear acceptance criteria.
-- User stories should follow the "As a [role], I want [feature] so that [benefit]" format.
-- Acceptance criteria should be a markdown checklist.
-- Be specific and actionable -- avoid vague descriptions.
-- If a current specification exists, refine and improve it rather than starting from scratch.
-- Incorporate any relevant details from the reference documents and conversation history.
-
-## CRITICAL OUTPUT RULES
-
-Your final response MUST be ONLY the raw JSON object. No markdown, no explanation, no summary, no code fences. Just the JSON starting with \`{\` and ending with \`}\`. Do not wrap it in \`\`\`json code blocks. Do not add any text before or after the JSON. The very first character of your response must be \`{\` and the very last must be \`}\`.
+ABSOLUTE REQUIREMENTS:
+- The very first character of your response MUST be \`{\`
+- The very last character of your response MUST be \`}\`
+- Do NOT wrap the JSON in \\\`\\\`\\\`json code blocks or any markdown.
+- Do NOT write any text, explanation, or summary before or after the JSON.
+- Do NOT say "Here is the spec" or any preamble — just output the raw JSON.
+- If you include ANY text outside the JSON object, the automated parser will FAIL.
 `);
 
   return parts.filter(Boolean).join("\n");
@@ -418,13 +420,25 @@ export function buildEpicFinalizationPrompt(
   parts.push(existingEpicsSection(existingEpics));
   parts.push(chatHistorySection(messages));
 
-  parts.push(`## Instructions
+  parts.push(`## Task
 
-Based on the conversation above, generate the final epic with user stories.
+Output the epic and user stories from the conversation above as a MACHINE-PARSEABLE JSON code block.
 
-Return ONLY a JSON code block with the following structure — no extra text, no explanation, just the fenced JSON:
+## Rules
+- The title should be concise and descriptive.
+- The description should include a detailed implementation plan.
+- Generate 2-8 user stories that fully cover the epic scope.
+- User stories must follow the "As a [role], I want [feature] so that [benefit]" format.
+- Acceptance criteria must be a markdown checklist.
+- Be specific and actionable — avoid vague descriptions.
+- Incorporate relevant details from the project spec and reference documents.
+- If this epic depends on existing epics (listed above), include dependency edges in the "dependencies" array. Use "$self" for the current epic's ID. Only reference epics from the same project. If there are no dependencies, omit the "dependencies" field or use an empty array.
 
-\`\`\`json
+## CRITICAL OUTPUT FORMAT — YOU MUST FOLLOW THIS EXACTLY
+
+Your ENTIRE response must be a single fenced JSON code block. Nothing else.
+
+\\\`\\\`\\\`json
 {
   "title": "Epic title",
   "description": "Detailed epic description including implementation plan",
@@ -435,24 +449,17 @@ Return ONLY a JSON code block with the following structure — no extra text, no
       "acceptanceCriteria": "- [ ] Criterion 1\\n- [ ] Criterion 2"
     }
   ],
-  "dependencies": [
-    {
-      "ticketId": "$self",
-      "dependsOnTicketId": "<existing-epic-id>"
-    }
-  ]
+  "dependencies": []
 }
-\`\`\`
+\\\`\\\`\\\`
 
-Rules:
-- The title should be concise and descriptive.
-- The description should include a detailed implementation plan.
-- Generate 2-8 user stories that fully cover the epic scope.
-- User stories must follow the "As a [role], I want [feature] so that [benefit]" format.
-- Acceptance criteria must be a markdown checklist.
-- Be specific and actionable — avoid vague descriptions.
-- Incorporate relevant details from the project spec and reference documents.
-- If this epic depends on existing epics (listed above), include dependency edges in the "dependencies" array. Use "$self" for the current epic's ID. Only reference epics from the same project. If there are no dependencies, omit the "dependencies" field or use an empty array.
+ABSOLUTE REQUIREMENTS:
+- The very first characters of your response MUST be \\\`\\\`\\\`json
+- The very last characters of your response MUST be \\\`\\\`\\\`
+- Do NOT write any text before or after the JSON code block.
+- Do NOT say "The plan is ready", "Here's the epic", or any summary/preamble.
+- Do NOT ask for confirmation or approval — just output the JSON.
+- If you include ANY text outside the code fence, the automated parser will FAIL and the epic will not be created.
 `);
 
   return parts.filter(Boolean).join("\n");
