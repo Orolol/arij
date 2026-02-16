@@ -418,13 +418,25 @@ export function buildEpicFinalizationPrompt(
   parts.push(existingEpicsSection(existingEpics));
   parts.push(chatHistorySection(messages));
 
-  parts.push(`## Instructions
+  parts.push(`## Task
 
-Based on the conversation above, generate the final epic with user stories.
+Output the epic and user stories from the conversation above as a MACHINE-PARSEABLE JSON code block.
 
-Return ONLY a JSON code block with the following structure — no extra text, no explanation, just the fenced JSON:
+## Rules
+- The title should be concise and descriptive.
+- The description should include a detailed implementation plan.
+- Generate 2-8 user stories that fully cover the epic scope.
+- User stories must follow the "As a [role], I want [feature] so that [benefit]" format.
+- Acceptance criteria must be a markdown checklist.
+- Be specific and actionable — avoid vague descriptions.
+- Incorporate relevant details from the project spec and reference documents.
+- If this epic depends on existing epics (listed above), include dependency edges in the "dependencies" array. Use "$self" for the current epic's ID. Only reference epics from the same project. If there are no dependencies, omit the "dependencies" field or use an empty array.
 
-\`\`\`json
+## CRITICAL OUTPUT FORMAT — YOU MUST FOLLOW THIS EXACTLY
+
+Your ENTIRE response must be a single fenced JSON code block. Nothing else.
+
+\\\`\\\`\\\`json
 {
   "title": "Epic title",
   "description": "Detailed epic description including implementation plan",
@@ -435,24 +447,17 @@ Return ONLY a JSON code block with the following structure — no extra text, no
       "acceptanceCriteria": "- [ ] Criterion 1\\n- [ ] Criterion 2"
     }
   ],
-  "dependencies": [
-    {
-      "ticketId": "$self",
-      "dependsOnTicketId": "<existing-epic-id>"
-    }
-  ]
+  "dependencies": []
 }
-\`\`\`
+\\\`\\\`\\\`
 
-Rules:
-- The title should be concise and descriptive.
-- The description should include a detailed implementation plan.
-- Generate 2-8 user stories that fully cover the epic scope.
-- User stories must follow the "As a [role], I want [feature] so that [benefit]" format.
-- Acceptance criteria must be a markdown checklist.
-- Be specific and actionable — avoid vague descriptions.
-- Incorporate relevant details from the project spec and reference documents.
-- If this epic depends on existing epics (listed above), include dependency edges in the "dependencies" array. Use "$self" for the current epic's ID. Only reference epics from the same project. If there are no dependencies, omit the "dependencies" field or use an empty array.
+ABSOLUTE REQUIREMENTS:
+- The very first characters of your response MUST be \\\`\\\`\\\`json
+- The very last characters of your response MUST be \\\`\\\`\\\`
+- Do NOT write any text before or after the JSON code block.
+- Do NOT say "The plan is ready", "Here's the epic", or any summary/preamble.
+- Do NOT ask for confirmation or approval — just output the JSON.
+- If you include ANY text outside the code fence, the automated parser will FAIL and the epic will not be created.
 `);
 
   return parts.filter(Boolean).join("\n");
