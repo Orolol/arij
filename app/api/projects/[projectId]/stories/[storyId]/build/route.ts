@@ -174,7 +174,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   const resolvedAgent = resolveAgentByNamedId("ticket_build", projectId, namedAgentId);
 
   const providerSupportsResume =
-    resolvedAgent.provider === "claude-code" || resolvedAgent.provider === "gemini-cli";
+    resolvedAgent.provider === "claude-code" ||
+    resolvedAgent.provider === "gemini-cli" ||
+    resolvedAgent.provider === "codex";
 
   // Resume support — scope-guarded
   let cliSessionId: string | undefined;

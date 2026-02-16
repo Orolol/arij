@@ -26,6 +26,7 @@ interface EpicDetail {
   type: string;
   linkedEpicId: string | null;
   images: string | null;
+  readableId: string | null;
 }
 
 export function useEpicDetail(projectId: string, epicId: string | null) {

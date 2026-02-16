@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { epics, ticketComments, userStories } from "@/lib/db/schema";
+import { epics, projects, ticketComments, userStories } from "@/lib/db/schema";
 import { count, eq, sql, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
@@ -8,6 +8,7 @@ import { createDependencies } from "@/lib/dependencies/crud";
 import { CycleError, CrossProjectError } from "@/lib/dependencies/validation";
 import { createEpicSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { generateReadableId } from "@/lib/db/readable-id";
 
 export async function GET(
   _request: NextRequest,
@@ -75,6 +76,7 @@ export async function GET(
       type: epics.type,
       linkedEpicId: epics.linkedEpicId,
       images: epics.images,
+      readableId: epics.readableId,
       usCount: sql<number>`COALESCE(${storyCounts.usCount}, 0)`,
       usDone: sql<number>`COALESCE(${storyCounts.usDone}, 0)`,
       latestCommentId: latestEpicComments.latestCommentId,
@@ -136,6 +138,13 @@ export async function POST(
     .get();
 
   const id = createId();
+
+  // Resolve project for readable ID generation
+  const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
+  const readableId = project
+    ? generateReadableId(projectId, project.name, (body.type as "feature" | "bug") || "feature")
+    : undefined;
+
   const storiesToInsert = normalizedUserStories.map((story, index) => ({
     id: createId(),
     epicId: id,
@@ -166,6 +175,7 @@ export async function POST(
           type: body.type || "feature",
           linkedEpicId: body.linkedEpicId || null,
           images: body.images ? JSON.stringify(body.images) : null,
+          readableId: readableId || null,
         })
         .run();
       if (storiesToInsert.length > 0) {

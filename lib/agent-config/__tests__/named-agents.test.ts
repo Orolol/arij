@@ -12,9 +12,11 @@ testSqlite.exec(`
     name TEXT NOT NULL,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
+    readable_agent_name TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
   CREATE UNIQUE INDEX named_agents_name_unique ON named_agents (name);
+  CREATE UNIQUE INDEX named_agents_readable_agent_name_unique ON named_agents (readable_agent_name);
 
   CREATE TABLE agent_provider_defaults (
     id TEXT PRIMARY KEY NOT NULL,

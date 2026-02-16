@@ -20,6 +20,7 @@ const CREATE_TABLES_SQL = `
     github_owner_repo TEXT,
     spec TEXT,
     imported INTEGER DEFAULT 0,
+    ticket_counter INTEGER DEFAULT 0,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
@@ -35,9 +36,11 @@ const CREATE_TABLES_SQL = `
     name TEXT NOT NULL,
     provider TEXT NOT NULL,
     model TEXT NOT NULL,
+    readable_agent_name TEXT,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
   CREATE UNIQUE INDEX named_agents_name_unique ON named_agents (name);
+  CREATE UNIQUE INDEX named_agents_readable_agent_name_unique ON named_agents (readable_agent_name);
 
   CREATE TABLE qa_prompts (
     id TEXT PRIMARY KEY,
@@ -105,7 +108,8 @@ const CREATE_TABLES_SQL = `
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
     type TEXT DEFAULT 'feature',
     linked_epic_id TEXT REFERENCES epics(id) ON DELETE SET NULL,
-    images TEXT
+    images TEXT,
+    readable_id TEXT
   );
 
   CREATE TABLE chat_conversations (

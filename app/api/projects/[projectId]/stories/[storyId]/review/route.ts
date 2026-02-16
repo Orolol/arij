@@ -249,7 +249,9 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     const agentMode = reviewType === "feature_review" ? "code" : "plan";
     const providerSupportsResume =
-      resolvedAgent.provider === "claude-code" || resolvedAgent.provider === "gemini-cli";
+      resolvedAgent.provider === "claude-code" ||
+      resolvedAgent.provider === "gemini-cli" ||
+      resolvedAgent.provider === "codex";
 
     // First review session can resume (when provider supports it); subsequent ones start fresh
     const useResume = idx === 0 && providerSupportsResume && !!resumeCliSessionId;

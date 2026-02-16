@@ -22,7 +22,8 @@ const BASE_SCHEMA_SQL = `
     updated_at TEXT,
     type TEXT,
     linked_epic_id TEXT,
-    images TEXT
+    images TEXT,
+    readable_id TEXT
   );
 
   CREATE TABLE user_stories (

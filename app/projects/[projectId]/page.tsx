@@ -69,7 +69,7 @@ export default function KanbanPage() {
         map[activity.epicId] = {
           sessionId: activity.id,
           actionType: activity.type as KanbanEpicAgentActivity["actionType"],
-          agentName: `Agent ${activity.id.slice(0, 6)}`,
+          agentName: activity.namedAgentName || `Agent ${activity.id.slice(0, 6)}`,
         };
       }
 
