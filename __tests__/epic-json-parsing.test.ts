@@ -158,4 +158,54 @@ describe("parseEpicFromConversation", () => {
     expect(result).not.toBeNull();
     expect(result!.title).toBe("Final Auth");
   });
+
+  it("parses wrapped payloads and stories alias", () => {
+    const messages = [
+      { role: "user", content: "Generate the final epic" },
+      {
+        role: "assistant",
+        content:
+          '```json\n{"data":{"epic":{"title":"Auth","description":"desc","stories":[{"title":"As a user, I want login so that I can access","description":"story desc","acceptanceCriteria":"- [ ] works"}]}}}\n```',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.title).toBe("Auth");
+    expect(result!.userStories).toHaveLength(1);
+    expect(result!.userStories[0].title).toContain("As a user");
+  });
+
+  it("normalizes acceptance criteria arrays into checklist markdown", () => {
+    const messages = [
+      { role: "user", content: "Generate the final epic" },
+      {
+        role: "assistant",
+        content:
+          '```json\n{"title":"Auth","description":"desc","userStories":[{"title":"As a user, I want login so that I can access","acceptanceCriteria":["Password reset works","- [ ] MFA can be enabled"]}]}\n```',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.userStories[0].acceptanceCriteria).toBe(
+      "- [ ] Password reset works\n- [ ] MFA can be enabled",
+    );
+  });
+
+  it("normalizes object-array criteria and array descriptions", () => {
+    const messages = [
+      { role: "user", content: "Generate the final epic" },
+      {
+        role: "assistant",
+        content:
+          '```json\n{"title":"Auth","description":["First paragraph","Second paragraph"],"userStories":[{"title":"As a user, I want secure login so that my account stays safe","description":["Flow","Validation"],"acceptanceCriteria":[{"text":"Captcha after retries"},{"description":"Brute-force lockout"}]}]}\n```',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.description).toBe("First paragraph\n\nSecond paragraph");
+    expect(result!.userStories[0].description).toBe("Flow\n\nValidation");
+    expect(result!.userStories[0].acceptanceCriteria).toBe(
+      "- [ ] Captcha after retries\n- [ ] Brute-force lockout",
+    );
+  });
 });
