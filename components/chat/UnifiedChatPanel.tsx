@@ -604,7 +604,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
                 size="sm"
                 variant="default"
                 onClick={handleCreateEpic}
-                disabled={epicCreating || isCurrentConversationBusy}
+                disabled={epicCreating}
                 className="text-xs"
               >
                 {epicCreating ? (
