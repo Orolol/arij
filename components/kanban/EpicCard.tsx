@@ -166,9 +166,11 @@ export function EpicCard({
         </div>
       </div>
       <div className="flex items-center justify-between mt-1">
-        <span className="text-xs text-muted-foreground">
-          {epic.usDone}/{epic.usCount} US
-        </span>
+        {epic.type !== "bug" && (
+          <span className="text-xs text-muted-foreground">
+            {epic.usDone}/{epic.usCount} US
+          </span>
+        )}
         {epic.prNumber && epic.prUrl && (
           <a
             href={epic.prUrl}
