@@ -13,6 +13,7 @@ import {
   type KanbanEpic,
   type KanbanEpicAgentActivity,
 } from "@/lib/types/kanban";
+import type { FailedSessionInfo } from "@/hooks/useAgentPolling";
 
 interface ColumnProps {
   status: KanbanStatus;
@@ -25,6 +26,8 @@ interface ColumnProps {
   activeAgentActivities?: Record<string, KanbanEpicAgentActivity>;
   onLinkedAgentHoverChange?: (activityId: string | null) => void;
   unreadAiByEpicId?: Record<string, boolean>;
+  failedSessions?: Record<string, FailedSessionInfo>;
+  onRetryBuild?: (epicId: string) => void;
 }
 
 export function Column({
@@ -38,6 +41,8 @@ export function Column({
   activeAgentActivities,
   onLinkedAgentHoverChange,
   unreadAiByEpicId,
+  failedSessions,
+  onRetryBuild,
 }: ColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
 
@@ -100,7 +105,7 @@ export function Column({
               <div
                 key={epic.id}
                 className={highlightedEpicIds.has(epic.id)
-                  ? "animate-in fade-in slide-in-from-top-2 duration-300 motion-reduce:animate-none"
+                  ? "animate-in fade-in slide-in-from-left-4 zoom-in-95 duration-500 motion-reduce:animate-none"
                   : ""
                 }
               >
@@ -117,6 +122,12 @@ export function Column({
                   onToggleSelect={
                     onToggleSelect
                       ? () => onToggleSelect(epic.id)
+                      : undefined
+                  }
+                  failedSession={failedSessions?.[epic.id]}
+                  onRetry={
+                    onRetryBuild && failedSessions?.[epic.id]
+                      ? () => onRetryBuild(epic.id)
                       : undefined
                   }
                 />
