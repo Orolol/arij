@@ -44,6 +44,7 @@ const baseEpic = {
   linkedEpicId: null,
   images: null,
   readableId: null,
+  releaseId: null,
 };
 
 describe("EpicCard", () => {

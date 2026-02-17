@@ -71,6 +71,7 @@ export default function KanbanPage() {
     "session:completed": () => setRefreshTrigger((t) => t + 1),
     "session:failed": () => setRefreshTrigger((t) => t + 1),
     "session:progress": () => setRefreshTrigger((t) => t + 1),
+    "release:created": () => setRefreshTrigger((t) => t + 1),
   });
 
   // Fallback: refresh board when SSE is down and polling kicks in

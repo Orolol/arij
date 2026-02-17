@@ -75,8 +75,17 @@ export interface KanbanEpicAgentActivity {
   startedAt?: string;
 }
 
+export interface ReleaseGroup {
+  id: string;
+  version: string;
+  title: string | null;
+  createdAt: string;
+  epics: KanbanEpic[];
+}
+
 export interface BoardState {
   columns: Record<KanbanStatus, KanbanEpic[]>;
+  releaseGroups?: ReleaseGroup[];
 }
 
 export interface ReorderItem {

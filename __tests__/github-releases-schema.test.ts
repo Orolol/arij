@@ -90,6 +90,7 @@ describe("Schema: exported types", () => {
       title: "Test",
       changelog: "Changes",
       epicIds: "[]",
+      releaseBranch: null,
       gitTag: "v1.0.0",
       githubReleaseId: 12345,
       githubReleaseUrl: "https://github.com/owner/repo/releases/1",

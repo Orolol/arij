@@ -3,11 +3,21 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   KANBAN_COLUMNS,
+  DRAGGABLE_COLUMNS,
   type KanbanStatus,
   type KanbanEpic,
   type BoardState,
   type ReorderItem,
+  type ReleaseGroup,
 } from "@/lib/types/kanban";
+
+interface ReleaseRow {
+  id: string;
+  version: string;
+  title: string | null;
+  epicIds: string | null;
+  createdAt: string;
+}
 
 export interface UseKanbanOptions {
   onMoveError?: (error: string) => void;
@@ -21,6 +31,7 @@ export function useKanban(projectId: string, options?: UseKanbanOptions) {
       in_progress: [],
       review: [],
       done: [],
+      released: [],
     },
   });
   const [loading, setLoading] = useState(true);
@@ -29,9 +40,14 @@ export function useKanban(projectId: string, options?: UseKanbanOptions) {
 
   const loadEpics = useCallback(async () => {
     try {
-      const res = await fetch(`/api/projects/${projectId}/epics`);
-      const data = await res.json();
-      const epics: KanbanEpic[] = data.data || [];
+      const [epicsRes, releasesRes] = await Promise.all([
+        fetch(`/api/projects/${projectId}/epics`),
+        fetch(`/api/projects/${projectId}/releases`),
+      ]);
+      const epicsData = await epicsRes.json();
+      const releasesData = await releasesRes.json();
+      const epics: KanbanEpic[] = epicsData.data || [];
+      const releaseRows: ReleaseRow[] = releasesData.data || [];
 
       const columns: BoardState["columns"] = {
         backlog: [],
@@ -39,23 +55,42 @@ export function useKanban(projectId: string, options?: UseKanbanOptions) {
         in_progress: [],
         review: [],
         done: [],
+        released: [],
       };
+
+      const releasedEpicMap = new Map<string, KanbanEpic>();
 
       for (const epic of epics) {
         const status = (epic.status as KanbanStatus) || "backlog";
-        if (columns[status]) {
+        if (status === "released") {
+          releasedEpicMap.set(epic.id, epic);
+          columns.released.push(epic);
+        } else if (columns[status]) {
           columns[status].push(epic);
         } else {
           columns.backlog.push(epic);
         }
       }
 
-      // Sort each column by position
-      for (const col of KANBAN_COLUMNS) {
+      for (const col of DRAGGABLE_COLUMNS) {
         columns[col].sort((a, b) => a.position - b.position);
       }
 
-      setBoard({ columns });
+      const releaseGroups: ReleaseGroup[] = releaseRows.map((rel) => {
+        const epicIds: string[] = rel.epicIds ? JSON.parse(rel.epicIds) : [];
+        const groupEpics = epicIds
+          .map((id) => releasedEpicMap.get(id))
+          .filter((e): e is KanbanEpic => !!e);
+        return {
+          id: rel.id,
+          version: rel.version,
+          title: rel.title,
+          createdAt: rel.createdAt,
+          epics: groupEpics,
+        };
+      });
+
+      setBoard({ columns, releaseGroups });
     } catch {
       // ignore
     }
@@ -73,32 +108,30 @@ export function useKanban(projectId: string, options?: UseKanbanOptions) {
       toColumn: KanbanStatus,
       newIndex: number
     ) => {
-      // Optimistic update
+      if (fromColumn === "released" || toColumn === "released") return;
+
       setBoard((prev) => {
-        const next = { columns: { ...prev.columns } };
+        const next = { columns: { ...prev.columns }, releaseGroups: prev.releaseGroups };
         for (const col of KANBAN_COLUMNS) {
           next.columns[col] = [...prev.columns[col]];
         }
 
-        // Remove from source
         const epicIndex = next.columns[fromColumn].findIndex(
           (e) => e.id === epicId
         );
         if (epicIndex === -1) return prev;
         const [epic] = next.columns[fromColumn].splice(epicIndex, 1);
 
-        // Insert into destination
         epic.status = toColumn;
         next.columns[toColumn].splice(newIndex, 0, epic);
 
         return next;
       });
 
-      // Build reorder items for all affected columns
       setTimeout(async () => {
         setBoard((current) => {
           const reorderItems: ReorderItem[] = [];
-          for (const col of KANBAN_COLUMNS) {
+          for (const col of DRAGGABLE_COLUMNS) {
             if (col === fromColumn || col === toColumn) {
               current.columns[col].forEach((epic, idx) => {
                 reorderItems.push({
@@ -110,7 +143,6 @@ export function useKanban(projectId: string, options?: UseKanbanOptions) {
             }
           }
 
-          // Fire API call
           fetch(`/api/projects/${projectId}/epics/reorder`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -120,11 +152,9 @@ export function useKanban(projectId: string, options?: UseKanbanOptions) {
               const data = await res.json().catch(() => ({}));
               const errorMsg = data.error || "Failed to move epic";
               onMoveErrorRef.current?.(errorMsg);
-              // Rollback
               loadEpics();
             }
           }).catch(() => {
-            // Rollback on network failure
             loadEpics();
           });
 
