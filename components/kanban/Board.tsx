@@ -15,9 +15,11 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { Column } from "./Column";
+import { ReleasedColumn } from "./ReleasedColumn";
 import { EpicCard } from "./EpicCard";
 import {
   KANBAN_COLUMNS,
+  DRAGGABLE_COLUMNS,
   type KanbanStatus,
   type KanbanEpic,
   type KanbanEpicAgentActivity,
@@ -165,7 +167,10 @@ export function Board({
 
   function handleDragStart(event: DragStartEvent) {
     const found = findEpicById(event.active.id as string);
-    if (found) setActiveEpic(found.epic);
+    if (!found) return;
+    // Block dragging from the released column
+    if (found.column === "released") return;
+    setActiveEpic(found.epic);
   }
 
   function handleDragOver(event: DragOverEvent) {
@@ -183,6 +188,8 @@ export function Board({
 
     const activeResult = findEpicById(activeId);
     if (!activeResult) return;
+    // Block drops from/to released column
+    if (activeResult.column === "released") return;
 
     // Determine target column
     let targetColumn: KanbanStatus;
@@ -191,11 +198,13 @@ export function Board({
     // Check if dropping on a column directly
     if (KANBAN_COLUMNS.includes(overId as KanbanStatus)) {
       targetColumn = overId as KanbanStatus;
+      if (targetColumn === "released") return;
       targetIndex = board.columns[targetColumn].length;
     } else {
       // Dropping on another epic
       const overResult = findEpicById(overId);
       if (!overResult) return;
+      if (overResult.column === "released") return;
       targetColumn = overResult.column;
       targetIndex = board.columns[targetColumn].findIndex((e) => e.id === overId);
     }
@@ -220,7 +229,7 @@ export function Board({
       onDragEnd={handleDragEnd}
     >
       <div className="flex gap-4 h-full p-4 overflow-x-auto">
-        {KANBAN_COLUMNS.map((status) => (
+        {DRAGGABLE_COLUMNS.map((status) => (
           <Column
             key={status}
             status={status}
@@ -237,6 +246,10 @@ export function Board({
             onRetryBuild={onRetryBuild}
           />
         ))}
+        <ReleasedColumn
+          releaseGroups={board.releaseGroups || []}
+          onEpicClick={handleEpicClick}
+        />
       </div>
       <DragOverlay>
         {activeEpic && (

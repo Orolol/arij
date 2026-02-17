@@ -12,7 +12,9 @@ const mockKanbanState = vi.hoisted(() => ({
       in_progress: [] as KanbanEpic[],
       review: [] as KanbanEpic[],
       done: [] as KanbanEpic[],
+      released: [] as KanbanEpic[],
     },
+    releaseGroups: [],
   },
   refresh: vi.fn(),
   moveEpic: vi.fn(),
@@ -57,6 +59,10 @@ vi.mock("@dnd-kit/sortable", () => ({
   sortableKeyboardCoordinates: vi.fn(),
 }));
 
+vi.mock("@/components/kanban/ReleasedColumn", () => ({
+  ReleasedColumn: () => <div data-testid="released-column" />,
+}));
+
 vi.mock("@dnd-kit/utilities", () => ({
   CSS: {
     Transform: {
@@ -86,6 +92,7 @@ function makeEpic(overrides?: Partial<KanbanEpic>): KanbanEpic {
     linkedEpicId: null,
     images: null,
     readableId: null,
+    releaseId: null,
     usCount: 1,
     usDone: 0,
     latestCommentId: "comment-1",
@@ -103,7 +110,9 @@ function setBoardTodo(epic: KanbanEpic) {
       in_progress: [],
       review: [],
       done: [],
+      released: [],
     },
+    releaseGroups: [],
   };
 }
 

@@ -15,12 +15,15 @@ const mockGitPush = vi.hoisted(() => vi.fn());
 const mockCreateReleaseBranchAndCommitChangelog = vi.hoisted(() => vi.fn());
 
 const mockSchema = vi.hoisted(() => ({
-  releases: { __name: "releases" },
-  projects: { __name: "projects" },
-  epics: { __name: "epics" },
-  userStories: { __name: "user_stories" },
-  settings: { __name: "settings" },
+  releases: { __name: "releases", id: "id", projectId: "projectId", epicIds: "epicIds" },
+  projects: { __name: "projects", id: "id" },
+  epics: { __name: "epics", id: "id", projectId: "projectId", status: "status" },
+  userStories: { __name: "user_stories", epicId: "epicId" },
+  settings: { __name: "settings", key: "key" },
+  agentSessions: { __name: "agent_sessions", id: "id", projectId: "projectId", provider: "provider", cliSessionId: "cliSessionId", claudeSessionId: "claudeSessionId" },
   gitSyncLog: { __name: "git_sync_log" },
+  agentProviderDefaults: { __name: "agent_provider_defaults" },
+  namedAgents: { __name: "named_agents" },
 }));
 
 /* ------------------------------------------------------------------ */
@@ -35,40 +38,52 @@ vi.mock("drizzle-orm", () => ({
 }));
 
 vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn(),
-    from: vi.fn(),
-    where: vi.fn(),
-    orderBy: vi.fn(),
-    limit: vi.fn(),
-    get: vi.fn(),
-    all: vi.fn(),
-    insert: vi.fn(),
-    update: vi.fn(),
-    set: vi.fn(),
-  };
+  function createChain() {
+    const chain: Record<string, ReturnType<typeof vi.fn>> = {
+      select: vi.fn(),
+      from: vi.fn(),
+      where: vi.fn(),
+      orderBy: vi.fn(),
+      limit: vi.fn(),
+      get: vi.fn(),
+      all: vi.fn(),
+      insert: vi.fn(),
+      update: vi.fn(),
+      set: vi.fn(),
+      transaction: vi.fn(),
+    };
 
-  chain.select.mockReturnValue(chain);
-  chain.from.mockReturnValue(chain);
-  chain.where.mockReturnValue(chain);
-  chain.orderBy.mockReturnValue(chain);
-  chain.limit.mockReturnValue(chain);
-  chain.all.mockImplementation(() => mockDbState.allQueue.shift() ?? []);
-  chain.get.mockImplementation(() => mockDbState.getQueue.shift() ?? null);
-  chain.insert.mockImplementation((table: unknown) => ({
-    values: vi.fn((payload: unknown) => {
-      mockDbState.insertCalls.push({ table, payload });
-      return { run: vi.fn() };
-    }),
-  }));
-  chain.update.mockImplementation((table: unknown) => ({
-    set: vi.fn((values: unknown) => {
-      mockDbState.updateCalls.push({ table, values });
-      return chain;
-    }),
-  }));
+    chain.select.mockReturnValue(chain);
+    chain.from.mockReturnValue(chain);
+    chain.where.mockReturnValue(chain);
+    chain.orderBy.mockReturnValue(chain);
+    chain.limit.mockReturnValue(chain);
+    chain.all.mockImplementation(() => mockDbState.allQueue.shift() ?? []);
+    chain.get.mockImplementation(() => mockDbState.getQueue.shift() ?? null);
+    chain.insert.mockImplementation((table: unknown) => ({
+      values: vi.fn((payload: unknown) => {
+        mockDbState.insertCalls.push({ table, payload });
+        return { run: vi.fn() };
+      }),
+    }));
+    chain.update.mockImplementation((table: unknown) => ({
+      set: vi.fn((values: unknown) => {
+        mockDbState.updateCalls.push({ table, values });
+        return {
+          where: vi.fn().mockReturnValue({ run: vi.fn() }),
+        };
+      }),
+    }));
+    // transaction(fn) calls fn(tx) where tx has the same interface
+    chain.transaction.mockImplementation((fn: (tx: unknown) => void) => {
+      const tx = createChain();
+      fn(tx);
+    });
 
-  return { db: chain };
+    return chain;
+  }
+
+  return { db: createChain() };
 });
 
 vi.mock("@/lib/db/schema", () => mockSchema);
@@ -119,6 +134,43 @@ vi.mock("@/lib/activity-registry", () => ({
   },
 }));
 
+// Mock new modules added for release flow
+vi.mock("@/lib/agent-sessions/lifecycle", () => ({
+  createQueuedSession: vi.fn(),
+  markSessionRunning: vi.fn(),
+  markSessionTerminal: vi.fn(),
+  isSessionLifecycleConflictError: vi.fn(() => false),
+}));
+
+vi.mock("@/lib/claude/process-manager", () => ({
+  processManager: {
+    start: vi.fn(),
+    getStatus: vi.fn(() => null),
+  },
+}));
+
+vi.mock("@/lib/agent-sessions/validate-resume", () => ({
+  isResumableProvider: vi.fn(() => false),
+}));
+
+vi.mock("@/lib/agent-config/providers", () => ({
+  resolveAgentByNamedId: vi.fn(() => ({
+    provider: "claude-code",
+    name: "Claude Code",
+    namedAgentId: null,
+    model: null,
+  })),
+}));
+
+const mockApplyTransition = vi.fn(() => ({ valid: true }));
+vi.mock("@/lib/workflow/transition-service", () => ({
+  applyTransition: (...args: unknown[]) => mockApplyTransition(...args),
+}));
+
+vi.mock("@/lib/events/emit", () => ({
+  emitReleaseCreated: vi.fn(),
+}));
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
@@ -158,7 +210,7 @@ describe("Release creation with pushToGitHub", () => {
       { id: "test-release-id", version: "1.0.0" },
     ];
     mockDbState.allQueue = [
-      [{ id: "ep_1", title: "Epic 1", description: "desc" }],
+      [{ id: "ep_1", title: "Epic 1", description: "desc", status: "done" }],
     ];
 
     const { POST } = await import(
@@ -193,7 +245,7 @@ describe("Release creation with pushToGitHub", () => {
       { id: "test-release-id", version: "1.0.0", githubReleaseId: 99, githubReleaseUrl: "https://github.com/owner/repo/releases/99" },
     ];
     mockDbState.allQueue = [
-      [{ id: "ep_1", title: "Epic 1", description: "desc" }],
+      [{ id: "ep_1", title: "Epic 1", description: "desc", status: "done" }],
     ];
 
     mockCreateDraftRelease.mockResolvedValue({
@@ -264,7 +316,7 @@ describe("Release creation with pushToGitHub", () => {
       { id: "test-release-id", version: "2.0.0" },
     ];
     mockDbState.allQueue = [
-      [{ id: "ep_1", title: "Epic 1", description: "desc" }],
+      [{ id: "ep_1", title: "Epic 1", description: "desc", status: "done" }],
     ];
 
     mockGitPush.mockRejectedValue(new Error("Network error"));
@@ -317,7 +369,7 @@ describe("Release creation with pushToGitHub", () => {
       { id: "test-release-id", version: "1.0.0" },
     ];
     mockDbState.allQueue = [
-      [{ id: "ep_1", title: "Epic 1", description: "desc" }],
+      [{ id: "ep_1", title: "Epic 1", description: "desc", status: "done" }],
     ];
 
     const { POST } = await import(

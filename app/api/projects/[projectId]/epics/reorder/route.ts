@@ -27,6 +27,16 @@ export async function POST(
 
   const now = new Date().toISOString();
 
+  // Reject any items that touch the "released" column
+  for (const item of body.items) {
+    if (item.status === "released") {
+      return NextResponse.json(
+        { error: "Cannot move tickets to the Released column. Tickets are moved there automatically when a release is created." },
+        { status: 400 }
+      );
+    }
+  }
+
   // Validate workflow rules for any status changes and track moves
   const statusChanges: { epicId: string; from: KanbanStatus; to: KanbanStatus }[] = [];
   for (const item of body.items) {
@@ -35,6 +45,14 @@ export async function POST(
 
     const fromStatus = (epic.status ?? "backlog") as KanbanStatus;
     const toStatus = item.status as KanbanStatus;
+
+    // Reject moves from the released column
+    if (fromStatus === "released") {
+      return NextResponse.json(
+        { error: "Cannot move tickets out of the Released column. Released tickets cannot be moved." },
+        { status: 400 }
+      );
+    }
 
     // Only validate if status is actually changing
     if (fromStatus !== toStatus) {

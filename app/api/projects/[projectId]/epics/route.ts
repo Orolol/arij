@@ -78,6 +78,7 @@ export async function GET(
       linkedEpicId: epics.linkedEpicId,
       images: epics.images,
       readableId: epics.readableId,
+      releaseId: epics.releaseId,
       usCount: sql<number>`COALESCE(${storyCounts.usCount}, 0)`,
       usDone: sql<number>`COALESCE(${storyCounts.usDone}, 0)`,
       latestCommentId: latestEpicComments.latestCommentId,

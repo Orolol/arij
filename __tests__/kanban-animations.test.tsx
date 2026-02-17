@@ -56,6 +56,7 @@ function makeEpic(overrides?: Partial<KanbanEpic>): KanbanEpic {
     linkedEpicId: null,
     images: null,
     readableId: "E-1",
+    releaseId: null,
     usCount: 2,
     usDone: 0,
     ...overrides,

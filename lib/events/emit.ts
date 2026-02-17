@@ -82,3 +82,12 @@ export function emitSessionProgress(
 ) {
   emit("session:progress", projectId, epicId, { sessionId, step });
 }
+
+export function emitReleaseCreated(
+  projectId: string,
+  releaseId: string,
+  version: string,
+  epicIds: string[]
+) {
+  emit("release:created", projectId, undefined, { releaseId, version, epicIds });
+}

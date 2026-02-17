@@ -20,7 +20,8 @@ const EPIC_TRANSITIONS: Record<KanbanStatus, readonly KanbanStatus[]> = {
   todo: ["backlog", "in_progress"],
   in_progress: ["todo", "review", "backlog"],
   review: ["in_progress", "done"],
-  done: ["review", "in_progress"],
+  done: ["review", "in_progress", "released"],
+  released: [], // Terminal state - no outbound transitions
 };
 
 /**
@@ -42,7 +43,7 @@ export interface TransitionContext {
   /** The actor initiating the transition */
   actor: "user" | "agent" | "system";
   /** The source route/action triggering this transition */
-  source?: "approve" | "merge" | "drag" | "api" | "build" | "review";
+  source?: "approve" | "merge" | "drag" | "api" | "build" | "review" | "release";
 }
 
 const TRANSITION_GUARDS: TransitionGuard[] = [
@@ -69,6 +70,27 @@ const TRANSITION_GUARDS: TransitionGuard[] = [
       ctx.source !== "merge"
     ) {
       return "Cannot move to Done: manual approval is required. Use the Approve action to move from Review to Done.";
+    }
+    return null;
+  },
+  // Only system actor can move to released
+  (ctx) => {
+    if (ctx.toStatus === "released" && ctx.actor !== "system") {
+      return "Cannot move to Released: only the system can move tickets to the Released column during release creation.";
+    }
+    return null;
+  },
+  // Cannot drag to released
+  (ctx) => {
+    if (ctx.toStatus === "released" && ctx.source === "drag") {
+      return "Cannot drag tickets to Released: tickets are automatically moved to Released when a release is created.";
+    }
+    return null;
+  },
+  // Cannot move away from released
+  (ctx) => {
+    if (ctx.fromStatus === "released") {
+      return "Cannot change status: tickets in Released cannot be moved to another column.";
     }
     return null;
   },

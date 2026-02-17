@@ -24,6 +24,10 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 import { processManager } from "@/lib/claude/process-manager";
 import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
+import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { applyTransition } from "@/lib/workflow/transition-service";
+import { emitReleaseCreated } from "@/lib/events/emit";
+import type { KanbanStatus } from "@/lib/types/kanban";
 import fs from "fs";
 import path from "path";
 
@@ -56,6 +60,7 @@ export async function POST(
     generateChangelog = true,
     pushToGitHub = false,
     resumeSessionId,
+    namedAgentId,
   } = body as {
     version: string;
     title?: string;
@@ -63,6 +68,7 @@ export async function POST(
     generateChangelog?: boolean;
     pushToGitHub?: boolean;
     resumeSessionId?: string;
+    namedAgentId?: string;
   };
 
   if (!version) {
@@ -95,6 +101,10 @@ export async function POST(
     .where(and(inArray(epics.id, epicIds), eq(epics.projectId, projectId)))
     .all();
 
+  // Resolve which agent to use for changelog generation
+  const resolvedAgent = resolveAgentByNamedId("release_notes", projectId, namedAgentId);
+  const agentProvider = resolvedAgent.provider;
+
   let changelog = "";
   let releaseBranch: string | null = null;
 
@@ -107,7 +117,7 @@ export async function POST(
       projectId,
       type: "release",
       label: `Generating Changelog: v${version}`,
-      provider: "claude-code",
+      provider: agentProvider,
       startedAt: new Date().toISOString(),
     });
 
@@ -189,7 +199,7 @@ ${ticketContext}
 
       let cliSessionId: string | undefined;
       let resumeSession = false;
-      if (isResumableProvider("claude-code")) {
+      if (isResumableProvider(agentProvider)) {
         if (resumeSessionId) {
           const previous = db
             .select({
@@ -205,7 +215,7 @@ ${ticketContext}
           if (
             previous &&
             previous.projectId === projectId &&
-            previous.provider === "claude-code" &&
+            previous.provider === agentProvider &&
             (previous.cliSessionId || previous.claudeSessionId)
           ) {
             cliSessionId = previous.cliSessionId ?? previous.claudeSessionId ?? undefined;
@@ -221,15 +231,16 @@ ${ticketContext}
         id: sessionId,
         projectId,
         mode: "plan",
-        provider: "claude-code",
+        provider: agentProvider,
         prompt,
         logsPath,
         worktreePath: project.gitRepoPath || null,
         claudeSessionId: cliSessionId,
         cliSessionId,
         agentType: "release_notes",
-        namedAgentName: null,
-        model: null,
+        namedAgentName: resolvedAgent.name || null,
+        namedAgentId: resolvedAgent.namedAgentId || null,
+        model: resolvedAgent.model || null,
         createdAt: now,
       });
 
@@ -243,7 +254,7 @@ ${ticketContext}
           cliSessionId,
           resumeSession,
         },
-        "claude-code"
+        agentProvider
       );
 
       let info = processManager.getStatus(sessionId);
@@ -414,24 +425,62 @@ ${ticketContext}
     }
   }
 
-  // Save release
+  // Save release and transition epics atomically
   const id = createId();
-  db.insert(releases)
-    .values({
-      id,
-      projectId,
-      version,
-      title: title || null,
-      changelog,
-      epicIds: JSON.stringify(epicIds),
-      releaseBranch,
-      gitTag,
-      githubReleaseId,
-      githubReleaseUrl,
-      pushedAt,
-      createdAt: new Date().toISOString(),
-    })
-    .run();
+
+  // Pre-validate all epic transitions before committing anything
+  for (const epic of selectedEpics) {
+    const fromStatus = (epic.status ?? "backlog") as KanbanStatus;
+    if (fromStatus !== "done") {
+      return NextResponse.json(
+        { error: `Epic "${epic.title}" has status "${fromStatus}" — only "done" epics can be released.` },
+        { status: 400 }
+      );
+    }
+  }
+
+  db.transaction((tx) => {
+    tx.insert(releases)
+      .values({
+        id,
+        projectId,
+        version,
+        title: title || null,
+        changelog,
+        epicIds: JSON.stringify(epicIds),
+        releaseBranch,
+        gitTag,
+        githubReleaseId,
+        githubReleaseUrl,
+        pushedAt,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+
+    // Transition included epics to "released" and stamp releaseId
+    for (const epic of selectedEpics) {
+      const fromStatus = (epic.status ?? "backlog") as KanbanStatus;
+      const result = applyTransition({
+        projectId,
+        epicId: epic.id,
+        fromStatus,
+        toStatus: "released",
+        actor: "system",
+        source: "release",
+        reason: `Released in v${version}`,
+      });
+      if (!result.valid) {
+        throw new Error(`Failed to transition epic "${epic.title}": ${result.error}`);
+      }
+      tx.update(epics)
+        .set({ releaseId: id })
+        .where(eq(epics.id, epic.id))
+        .run();
+    }
+  });
+
+  // Emit release:created event for real-time board refresh
+  emitReleaseCreated(projectId, id, version, epicIds);
 
   const release = db.select().from(releases).where(eq(releases.id, id)).get();
 

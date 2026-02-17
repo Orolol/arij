@@ -4,6 +4,7 @@ export const KANBAN_COLUMNS = [
   "in_progress",
   "review",
   "done",
+  "released",
 ] as const;
 
 export type KanbanStatus = (typeof KANBAN_COLUMNS)[number];
@@ -14,7 +15,13 @@ export const COLUMN_LABELS: Record<KanbanStatus, string> = {
   in_progress: "In Progress",
   review: "Review",
   done: "Done",
+  released: "Released",
 };
+
+/** Columns that support drag-and-drop (all except released) */
+export const DRAGGABLE_COLUMNS = KANBAN_COLUMNS.filter(
+  (col) => col !== "released"
+) as Exclude<KanbanStatus, "released">[];
 
 export const PRIORITY_LABELS: Record<number, string> = {
   0: "Low",
@@ -50,6 +57,7 @@ export interface KanbanEpic {
   linkedEpicId: string | null;
   images: string | null; // JSON array
   readableId: string | null;
+  releaseId: string | null;
   usCount: number;
   usDone: number;
   latestCommentId?: string | null;
@@ -67,8 +75,17 @@ export interface KanbanEpicAgentActivity {
   startedAt?: string;
 }
 
+export interface ReleaseGroup {
+  id: string;
+  version: string;
+  title: string | null;
+  createdAt: string;
+  epics: KanbanEpic[];
+}
+
 export interface BoardState {
   columns: Record<KanbanStatus, KanbanEpic[]>;
+  releaseGroups?: ReleaseGroup[];
 }
 
 export interface ReorderItem {
