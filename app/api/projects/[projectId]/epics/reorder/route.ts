@@ -4,6 +4,9 @@ import { epics } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import Database from "better-sqlite3";
 import { tryExportArjiJson } from "@/lib/sync/export";
+import type { KanbanStatus } from "@/lib/types/kanban";
+import { KANBAN_COLUMNS } from "@/lib/types/kanban";
+import { applyTransition } from "@/lib/workflow/transition-service";
 
 interface ReorderItem {
   id: string;
@@ -24,6 +27,43 @@ export async function POST(
 
   const now = new Date().toISOString();
 
+  // Validate workflow rules for any status changes and track moves
+  const statusChanges: { epicId: string; from: KanbanStatus; to: KanbanStatus }[] = [];
+  for (const item of body.items) {
+    const epic = db.select().from(epics).where(eq(epics.id, item.id)).get();
+    if (!epic) continue;
+
+    const fromStatus = (epic.status ?? "backlog") as KanbanStatus;
+    const toStatus = item.status as KanbanStatus;
+
+    // Only validate if status is actually changing
+    if (fromStatus !== toStatus) {
+      if (!KANBAN_COLUMNS.includes(toStatus)) {
+        return NextResponse.json(
+          { error: `Invalid status: ${toStatus}` },
+          { status: 400 }
+        );
+      }
+
+      const result = applyTransition({
+        projectId,
+        epicId: item.id,
+        fromStatus,
+        toStatus,
+        actor: "user",
+        source: "drag",
+        validateOnly: true,
+      });
+      if (!result.valid) {
+        return NextResponse.json(
+          { error: result.error },
+          { status: 400 }
+        );
+      }
+      statusChanges.push({ epicId: item.id, from: fromStatus, to: toStatus });
+    }
+  }
+
   // Use a transaction for atomic reorder
   const sqlite = (db as unknown as { $client: Database.Database }).$client;
   const transaction = sqlite.transaction(() => {
@@ -40,6 +80,20 @@ export async function POST(
   });
 
   transaction();
+
+  // Emit events and log transitions for status changes (DB already updated in transaction)
+  for (const change of statusChanges) {
+    applyTransition({
+      projectId,
+      epicId: change.epicId,
+      fromStatus: change.from,
+      toStatus: change.to,
+      actor: "user",
+      source: "drag",
+      reason: "Kanban drag-and-drop",
+      skipDbUpdate: true,
+    });
+  }
 
   tryExportArjiJson(projectId);
   return NextResponse.json({ data: { updated: body.items.length } });

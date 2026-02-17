@@ -8,21 +8,21 @@ describe("README onboarding documentation", () => {
   it("describes the project purpose", () => {
     expect(readme).toContain("# Arij");
     expect(readme).toContain(
-      "AI-first, local, open-source project orchestrator",
+      "local-first, AI-powered project orchestrator",
     );
   });
 
   it("includes a technical stack overview", () => {
-    expect(readme).toContain("## 🚀 Tech Stack");
+    expect(readme).toContain("## Tech Stack");
     expect(readme).toContain("Next.js 16");
-    expect(readme).toContain("SQLite via Drizzle ORM");
-    expect(readme).toContain("CLI `claude`");
+    expect(readme).toContain("SQLite via better-sqlite3 + Drizzle ORM");
+    expect(readme).toContain("Claude Code CLI (`claude`)");
   });
 
   it("includes a high-level architecture overview", () => {
-    expect(readme).toContain("## 🏗️ Architecture");
-    expect(readme).toContain("UnifiedChatPanel");
-    expect(readme).toContain("git worktree");
+    expect(readme).toContain("## Architecture");
+    expect(readme).toContain("Chat Panel");
+    expect(readme).toContain("worktree");
   });
 
   it("replaces the default create-next-app template", () => {

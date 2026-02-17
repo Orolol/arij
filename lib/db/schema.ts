@@ -478,3 +478,29 @@ export type NewTicketDependency = typeof ticketDependencies.$inferInsert;
 
 export type ReviewComment = typeof reviewComments.$inferSelect;
 export type NewReviewComment = typeof reviewComments.$inferInsert;
+
+export const ticketActivityLog = sqliteTable(
+  "ticket_activity_log",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    epicId: text("epic_id")
+      .notNull()
+      .references(() => epics.id, { onDelete: "cascade" }),
+    fromStatus: text("from_status").notNull(),
+    toStatus: text("to_status").notNull(),
+    actor: text("actor").notNull(), // user | agent | system
+    reason: text("reason"),
+    sessionId: text("session_id"),
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    epicIdx: index("ticket_activity_log_epic_idx").on(table.epicId),
+    projectIdx: index("ticket_activity_log_project_idx").on(table.projectId),
+  })
+);
+
+export type TicketActivityLog = typeof ticketActivityLog.$inferSelect;
+export type NewTicketActivityLog = typeof ticketActivityLog.$inferInsert;

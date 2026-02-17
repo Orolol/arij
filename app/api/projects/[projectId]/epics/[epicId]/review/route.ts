@@ -36,6 +36,13 @@ import {
   enrichPromptWithDocumentMentions,
 } from "@/lib/documents/mentions";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import { logTransition } from "@/lib/workflow/log";
+import {
+  emitSessionStarted,
+  emitSessionCompleted,
+  emitSessionFailed,
+  emitTicketMoved,
+} from "@/lib/events/emit";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -273,6 +280,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       resumeSession: useResume,
     }, resolvedAgent.provider);
 
+    emitSessionStarted(projectId, epicId, sessionId, REVIEW_TYPE_TO_AGENT_TYPE[reviewType]);
+
     // Background: wait for completion, post review as epic comment
     const label = REVIEW_LABELS[reviewType];
     ((sid, lbl) => {
@@ -330,6 +339,12 @@ export async function POST(request: NextRequest, { params }: Params) {
           lowerOutput.includes("not complete") ||
           lowerOutput.includes("partially complete");
 
+        if (result?.success) {
+          emitSessionCompleted(projectId, epicId, sid);
+        } else {
+          emitSessionFailed(projectId, epicId, sid, result?.error || "Review failed");
+        }
+
         if (isNegativeVerdict) {
           const currentEpic = db
             .select()
@@ -338,6 +353,7 @@ export async function POST(request: NextRequest, { params }: Params) {
             .get();
 
           if (currentEpic && (currentEpic.status === "done" || currentEpic.status === "review")) {
+            const prevStatus = currentEpic.status;
             db.update(epics)
               .set({ status: "in_progress", updatedAt: completedAt })
               .where(eq(epics.id, epicId))
@@ -352,6 +368,17 @@ export async function POST(request: NextRequest, { params }: Params) {
                 )
               )
               .run();
+
+            emitTicketMoved(projectId, epicId, prevStatus, "in_progress");
+            logTransition({
+              projectId,
+              epicId,
+              fromStatus: prevStatus,
+              toStatus: "in_progress",
+              actor: "agent",
+              reason: `Review verdict: changes requested (${lbl})`,
+              sessionId: sid,
+            });
           }
         }
       })();

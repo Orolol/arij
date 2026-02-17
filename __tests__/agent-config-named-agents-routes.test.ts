@@ -77,12 +77,12 @@ describe("Named agents routes", () => {
     expect(json.data.provider).toBe("gemini-cli");
   });
 
-  it("PATCH returns 404 when named agent is missing", async () => {
-    const { PATCH } = await import(
+  it("PUT returns 404 when named agent is missing", async () => {
+    const { PUT } = await import(
       "@/app/api/agent-config/named-agents/[agentId]/route"
     );
 
-    const res = await PATCH(mockRequest({ name: "Updated" }), {
+    const res = await PUT(mockRequest({ name: "Updated" }), {
       params: Promise.resolve({ agentId: "na-missing" }),
     });
 

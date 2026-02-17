@@ -9,6 +9,9 @@ import {
 } from "@/lib/planning/permanent-delete";
 import { updateEpicSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
+import type { KanbanStatus } from "@/lib/types/kanban";
+import { applyTransition } from "@/lib/workflow/transition-service";
+import { emitTicketUpdated, emitTicketDeleted } from "@/lib/events/emit";
 
 export async function PATCH(
   request: NextRequest,
@@ -26,6 +29,23 @@ export async function PATCH(
     return NextResponse.json({ error: "Epic not found" }, { status: 404 });
   }
 
+  // Validate workflow rules if status is changing
+  if (body.status !== undefined && body.status !== existing.status) {
+    const result = applyTransition({
+      projectId,
+      epicId,
+      fromStatus: (existing.status ?? "backlog") as KanbanStatus,
+      toStatus: body.status as KanbanStatus,
+      actor: "user",
+      source: "api",
+      reason: "Manual status update",
+      skipDbUpdate: true, // we update below with all fields
+    });
+    if (!result.valid) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+  }
+
   const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
   if (body.title !== undefined) updates.title = body.title;
   if (body.description !== undefined) updates.description = body.description;
@@ -37,6 +57,12 @@ export async function PATCH(
   db.update(epics).set(updates).where(eq(epics.id, epicId)).run();
 
   const updated = db.select().from(epics).where(eq(epics.id, epicId)).get();
+
+  // Emit update event for non-status changes (status changes already emitted by applyTransition)
+  if (!(body.status !== undefined && body.status !== existing.status)) {
+    emitTicketUpdated(projectId, epicId, updates);
+  }
+
   tryExportArjiJson(projectId);
   return NextResponse.json({ data: updated });
 }
@@ -49,6 +75,7 @@ export async function DELETE(
 
   try {
     deleteEpicPermanently(projectId, epicId);
+    emitTicketDeleted(projectId, epicId);
     tryExportArjiJson(projectId);
     return NextResponse.json({ data: { deleted: true } });
   } catch (error) {

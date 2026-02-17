@@ -17,6 +17,10 @@ import {
 import {
   getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import { applyTransition } from "@/lib/workflow/transition-service";
+import { emitTicketMoved } from "@/lib/events/emit";
+import { logTransition } from "@/lib/workflow/log";
+import type { KanbanStatus } from "@/lib/types/kanban";
 import fs from "fs";
 import path from "path";
 
@@ -62,7 +66,24 @@ export async function POST(
   const result = await mergeWorktree(project.gitRepoPath, epic.branchName, worktreePath);
 
   if (result.merged) {
-    // Move epic to done
+    const prevStatus = (epic.status ?? "review") as KanbanStatus;
+
+    // Validate + emit + log via transition service (skip DB update — we handle branchName too)
+    const validation = applyTransition({
+      projectId,
+      epicId,
+      fromStatus: prevStatus,
+      toStatus: "done",
+      actor: "user",
+      source: "merge",
+      reason: "Branch merged successfully",
+      skipDbUpdate: true,
+    });
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
+    // Move epic to done + clear branch name
     const now = new Date().toISOString();
     db.update(epics)
       .set({ status: "done", branchName: null, updatedAt: now })
@@ -182,10 +203,21 @@ export async function POST(
           worktreePath
         );
         if (retryResult.merged) {
+          const mergedAt = new Date().toISOString();
           db.update(epics)
-            .set({ status: "done", branchName: null, updatedAt: new Date().toISOString() })
+            .set({ status: "done", branchName: null, updatedAt: mergedAt })
             .where(eq(epics.id, epicId))
             .run();
+          emitTicketMoved(projectId, epicId, epic.status ?? "review", "done");
+          logTransition({
+            projectId,
+            epicId,
+            fromStatus: epic.status ?? "review",
+            toStatus: "done",
+            actor: "agent",
+            reason: "Merge-fix agent resolved conflicts and merged",
+            sessionId,
+          });
           tryExportArjiJson(projectId);
         }
       }

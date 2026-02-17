@@ -93,7 +93,7 @@ describe("Agent provider default routes", () => {
     const json = await res.json();
 
     expect(res.status).toBe(400);
-    expect(json.error).toContain("provider must be");
+    expect(json.error).toContain("invalid provider");
   });
 
   it("PUT /api/agent-config/providers/[agentType] upserts global defaults", async () => {

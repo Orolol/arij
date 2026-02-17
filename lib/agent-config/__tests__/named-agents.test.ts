@@ -211,7 +211,8 @@ describe("resolveAgent", () => {
   it("returns fallback when no defaults configured", async () => {
     const { resolveAgent } = await import("../named-agents");
     const result = await resolveAgent("build");
-    expect(result).toEqual({ provider: "claude-code", model: undefined, name: undefined });
+    expect(result.provider).toBe("claude-code");
+    expect(result.namedAgentId).toBeNull();
   });
 
   it("resolves named agent when namedAgentId is set", async () => {

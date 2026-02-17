@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import simpleGit from "simple-git";
+import { applyTransition } from "@/lib/workflow/transition-service";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -25,7 +26,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
 
   const now = new Date().toISOString();
 
-  // Bulk-resolve all open review comments
+  // Bulk-resolve all open review comments (before validation so context sees them resolved)
   db.update(reviewComments)
     .set({ status: "resolved", updatedAt: now })
     .where(
@@ -35,6 +36,21 @@ export async function POST(_request: NextRequest, { params }: Params) {
       )
     )
     .run();
+
+  // Validate + apply transition (updates epic status, emits event, logs)
+  const validation = applyTransition({
+    projectId,
+    epicId,
+    fromStatus: "review",
+    toStatus: "done",
+    actor: "user",
+    source: "approve",
+    reason: "Review approved",
+    skipDbUpdate: true, // we handle epic + US update below
+  });
+  if (!validation.valid) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
 
   // Post approval activity comment
   db.insert(ticketComments)

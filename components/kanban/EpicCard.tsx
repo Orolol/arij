@@ -2,9 +2,15 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
   PRIORITY_LABELS,
   PRIORITY_COLORS,
@@ -12,6 +18,7 @@ import {
   type KanbanAgentActionType,
   type KanbanEpicAgentActivity,
 } from "@/lib/types/kanban";
+import { formatElapsed } from "@/lib/utils/format-elapsed";
 import {
   GitPullRequest,
   Hammer,
@@ -19,8 +26,18 @@ import {
   GitMerge,
   Bug,
   Bot,
+  AlertTriangle,
+  RotateCcw,
   type LucideIcon,
 } from "lucide-react";
+import type { FailedSessionInfo } from "@/hooks/useAgentPolling";
+
+function providerLabel(provider?: string): string {
+  if (!provider) return "Agent";
+  if (provider === "gemini-cli") return "Gemini";
+  if (provider === "codex") return "Codex";
+  return "Claude Code";
+}
 
 interface EpicCardProps {
   epic: KanbanEpic;
@@ -33,6 +50,12 @@ interface EpicCardProps {
   selected?: boolean;
   autoIncluded?: boolean;
   onToggleSelect?: () => void;
+  /** Flash highlight when ticket state changes */
+  highlight?: boolean;
+  /** Info about the most recent failed agent session for this epic */
+  failedSession?: FailedSessionInfo;
+  /** Called when user clicks the retry button on a failed session indicator */
+  onRetry?: () => void;
 }
 
 const ACTIVITY_ICON_BY_TYPE: Record<
@@ -54,6 +77,9 @@ export function EpicCard({
   selected,
   autoIncluded,
   onToggleSelect,
+  highlight = false,
+  failedSession,
+  onRetry,
 }: EpicCardProps) {
   const {
     attributes,
@@ -63,6 +89,18 @@ export function EpicCard({
     transition,
     isDragging,
   } = useSortable({ id: epic.id });
+
+  // Flash highlight animation state
+  const [isHighlighted, setIsHighlighted] = useState(false);
+  const prevHighlight = useRef(highlight);
+  useEffect(() => {
+    if (highlight && !prevHighlight.current) {
+      setIsHighlighted(true);
+      const timer = setTimeout(() => setIsHighlighted(false), 1500);
+      return () => clearTimeout(timer);
+    }
+    prevHighlight.current = highlight;
+  }, [highlight]);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -75,9 +113,19 @@ export function EpicCard({
     ? ACTIVITY_ICON_BY_TYPE[activeAgentActivity.actionType]
     : null;
   const linkedActivityId = activeAgentActivity?.sessionId ?? null;
-  const activityTooltip = activityConfig
-    ? `${activityConfig.label} active: ${activeAgentActivity!.agentName}`
-    : null;
+
+  // Elapsed time ticker for active agent
+  const [elapsedText, setElapsedText] = useState("");
+  useEffect(() => {
+    if (!activeAgentActivity?.startedAt) {
+      setElapsedText("");
+      return;
+    }
+    const update = () => setElapsedText(formatElapsed(activeAgentActivity.startedAt!));
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [activeAgentActivity?.startedAt]);
 
   function handleCardClick(event: MouseEvent) {
     const additiveSelection = event.metaKey || event.ctrlKey || event.shiftKey;
@@ -113,24 +161,41 @@ export function EpicCard({
         }
         onLinkedAgentHoverChange?.(null);
       }}
-      className={`p-2 gap-0 rounded-md shadow-none cursor-pointer hover:bg-accent/50 transition-colors ${
+      className={`p-2 gap-0 rounded-md shadow-none cursor-pointer hover:bg-accent/50 transition-all duration-300 motion-reduce:transition-none ${
         isOverlay ? "shadow-lg" : ""
       } ${isDragging ? "shadow-md" : ""} ${
         selected ? "ring-2 ring-primary" : autoIncluded ? "ring-2 ring-blue-400/50" : ""
-      } ${epic.type === "bug" ? "border-l-2 border-l-red-500" : ""}`}
+      } ${epic.type === "bug" ? "border-l-2 border-l-red-500" : ""} ${
+        isHighlighted ? "ring-2 ring-primary/70 bg-primary/5 motion-reduce:ring-0 motion-reduce:bg-transparent" : ""
+      }`}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
         <div className="flex-1 min-w-0">
           <div className="flex items-start gap-2">
             {activityConfig && (
-              <span
-                className="shrink-0 mt-0.5 inline-flex items-center justify-center rounded-sm bg-yellow-500/10 text-yellow-600 p-0.5"
-                title={activityTooltip ?? undefined}
-                aria-label={activityTooltip ?? undefined}
-                data-testid={`epic-activity-${epic.id}`}
-              >
-                <activityConfig.Icon className="h-3.5 w-3.5" />
-              </span>
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      className="relative shrink-0 mt-0.5 inline-flex items-center justify-center rounded-sm bg-yellow-500/10 text-yellow-600 p-0.5"
+                      aria-label={`${activityConfig.label} active: ${activeAgentActivity!.agentName}`}
+                      data-testid={`epic-activity-${epic.id}`}
+                    >
+                      <span className="absolute inset-0 rounded-sm bg-yellow-500/20 animate-pulse motion-reduce:animate-none" />
+                      <activityConfig.Icon className="relative h-3.5 w-3.5" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="text-xs">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-medium">{activityConfig.label}: {activeAgentActivity!.agentName}</span>
+                      <span className="text-muted-foreground">
+                        {providerLabel(activeAgentActivity!.provider)}
+                        {elapsedText && ` \u00B7 ${elapsedText}`}
+                      </span>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
             <div className="flex-1 min-w-0">
               <span className="text-xs text-muted-foreground font-mono">{epic.readableId || epic.id}</span>
@@ -151,6 +216,41 @@ export function EpicCard({
             >
               <Bot className="h-3.5 w-3.5" />
             </span>
+          )}
+          {failedSession && !activeAgentActivity && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className="inline-flex items-center gap-0.5 rounded-sm bg-red-500/15 text-red-500 px-1 py-0.5"
+                    aria-label="Agent session failed"
+                    data-testid={`epic-error-${epic.id}`}
+                  >
+                    <AlertTriangle className="h-3 w-3" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs max-w-xs">
+                  <div className="flex flex-col gap-1">
+                    <span className="font-medium text-red-400">Agent failed</span>
+                    <span className="text-muted-foreground break-words">{failedSession.error}</span>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {failedSession && !activeAgentActivity && onRetry && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetry();
+              }}
+              className="inline-flex items-center gap-0.5 rounded-sm bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 px-1.5 py-0.5 text-xs transition-colors"
+              aria-label="Retry failed agent session"
+              data-testid={`epic-retry-${epic.id}`}
+            >
+              <RotateCcw className="h-3 w-3" />
+              Retry
+            </button>
           )}
           <Badge
             className={`text-xs shrink-0 ${PRIORITY_COLORS[epic.priority] || PRIORITY_COLORS[0]}`}

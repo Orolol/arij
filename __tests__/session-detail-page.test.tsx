@@ -72,7 +72,7 @@ describe("SessionDetailPage", () => {
     render(<SessionDetailPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("CC")).toBeInTheDocument();
+      expect(screen.getByText("Claude Code")).toBeInTheDocument();
     });
   });
 

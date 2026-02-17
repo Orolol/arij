@@ -35,24 +35,21 @@ describe("Schema: pullRequests table", () => {
     expect(cols.id).toBeDefined();
     expect(cols.projectId).toBeDefined();
     expect(cols.epicId).toBeDefined();
-    expect(cols.prNumber).toBeDefined();
+    expect(cols.number).toBeDefined();
     expect(cols.title).toBeDefined();
-    expect(cols.body).toBeDefined();
-    expect(cols.htmlUrl).toBeDefined();
+    expect(cols.url).toBeDefined();
     expect(cols.status).toBeDefined();
     expect(cols.headBranch).toBeDefined();
     expect(cols.baseBranch).toBeDefined();
-    expect(cols.githubId).toBeDefined();
     expect(cols.createdAt).toBeDefined();
     expect(cols.updatedAt).toBeDefined();
   });
 
   it("has correct column names", () => {
-    expect(schema.pullRequests.prNumber.name).toBe("pr_number");
-    expect(schema.pullRequests.htmlUrl.name).toBe("html_url");
+    expect(schema.pullRequests.number.name).toBe("number");
+    expect(schema.pullRequests.url.name).toBe("url");
     expect(schema.pullRequests.headBranch.name).toBe("head_branch");
     expect(schema.pullRequests.baseBranch.name).toBe("base_branch");
-    expect(schema.pullRequests.githubId.name).toBe("github_id");
   });
 });
 
@@ -75,22 +72,20 @@ describe("Schema: PR-related exported types", () => {
       id: "pr-1",
       projectId: "proj-1",
       epicId: "epic-1",
-      prNumber: 42,
+      number: 42,
       title: "Add feature",
-      body: "Description",
-      htmlUrl: "https://github.com/org/repo/pull/42",
+      url: "https://github.com/org/repo/pull/42",
       status: "open",
       headBranch: "feature/test",
       baseBranch: "main",
-      githubId: 12345,
       createdAt: "2025-01-01",
       updatedAt: "2025-01-01",
     };
-    expect(pr.prNumber).toBe(42);
+    expect(pr.number).toBe(42);
   });
 
   it("exports GitSyncLogEntry type", () => {
-    const entry: schema.GitSyncLogEntry = {
+    const entry: schema.GitSyncLog = {
       id: "log-1",
       projectId: "proj-1",
       operation: "pr_create",

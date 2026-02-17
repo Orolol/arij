@@ -636,7 +636,7 @@ describe("Story 3: Resizable split between board and chat", () => {
 describe("Story 4: Agent type selection pre-populated on every new chat tab", () => {
   beforeEach(resetMocks);
 
-  it("new brainstorm tab inherits the active conversation provider", async () => {
+  it("new brainstorm tab creates a conversation with brainstorm type", async () => {
     // Active conversation uses codex provider
     mockConversations = [
       {
@@ -663,12 +663,12 @@ describe("Story 4: Agent type selection pre-populated on every new chat tab", ()
 
     await waitFor(() => {
       expect(mockCreateConversation).toHaveBeenCalledWith(
-        expect.objectContaining({ provider: "codex" }),
+        expect.objectContaining({ type: "brainstorm", label: "Brainstorm" }),
       );
     });
   });
 
-  it("new epic_creation tab inherits the active conversation provider", async () => {
+  it("new epic_creation tab creates a conversation with epic_creation type", async () => {
     // Active conversation uses codex provider
     mockConversations = [
       {
@@ -699,13 +699,13 @@ describe("Story 4: Agent type selection pre-populated on every new chat tab", ()
       expect(mockCreateConversation).toHaveBeenCalledWith(
         expect.objectContaining({
           type: "epic_creation",
-          provider: "codex",
+          label: "New Epic",
         }),
       );
     });
   });
 
-  it("defaults to claude-code provider when active has no provider set", async () => {
+  it("creates new brainstorm tab with default type when active has no special provider set", async () => {
     mockConversations = [
       {
         id: "conv1",
@@ -731,7 +731,7 @@ describe("Story 4: Agent type selection pre-populated on every new chat tab", ()
 
     await waitFor(() => {
       expect(mockCreateConversation).toHaveBeenCalledWith(
-        expect.objectContaining({ provider: "claude-code" }),
+        expect.objectContaining({ type: "brainstorm", label: "Brainstorm" }),
       );
     });
   });

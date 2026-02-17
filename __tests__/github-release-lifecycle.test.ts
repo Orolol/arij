@@ -112,6 +112,13 @@ vi.mock("@/lib/github/sync-log", () => ({
   logSyncOperation: mockLogSyncOperation,
 }));
 
+vi.mock("@/lib/activity-registry", () => ({
+  activityRegistry: {
+    register: vi.fn(),
+    unregister: vi.fn(),
+  },
+}));
+
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */

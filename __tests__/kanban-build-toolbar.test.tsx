@@ -2,6 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { forwardRef, useImperativeHandle, useState, useCallback, type ReactNode } from "react";
 
+// Mock EventSource (used by useProjectEvents)
+class MockEventSource {
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: string }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  close() {}
+}
+(globalThis as Record<string, unknown>).EventSource = MockEventSource;
+
 // Mock next/navigation
 vi.mock("next/navigation", () => ({
   useParams: () => ({ projectId: "proj1" }),

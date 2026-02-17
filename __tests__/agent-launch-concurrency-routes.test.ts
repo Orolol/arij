@@ -83,6 +83,36 @@ vi.mock("@/lib/db/schema", () => ({
   },
   ticketComments: { userStoryId: "userStoryId", createdAt: "createdAt" },
   settings: { key: "key", value: "value" },
+  reviewComments: {
+    id: "id",
+    epicId: "epicId",
+    status: "status",
+    createdAt: "createdAt",
+  },
+  ticketActivityLog: {
+    id: "id",
+    projectId: "projectId",
+    epicId: "epicId",
+    fromStatus: "fromStatus",
+    toStatus: "toStatus",
+    actor: "actor",
+    reason: "reason",
+    sessionId: "sessionId",
+    createdAt: "createdAt",
+  },
+}));
+
+vi.mock("@/lib/workflow/log", () => ({
+  logTransition: vi.fn(),
+}));
+
+vi.mock("@/lib/events/emit", () => ({
+  emitTicketMoved: vi.fn(),
+  emitTicketCreated: vi.fn(),
+  emitSessionStarted: vi.fn(),
+  emitSessionCompleted: vi.fn(),
+  emitSessionFailed: vi.fn(),
+  emitSessionProgress: vi.fn(),
 }));
 
 vi.mock("@/lib/git/manager", () => ({

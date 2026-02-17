@@ -92,6 +92,44 @@ vi.mock("@/lib/db/schema", () => ({
     content: "content",
     createdAt: "createdAt",
   },
+  ticketActivityLog: {
+    _name: "ticketActivityLog",
+    id: "id",
+    projectId: "projectId",
+    epicId: "epicId",
+    fromStatus: "fromStatus",
+    toStatus: "toStatus",
+    actor: "actor",
+    reason: "reason",
+    sessionId: "sessionId",
+    createdAt: "createdAt",
+  },
+  agentSessions: {
+    _name: "agentSessions",
+    id: "id",
+    epicId: "epicId",
+    projectId: "projectId",
+    status: "status",
+    agentType: "agentType",
+  },
+}));
+
+vi.mock("@/lib/workflow/engine", () => ({
+  validateTransition: vi.fn(() => ({ valid: true })),
+  isAllowedTransition: vi.fn(() => true),
+}));
+
+vi.mock("@/lib/workflow/context", () => ({
+  buildTransitionContext: vi.fn(() => ({
+    epicId: "epic-1",
+    fromStatus: "review",
+    toStatus: "done",
+    hasOpenReviewComments: false,
+    hasCompletedReview: true,
+    hasRunningSession: false,
+    actor: "user",
+    source: "approve",
+  })),
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({
@@ -111,6 +149,14 @@ vi.mock("simple-git", () => ({
 
 vi.mock("@/lib/sync/export", () => ({
   tryExportArjiJson: vi.fn(),
+}));
+
+vi.mock("@/lib/workflow/log", () => ({
+  logTransition: vi.fn(),
+}));
+
+vi.mock("@/lib/events/emit", () => ({
+  emitTicketMoved: vi.fn(),
 }));
 
 describe("Review approval", () => {

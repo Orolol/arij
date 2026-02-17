@@ -135,9 +135,9 @@ describe("Publish release endpoint", () => {
       })
     );
 
-    // Verify the detail includes "publish"
+    // Verify the detail includes "publish" action
     const logCall = mockLogSyncOperation.mock.calls[0][0];
-    expect(logCall.detail).toContain("publish");
+    expect(logCall.detail.action).toBe("publish");
   });
 
   it("returns 404 when project not found", async () => {
@@ -245,7 +245,7 @@ describe("Publish release endpoint", () => {
     );
 
     const logCall = mockLogSyncOperation.mock.calls[0][0];
-    expect(logCall.detail).toContain("publish");
-    expect(logCall.detail).toContain("API rate limited");
+    expect(logCall.detail.action).toBe("publish");
+    expect(logCall.detail.error).toContain("API rate limited");
   });
 });

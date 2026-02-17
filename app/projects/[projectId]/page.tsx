@@ -27,6 +27,7 @@ import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, 
 import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
 import type { KanbanEpicAgentActivity } from "@/lib/types/kanban";
 import { getActiveDetailTicketId, selectOnlyTicket } from "@/lib/kanban/selection";
+import { useProjectEvents, type ConnectionStatus } from "@/hooks/useProjectEvents";
 
 interface Toast {
   id: string;
@@ -55,9 +56,30 @@ export default function KanbanPage() {
   const [bugDialogOpen, setBugDialogOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [highlightedActivityId, setHighlightedActivityId] = useState<string | null>(null);
-  const { activities } = useAgentPolling(projectId);
+  const { activities, failedSessions } = useAgentPolling(projectId, 3000, refreshTrigger);
   const prevSessionIds = useRef<Set<string>>(new Set());
   const panelRef = useRef<UnifiedChatPanelHandle>(null);
+
+  // Real-time events via SSE — auto-refresh board on ticket/session changes
+  // pollTick increments on fallback polling when SSE is disconnected
+  const { status: sseStatus, pollTick } = useProjectEvents(projectId, {
+    "ticket:moved": () => setRefreshTrigger((t) => t + 1),
+    "ticket:created": () => setRefreshTrigger((t) => t + 1),
+    "ticket:updated": () => setRefreshTrigger((t) => t + 1),
+    "ticket:deleted": () => setRefreshTrigger((t) => t + 1),
+    "session:started": () => setRefreshTrigger((t) => t + 1),
+    "session:completed": () => setRefreshTrigger((t) => t + 1),
+    "session:failed": () => setRefreshTrigger((t) => t + 1),
+    "session:progress": () => setRefreshTrigger((t) => t + 1),
+  });
+
+  // Fallback: refresh board when SSE is down and polling kicks in
+  useEffect(() => {
+    if (pollTick > 0) {
+      setRefreshTrigger((t) => t + 1);
+    }
+  }, [pollTick]);
+
   const activeAgentActivities = useMemo<Record<string, KanbanEpicAgentActivity>>(
     () => {
       const map: Record<string, KanbanEpicAgentActivity> = {};
@@ -70,6 +92,8 @@ export default function KanbanPage() {
           sessionId: activity.id,
           actionType: activity.type as KanbanEpicAgentActivity["actionType"],
           agentName: activity.namedAgentName || `Agent ${activity.id.slice(0, 6)}`,
+          provider: activity.provider,
+          startedAt: activity.startedAt,
         };
       }
 
@@ -135,6 +159,30 @@ export default function KanbanPage() {
       setToasts((t) => t.filter((toast) => toast.id !== id));
     }, 5000);
   }, []);
+
+  const handleRetryBuild = useCallback(async (epicId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/build`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          epicIds: [epicId],
+          mode: "parallel",
+          namedAgentId,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        addToast("error", data.error || "Failed to retry build");
+      } else {
+        addToast("success", `Retrying build for epic`);
+        setRefreshTrigger((t) => t + 1);
+      }
+    } catch {
+      addToast("error", "Failed to retry build");
+    }
+  }, [projectId, namedAgentId, addToast]);
 
   useEffect(() => {
     const deleted = searchParams.get("deleted");
@@ -546,7 +594,16 @@ export default function KanbanPage() {
               </div>
             )}
 
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 overflow-hidden relative">
+              {sseStatus !== "connected" && (
+                <div
+                  className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/80 text-xs text-muted-foreground"
+                  title={sseStatus === "connecting" ? "Connecting to real-time updates..." : "Offline — reconnecting..."}
+                >
+                  <span className={`h-2 w-2 rounded-full ${sseStatus === "connecting" ? "bg-yellow-500 animate-pulse" : "bg-red-500"}`} />
+                  {sseStatus === "connecting" ? "Connecting..." : "Offline"}
+                </div>
+              )}
               <Board
                 projectId={projectId}
                 onEpicClick={handlePrimaryTicketClick}
@@ -557,6 +614,9 @@ export default function KanbanPage() {
                 runningEpicIds={runningEpicIds}
                 activeAgentActivities={activeAgentActivities}
                 onLinkedAgentHoverChange={setHighlightedActivityId}
+                onMoveError={(error) => addToast("error", error)}
+                failedSessions={failedSessions}
+                onRetryBuild={handleRetryBuild}
               />
             </div>
 

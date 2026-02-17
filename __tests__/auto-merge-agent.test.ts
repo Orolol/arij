@@ -75,6 +75,47 @@ vi.mock("@/lib/db/schema", () => ({
   projects: {},
   epics: {},
   agentSessions: {},
+  reviewComments: {
+    epicId: "epicId",
+    status: "status",
+  },
+  ticketActivityLog: {
+    id: "id",
+    projectId: "projectId",
+    epicId: "epicId",
+    fromStatus: "fromStatus",
+    toStatus: "toStatus",
+    actor: "actor",
+    reason: "reason",
+    sessionId: "sessionId",
+    createdAt: "createdAt",
+  },
+}));
+
+vi.mock("@/lib/workflow/log", () => ({
+  logTransition: vi.fn(),
+}));
+
+vi.mock("@/lib/events/emit", () => ({
+  emitTicketMoved: vi.fn(),
+}));
+
+vi.mock("@/lib/workflow/engine", () => ({
+  validateTransition: vi.fn(() => ({ valid: true })),
+  isAllowedTransition: vi.fn(() => true),
+}));
+
+vi.mock("@/lib/workflow/context", () => ({
+  buildTransitionContext: vi.fn(() => ({
+    epicId: "epic-1",
+    fromStatus: "review",
+    toStatus: "done",
+    hasOpenReviewComments: false,
+    hasCompletedReview: true,
+    hasRunningSession: false,
+    actor: "user",
+    source: "merge",
+  })),
 }));
 
 vi.mock("fs", () => ({
