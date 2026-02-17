@@ -198,7 +198,7 @@ export default function GitSyncPage() {
         <div className="flex flex-col gap-2 md:flex-row md:items-center">
           <NamedAgentSelect
             value={namedAgentId}
-            onChange={handleNamedAgentChange}
+            onChange={(next: string) => setNamedAgentId(next)}
             className="w-full md:w-[280px]"
           />
           <SessionPicker
@@ -242,6 +242,3 @@ export default function GitSyncPage() {
     </div>
   );
 }
-  function handleNamedAgentChange(next: string) {
-    setNamedAgentId(next);
-  }

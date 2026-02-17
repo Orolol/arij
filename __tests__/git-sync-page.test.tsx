@@ -7,6 +7,22 @@ vi.mock("next/navigation", () => ({
   useParams: () => ({ projectId: "proj-1" }),
 }));
 
+vi.mock("@/hooks/useNamedAgentsList", () => ({
+  useNamedAgentsList: () => ({ agents: [], loading: false }),
+}));
+
+vi.mock("@/components/shared/NamedAgentSelect", () => ({
+  NamedAgentSelect: (props: { value: string | null; onChange: (v: string) => void }) => (
+    <select data-testid="named-agent-select" value={props.value || ""} onChange={(e) => props.onChange(e.target.value)}>
+      <option value="">Default</option>
+    </select>
+  ),
+}));
+
+vi.mock("@/components/shared/SessionPicker", () => ({
+  SessionPicker: () => <div data-testid="session-picker" />,
+}));
+
 describe("GitSyncPage", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -41,19 +57,25 @@ describe("GitSyncPage", () => {
 
   it("shows manual conflict diff view when pull returns 409 conflicts", async () => {
     const user = userEvent.setup();
+    const statusPayload = {
+      ok: true,
+      json: async () => ({
+        data: {
+          branch: "main",
+          remote: "origin",
+          ahead: 0,
+          behind: 0,
+          hasRemoteBranch: true,
+        },
+      }),
+    } as Response;
+
     vi.spyOn(global, "fetch")
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          data: {
-            branch: "main",
-            remote: "origin",
-            ahead: 0,
-            behind: 0,
-            hasRemoteBranch: true,
-          },
-        }),
-      } as Response)
+      // 1st call: initial status fetch (branch is "")
+      .mockResolvedValueOnce(statusPayload)
+      // 2nd call: status re-fetch triggered when branch changes "" -> "main"
+      .mockResolvedValueOnce(statusPayload)
+      // 3rd call: the actual pull POST returning 409
       .mockResolvedValueOnce({
         ok: false,
         status: 409,
