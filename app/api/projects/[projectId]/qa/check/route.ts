@@ -110,7 +110,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   createQueuedSession({
     id: sessionId,
     projectId,
-    mode: "plan",
+    mode: "code",
     provider: resolvedAgent.provider,
     prompt,
     logsPath,
@@ -138,7 +138,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   processManager.start(
     sessionId,
     {
-      mode: "plan",
+      mode: "code",
       prompt,
       cwd: project.gitRepoPath,
       model: resolvedAgent.model,
