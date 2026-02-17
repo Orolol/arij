@@ -60,8 +60,11 @@ Use whichever AI coding tool you prefer:
 | **Claude Code** | `claude` CLI — primary provider with plan + code modes |
 | **OpenAI Codex** | `codex` CLI via Codex SDK |
 | **Gemini CLI** | `gemini` CLI via Google |
+| **OpenCode** | `opencode` CLI — open-source, supports any model |
+| **Qwen Code** | `qwen` CLI — Alibaba's coding agent |
+| **Any CLI agent** | Any tool that accepts a `--prompt` flag works out of the box |
 
-Create "Named Agents" to mix and match providers and models — e.g., use Claude Opus for complex builds, Gemini Flash for quick bug fixes.
+Arij's provider system is designed to be extensible — if your favorite AI coding CLI accepts a prompt and outputs results, it can plug into Arij. Create "Named Agents" to mix and match providers and models — e.g., use Claude Opus for complex builds, Gemini Flash for quick bug fixes, or a local model via OpenCode for privacy-sensitive tasks.
 
 ### Automated Code Review
 
