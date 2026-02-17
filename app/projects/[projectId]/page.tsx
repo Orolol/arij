@@ -61,7 +61,8 @@ export default function KanbanPage() {
   const panelRef = useRef<UnifiedChatPanelHandle>(null);
 
   // Real-time events via SSE — auto-refresh board on ticket/session changes
-  const { status: sseStatus } = useProjectEvents(projectId, {
+  // pollTick increments on fallback polling when SSE is disconnected
+  const { status: sseStatus, pollTick } = useProjectEvents(projectId, {
     "ticket:moved": () => setRefreshTrigger((t) => t + 1),
     "ticket:created": () => setRefreshTrigger((t) => t + 1),
     "ticket:updated": () => setRefreshTrigger((t) => t + 1),
@@ -71,6 +72,14 @@ export default function KanbanPage() {
     "session:failed": () => setRefreshTrigger((t) => t + 1),
     "session:progress": () => setRefreshTrigger((t) => t + 1),
   });
+
+  // Fallback: refresh board when SSE is down and polling kicks in
+  useEffect(() => {
+    if (pollTick > 0) {
+      setRefreshTrigger((t) => t + 1);
+    }
+  }, [pollTick]);
+
   const activeAgentActivities = useMemo<Record<string, KanbanEpicAgentActivity>>(
     () => {
       const map: Record<string, KanbanEpicAgentActivity> = {};

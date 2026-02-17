@@ -9,17 +9,20 @@ type EventHandler = (event: TicketEvent) => void;
 
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
+const FALLBACK_POLL_MS = 10_000;
 
 export function useProjectEvents(
   projectId: string,
   handlers?: Partial<Record<TicketEventType, EventHandler>>
 ) {
   const [status, setStatus] = useState<ConnectionStatus>("disconnected");
+  const [pollTick, setPollTick] = useState(0);
   const handlersRef = useRef(handlers);
   handlersRef.current = handlers;
   const esRef = useRef<EventSource | null>(null);
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const pollTimer = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const connect = useCallback(() => {
     // Close existing
@@ -64,11 +67,27 @@ export function useProjectEvents(
     };
   }, [projectId]);
 
+  // Fallback polling when SSE is disconnected
+  useEffect(() => {
+    if (status === "disconnected") {
+      // Start fallback polling
+      pollTimer.current = setInterval(() => {
+        setPollTick((t) => t + 1);
+      }, FALLBACK_POLL_MS);
+    } else {
+      // Stop polling when connected
+      clearInterval(pollTimer.current);
+    }
+
+    return () => clearInterval(pollTimer.current);
+  }, [status]);
+
   useEffect(() => {
     connect();
 
     return () => {
       clearTimeout(reconnectTimer.current);
+      clearInterval(pollTimer.current);
       if (esRef.current) {
         esRef.current.close();
         esRef.current = null;
@@ -77,5 +96,5 @@ export function useProjectEvents(
     };
   }, [connect]);
 
-  return { status };
+  return { status, pollTick };
 }
