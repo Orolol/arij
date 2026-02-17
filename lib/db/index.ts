@@ -67,3 +67,18 @@ export const db = drizzle(sqlite, { schema });
     // Silently ignore
   }
 }
+
+// ---------------------------------------------------------------------------
+// Backfill: populate releaseId for released epics from releases.epicIds (idempotent)
+// ---------------------------------------------------------------------------
+{
+  try {
+    const { backfillReleasedEpicIds } = require("./backfill-release-ids");
+    const result = backfillReleasedEpicIds();
+    if (result.updated > 0) {
+      console.log(`[backfill] Populated releaseId for ${result.updated} released epics`);
+    }
+  } catch {
+    // Silently ignore — columns may not exist during build or before migration
+  }
+}

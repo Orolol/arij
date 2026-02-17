@@ -57,7 +57,7 @@ export const epics = sqliteTable("epics", {
   title: text("title").notNull(),
   description: text("description"),
   priority: integer("priority").default(0), // 0=low, 1=medium, 2=high, 3=critical
-  status: text("status").default("backlog"), // backlog | todo | in_progress | review | done
+  status: text("status").default("backlog"), // backlog | todo | in_progress | review | done | released
   position: integer("position").default(0),
   branchName: text("branch_name"),
   prNumber: integer("pr_number"),
@@ -74,6 +74,7 @@ export const epics = sqliteTable("epics", {
   githubIssueNumber: integer("github_issue_number"),
   githubIssueUrl: text("github_issue_url"),
   githubIssueState: text("github_issue_state"),
+  releaseId: text("release_id").references(() => releases.id, { onDelete: "set null" }),
 });
 
 export const userStories = sqliteTable("user_stories", {
