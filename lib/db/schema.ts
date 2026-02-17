@@ -210,6 +210,7 @@ export const releases = sqliteTable("releases", {
   title: text("title"),
   changelog: text("changelog"), // markdown
   epicIds: text("epic_ids"), // JSON array of epic IDs
+  releaseBranch: text("release_branch"),
   gitTag: text("git_tag"),
   githubReleaseId: integer("github_release_id"),
   githubReleaseUrl: text("github_release_url"),

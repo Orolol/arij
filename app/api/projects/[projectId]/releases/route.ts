@@ -4,6 +4,7 @@ import {
   releases,
   projects,
   epics,
+  userStories,
   settings,
 } from "@/lib/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
@@ -14,6 +15,7 @@ import simpleGit from "simple-git";
 import { createDraftRelease } from "@/lib/github/releases";
 import { logSyncOperation } from "@/lib/github/sync-log";
 import { activityRegistry } from "@/lib/activity-registry";
+import { createReleaseBranchAndCommitChangelog } from "@/lib/git/release";
 
 export async function GET(
   _request: NextRequest,
@@ -82,6 +84,7 @@ export async function POST(
     .all();
 
   let changelog = "";
+  let releaseBranch: string | null = null;
 
   let releaseActivityId: string | null = null;
 
@@ -104,23 +107,64 @@ export async function POST(
       .get();
     const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
 
-    const epicSummaries = selectedEpics
-      .map((e) => `- **${e.title}**: ${e.description || "No description"}`)
+    const storiesByEpic = db
+      .select()
+      .from(userStories)
+      .where(inArray(userStories.epicId, epicIds))
+      .all()
+      .reduce<Record<string, Array<{ title: string; acceptanceCriteria: string | null }>>>(
+        (acc, story) => {
+          const list = acc[story.epicId] || [];
+          list.push({
+            title: story.title,
+            acceptanceCriteria: story.acceptanceCriteria,
+          });
+          acc[story.epicId] = list;
+          return acc;
+        },
+        {}
+      );
+
+    const ticketContext = selectedEpics
+      .map((e) => {
+        const ticketType = e.type === "bug" ? "Bug" : "Feature";
+        const stories = storiesByEpic[e.id] || [];
+        const storiesText =
+          stories.length === 0
+            ? "No user stories"
+            : stories
+                .map(
+                  (s) =>
+                    `  - ${s.title}${s.acceptanceCriteria ? ` (AC: ${s.acceptanceCriteria})` : ""}`
+                )
+                .join("\n");
+        return [
+          `- Ticket: ${e.title}`,
+          `  Type: ${ticketType}`,
+          `  Description: ${e.description || "No description"}`,
+          `  Stories:`,
+          storiesText,
+        ].join("\n");
+      })
       .join("\n");
 
     const prompt = `${globalPrompt ? `# Global Instructions\n${globalPrompt}\n\n` : ""}# Task: Generate Release Changelog
 
 Generate a markdown changelog for version ${version} of project "${project.name}".
 
-## Completed Epics
-${epicSummaries}
+## Included Tickets
+${ticketContext}
 
 ## Instructions
-- Write a concise, user-facing changelog in markdown
-- Group changes by category (Features, Improvements, Bug Fixes) where applicable
-- Use bullet points for each change
-- Be specific about what was added/changed
-- Keep it professional and concise
+- Write a concise, user-facing changelog in markdown.
+- Use exactly these sections in order:
+  1) Features
+  2) Bugfixes
+  3) Breaking Changes
+- Use bullet points in each section.
+- If no entries exist for a section, include \"- None\".
+- If there are breaking changes, include a short migration guide subsection.
+- Be specific and avoid generic wording.
 - Return ONLY the markdown changelog, no extra text`;
 
     try {
@@ -144,7 +188,50 @@ ${epicSummaries}
 
   // Fallback: auto-generate simple changelog
   if (!changelog) {
-    changelog = `# ${version}${title ? ` — ${title}` : ""}\n\n## Changes\n\n${selectedEpics.map((e) => `- ${e.title}`).join("\n")}\n`;
+    const featureLines = selectedEpics
+      .filter((e) => e.type !== "bug")
+      .map((e) => `- ${e.title}`);
+    const bugLines = selectedEpics
+      .filter((e) => e.type === "bug")
+      .map((e) => `- ${e.title}`);
+
+    changelog = [
+      `# ${version}${title ? ` — ${title}` : ""}`,
+      "",
+      "## Features",
+      featureLines.length > 0 ? featureLines.join("\n") : "- None",
+      "",
+      "## Bugfixes",
+      bugLines.length > 0 ? bugLines.join("\n") : "- None",
+      "",
+      "## Breaking Changes",
+      "- None",
+      "",
+    ].join("\n");
+  } else {
+    const normalized = changelog.trim();
+    const sections = ["## Features", "## Bugfixes", "## Breaking Changes"];
+    const missing = sections.filter(
+      (section) => !normalized.toLowerCase().includes(section.toLowerCase())
+    );
+    if (missing.length > 0) {
+      changelog = [
+        normalized,
+        "",
+        ...missing.flatMap((section) => [section, "- None", ""]),
+      ].join("\n").trim();
+    } else {
+      changelog = normalized;
+    }
+  }
+
+  if (project.gitRepoPath) {
+    const releaseBranchResult = await createReleaseBranchAndCommitChangelog(
+      project.gitRepoPath,
+      version,
+      changelog
+    );
+    releaseBranch = releaseBranchResult.releaseBranch;
   }
 
   // Create git tag if repo is configured
@@ -233,6 +320,7 @@ ${epicSummaries}
       title: title || null,
       changelog,
       epicIds: JSON.stringify(epicIds),
+      releaseBranch,
       gitTag,
       githubReleaseId,
       githubReleaseUrl,

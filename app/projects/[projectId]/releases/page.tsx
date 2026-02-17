@@ -37,6 +37,7 @@ interface Release {
   title: string | null;
   changelog: string | null;
   epicIds: string | null;
+  releaseBranch: string | null;
   gitTag: string | null;
   githubReleaseId: number | null;
   githubReleaseUrl: string | null;
@@ -84,6 +85,11 @@ function ReleaseCard({
               <Badge variant="outline" className="text-xs">
                 <Tag className="h-3 w-3 mr-1" />
                 {release.gitTag}
+              </Badge>
+            )}
+            {release.releaseBranch && (
+              <Badge variant="outline" className="text-xs font-mono">
+                {release.releaseBranch}
               </Badge>
             )}
             {isDraft && (

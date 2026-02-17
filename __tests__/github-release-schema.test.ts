@@ -42,6 +42,7 @@ describe("Schema: releases table GitHub fields", () => {
     expect(schema.releases.title).toBeDefined();
     expect(schema.releases.changelog).toBeDefined();
     expect(schema.releases.epicIds).toBeDefined();
+    expect(schema.releases.releaseBranch).toBeDefined();
     expect(schema.releases.gitTag).toBeDefined();
     expect(schema.releases.createdAt).toBeDefined();
   });
@@ -56,6 +57,7 @@ describe("Schema: Release exported types", () => {
       title: "First Release",
       changelog: "# Changes",
       epicIds: '["ep_1"]',
+      releaseBranch: "release/v1.0.0",
       gitTag: "v1.0.0",
       githubReleaseId: 12345,
       githubReleaseUrl: "https://github.com/owner/repo/releases/12345",
@@ -75,6 +77,7 @@ describe("Schema: Release exported types", () => {
       title: null,
       changelog: null,
       epicIds: null,
+      releaseBranch: null,
       gitTag: null,
       githubReleaseId: null,
       githubReleaseUrl: null,
