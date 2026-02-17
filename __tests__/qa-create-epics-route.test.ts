@@ -410,6 +410,76 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     );
   });
 
+  it("falls back to fresh prompt when resume succeeds with empty result", async () => {
+    mockIsResumableProvider.mockReturnValue(true);
+    // First call (resume) succeeds but with empty result (e.g. OpenCode exits 0 with ZodError in stderr)
+    mockSpawnClaude
+      .mockReturnValueOnce({
+        promise: Promise.resolve({ success: true, result: "" }),
+      })
+      .mockReturnValueOnce({
+        promise: Promise.resolve({ success: true, result: "AI JSON" }),
+      });
+
+    const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    // getQueue: project, report, originalSession, maxPosition
+    mockDb.getQueue = [
+      { id: "proj-1", gitRepoPath: "/tmp/repo" },
+      {
+        id: "report-1",
+        projectId: "proj-1",
+        reportContent: "# Findings",
+        namedAgentId: "agent-42",
+        agentSessionId: "session-original",
+      },
+      {
+        provider: "claude-code",
+        model: "claude-opus-4",
+        cliSessionId: "cli-sess-bad-format",
+        claudeSessionId: null,
+        namedAgentId: "agent-42",
+      },
+      { max: 0 },
+    ];
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
+    );
+    const res = await POST({} as never, {
+      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.epics).toHaveLength(1);
+
+    // Should have been called twice: once with resume (empty result), once fresh
+    expect(mockSpawnClaude).toHaveBeenCalledTimes(2);
+    expect(mockSpawnClaude).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        cliSessionId: "cli-sess-bad-format",
+        resumeSession: true,
+      }),
+    );
+    expect(mockSpawnClaude).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        cliSessionId: undefined,
+        resumeSession: false,
+      }),
+    );
+
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      "[qa/create-epics] Resume failed, falling back to fresh prompt",
+      expect.objectContaining({
+        provider: "claude-code",
+        cliSessionId: "cli-sess-bad-format",
+      }),
+    );
+  });
+
   it("skips resume for non-resumable providers", async () => {
     mockIsResumableProvider.mockReturnValue(false);
     mockResolveAgent.mockReturnValue({ provider: "codex", model: "gpt-4o" });
