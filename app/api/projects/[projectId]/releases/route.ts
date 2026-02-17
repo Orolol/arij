@@ -4,16 +4,28 @@ import {
   releases,
   projects,
   epics,
+  userStories,
   settings,
+  agentSessions,
 } from "@/lib/db/schema";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
-import { spawnClaude } from "@/lib/claude/spawn";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import simpleGit from "simple-git";
 import { createDraftRelease } from "@/lib/github/releases";
 import { logSyncOperation } from "@/lib/github/sync-log";
 import { activityRegistry } from "@/lib/activity-registry";
+import { createReleaseBranchAndCommitChangelog, type ReleaseBranchResult } from "@/lib/git/release";
+import {
+  createQueuedSession,
+  markSessionRunning,
+  markSessionTerminal,
+  isSessionLifecycleConflictError,
+} from "@/lib/agent-sessions/lifecycle";
+import { processManager } from "@/lib/claude/process-manager";
+import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
+import fs from "fs";
+import path from "path";
 
 export async function GET(
   _request: NextRequest,
@@ -43,12 +55,14 @@ export async function POST(
     epicIds,
     generateChangelog = true,
     pushToGitHub = false,
+    resumeSessionId,
   } = body as {
     version: string;
     title?: string;
     epicIds: string[];
     generateChangelog?: boolean;
     pushToGitHub?: boolean;
+    resumeSessionId?: string;
   };
 
   if (!version) {
@@ -78,10 +92,11 @@ export async function POST(
   const selectedEpics = db
     .select()
     .from(epics)
-    .where(inArray(epics.id, epicIds))
+    .where(and(inArray(epics.id, epicIds), eq(epics.projectId, projectId)))
     .all();
 
   let changelog = "";
+  let releaseBranch: string | null = null;
 
   let releaseActivityId: string | null = null;
 
@@ -104,36 +119,163 @@ export async function POST(
       .get();
     const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
 
-    const epicSummaries = selectedEpics
-      .map((e) => `- **${e.title}**: ${e.description || "No description"}`)
+    const filteredEpicIds = selectedEpics.map((e) => e.id);
+    const storiesByEpic = db
+      .select()
+      .from(userStories)
+      .where(inArray(userStories.epicId, filteredEpicIds.length > 0 ? filteredEpicIds : ["__none__"]))
+      .all()
+      .reduce<Record<string, Array<{ title: string; acceptanceCriteria: string | null }>>>(
+        (acc, story) => {
+          const list = acc[story.epicId] || [];
+          list.push({
+            title: story.title,
+            acceptanceCriteria: story.acceptanceCriteria,
+          });
+          acc[story.epicId] = list;
+          return acc;
+        },
+        {}
+      );
+
+    const ticketContext = selectedEpics
+      .map((e) => {
+        const ticketType = e.type === "bug" ? "Bug" : "Feature";
+        const stories = storiesByEpic[e.id] || [];
+        const storiesText =
+          stories.length === 0
+            ? "No user stories"
+            : stories
+                .map(
+                  (s) =>
+                    `  - ${s.title}${s.acceptanceCriteria ? ` (AC: ${s.acceptanceCriteria})` : ""}`
+                )
+                .join("\n");
+        return [
+          `- Ticket: ${e.title}`,
+          `  Type: ${ticketType}`,
+          `  Description: ${e.description || "No description"}`,
+          `  Stories:`,
+          storiesText,
+        ].join("\n");
+      })
       .join("\n");
 
     const prompt = `${globalPrompt ? `# Global Instructions\n${globalPrompt}\n\n` : ""}# Task: Generate Release Changelog
 
 Generate a markdown changelog for version ${version} of project "${project.name}".
 
-## Completed Epics
-${epicSummaries}
+## Included Tickets
+${ticketContext}
 
 ## Instructions
-- Write a concise, user-facing changelog in markdown
-- Group changes by category (Features, Improvements, Bug Fixes) where applicable
-- Use bullet points for each change
-- Be specific about what was added/changed
-- Keep it professional and concise
+- Write a concise, user-facing changelog in markdown.
+- Use exactly these sections in order:
+  1) Features
+  2) Bugfixes
+  3) Breaking Changes
+- Use bullet points in each section.
+- If no entries exist for a section, include \"- None\".
+- If there are breaking changes, include a short migration guide subsection.
+- Be specific and avoid generic wording.
 - Return ONLY the markdown changelog, no extra text`;
 
     try {
-      const { promise } = spawnClaude({
+      const sessionId = createId();
+      const now = new Date().toISOString();
+      const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
+      fs.mkdirSync(logsDir, { recursive: true });
+      const logsPath = path.join(logsDir, "logs.json");
+
+      let cliSessionId: string | undefined;
+      let resumeSession = false;
+      if (isResumableProvider("claude-code")) {
+        if (resumeSessionId) {
+          const previous = db
+            .select({
+              id: agentSessions.id,
+              projectId: agentSessions.projectId,
+              provider: agentSessions.provider,
+              cliSessionId: agentSessions.cliSessionId,
+              claudeSessionId: agentSessions.claudeSessionId,
+            })
+            .from(agentSessions)
+            .where(eq(agentSessions.id, resumeSessionId))
+            .get();
+          if (
+            previous &&
+            previous.projectId === projectId &&
+            previous.provider === "claude-code" &&
+            (previous.cliSessionId || previous.claudeSessionId)
+          ) {
+            cliSessionId = previous.cliSessionId ?? previous.claudeSessionId ?? undefined;
+            resumeSession = true;
+          }
+        }
+        if (!cliSessionId) {
+          cliSessionId = crypto.randomUUID();
+        }
+      }
+
+      createQueuedSession({
+        id: sessionId,
+        projectId,
         mode: "plan",
+        provider: "claude-code",
         prompt,
-        cwd: project.gitRepoPath || undefined,
+        logsPath,
+        worktreePath: project.gitRepoPath || null,
+        claudeSessionId: cliSessionId,
+        cliSessionId,
+        agentType: "release_notes",
+        namedAgentName: null,
+        model: null,
+        createdAt: now,
       });
 
-      const result = await promise;
-      if (result.success && result.result) {
-        const parsed = parseClaudeOutput(result.result);
-        changelog = parsed.content;
+      markSessionRunning(sessionId, now);
+      processManager.start(
+        sessionId,
+        {
+          mode: "plan",
+          prompt,
+          cwd: project.gitRepoPath || undefined,
+          cliSessionId,
+          resumeSession,
+        },
+        "claude-code"
+      );
+
+      let info = processManager.getStatus(sessionId);
+      while (info && info.status === "running") {
+        await new Promise((r) => setTimeout(r, 1200));
+        info = processManager.getStatus(sessionId);
+      }
+      const result = info?.result;
+
+      try {
+        fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
+      } catch {
+        // best effort
+      }
+
+      try {
+        markSessionTerminal(
+          sessionId,
+          {
+            success: !!result?.success,
+            error: result?.error || null,
+          },
+          new Date().toISOString()
+        );
+      } catch (error) {
+        if (!isSessionLifecycleConflictError(error)) {
+          console.error("[release] failed to finalize release-notes session", error);
+        }
+      }
+
+      if (result?.success && result.result) {
+        changelog = parseClaudeOutput(result.result).content;
       }
     } catch {
       // Fall back to auto-generated changelog
@@ -144,16 +286,65 @@ ${epicSummaries}
 
   // Fallback: auto-generate simple changelog
   if (!changelog) {
-    changelog = `# ${version}${title ? ` — ${title}` : ""}\n\n## Changes\n\n${selectedEpics.map((e) => `- ${e.title}`).join("\n")}\n`;
+    const featureLines = selectedEpics
+      .filter((e) => e.type !== "bug")
+      .map((e) => `- ${e.title}`);
+    const bugLines = selectedEpics
+      .filter((e) => e.type === "bug")
+      .map((e) => `- ${e.title}`);
+
+    changelog = [
+      `# ${version}${title ? ` — ${title}` : ""}`,
+      "",
+      "## Features",
+      featureLines.length > 0 ? featureLines.join("\n") : "- None",
+      "",
+      "## Bugfixes",
+      bugLines.length > 0 ? bugLines.join("\n") : "- None",
+      "",
+      "## Breaking Changes",
+      "- None",
+      "",
+    ].join("\n");
+  } else {
+    const normalized = changelog.trim();
+    const sections = ["## Features", "## Bugfixes", "## Breaking Changes"];
+    const missing = sections.filter(
+      (section) => !normalized.toLowerCase().includes(section.toLowerCase())
+    );
+    if (missing.length > 0) {
+      changelog = [
+        normalized,
+        "",
+        ...missing.flatMap((section) => [section, "- None", ""]),
+      ].join("\n").trim();
+    } else {
+      changelog = normalized;
+    }
   }
 
-  // Create git tag if repo is configured
+  let releaseBranchResult: ReleaseBranchResult | null = null;
+  if (project.gitRepoPath) {
+    releaseBranchResult = await createReleaseBranchAndCommitChangelog(
+      project.gitRepoPath,
+      version,
+      changelog
+    );
+    releaseBranch = releaseBranchResult.releaseBranch;
+  }
+
+  // Create git tag targeting the release branch commit
   let gitTag: string | null = null;
   if (project.gitRepoPath) {
     try {
       const git = simpleGit(project.gitRepoPath);
       const tagName = `v${version}`;
-      await git.addTag(tagName);
+      if (releaseBranchResult?.commitHash) {
+        // Tag the specific release branch commit, not HEAD
+        await git.tag([tagName, releaseBranchResult.commitHash]);
+      } else {
+        await git.addTag(tagName);
+      }
       gitTag = tagName;
     } catch {
       // Tag creation failed, continue without it
@@ -233,6 +424,7 @@ ${epicSummaries}
       title: title || null,
       changelog,
       epicIds: JSON.stringify(epicIds),
+      releaseBranch,
       gitTag,
       githubReleaseId,
       githubReleaseUrl,

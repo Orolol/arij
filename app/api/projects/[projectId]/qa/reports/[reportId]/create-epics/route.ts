@@ -254,7 +254,7 @@ ${epicTypeRule}
   let result: { success: boolean; result?: string; error?: string };
   if (canResume) {
     result = await spawnEpicGeneration(true);
-    if (!result.success) {
+    if (!result.success || !result.result) {
       console.warn(
         "[qa/create-epics] Resume failed, falling back to fresh prompt",
         { provider, cliSessionId: previousCliSessionId, error: result.error },

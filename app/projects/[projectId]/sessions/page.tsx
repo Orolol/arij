@@ -65,6 +65,7 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
   review_feature: "Feature Review",
   merge: "Merge",
   tech_check: "Tech Check",
+  release_notes: "Release Notes",
 };
 
 const STATUS_CONFIG: Record<

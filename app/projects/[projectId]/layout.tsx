@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
-import { ArrowLeft, Kanban, FileText, Files, Activity, Tag, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, Kanban, FileText, Files, Activity, Tag, RefreshCw, ShieldCheck, GitPullRequestArrow, Github } from "lucide-react";
 import { GitHubConnectBanner } from "@/components/github/GitHubConnectBanner";
 import { useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
@@ -90,6 +90,16 @@ export default function ProjectLayout({
       href: `/projects/${projectId}/releases`,
       label: "Releases",
       icon: Tag,
+    },
+    {
+      href: `/projects/${projectId}/git-sync`,
+      label: "Git Sync",
+      icon: GitPullRequestArrow,
+    },
+    {
+      href: `/projects/${projectId}/github-issues`,
+      label: "GitHub Issues",
+      icon: Github,
     },
   ];
 

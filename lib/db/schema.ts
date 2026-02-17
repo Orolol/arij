@@ -71,6 +71,9 @@ export const epics = sqliteTable("epics", {
   linkedEpicId: text("linked_epic_id").references((): AnySQLiteColumn => epics.id, { onDelete: "set null" }),
   images: text("images"), // JSON array of image paths
   readableId: text("readable_id"), // E-project-001 or B-project-002
+  githubIssueNumber: integer("github_issue_number"),
+  githubIssueUrl: text("github_issue_url"),
+  githubIssueState: text("github_issue_state"),
 });
 
 export const userStories = sqliteTable("user_stories", {
@@ -210,6 +213,7 @@ export const releases = sqliteTable("releases", {
   title: text("title"),
   changelog: text("changelog"), // markdown
   epicIds: text("epic_ids"), // JSON array of epic IDs
+  releaseBranch: text("release_branch"),
   gitTag: text("git_tag"),
   githubReleaseId: integer("github_release_id"),
   githubReleaseUrl: text("github_release_url"),
@@ -377,6 +381,38 @@ export const gitSyncLog = sqliteTable("git_sync_log", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
+export const githubIssues = sqliteTable(
+  "github_issues",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    issueNumber: integer("issue_number").notNull(),
+    title: text("title").notNull(),
+    body: text("body"),
+    labels: text("labels"), // JSON array
+    milestone: text("milestone"),
+    assignees: text("assignees"), // JSON array
+    githubUrl: text("github_url").notNull(),
+    createdAtGitHub: text("created_at_github"),
+    updatedAtGitHub: text("updated_at_github"),
+    syncedAt: text("synced_at").default(sql`CURRENT_TIMESTAMP`),
+    importedEpicId: text("imported_epic_id").references(() => epics.id, { onDelete: "set null" }),
+    importedAt: text("imported_at"),
+  },
+  (table) => ({
+    projectIssueUnique: uniqueIndex("github_issues_project_issue_unique").on(
+      table.projectId,
+      table.issueNumber
+    ),
+    projectSyncedIdx: index("github_issues_project_synced_idx").on(
+      table.projectId,
+      table.syncedAt
+    ),
+  })
+);
+
 export const qaReports = sqliteTable("qa_reports", {
   id: text("id").primaryKey(),
   projectId: text("project_id")
@@ -410,6 +446,8 @@ export const qaPrompts = sqliteTable(
 
 export type GitSyncLog = typeof gitSyncLog.$inferSelect;
 export type NewGitSyncLog = typeof gitSyncLog.$inferInsert;
+export type GitHubIssue = typeof githubIssues.$inferSelect;
+export type NewGitHubIssue = typeof githubIssues.$inferInsert;
 
 export type QaReport = typeof qaReports.$inferSelect;
 export type NewQaReport = typeof qaReports.$inferInsert;

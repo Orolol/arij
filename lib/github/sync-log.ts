@@ -11,7 +11,8 @@ export type GitSyncOperation =
   | "pr_create"
   | "pr_sync"
   | "release"
-  | "tag_push";
+  | "tag_push"
+  | "issues_sync";
 
 export type GitSyncStatus = "success" | "failed" | "failure";
 

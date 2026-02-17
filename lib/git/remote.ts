@@ -20,10 +20,29 @@ export interface BranchSyncStatus {
   hasRemoteBranch: boolean;
 }
 
+export interface PullWithConflictResult {
+  conflicted: boolean;
+  summary: string;
+  conflictedFiles: string[];
+}
+
 export class FastForwardOnlyPullError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "FastForwardOnlyPullError";
+  }
+}
+
+export class PushValidationError extends Error {
+  readonly code: "working_tree_dirty" | "branch_behind_remote";
+
+  constructor(
+    code: "working_tree_dirty" | "branch_behind_remote",
+    message: string
+  ) {
+    super(message);
+    this.name = "PushValidationError";
+    this.code = code;
   }
 }
 
@@ -135,6 +154,39 @@ export async function pullGitBranchFfOnly(
   }
 }
 
+export async function pullGitBranchWithConflictSupport(
+  repoPath: string,
+  branch: string,
+  remote = "origin"
+): Promise<PullWithConflictResult> {
+  const cleanBranch = branch.trim();
+  if (!cleanBranch) {
+    throw new Error("Branch is required for pull.");
+  }
+
+  const git = getGit(repoPath);
+  try {
+    const pullResult = await git.pull(defaultRemote(remote), cleanBranch);
+    return {
+      conflicted: false,
+      summary: pullResult.summary
+        ? JSON.stringify(pullResult.summary)
+        : "Pulled successfully.",
+      conflictedFiles: [],
+    };
+  } catch (error) {
+    const status = await git.status();
+    if (status.conflicted.length > 0) {
+      return {
+        conflicted: true,
+        summary: error instanceof Error ? error.message : "Merge conflicts detected.",
+        conflictedFiles: status.conflicted,
+      };
+    }
+    throw error;
+  }
+}
+
 export async function pushGitBranch(
   repoPath: string,
   branch: string,
@@ -149,6 +201,46 @@ export async function pushGitBranch(
   const git = getGit(repoPath);
   const options = setUpstream ? ["--set-upstream"] : [];
   return git.push(defaultRemote(remote), cleanBranch, options);
+}
+
+export async function validatePushPreconditions(
+  repoPath: string,
+  branch: string,
+  remote = "origin"
+): Promise<void> {
+  const git = getGit(repoPath);
+  const status = await git.status();
+  const hasChanges =
+    status.files.length > 0 ||
+    status.staged.length > 0 ||
+    status.not_added.length > 0;
+  if (hasChanges) {
+    throw new PushValidationError(
+      "working_tree_dirty",
+      "Push rejected: working tree has uncommitted changes."
+    );
+  }
+
+  const sync = await getBranchSyncStatus(repoPath, branch, remote);
+  if (sync.behind > 0) {
+    throw new PushValidationError(
+      "branch_behind_remote",
+      `Push rejected: local branch is ${sync.behind} commit(s) behind ${sync.remoteBranch}. Pull first.`
+    );
+  }
+}
+
+export async function getConflictFileDiffs(
+  repoPath: string,
+  files: string[]
+): Promise<Array<{ filePath: string; diff: string }>> {
+  const git = getGit(repoPath);
+  const diffs: Array<{ filePath: string; diff: string }> = [];
+  for (const file of files) {
+    const diff = await git.raw(["diff", "--", file]);
+    diffs.push({ filePath: file, diff });
+  }
+  return diffs;
 }
 
 export async function getCurrentGitBranch(repoPath: string): Promise<string> {
