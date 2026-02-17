@@ -25,6 +25,9 @@ import {
 import { processManager } from "@/lib/claude/process-manager";
 import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { applyTransition } from "@/lib/workflow/transition-service";
+import { emitReleaseCreated } from "@/lib/events/emit";
+import type { KanbanStatus } from "@/lib/types/kanban";
 import fs from "fs";
 import path from "path";
 
@@ -440,6 +443,29 @@ ${ticketContext}
       createdAt: new Date().toISOString(),
     })
     .run();
+
+  // Transition included epics to "released" and stamp releaseId
+  for (const epic of selectedEpics) {
+    const fromStatus = (epic.status ?? "backlog") as KanbanStatus;
+    const result = applyTransition({
+      projectId,
+      epicId: epic.id,
+      fromStatus,
+      toStatus: "released",
+      actor: "system",
+      source: "release",
+      reason: `Released in v${version}`,
+    });
+    if (result.valid) {
+      db.update(epics)
+        .set({ releaseId: id })
+        .where(eq(epics.id, epic.id))
+        .run();
+    }
+  }
+
+  // Emit release:created event for real-time board refresh
+  emitReleaseCreated(projectId, id, version, epicIds);
 
   const release = db.select().from(releases).where(eq(releases.id, id)).get();
 
