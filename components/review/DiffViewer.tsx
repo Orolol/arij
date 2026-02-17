@@ -4,7 +4,7 @@ import { useDiff } from "@/hooks/useDiff";
 import { useReviewComments } from "@/hooks/useReviewComments";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, RefreshCw, FileCode, MessageSquare } from "lucide-react";
+import { Loader2, RefreshCw, FileCode, MessageSquare, GitBranch, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { FileDiffView } from "./FileDiffView";
 import { ReviewActions } from "./ReviewActions";
@@ -28,7 +28,7 @@ export function DiffViewer({
   dispatching,
   isRunning,
 }: DiffViewerProps) {
-  const { files, loading: diffLoading, error: diffError, refresh: refreshDiff } = useDiff(projectId, epicId);
+  const { files, metadata, loading: diffLoading, error: diffError, refresh: refreshDiff } = useDiff(projectId, epicId);
   const {
     comments,
     loading: commentsLoading,
@@ -77,11 +77,48 @@ export function DiffViewer({
 
   if (files.length === 0) {
     return (
-      <div className="py-8 text-center space-y-2">
+      <div className="py-8 text-center space-y-3">
         <FileCode className="h-8 w-8 mx-auto text-muted-foreground/50" />
         <p className="text-sm text-muted-foreground">
-          No changes detected. The branch may not have diverged from main yet.
+          No changes detected.
         </p>
+
+        {/* Diagnostics when diff is empty */}
+        {metadata && (
+          <div className="max-w-md mx-auto space-y-2">
+            <div className="flex items-center justify-center gap-2 text-xs text-muted-foreground">
+              <GitBranch className="h-3 w-3" />
+              <span className="font-mono">{metadata.branchName}</span>
+              <span>vs</span>
+              <span className="font-mono">{metadata.baseBranch}</span>
+            </div>
+
+            {metadata.ahead > 0 && (
+              <p className="text-xs text-amber-500 flex items-center justify-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                Branch is {metadata.ahead} commit{metadata.ahead !== 1 ? "s" : ""} ahead of {metadata.baseBranch}
+                {metadata.behind > 0 && `, ${metadata.behind} behind`}.
+                The branch may have been merged already.
+              </p>
+            )}
+
+            {metadata.ahead === 0 && !metadata.hasUncommittedChanges && (
+              <p className="text-xs text-muted-foreground">
+                The branch has not diverged from {metadata.baseBranch}.
+                The agent may not have committed its changes yet, or the build may still be running.
+              </p>
+            )}
+
+            {metadata.hasUncommittedChanges && (
+              <p className="text-xs text-amber-500 flex items-center justify-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                There are uncommitted changes in the worktree.
+                The agent may have been interrupted before committing.
+              </p>
+            )}
+          </div>
+        )}
+
         <Button variant="outline" size="sm" onClick={handleRefresh}>
           <RefreshCw className="h-3 w-3 mr-1" />
           Refresh
@@ -108,6 +145,12 @@ export function DiffViewer({
           <Badge variant="outline" className="gap-1 text-xs text-blue-500 border-blue-500/30">
             <MessageSquare className="h-3 w-3" />
             {openCount} open comment{openCount !== 1 ? "s" : ""}
+          </Badge>
+        )}
+        {metadata && metadata.ahead > 0 && (
+          <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
+            <GitBranch className="h-3 w-3" />
+            {metadata.ahead} commit{metadata.ahead !== 1 ? "s" : ""} ahead
           </Badge>
         )}
         <div className="flex-1" />

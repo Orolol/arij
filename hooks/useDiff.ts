@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import type { FileDiff } from "@/lib/git/diff";
+import type { FileDiff, DiffMetadata } from "@/lib/git/diff";
 
 export function useDiff(projectId: string, epicId: string | null) {
   const [files, setFiles] = useState<FileDiff[]>([]);
+  const [metadata, setMetadata] = useState<DiffMetadata | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -20,12 +21,15 @@ export function useDiff(projectId: string, epicId: string | null) {
       if (data.error) {
         setError(data.error);
         setFiles([]);
+        setMetadata(null);
       } else {
         setFiles(data.data?.files || []);
+        setMetadata(data.data?.metadata || null);
       }
     } catch {
       setError("Failed to load diff");
       setFiles([]);
+      setMetadata(null);
     } finally {
       setLoading(false);
     }
@@ -35,5 +39,5 @@ export function useDiff(projectId: string, epicId: string | null) {
     fetchDiff();
   }, [fetchDiff]);
 
-  return { files, loading, error, refresh: fetchDiff };
+  return { files, metadata, loading, error, refresh: fetchDiff };
 }

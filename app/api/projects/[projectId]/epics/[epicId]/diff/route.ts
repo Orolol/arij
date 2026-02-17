@@ -53,8 +53,8 @@ export async function GET(_request: NextRequest, { params }: Params) {
   );
 
   try {
-    const files = await getWorktreeDiff(worktreePath);
-    return NextResponse.json({ data: { files } });
+    const result = await getWorktreeDiff(worktreePath);
+    return NextResponse.json({ data: result });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to generate diff";
     return NextResponse.json({ error: msg }, { status: 500 });
