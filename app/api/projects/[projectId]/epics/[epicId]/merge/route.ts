@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, epics, agentSessions } from "@/lib/db/schema";
+import { projects, epics, agentSessions, ticketComments } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { mergeWorktree } from "@/lib/git/manager";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import { createId } from "@/lib/utils/nanoid";
 import { processManager } from "@/lib/claude/process-manager";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import {
   createQueuedSession,
   markSessionRunning,
@@ -188,6 +189,22 @@ export async function POST(
           tryExportArjiJson(projectId);
         }
       }
+
+      // Post output as epic comment
+      const mergeOutput = agentResult?.result
+        ? parseClaudeOutput(agentResult.result).content
+        : agentResult?.error || "Agent session completed without output.";
+
+      db.insert(ticketComments)
+        .values({
+          id: createId(),
+          epicId,
+          author: "agent",
+          content: mergeOutput,
+          agentSessionId: sessionId,
+          createdAt: completedAt,
+        })
+        .run();
     })();
 
     return NextResponse.json({

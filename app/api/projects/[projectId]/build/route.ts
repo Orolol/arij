@@ -4,6 +4,7 @@ import {
   projects,
   epics,
   userStories,
+  ticketComments,
 } from "@/lib/db/schema";
 import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
@@ -15,6 +16,7 @@ import {
   type TeamEpic,
 } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import { parseClaudeOutput } from "@/lib/claude/json-parser";
 
 import fs from "fs";
 import path from "path";
@@ -315,6 +317,24 @@ export async function POST(
               .run();
           }
         }
+
+        // Post output as comment on each epic
+        const teamOutput = result?.result
+          ? parseClaudeOutput(result.result).content
+          : result?.error || "Agent session completed without output.";
+
+        for (const eid of allEpicIds) {
+          db.insert(ticketComments)
+            .values({
+              id: createId(),
+              epicId: eid,
+              author: "agent",
+              content: teamOutput,
+              agentSessionId: sessionId,
+              createdAt: completedAt,
+            })
+            .run();
+        }
       })();
 
       sessionsCreated.push(sessionId);
@@ -508,6 +528,22 @@ export async function POST(
           .where(eq(epics.id, epicId))
           .run();
       }
+
+      // Post output as epic comment
+      const output = result?.result
+        ? parseClaudeOutput(result.result).content
+        : result?.error || "Agent session completed without output.";
+
+      db.insert(ticketComments)
+        .values({
+          id: createId(),
+          epicId,
+          author: "agent",
+          content: output,
+          agentSessionId: sessionId,
+          createdAt: completedAt,
+        })
+        .run();
     })();
 
     sessionsCreated.push(sessionId);
