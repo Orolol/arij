@@ -6,10 +6,7 @@ import Database from "better-sqlite3";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import type { KanbanStatus } from "@/lib/types/kanban";
 import { KANBAN_COLUMNS } from "@/lib/types/kanban";
-import { validateTransition } from "@/lib/workflow/engine";
-import { buildTransitionContext } from "@/lib/workflow/context";
-import { emitTicketMoved } from "@/lib/events/emit";
-import { logTransition } from "@/lib/workflow/log";
+import { applyTransition } from "@/lib/workflow/transition-service";
 
 interface ReorderItem {
   id: string;
@@ -31,7 +28,7 @@ export async function POST(
   const now = new Date().toISOString();
 
   // Validate workflow rules for any status changes and track moves
-  const statusChanges: { epicId: string; from: string; to: string }[] = [];
+  const statusChanges: { epicId: string; from: KanbanStatus; to: KanbanStatus }[] = [];
   for (const item of body.items) {
     const epic = db.select().from(epics).where(eq(epics.id, item.id)).get();
     if (!epic) continue;
@@ -48,14 +45,15 @@ export async function POST(
         );
       }
 
-      const ctx = buildTransitionContext({
+      const result = applyTransition({
+        projectId,
         epicId: item.id,
         fromStatus,
         toStatus,
         actor: "user",
+        source: "drag",
+        validateOnly: true,
       });
-      ctx.source = "drag";
-      const result = validateTransition(ctx);
       if (!result.valid) {
         return NextResponse.json(
           { error: result.error },
@@ -83,16 +81,17 @@ export async function POST(
 
   transaction();
 
-  // Emit events and log transitions for status changes
+  // Emit events and log transitions for status changes (DB already updated in transaction)
   for (const change of statusChanges) {
-    emitTicketMoved(projectId, change.epicId, change.from, change.to);
-    logTransition({
+    applyTransition({
       projectId,
       epicId: change.epicId,
       fromStatus: change.from,
       toStatus: change.to,
       actor: "user",
+      source: "drag",
       reason: "Kanban drag-and-drop",
+      skipDbUpdate: true,
     });
   }
 

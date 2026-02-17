@@ -10,10 +10,8 @@ import {
 import { updateEpicSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import type { KanbanStatus } from "@/lib/types/kanban";
-import { validateTransition } from "@/lib/workflow/engine";
-import { buildTransitionContext } from "@/lib/workflow/context";
-import { emitTicketUpdated, emitTicketMoved, emitTicketDeleted } from "@/lib/events/emit";
-import { logTransition } from "@/lib/workflow/log";
+import { applyTransition } from "@/lib/workflow/transition-service";
+import { emitTicketUpdated, emitTicketDeleted } from "@/lib/events/emit";
 
 export async function PATCH(
   request: NextRequest,
@@ -33,14 +31,16 @@ export async function PATCH(
 
   // Validate workflow rules if status is changing
   if (body.status !== undefined && body.status !== existing.status) {
-    const ctx = buildTransitionContext({
+    const result = applyTransition({
+      projectId,
       epicId,
       fromStatus: (existing.status ?? "backlog") as KanbanStatus,
       toStatus: body.status as KanbanStatus,
       actor: "user",
+      source: "api",
+      reason: "Manual status update",
+      skipDbUpdate: true, // we update below with all fields
     });
-    ctx.source = "api";
-    const result = validateTransition(ctx);
     if (!result.valid) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
@@ -58,18 +58,8 @@ export async function PATCH(
 
   const updated = db.select().from(epics).where(eq(epics.id, epicId)).get();
 
-  // Emit events and log transitions
-  if (body.status !== undefined && body.status !== existing.status) {
-    emitTicketMoved(projectId, epicId, existing.status ?? "backlog", body.status);
-    logTransition({
-      projectId,
-      epicId,
-      fromStatus: existing.status ?? "backlog",
-      toStatus: body.status,
-      actor: "user",
-      reason: "Manual status update",
-    });
-  } else {
+  // Emit update event for non-status changes (status changes already emitted by applyTransition)
+  if (!(body.status !== undefined && body.status !== existing.status)) {
     emitTicketUpdated(projectId, epicId, updates);
   }
 

@@ -16,10 +16,9 @@ import {
 import {
   getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
-import { logTransition } from "@/lib/workflow/log";
+import { applyTransition } from "@/lib/workflow/transition-service";
 import { emitTicketMoved } from "@/lib/events/emit";
-import { validateTransition } from "@/lib/workflow/engine";
-import { buildTransitionContext } from "@/lib/workflow/context";
+import { logTransition } from "@/lib/workflow/log";
 import type { KanbanStatus } from "@/lib/types/kanban";
 import fs from "fs";
 import path from "path";
@@ -66,36 +65,29 @@ export async function POST(
   const result = await mergeWorktree(project.gitRepoPath, epic.branchName, worktreePath);
 
   if (result.merged) {
-    // Validate transition through workflow engine
     const prevStatus = (epic.status ?? "review") as KanbanStatus;
-    const ctx = buildTransitionContext({
-      epicId,
-      fromStatus: prevStatus,
-      toStatus: "done",
-      actor: "user",
-    });
-    ctx.source = "merge";
-    const validation = validateTransition(ctx);
-    if (!validation.valid) {
-      return NextResponse.json({ error: validation.error }, { status: 400 });
-    }
 
-    // Move epic to done
-    const now = new Date().toISOString();
-    db.update(epics)
-      .set({ status: "done", branchName: null, updatedAt: now })
-      .where(eq(epics.id, epicId))
-      .run();
-
-    emitTicketMoved(projectId, epicId, prevStatus, "done");
-    logTransition({
+    // Validate + emit + log via transition service (skip DB update — we handle branchName too)
+    const validation = applyTransition({
       projectId,
       epicId,
       fromStatus: prevStatus,
       toStatus: "done",
       actor: "user",
+      source: "merge",
       reason: "Branch merged successfully",
+      skipDbUpdate: true,
     });
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
+    // Move epic to done + clear branch name
+    const now = new Date().toISOString();
+    db.update(epics)
+      .set({ status: "done", branchName: null, updatedAt: now })
+      .where(eq(epics.id, epicId))
+      .run();
 
     tryExportArjiJson(projectId);
 
