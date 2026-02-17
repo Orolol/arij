@@ -104,6 +104,32 @@ vi.mock("@/lib/db/schema", () => ({
     sessionId: "sessionId",
     createdAt: "createdAt",
   },
+  agentSessions: {
+    _name: "agentSessions",
+    id: "id",
+    epicId: "epicId",
+    projectId: "projectId",
+    status: "status",
+    agentType: "agentType",
+  },
+}));
+
+vi.mock("@/lib/workflow/engine", () => ({
+  validateTransition: vi.fn(() => ({ valid: true })),
+  isAllowedTransition: vi.fn(() => true),
+}));
+
+vi.mock("@/lib/workflow/context", () => ({
+  buildTransitionContext: vi.fn(() => ({
+    epicId: "epic-1",
+    fromStatus: "review",
+    toStatus: "done",
+    hasOpenReviewComments: false,
+    hasCompletedReview: true,
+    hasRunningSession: false,
+    actor: "user",
+    source: "approve",
+  })),
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({

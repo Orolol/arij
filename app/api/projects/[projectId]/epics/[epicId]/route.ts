@@ -39,6 +39,7 @@ export async function PATCH(
       toStatus: body.status as KanbanStatus,
       actor: "user",
     });
+    ctx.source = "api";
     const result = validateTransition(ctx);
     if (!result.valid) {
       return NextResponse.json({ error: result.error }, { status: 400 });

@@ -104,9 +104,9 @@ describe("validateTransition — Done requires completed review", () => {
     expect(result.error).toContain("no completed review");
   });
 
-  it("allows review -> done with completed review and no open comments", () => {
+  it("allows review -> done with completed review, no open comments, via approve", () => {
     const result = validateTransition(
-      ctx("review", "done", { hasCompletedReview: true })
+      ctx("review", "done", { hasCompletedReview: true, source: "approve" })
     );
     expect(result.valid).toBe(true);
   });
@@ -128,11 +128,70 @@ describe("validateTransition — Done requires resolved comments", () => {
     expect(result.error).toContain("unresolved review comments");
   });
 
-  it("allows review -> done when all comments resolved", () => {
+  it("allows review -> done when all comments resolved via approve", () => {
     const result = validateTransition(
       ctx("review", "done", {
         hasCompletedReview: true,
         hasOpenReviewComments: false,
+        source: "approve",
+      })
+    );
+    expect(result.valid).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Guard: review → done requires approve or merge source
+// ---------------------------------------------------------------------------
+
+describe("validateTransition — review to done requires approval", () => {
+  it("rejects review -> done via drag (no approval)", () => {
+    const result = validateTransition(
+      ctx("review", "done", {
+        hasCompletedReview: true,
+        source: "drag",
+      })
+    );
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("manual approval is required");
+  });
+
+  it("rejects review -> done via API (no approval)", () => {
+    const result = validateTransition(
+      ctx("review", "done", {
+        hasCompletedReview: true,
+        source: "api",
+      })
+    );
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("manual approval is required");
+  });
+
+  it("rejects review -> done without source (no approval)", () => {
+    const result = validateTransition(
+      ctx("review", "done", {
+        hasCompletedReview: true,
+      })
+    );
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("manual approval is required");
+  });
+
+  it("allows review -> done via approve source", () => {
+    const result = validateTransition(
+      ctx("review", "done", {
+        hasCompletedReview: true,
+        source: "approve",
+      })
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  it("allows review -> done via merge source", () => {
+    const result = validateTransition(
+      ctx("review", "done", {
+        hasCompletedReview: true,
+        source: "merge",
       })
     );
     expect(result.valid).toBe(true);

@@ -18,6 +18,9 @@ import {
 } from "@/lib/agents/concurrency";
 import { logTransition } from "@/lib/workflow/log";
 import { emitTicketMoved } from "@/lib/events/emit";
+import { validateTransition } from "@/lib/workflow/engine";
+import { buildTransitionContext } from "@/lib/workflow/context";
+import type { KanbanStatus } from "@/lib/types/kanban";
 import fs from "fs";
 import path from "path";
 
@@ -63,8 +66,21 @@ export async function POST(
   const result = await mergeWorktree(project.gitRepoPath, epic.branchName, worktreePath);
 
   if (result.merged) {
+    // Validate transition through workflow engine
+    const prevStatus = (epic.status ?? "review") as KanbanStatus;
+    const ctx = buildTransitionContext({
+      epicId,
+      fromStatus: prevStatus,
+      toStatus: "done",
+      actor: "user",
+    });
+    ctx.source = "merge";
+    const validation = validateTransition(ctx);
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
     // Move epic to done
-    const prevStatus = epic.status ?? "review";
     const now = new Date().toISOString();
     db.update(epics)
       .set({ status: "done", branchName: null, updatedAt: now })

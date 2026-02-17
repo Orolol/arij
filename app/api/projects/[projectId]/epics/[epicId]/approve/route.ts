@@ -7,6 +7,9 @@ import { tryExportArjiJson } from "@/lib/sync/export";
 import simpleGit from "simple-git";
 import { emitTicketMoved } from "@/lib/events/emit";
 import { logTransition } from "@/lib/workflow/log";
+import { validateTransition } from "@/lib/workflow/engine";
+import { buildTransitionContext } from "@/lib/workflow/context";
+import type { KanbanStatus } from "@/lib/types/kanban";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -23,6 +26,19 @@ export async function POST(_request: NextRequest, { params }: Params) {
       { error: "Epic must be in review status to approve" },
       { status: 400 }
     );
+  }
+
+  // Validate transition through workflow engine
+  const ctx = buildTransitionContext({
+    epicId,
+    fromStatus: (epic.status ?? "review") as KanbanStatus,
+    toStatus: "done",
+    actor: "user",
+  });
+  ctx.source = "approve";
+  const validation = validateTransition(ctx);
+  if (!validation.valid) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
   }
 
   const now = new Date().toISOString();

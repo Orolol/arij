@@ -41,6 +41,8 @@ export interface TransitionContext {
   hasRunningSession: boolean;
   /** The actor initiating the transition */
   actor: "user" | "agent" | "system";
+  /** The source route/action triggering this transition */
+  source?: "approve" | "merge" | "drag" | "api" | "build" | "review";
 }
 
 const TRANSITION_GUARDS: TransitionGuard[] = [
@@ -55,6 +57,18 @@ const TRANSITION_GUARDS: TransitionGuard[] = [
   (ctx) => {
     if (ctx.toStatus === "done" && ctx.hasOpenReviewComments) {
       return "Cannot move to Done: there are unresolved review comments. Resolve all review comments first.";
+    }
+    return null;
+  },
+  // review → done requires explicit approval (approve route) or merge
+  (ctx) => {
+    if (
+      ctx.fromStatus === "review" &&
+      ctx.toStatus === "done" &&
+      ctx.source !== "approve" &&
+      ctx.source !== "merge"
+    ) {
+      return "Cannot move to Done: manual approval is required. Use the Approve action to move from Review to Done.";
     }
     return null;
   },

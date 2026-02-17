@@ -54,6 +54,7 @@ export async function POST(
         toStatus,
         actor: "user",
       });
+      ctx.source = "drag";
       const result = validateTransition(ctx);
       if (!result.valid) {
         return NextResponse.json(
