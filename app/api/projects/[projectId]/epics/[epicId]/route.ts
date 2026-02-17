@@ -12,6 +12,7 @@ import { validateBody, isValidationError } from "@/lib/validation/validate";
 import type { KanbanStatus } from "@/lib/types/kanban";
 import { validateTransition } from "@/lib/workflow/engine";
 import { buildTransitionContext } from "@/lib/workflow/context";
+import { emitTicketUpdated, emitTicketMoved, emitTicketDeleted } from "@/lib/events/emit";
 
 export async function PATCH(
   request: NextRequest,
@@ -54,6 +55,14 @@ export async function PATCH(
   db.update(epics).set(updates).where(eq(epics.id, epicId)).run();
 
   const updated = db.select().from(epics).where(eq(epics.id, epicId)).get();
+
+  // Emit events
+  if (body.status !== undefined && body.status !== existing.status) {
+    emitTicketMoved(projectId, epicId, existing.status ?? "backlog", body.status);
+  } else {
+    emitTicketUpdated(projectId, epicId, updates);
+  }
+
   tryExportArjiJson(projectId);
   return NextResponse.json({ data: updated });
 }
@@ -66,6 +75,7 @@ export async function DELETE(
 
   try {
     deleteEpicPermanently(projectId, epicId);
+    emitTicketDeleted(projectId, epicId);
     tryExportArjiJson(projectId);
     return NextResponse.json({ data: { deleted: true } });
   } catch (error) {

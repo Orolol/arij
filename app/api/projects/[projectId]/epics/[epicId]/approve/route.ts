@@ -5,6 +5,7 @@ import { eq, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import simpleGit from "simple-git";
+import { emitTicketMoved } from "@/lib/events/emit";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -77,6 +78,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
     }
   }
 
+  emitTicketMoved(projectId, epicId, "review", "done");
   tryExportArjiJson(projectId);
 
   return NextResponse.json({

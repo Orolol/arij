@@ -27,6 +27,7 @@ import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, 
 import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
 import type { KanbanEpicAgentActivity } from "@/lib/types/kanban";
 import { getActiveDetailTicketId, selectOnlyTicket } from "@/lib/kanban/selection";
+import { useProjectEvents, type ConnectionStatus } from "@/hooks/useProjectEvents";
 
 interface Toast {
   id: string;
@@ -58,6 +59,17 @@ export default function KanbanPage() {
   const { activities } = useAgentPolling(projectId);
   const prevSessionIds = useRef<Set<string>>(new Set());
   const panelRef = useRef<UnifiedChatPanelHandle>(null);
+
+  // Real-time events via SSE — auto-refresh board on ticket changes
+  const { status: sseStatus } = useProjectEvents(projectId, {
+    "ticket:moved": () => setRefreshTrigger((t) => t + 1),
+    "ticket:created": () => setRefreshTrigger((t) => t + 1),
+    "ticket:updated": () => setRefreshTrigger((t) => t + 1),
+    "ticket:deleted": () => setRefreshTrigger((t) => t + 1),
+    "session:started": () => setRefreshTrigger((t) => t + 1),
+    "session:completed": () => setRefreshTrigger((t) => t + 1),
+    "session:failed": () => setRefreshTrigger((t) => t + 1),
+  });
   const activeAgentActivities = useMemo<Record<string, KanbanEpicAgentActivity>>(
     () => {
       const map: Record<string, KanbanEpicAgentActivity> = {};
@@ -546,7 +558,16 @@ export default function KanbanPage() {
               </div>
             )}
 
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 overflow-hidden relative">
+              {sseStatus !== "connected" && (
+                <div
+                  className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/80 text-xs text-muted-foreground"
+                  title={sseStatus === "connecting" ? "Connecting to real-time updates..." : "Offline — reconnecting..."}
+                >
+                  <span className={`h-2 w-2 rounded-full ${sseStatus === "connecting" ? "bg-yellow-500 animate-pulse" : "bg-red-500"}`} />
+                  {sseStatus === "connecting" ? "Connecting..." : "Offline"}
+                </div>
+              )}
               <Board
                 projectId={projectId}
                 onEpicClick={handlePrimaryTicketClick}

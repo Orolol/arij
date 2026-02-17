@@ -9,6 +9,7 @@ import { CycleError, CrossProjectError } from "@/lib/dependencies/validation";
 import { createEpicSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { generateReadableId } from "@/lib/db/readable-id";
+import { emitTicketCreated } from "@/lib/events/emit";
 
 export async function GET(
   _request: NextRequest,
@@ -226,6 +227,7 @@ export async function POST(
   }
 
   const epic = db.select().from(epics).where(eq(epics.id, id)).get();
+  emitTicketCreated(projectId, id, body.title);
   tryExportArjiJson(projectId);
   return NextResponse.json(
     {

@@ -8,6 +8,7 @@ import type { KanbanStatus } from "@/lib/types/kanban";
 import { KANBAN_COLUMNS } from "@/lib/types/kanban";
 import { validateTransition } from "@/lib/workflow/engine";
 import { buildTransitionContext } from "@/lib/workflow/context";
+import { emitTicketMoved } from "@/lib/events/emit";
 
 interface ReorderItem {
   id: string;
@@ -28,7 +29,8 @@ export async function POST(
 
   const now = new Date().toISOString();
 
-  // Validate workflow rules for any status changes
+  // Validate workflow rules for any status changes and track moves
+  const statusChanges: { epicId: string; from: string; to: string }[] = [];
   for (const item of body.items) {
     const epic = db.select().from(epics).where(eq(epics.id, item.id)).get();
     if (!epic) continue;
@@ -58,6 +60,7 @@ export async function POST(
           { status: 400 }
         );
       }
+      statusChanges.push({ epicId: item.id, from: fromStatus, to: toStatus });
     }
   }
 
@@ -77,6 +80,11 @@ export async function POST(
   });
 
   transaction();
+
+  // Emit events for status changes
+  for (const change of statusChanges) {
+    emitTicketMoved(projectId, change.epicId, change.from, change.to);
+  }
 
   tryExportArjiJson(projectId);
   return NextResponse.json({ data: { updated: body.items.length } });

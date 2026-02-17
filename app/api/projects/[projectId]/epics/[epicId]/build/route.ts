@@ -33,6 +33,12 @@ import {
   validateMentionsExist,
 } from "@/lib/documents/mentions";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import {
+  emitSessionStarted,
+  emitSessionCompleted,
+  emitSessionFailed,
+  emitTicketMoved,
+} from "@/lib/events/emit";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -284,6 +290,9 @@ export async function POST(request: NextRequest, { params }: Params) {
     resumeSession,
   }, resolvedAgent.provider);
 
+  emitSessionStarted(projectId, epicId, sessionId, "build");
+  emitTicketMoved(projectId, epicId, epic.status ?? "backlog", "in_progress");
+
   // Background: wait for completion, sync statuses, post agent comment
   (async () => {
     let info = processManager.getStatus(sessionId);
@@ -333,6 +342,13 @@ export async function POST(request: NextRequest, { params }: Params) {
         .set({ status: "review", updatedAt: completedAt })
         .where(eq(epics.id, epicId))
         .run();
+
+      emitSessionCompleted(projectId, epicId, sessionId);
+      emitTicketMoved(projectId, epicId, "in_progress", "review");
+    } else if (result?.success) {
+      emitSessionCompleted(projectId, epicId, sessionId);
+    } else {
+      emitSessionFailed(projectId, epicId, sessionId, result?.error || "Build failed");
     }
 
     // Post output as epic comment
