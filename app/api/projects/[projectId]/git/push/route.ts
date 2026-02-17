@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
-import { getCurrentGitBranch, pushGitBranch } from "@/lib/git/remote";
+import {
+  getCurrentGitBranch,
+  pushGitBranch,
+  PushValidationError,
+  validatePushPreconditions,
+} from "@/lib/git/remote";
 import { writeGitSyncLog } from "@/lib/github/sync-log";
 
 type Params = { params: Promise<{ projectId: string }> };
@@ -36,6 +41,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const branch = requestedBranch.trim() || (await getCurrentGitBranch(project.gitRepoPath));
 
   try {
+    await validatePushPreconditions(project.gitRepoPath, branch, remote);
     const result = await pushGitBranch(
       project.gitRepoPath,
       branch,
@@ -66,6 +72,36 @@ export async function POST(request: NextRequest, { params }: Params) {
       },
     });
   } catch (error) {
+    if (error instanceof PushValidationError) {
+      writeGitSyncLog({
+        projectId,
+        operation: "push",
+        status: "failed",
+        branch,
+        detail: {
+          remote,
+          setUpstream,
+          code: error.code,
+          error: error.message,
+        },
+      });
+
+      return NextResponse.json(
+        {
+          error: error.message,
+          data: {
+            action: "push",
+            projectId,
+            remote,
+            branch,
+            setUpstream,
+            code: error.code,
+          },
+        },
+        { status: 409 }
+      );
+    }
+
     writeGitSyncLog({
       projectId,
       operation: "push",
