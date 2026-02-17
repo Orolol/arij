@@ -9,6 +9,7 @@ import { KANBAN_COLUMNS } from "@/lib/types/kanban";
 import { validateTransition } from "@/lib/workflow/engine";
 import { buildTransitionContext } from "@/lib/workflow/context";
 import { emitTicketMoved } from "@/lib/events/emit";
+import { logTransition } from "@/lib/workflow/log";
 
 interface ReorderItem {
   id: string;
@@ -81,9 +82,17 @@ export async function POST(
 
   transaction();
 
-  // Emit events for status changes
+  // Emit events and log transitions for status changes
   for (const change of statusChanges) {
     emitTicketMoved(projectId, change.epicId, change.from, change.to);
+    logTransition({
+      projectId,
+      epicId: change.epicId,
+      fromStatus: change.from,
+      toStatus: change.to,
+      actor: "user",
+      reason: "Kanban drag-and-drop",
+    });
   }
 
   tryExportArjiJson(projectId);

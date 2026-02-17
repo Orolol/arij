@@ -39,6 +39,7 @@ import {
   emitSessionFailed,
   emitTicketMoved,
 } from "@/lib/events/emit";
+import { logTransition } from "@/lib/workflow/log";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -292,6 +293,15 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   emitSessionStarted(projectId, epicId, sessionId, "build");
   emitTicketMoved(projectId, epicId, epic.status ?? "backlog", "in_progress");
+  logTransition({
+    projectId,
+    epicId,
+    fromStatus: epic.status ?? "backlog",
+    toStatus: "in_progress",
+    actor: "agent",
+    reason: "Build agent started",
+    sessionId,
+  });
 
   // Background: wait for completion, sync statuses, post agent comment
   (async () => {
@@ -345,6 +355,15 @@ export async function POST(request: NextRequest, { params }: Params) {
 
       emitSessionCompleted(projectId, epicId, sessionId);
       emitTicketMoved(projectId, epicId, "in_progress", "review");
+      logTransition({
+        projectId,
+        epicId,
+        fromStatus: "in_progress",
+        toStatus: "review",
+        actor: "agent",
+        reason: "Build completed successfully",
+        sessionId,
+      });
     } else if (result?.success) {
       emitSessionCompleted(projectId, epicId, sessionId);
     } else {

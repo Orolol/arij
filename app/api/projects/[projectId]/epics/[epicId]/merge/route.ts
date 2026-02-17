@@ -16,6 +16,8 @@ import {
 import {
   getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import { logTransition } from "@/lib/workflow/log";
+import { emitTicketMoved } from "@/lib/events/emit";
 import fs from "fs";
 import path from "path";
 
@@ -62,11 +64,22 @@ export async function POST(
 
   if (result.merged) {
     // Move epic to done
+    const prevStatus = epic.status ?? "review";
     const now = new Date().toISOString();
     db.update(epics)
       .set({ status: "done", branchName: null, updatedAt: now })
       .where(eq(epics.id, epicId))
       .run();
+
+    emitTicketMoved(projectId, epicId, prevStatus, "done");
+    logTransition({
+      projectId,
+      epicId,
+      fromStatus: prevStatus,
+      toStatus: "done",
+      actor: "user",
+      reason: "Branch merged successfully",
+    });
 
     tryExportArjiJson(projectId);
 
@@ -181,10 +194,21 @@ export async function POST(
           worktreePath
         );
         if (retryResult.merged) {
+          const mergedAt = new Date().toISOString();
           db.update(epics)
-            .set({ status: "done", branchName: null, updatedAt: new Date().toISOString() })
+            .set({ status: "done", branchName: null, updatedAt: mergedAt })
             .where(eq(epics.id, epicId))
             .run();
+          emitTicketMoved(projectId, epicId, epic.status ?? "review", "done");
+          logTransition({
+            projectId,
+            epicId,
+            fromStatus: epic.status ?? "review",
+            toStatus: "done",
+            actor: "agent",
+            reason: "Merge-fix agent resolved conflicts and merged",
+            sessionId,
+          });
           tryExportArjiJson(projectId);
         }
       }

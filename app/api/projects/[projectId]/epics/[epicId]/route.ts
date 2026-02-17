@@ -13,6 +13,7 @@ import type { KanbanStatus } from "@/lib/types/kanban";
 import { validateTransition } from "@/lib/workflow/engine";
 import { buildTransitionContext } from "@/lib/workflow/context";
 import { emitTicketUpdated, emitTicketMoved, emitTicketDeleted } from "@/lib/events/emit";
+import { logTransition } from "@/lib/workflow/log";
 
 export async function PATCH(
   request: NextRequest,
@@ -56,9 +57,17 @@ export async function PATCH(
 
   const updated = db.select().from(epics).where(eq(epics.id, epicId)).get();
 
-  // Emit events
+  // Emit events and log transitions
   if (body.status !== undefined && body.status !== existing.status) {
     emitTicketMoved(projectId, epicId, existing.status ?? "backlog", body.status);
+    logTransition({
+      projectId,
+      epicId,
+      fromStatus: existing.status ?? "backlog",
+      toStatus: body.status,
+      actor: "user",
+      reason: "Manual status update",
+    });
   } else {
     emitTicketUpdated(projectId, epicId, updates);
   }

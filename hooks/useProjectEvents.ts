@@ -19,7 +19,7 @@ export function useProjectEvents(
   handlersRef.current = handlers;
   const esRef = useRef<EventSource | null>(null);
   const reconnectAttempt = useRef(0);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>();
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
 
   const connect = useCallback(() => {
     // Close existing

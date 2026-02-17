@@ -6,6 +6,7 @@ import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import simpleGit from "simple-git";
 import { emitTicketMoved } from "@/lib/events/emit";
+import { logTransition } from "@/lib/workflow/log";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -79,6 +80,14 @@ export async function POST(_request: NextRequest, { params }: Params) {
   }
 
   emitTicketMoved(projectId, epicId, "review", "done");
+  logTransition({
+    projectId,
+    epicId,
+    fromStatus: "review",
+    toStatus: "done",
+    actor: "user",
+    reason: "Review approved",
+  });
   tryExportArjiJson(projectId);
 
   return NextResponse.json({
