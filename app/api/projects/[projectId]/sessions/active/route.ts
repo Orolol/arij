@@ -30,13 +30,18 @@ function inferDbActivityType(row: {
     return "release";
   }
 
+  if (row.agentType === "merge") {
+    return "merge";
+  }
+
   if (row.orchestrationMode === "team") {
     return "build";
   }
 
+  // fallback prompt heuristics
   const prompt = (row.prompt || "").toLowerCase();
   if (
-    prompt.includes("merge conflict resolution") ||
+    prompt.includes("merge conflict") ||
     prompt.includes("git merge main")
   ) {
     return "merge";
