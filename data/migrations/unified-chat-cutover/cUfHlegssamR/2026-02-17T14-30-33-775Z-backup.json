@@ -1,0 +1,85 @@
+{
+  "migrationId": "2026-02-17T14-30-33-775Z",
+  "projectId": "cUfHlegssamR",
+  "capturedAt": "2026-02-17T14:30:33.775Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "l_1k8SYVJj_c",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "New Epic",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-17T13:57:00.564Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "eIX6RekDSTJx",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "l_1k8SYVJj_c",
+        "role": "user",
+        "content": "Realse flow update : \n\n1) We can choose whioch agent do the release notes / branhc creation\n2) We can click on a release tiles to have the details of every ticket inside the release\n3) We add a 6th column in the kanban \"Released\". We can't move ticket here directly. When we create a release, it will create a giant tiles with the number of the release for title, and move all ticket inside this",
+        "metadata": null,
+        "created_at": "2026-02-17T13:59:13.465Z"
+      },
+      {
+        "id": "XV-r2T2XiX00",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "l_1k8SYVJj_c",
+        "role": "assistant",
+        "content": "I have two clarifying questions before I can scope this properly:\n\n**For the \"Released\" kanban column with release tiles:**\n- Should the release tile be **expandable** (showing individual tickets inline in the kanban column), or a **compact summary** (e.g., \"v1.2.0 — 5 tickets\") that links to the release detail page when clicked? Or both — compact by default, expandable on click?\n\n**On reversibility:**\n- When a release is created and tickets move to \"Released\", should this be a **one-way** operation (released tickets can't move back — keeps history clean), or **reversible** (tickets can be dragged back to Done if a release needs correction)?\n\nThese choices significantly affect the scope of the workflow engine changes and kanban UI work.",
+        "metadata": null,
+        "created_at": "2026-02-17T14:01:15.325Z"
+      },
+      {
+        "id": "kCW-XW9oZnrB",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "l_1k8SYVJj_c",
+        "role": "user",
+        "content": "**Release tile**: Expandable tile\n**Reversibility**: One-way (Recommended)",
+        "metadata": null,
+        "created_at": "2026-02-17T14:01:49.173Z"
+      },
+      {
+        "id": "7dYHa4bljXQp",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "l_1k8SYVJj_c",
+        "role": "user",
+        "content": "Generate the final epic with user stories based on our discussion.",
+        "metadata": null,
+        "created_at": "2026-02-17T14:11:09.357Z"
+      },
+      {
+        "id": "26zxWKJd78eN",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "l_1k8SYVJj_c",
+        "role": "assistant",
+        "content": "Agent completed successfully (no textual output).",
+        "metadata": null,
+        "created_at": "2026-02-17T14:12:49.294Z"
+      },
+      {
+        "id": "oLs6m7fQoImN",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "l_1k8SYVJj_c",
+        "role": "user",
+        "content": "Output ONLY the JSON code block for the epic. Start your response with ```json and end with ```. No other text.",
+        "metadata": null,
+        "created_at": "2026-02-17T14:12:49.382Z"
+      },
+      {
+        "id": "rQITeQoTENEn",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "l_1k8SYVJj_c",
+        "role": "assistant",
+        "content": "```json\n{\n  \"epic\": {\n    \"title\": \"Release Flow Update — Agent Selection, Detail View & Released Column\",\n    \"description\": \"Update the release workflow with three improvements:\\n1. **Agent selection** — Let the user choose which named agent generates release notes and creates the release branch (currently hardcoded to Claude Code).\\n2. **Release detail view** — Clicking a release tile opens a dialog showing all included tickets with their type, readable ID, title, and US progress.\\n3. **\\\"Released\\\" kanban column** — A 6th column where tickets move automatically (and irreversibly) when a release is created. Tickets are grouped into expandable release tiles showing the version number.\",\n    \"priority\": 2,\n    \"type\": \"feature\",\n    \"userStories\": [\n      {\n        \"title\": \"Named Agent Selection for Release Notes Generation\",\n        \"description\": \"As a user creating a release, I want to choose which named agent generates the changelog, so that I can use the best-suited agent (Claude Code, Gemini CLI, etc.) for release notes.\",\n        \"acceptanceCriteria\": \"- A `NamedAgentSelect` dropdown appears in the \\\"Create Release\\\" dialog, labeled \\\"Changelog Agent\\\"\\n- The selected agent's provider is used for changelog generation instead of hardcoded `claude-code`\\n- The `SessionPicker` filters resumable sessions based on the selected agent\\n- `release_notes` is added to the official `AGENT_TYPES` list in `lib/agent-config/constants.ts`\\n- The release API (`POST /api/projects/:projectId/releases`) accepts `namedAgentId` and resolves the agent accordingly\\n- When no named agent is selected, the system falls back to the project/global default\"\n      },\n      {\n        \"title\": \"Release Detail Dialog\",\n        \"description\": \"As a user viewing the releases list, I want to click a release card to see all included tickets, so that I can quickly review what's in each release.\",\n        \"acceptanceCriteria\": \"- Clicking a `ReleaseCard` opens a `ReleaseDetailDialog`\\n- The dialog shows: version, title, git tag, branch, creation date\\n- All included tickets are listed with: type icon (feature/bug), readable ID, title, US progress (X/Y), status badge\\n- The changelog is displayed at the bottom in a prose block\\n- Interactive elements on the card (Publish button, GitHub link) don't trigger the dialog (stopPropagation)\"\n      },\n      {\n        \"title\": \"Database Schema — Add releaseId to Epics\",\n        \"description\": \"As a developer, I want epics to have a releaseId foreign key, so that the kanban board can group released epics by their release.\",\n        \"acceptanceCriteria\": \"- A nullable `releaseId` column is added to the `epics` table, referencing `releases.id` (onDelete: set null)\\n- The status comment on the `epics` table includes `released`\\n- A backfill block in `lib/db/index.ts` populates `releaseId` for existing released epics from the `epicIds` JSON in the releases table\\n- `releaseId` is included in the epics API GET response\\n- `KanbanEpic` interface includes `releaseId: string | null`\\n- Schema migration is generated and pushed (`drizzle-kit generate` + `drizzle-kit push`)\"\n      },\n      {\n        \"title\": \"\\\"Released\\\" Kanban Column — Type System & Workflow Engine\",\n        \"description\": \"As a system, I want \\\"released\\\" to be a valid terminal kanban status, so that released tickets are properly tracked in the state machine.\",\n        \"acceptanceCriteria\": \"- `\\\"released\\\"` is added to `KANBAN_COLUMNS` as the 6th entry\\n- `COLUMN_LABELS` includes `released: \\\"Released\\\"`\\n- `EPIC_TRANSITIONS` allows `done → released` and defines `released: []` (no outbound transitions)\\n- A guard blocks transitions to \\\"released\\\" unless the actor is \\\"system\\\" (prevents drag-and-drop)\\n- A guard blocks transitions to \\\"released\\\" from source \\\"drag\\\"\\n- `TransitionContext.source` type includes `\\\"release\\\"`\\n- The reorder API explicitly rejects moves to/from \\\"released\\\" with a clear error message\\n- The epic PATCH API prevents status changes away from \\\"released\\\"\\n- `DRAGGABLE_COLUMNS` constant is exported (all columns except \\\"released\\\")\"\n      },\n      {\n        \"title\": \"Auto-Move Epics to \\\"Released\\\" on Release Creation\",\n        \"description\": \"As a user creating a release, I want all included tickets to automatically move to the \\\"Released\\\" column, so that the kanban board reflects which tickets have been released.\",\n        \"acceptanceCriteria\": \"- After a release is saved to DB, each included epic transitions from its current status to \\\"released\\\" via `applyTransition()` with actor \\\"system\\\" and source \\\"release\\\"\\n- Each epic's `releaseId` is stamped with the new release's ID\\n- A `release:created` SSE event is emitted so the kanban board refreshes\\n- The release creation dialog only shows epics with status \\\"done\\\" (not \\\"review\\\", not already released)\\n- Epics that already have a `releaseId` are excluded from the epic selector\"\n      },\n      {\n        \"title\": \"Released Column UI — Expandable Release Group Tiles\",\n        \"description\": \"As a user viewing the kanban board, I want the \\\"Released\\\" column to show expandable release tiles, so that I can see which tickets belong to each release.\",\n        \"acceptanceCriteria\": \"- A new `ReleasedColumn` component renders the 6th column without dnd-kit drag-drop (no useDroppable, no SortableContext)\\n- Each release is rendered as a `ReleaseGroupCard` with: collapse/expand toggle, Package icon, version number, title, ticket count badge\\n- When expanded, individual tickets are listed with: type icon (bug=red), readable ID, title, US progress\\n- Clicking an individual ticket opens the EpicDetail panel\\n- The Board component renders `DRAGGABLE_COLUMNS` via `Column` and the \\\"Released\\\" column via `ReleasedColumn` separately\\n- `handleDragStart` blocks dragging from the released column\\n- `handleDragEnd` blocks dropping on the released column\\n- The `useKanban` hook fetches releases and builds `releaseGroups` for the board state\"\n      }\n    ]\n  }\n}\n```",
+        "metadata": null,
+        "created_at": "2026-02-17T14:13:16.941Z"
+      }
+    ],
+    "attachments": []
+  }
+}

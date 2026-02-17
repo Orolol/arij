@@ -16,6 +16,23 @@ export const sqlite = new Database(dbPath);
 sqlite.pragma("journal_mode = WAL");
 sqlite.pragma("foreign_keys = ON");
 
+// Ensure ticket_activity_log table exists (drizzle-kit push may not run cleanly)
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS ticket_activity_log (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    epic_id TEXT NOT NULL REFERENCES epics(id) ON DELETE CASCADE,
+    from_status TEXT NOT NULL,
+    to_status TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    reason TEXT,
+    session_id TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+sqlite.exec(`CREATE INDEX IF NOT EXISTS ticket_activity_log_epic_idx ON ticket_activity_log(epic_id)`);
+sqlite.exec(`CREATE INDEX IF NOT EXISTS ticket_activity_log_project_idx ON ticket_activity_log(project_id)`);
+
 export const db = drizzle(sqlite, { schema });
 
 // ---------------------------------------------------------------------------

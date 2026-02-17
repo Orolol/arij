@@ -1,0 +1,113 @@
+{
+  "migrationId": "2026-02-17T14-10-43-550Z",
+  "projectId": "cUfHlegssamR",
+  "capturedAt": "2026-02-17T14:10:43.550Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "PYlcwh0BDrEt",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "New Epic",
+        "status": "active",
+        "epic_id": null,
+        "provider": "opencode",
+        "created_at": "2026-02-17T09:11:38.763Z"
+      },
+      {
+        "id": "l_1k8SYVJj_c",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "New Epic",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-17T13:57:00.564Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "_x1MblvfBHRo",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "user",
+        "content": "Il faut refaire une apsse sur le flow des tickets qui est un peu erratique des fois. Il faut aussi s'assurer que l'utilisateur n'a jamais besoin de rafrachir la page pour voir els changements s'afficher. On pourrait également prévoir une petite animation quand les ticket passe d'une colonne a l'autre",
+        "metadata": null,
+        "created_at": "2026-02-17T09:13:12.831Z"
+      },
+      {
+        "id": "ndG8aEz_lu6I",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "assistant",
+        "content": "Je vois que vous voulez stabiliser le flow des tickets et améliorer la réactivité de l'interface Kanban. Cela touche à plusieurs aspects : la logique métier des transitions (tickets qui passent à \"Done\" prématurément), la synchronisation temps réel des états, et l'expérience visuelle (animations).\n\nConcernant le flow erratique, je vois déjà des tickets existants comme \"TIckets are sometimes sent to 'Done' even if no review has been done\" et \"When we give a task to an agent, and the agent instead of doign it, ask a question in comments, the ticket need to stay in progress\". S'agit-il de ces mêmes problèmes ou y a-t-il d'autres cas spécifiques que vous rencontrez ?\n\nPour les mises à jour sans refresh, utilisez-vous déjà un mécanisme de polling, ou souhaitez-vous implémenter des WebSockets/SSE pour du vrai temps réel ? Et concernant les animations dnd-kit, souhaitez-vous enrichir l'existant ou ajouter des animations supplémentaires (sons, effets visuels) lors des transitions ?",
+        "metadata": null,
+        "created_at": "2026-02-17T09:13:30.643Z"
+      },
+      {
+        "id": "czXEeqPua81P",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "user",
+        "content": "C'est plus un ticket général sur des comportement erratique, il faut passer tout en revue\nOui un websocket ça serait bien. \nJe te laisse voir pour les animations",
+        "metadata": null,
+        "created_at": "2026-02-17T09:20:10.898Z"
+      },
+      {
+        "id": "D0pH3SfK6W_Z",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "assistant",
+        "content": "Je vois que vous voulez une refonte complète du flow de tickets avec trois volets : la stabilité des transitions d'état, la synchronisation temps réel via WebSocket, et les animations visuelles. C'est un périmètre conséquent qui touche à la logique métier, au transport de données, et à l'UI.\n\nAvant de structurer l'epic, j'ai besoin de précisions :\n\n1. **Scope du flow** : Voulez-vous corriger uniquement la logique des transitions Kanban (quand un ticket passe de \"In Progress\" à \"Done\"), ou inclure aussi les hooks agent qui déclenchent ces transitions (ex: quand l'agent termine son travetree, quand la review est complète) ?\n\n2. **WebSocket** : Diffusion globale de tous les changements de tickets, ou uniquement pour le board actuellement visualisé ? Et concerne-t-il aussi les mises à jour des sessions agent en temps réel, ou seulement les mouvements de tickets ?\n\n3. **Animations** : Vous voulez enrichir le drag-and-drop existant de dnd-kit, ou ajouter des animations aussi sur les changements d'état programmatiques (quand un agent déplace un ticket sans interaction utilisateur) ?\n\nConcernant les epics existants, je vois que \"TIckets are sometimes sent to 'Done' even if no review has been done\" et \"When we give a task to an agent...\" sont des bugs spécifiques qui seront résolus par cette refonte. L'epic \"Non-Modal Kanban Ticket Details\" est orthogonal (UI de détail vs flow d'état). Votre epic serait donc bien différencié comme une **Refonte Systémique du Workflow Kanban**.",
+        "metadata": null,
+        "created_at": "2026-02-17T09:20:30.457Z"
+      },
+      {
+        "id": "mQ6ewxAuyl0n",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "user",
+        "content": "Generate the final epic with user stories based on our discussion.",
+        "metadata": null,
+        "created_at": "2026-02-17T09:21:20.308Z"
+      },
+      {
+        "id": "pDdSPb926Rao",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "assistant",
+        "content": "```json\n{\n  \"title\": \"Kanban Workflow Stability & Real-Time Synchronization\",\n  \"description\": \"Comprehensive refactor of the ticket workflow system to eliminate erratic behaviors, ensure consistent state transitions, and provide real-time updates without page refresh. This epic addresses critical bugs where tickets move to 'Done' prematurely or don't respect review workflows, while adding WebSocket-based live synchronization and enhanced visual feedback through animations.\\n\\nImplementation Plan:\\n1. **Workflow Rule Engine**: Implement strict state machine for ticket transitions with explicit guards (e.g., no 'Done' without completed review, no premature closure when agent asks questions)\\n2. **WebSocket Infrastructure**: Set up Socket.io or native WebSocket server for bidirectional communication, broadcasting ticket updates, agent session status, and column movements to all connected clients\\n3. **Event-Driven Architecture**: Unify agent hooks (build complete, review complete) and manual user actions under consistent event bus that enforces workflow rules\\n4. **Animation System**: Enhance dnd-kit with custom transitions for programmatic moves (agent-triggered) and add visual indicators (sounds optional, glow effects) for state changes\\n5. **Optimistic UI Updates**: Implement optimistic updates with rollback capability for instant feedback, confirmed by WebSocket events\\n6. **Agent Session Integration**: Ensure agent session lifecycle (start, resume, completion) properly gates ticket transitions and broadcasts status in real-time\",\n  \"userStories\": [\n    {\n      \"title\": \"As a user, I want ticket state transitions to follow strict business rules so that tickets don't move to incorrect columns prematurely\",\n      \"description\": \"Implement a state machine that enforces valid transitions: tickets cannot move to 'Done' without completed review and merged branch; tickets stay 'In Progress' when agents ask questions instead of completing work; manual drag-and-drop respects the same validation rules as programmatic transitions.\",\n      \"acceptanceCriteria\": \"- [ ] State machine validates all transitions (Backlog → In Progress → Review → Done)\\n- [ ] Tickets cannot be moved to 'Done' if review is not marked complete\\n- [ ] Tickets remain 'In Progress' when agent response contains questions rather than deliverables\\n- [ ] Invalid transitions show error toast with explanation\\n- [ ] Both UI drag-and-drop and API calls use the same validation logic\"\n    },\n    {\n      \"title\": \"As a user, I want WebSocket real-time updates so that I see ticket changes immediately without refreshing\",\n      \"description\": \"Implement WebSocket server that broadcasts ticket CRUD operations, column movements, and status changes to all connected clients viewing the project. Changes made by agents or other users appear instantly.\",\n      \"acceptanceCriteria\": \"- [ ] WebSocket server established with room-based project isolation\\n- [ ] Ticket movements broadcast to all clients in same project\\n- [ ] New tickets appear instantly without page refresh\\n- [ ] Agent session status changes (started, completed, error) broadcast in real-time\\n- [ ] Connection status indicator shows when offline/reconnecting\\n- [ ] Graceful fallback to polling if WebSocket unavailable\"\n    },\n    {\n      \"title\": \"As a user, I want visual animations when tickets move between columns so that I have clear feedback on state changes\",\n      \"description\": \"Enhance the Kanban board with smooth animations for all ticket movements. Distinguish between user-initiated drags (dnd-kit native) and programmatic moves (agent-triggered) with different visual treatments. Add subtle glow or highlight effects when tickets change state.\",\n      \"acceptanceCriteria\": \"- [ ] Smooth CSS transitions when tickets enter/leave columns\\n- [ ] Programmatic moves show animated 'fly' effect from source to destination\\n- [ ] Flash/highlight effect on ticket card when its state changes\\n- [ ] Column headers briefly highlight when tickets are added\\n- [ ] Animations respect reduced-motion accessibility preference\\n- [ ] No layout shift or jarring jumps during transitions\"\n    },\n    {\n      \"title\": \"As a user, I want agent-triggered ticket transitions to respect the same workflow rules so that automation doesn't bypass validation\",\n      \"description\": \"Ensure all agent hooks (worktree completion, review completion, build success/failure) use the same workflow engine as manual actions. Agent cannot force a ticket to 'Done' without following the proper sequence.\",\n      \"acceptanceCriteria\": \"- [ ] Agent session completion triggers review creation, not direct 'Done' status\\n- [ ] Review agent completion moves ticket to 'Review' column, not 'Done'\\n- [ ] Manual approval required to move from 'Review' to 'Done'\\n- [ ] Failed builds keep ticket in 'In Progress' with error indicator\\n- [ ] All agent-triggered transitions logged with reason in ticket activity\"\n    },\n    {\n      \"title\": \"As a user, I want to see real-time agent session status updates so that I know when work is in progress\",\n      \"description\": \"Display live agent session status in the Kanban board - show which tickets have active agent sessions, current step (analyzing, coding, reviewing), and progress. Visual indicator updates in real-time via WebSocket.\",\n      \"acceptanceCriteria\": \"- [ ] Ticket cards show pulsing indicator when agent session is active\\n- [ ] Tooltip/status bar shows current agent step and provider (Claude Code, Codex, Gemini)\\n- [ ] Session completion removes active indicator and moves ticket per workflow\\n- [ ] Session errors show error state on ticket with retry option\\n- [ ] Multiple concurrent sessions shown in project header with count\"\n    },\n    {\n      \"title\": \"As a developer, I want a unified event system for ticket state changes so that the system is maintainable and consistent\",\n      \"description\": \"Refactor the codebase to use a centralized event bus for all ticket state modifications. Replace direct API calls with events that flow through the workflow engine, ensuring single source of truth for business logic.\",\n      \"acceptanceCriteria\": \"- [ ] All ticket state changes route through central event bus\\n- [ ] Workflow engine subscribes to events and applies validation rules\\n- [ ] WebSocket broadcasts are triggered by events, not direct API calls\\n- [ ] Audit log captures all events with timestamp and actor (user/agent)\\n- [ ] Easy to add new transition rules or states in one location\"\n    }\n  ],\n  \"dependencies\": []\n}\n```",
+        "metadata": null,
+        "created_at": "2026-02-17T09:21:40.828Z"
+      },
+      {
+        "id": "eIX6RekDSTJx",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "l_1k8SYVJj_c",
+        "role": "user",
+        "content": "Realse flow update : \n\n1) We can choose whioch agent do the release notes / branhc creation\n2) We can click on a release tiles to have the details of every ticket inside the release\n3) We add a 6th column in the kanban \"Released\". We can't move ticket here directly. When we create a release, it will create a giant tiles with the number of the release for title, and move all ticket inside this",
+        "metadata": null,
+        "created_at": "2026-02-17T13:59:13.465Z"
+      },
+      {
+        "id": "XV-r2T2XiX00",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "l_1k8SYVJj_c",
+        "role": "assistant",
+        "content": "I have two clarifying questions before I can scope this properly:\n\n**For the \"Released\" kanban column with release tiles:**\n- Should the release tile be **expandable** (showing individual tickets inline in the kanban column), or a **compact summary** (e.g., \"v1.2.0 — 5 tickets\") that links to the release detail page when clicked? Or both — compact by default, expandable on click?\n\n**On reversibility:**\n- When a release is created and tickets move to \"Released\", should this be a **one-way** operation (released tickets can't move back — keeps history clean), or **reversible** (tickets can be dragged back to Done if a release needs correction)?\n\nThese choices significantly affect the scope of the workflow engine changes and kanban UI work.",
+        "metadata": null,
+        "created_at": "2026-02-17T14:01:15.325Z"
+      },
+      {
+        "id": "kCW-XW9oZnrB",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "l_1k8SYVJj_c",
+        "role": "user",
+        "content": "**Release tile**: Expandable tile\n**Reversibility**: One-way (Recommended)",
+        "metadata": null,
+        "created_at": "2026-02-17T14:01:49.173Z"
+      }
+    ],
+    "attachments": []
+  }
+}

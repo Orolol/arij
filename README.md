@@ -24,20 +24,26 @@ Most AI coding tools work at the file level — you prompt, you get code, you pa
 
 ## Features
 
-### Project Dashboard
-Manage multiple projects from a single overview. Each project card shows progress, current phase, and recent activity.
-
-![Dashboard](public/screenshots/dashboard.png)
-
 ### Kanban Board
-Organize your work into epics and bugs across workflow columns: Backlog, To Do, In Progress, Review, and Done. Drag and drop to reprioritize. Click any card to see details, comments, and agent activity.
+
+Organize your work into epics and bugs across workflow columns: Backlog, To Do, In Progress, Review, and Done. Drag and drop to reprioritize. Bug tickets are highlighted in red for quick identification.
 
 ![Kanban Board](public/screenshots/kanban.png)
 
+### Epic Detail & Actions
+
+Click any card to open its detail panel alongside the board. See the description, priority, status, user stories, and dependencies. Hit **"Send to Dev"** to dispatch an AI agent, or **"Build all"** to build multiple selected epics in parallel.
+
+![Ticket Detail](public/screenshots/ticket.png)
+
 ### AI Chat Panel
+
 Brainstorm ideas, create new epics, or refine your project spec — all through a chat interface powered by Claude Code (or another provider). The chat panel lives alongside the Kanban board in a resizable split view with tabbed conversations.
 
+![Chat Panel](public/screenshots/chat.png)
+
 ### One-Click Build
+
 Select an epic and hit "Build". Arij will:
 1. Create an isolated git worktree and branch
 2. Compose a structured prompt from your spec, epic details, and project context
@@ -46,6 +52,7 @@ Select an epic and hit "Build". Arij will:
 5. Move the card to Review when done
 
 ### Multi-Provider Support
+
 Use whichever AI coding tool you prefer:
 
 | Provider | What it uses |
@@ -57,6 +64,7 @@ Use whichever AI coding tool you prefer:
 Create "Named Agents" to mix and match providers and models — e.g., use Claude Opus for complex builds, Gemini Flash for quick bug fixes.
 
 ### Automated Code Review
+
 After an agent builds a feature, trigger AI-powered reviews:
 - **Security audit** — checks for vulnerabilities
 - **Code review** — best practices and quality
@@ -65,11 +73,11 @@ After an agent builds a feature, trigger AI-powered reviews:
 Review results are posted as comments on the epic.
 
 ### Agent Session Monitoring
+
 Track every AI agent session with detailed status, duration, provider info, and logs. See what's running, what's completed, and what failed.
 
-![Sessions](public/screenshots/sessions.png)
-
 ### Git Automation
+
 Arij handles all the git plumbing:
 - **Worktrees** — each epic gets its own isolated working directory
 - **Branches** — automatic branch creation and naming
@@ -77,21 +85,27 @@ Arij handles all the git plumbing:
 - **Merge** — merge completed work back to main
 
 ### Project Specification
+
 Write and edit your project spec in Markdown. Use it as context for all AI interactions — the spec is automatically injected into agent prompts so the AI always understands your project.
 
 ### Document Upload
+
 Upload reference documents (PDF, DOCX, Markdown, images) to your project. Documents are converted to Markdown and available as context for AI agents. Use `@filename` mentions in chat to reference specific docs.
 
 ### QA & Tech Checks
+
 Run AI-powered quality audits on your entire project. Get a detailed report and create epics directly from the findings.
 
 ### Release Management
+
 Create releases by selecting completed epics. Arij generates changelogs, creates git tags, and supports GitHub draft releases.
 
 ### Dependency Management
+
 Set dependencies between epics. Arij builds a DAG and schedules agent work in the correct order — parallel where possible, sequential where required.
 
 ### Team Mode
+
 For large features, enable Team Mode to have a single Claude Code session orchestrate multiple sub-agents working on different tickets simultaneously.
 
 ---

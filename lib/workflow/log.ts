@@ -15,17 +15,21 @@ export function logTransition(opts: {
   reason?: string;
   sessionId?: string;
 }) {
-  db.insert(ticketActivityLog)
-    .values({
-      id: createId(),
-      projectId: opts.projectId,
-      epicId: opts.epicId,
-      fromStatus: opts.fromStatus,
-      toStatus: opts.toStatus,
-      actor: opts.actor,
-      reason: opts.reason ?? null,
-      sessionId: opts.sessionId ?? null,
-      createdAt: new Date().toISOString(),
-    })
-    .run();
+  try {
+    db.insert(ticketActivityLog)
+      .values({
+        id: createId(),
+        projectId: opts.projectId,
+        epicId: opts.epicId,
+        fromStatus: opts.fromStatus,
+        toStatus: opts.toStatus,
+        actor: opts.actor,
+        reason: opts.reason ?? null,
+        sessionId: opts.sessionId ?? null,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+  } catch (err) {
+    console.warn("[logTransition] Failed to log activity:", (err as Error).message);
+  }
 }
