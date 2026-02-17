@@ -188,11 +188,10 @@ describe("POST /releases/[releaseId]/publish", () => {
     });
 
     expect(res.status).toBe(200);
-    expect(mockPublishRelease).toHaveBeenCalledWith(
-      expect.anything(),
-      "owner",
-      "repo",
-      100
-    );
+    expect(mockPublishRelease).toHaveBeenCalledWith({
+      owner: "owner",
+      repo: "repo",
+      releaseId: 100,
+    });
   });
 });
