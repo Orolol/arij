@@ -22,6 +22,10 @@ import {
   ExternalLink,
   Upload,
   FileEdit,
+  Bug,
+  Sparkles,
+  GitBranch,
+  Calendar,
 } from "lucide-react";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import { useReleasePublish } from "@/hooks/useReleasePublish";
@@ -32,6 +36,11 @@ interface Epic {
   id: string;
   title: string;
   status: string;
+  type?: string;
+  readableId?: string | null;
+  releaseId?: string | null;
+  usCount?: number;
+  usDone?: number;
 }
 
 interface Release {
@@ -48,6 +57,134 @@ interface Release {
   createdAt: string;
 }
 
+function ReleaseDetailDialog({
+  release,
+  projectId,
+  open,
+  onOpenChange,
+}: {
+  release: Release;
+  projectId: string;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const [epics, setEpics] = useState<Epic[]>([]);
+  const [loadingEpics, setLoadingEpics] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const epicIds: string[] = release.epicIds ? JSON.parse(release.epicIds) : [];
+    if (epicIds.length === 0) {
+      setEpics([]);
+      return;
+    }
+    setLoadingEpics(true);
+    fetch(`/api/projects/${projectId}/epics`)
+      .then((r) => r.json())
+      .then((data) => {
+        const all: Epic[] = data.data || [];
+        const idSet = new Set(epicIds);
+        setEpics(all.filter((e) => idSet.has(e.id)));
+      })
+      .catch(() => setEpics([]))
+      .finally(() => setLoadingEpics(false));
+  }, [open, release.epicIds, projectId]);
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            v{release.version}
+            {release.title && (
+              <span className="text-muted-foreground font-normal">
+                — {release.title}
+              </span>
+            )}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4 mt-2">
+          <div className="flex items-center gap-3 flex-wrap text-sm text-muted-foreground">
+            {release.gitTag && (
+              <span className="flex items-center gap-1">
+                <Tag className="h-3.5 w-3.5" />
+                {release.gitTag}
+              </span>
+            )}
+            {release.releaseBranch && (
+              <span className="flex items-center gap-1">
+                <GitBranch className="h-3.5 w-3.5" />
+                <span className="font-mono text-xs">{release.releaseBranch}</span>
+              </span>
+            )}
+            <span className="flex items-center gap-1">
+              <Calendar className="h-3.5 w-3.5" />
+              {new Date(release.createdAt).toLocaleDateString(undefined, {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+              })}
+            </span>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-medium mb-2">
+              Included Tickets ({loadingEpics ? "..." : epics.length})
+            </h4>
+            {loadingEpics ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Loading tickets...
+              </div>
+            ) : epics.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No tickets in this release</p>
+            ) : (
+              <div className="space-y-1">
+                {epics.map((epic) => (
+                  <div
+                    key={epic.id}
+                    className="flex items-center gap-2 p-2 rounded bg-muted/30 text-sm"
+                  >
+                    {epic.type === "bug" ? (
+                      <Bug className="h-3.5 w-3.5 text-red-400 shrink-0" />
+                    ) : (
+                      <Sparkles className="h-3.5 w-3.5 text-blue-400 shrink-0" />
+                    )}
+                    {epic.readableId && (
+                      <span className="text-xs text-muted-foreground font-mono shrink-0">
+                        {epic.readableId}
+                      </span>
+                    )}
+                    <span className="flex-1 truncate">{epic.title}</span>
+                    {epic.usCount != null && epic.usCount > 0 && (
+                      <span className="text-xs text-muted-foreground shrink-0">
+                        {epic.usDone ?? 0}/{epic.usCount} US
+                      </span>
+                    )}
+                    <Badge variant="outline" className="text-xs shrink-0">
+                      {epic.status}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {release.changelog && (
+            <div>
+              <h4 className="text-sm font-medium mb-2">Changelog</h4>
+              <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap text-sm text-muted-foreground bg-muted/20 rounded-lg p-4">
+                {release.changelog}
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ReleaseCard({
   release,
   projectId,
@@ -60,11 +197,13 @@ function ReleaseCard({
   onPublished: () => void;
 }) {
   const { publish, isPublishing, error } = useReleasePublish(projectId);
+  const [detailOpen, setDetailOpen] = useState(false);
 
   const isDraft = release.githubReleaseId !== null && !release.pushedAt;
   const isPublished = release.githubReleaseId !== null && release.pushedAt !== null;
 
-  async function handlePublish() {
+  async function handlePublish(e: React.MouseEvent) {
+    e.stopPropagation();
     const success = await publish(release.id);
     if (success) {
       onPublished();
@@ -72,87 +211,98 @@ function ReleaseCard({
   }
 
   return (
-    <Card className="p-5">
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-lg font-bold">v{release.version}</h3>
-            {release.title && (
-              <span className="text-muted-foreground">
-                — {release.title}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 mt-1 flex-wrap">
-            {release.gitTag && (
-              <Badge variant="outline" className="text-xs">
-                <Tag className="h-3 w-3 mr-1" />
-                {release.gitTag}
-              </Badge>
-            )}
-            {release.releaseBranch && (
-              <Badge variant="outline" className="text-xs font-mono">
-                {release.releaseBranch}
-              </Badge>
-            )}
-            {isDraft && (
-              <Badge variant="secondary" className="text-xs">
-                <FileEdit className="h-3 w-3 mr-1" />
-                Draft
-              </Badge>
-            )}
-            {isPublished && (
-              <Badge className="text-xs bg-green-600 text-white hover:bg-green-700">
-                Published
-              </Badge>
-            )}
-            <span className="text-xs text-muted-foreground">
-              {new Date(release.createdAt).toLocaleDateString()}
-            </span>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {isDraft && githubConfigured && (
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={handlePublish}
-              disabled={isPublishing}
-            >
-              {isPublishing ? (
-                <Loader2 className="h-3 w-3 animate-spin mr-1" />
-              ) : (
-                <Upload className="h-3 w-3 mr-1" />
+    <>
+      <Card
+        className="p-5 cursor-pointer hover:bg-accent/30 transition-colors"
+        onClick={() => setDetailOpen(true)}
+      >
+        <div className="flex items-start justify-between mb-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-lg font-bold">v{release.version}</h3>
+              {release.title && (
+                <span className="text-muted-foreground">
+                  — {release.title}
+                </span>
               )}
-              Publish
-            </Button>
-          )}
-          {release.githubReleaseUrl && (
-            <a
-              href={release.githubReleaseUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <Button size="sm" variant="ghost">
-                <ExternalLink className="h-3 w-3 mr-1" />
-                View on GitHub
+            </div>
+            <div className="flex items-center gap-2 mt-1 flex-wrap">
+              {release.gitTag && (
+                <Badge variant="outline" className="text-xs">
+                  <Tag className="h-3 w-3 mr-1" />
+                  {release.gitTag}
+                </Badge>
+              )}
+              {release.releaseBranch && (
+                <Badge variant="outline" className="text-xs font-mono">
+                  {release.releaseBranch}
+                </Badge>
+              )}
+              {isDraft && (
+                <Badge variant="secondary" className="text-xs">
+                  <FileEdit className="h-3 w-3 mr-1" />
+                  Draft
+                </Badge>
+              )}
+              {isPublished && (
+                <Badge className="text-xs bg-green-600 text-white hover:bg-green-700">
+                  Published
+                </Badge>
+              )}
+              <span className="text-xs text-muted-foreground">
+                {new Date(release.createdAt).toLocaleDateString()}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            {isDraft && githubConfigured && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handlePublish}
+                disabled={isPublishing}
+              >
+                {isPublishing ? (
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                ) : (
+                  <Upload className="h-3 w-3 mr-1" />
+                )}
+                Publish
               </Button>
-            </a>
-          )}
+            )}
+            {release.githubReleaseUrl && (
+              <a
+                href={release.githubReleaseUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Button size="sm" variant="ghost">
+                  <ExternalLink className="h-3 w-3 mr-1" />
+                  View on GitHub
+                </Button>
+              </a>
+            )}
+          </div>
         </div>
-      </div>
 
-      {error && (
-        <p className="text-sm text-destructive mb-2">{error}</p>
-      )}
+        {error && (
+          <p className="text-sm text-destructive mb-2">{error}</p>
+        )}
 
-      {release.changelog && (
-        <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap text-sm text-muted-foreground">
-          {release.changelog}
-        </div>
-      )}
-    </Card>
+        {release.changelog && (
+          <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap text-sm text-muted-foreground line-clamp-3">
+            {release.changelog}
+          </div>
+        )}
+      </Card>
+      <ReleaseDetailDialog
+        release={release}
+        projectId={projectId}
+        open={detailOpen}
+        onOpenChange={setDetailOpen}
+      />
+    </>
   );
 }
 
