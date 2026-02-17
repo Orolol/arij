@@ -266,6 +266,23 @@ export default function GitHubIssuesPage() {
           Save Mapping
         </Button>
       </Card>
+
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`px-4 py-2 rounded-lg shadow-lg text-sm font-medium transition-all animate-in fade-in slide-in-from-bottom-2 ${
+                toast.type === "success"
+                  ? "bg-green-600 text-white"
+                  : "bg-destructive text-destructive-foreground"
+              }`}
+            >
+              {toast.message}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -10,6 +10,12 @@ import { SessionPicker } from "@/components/shared/SessionPicker";
 import { useNamedAgentsList } from "@/hooks/useNamedAgentsList";
 import { Loader2, ArrowDownToLine, ArrowUpToLine, RefreshCw } from "lucide-react";
 
+interface Toast {
+  id: string;
+  type: "success" | "error";
+  message: string;
+}
+
 interface StatusResponse {
   data?: {
     branch: string;
@@ -46,8 +52,17 @@ export default function GitSyncPage() {
 
   const selectedProvider =
     agents.find((agent) => agent.id === namedAgentId)?.provider || "claude-code";
+  const [toasts, setToasts] = useState<Toast[]>([]);
   const [conflictDiffs, setConflictDiffs] = useState<ConflictDiff[]>([]);
   const [autoResolveConflicts, setAutoResolveConflicts] = useState(true);
+
+  const showToast = useCallback((type: "success" | "error", message: string) => {
+    const id = crypto.randomUUID();
+    setToasts((prev) => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }, []);
 
   const statusUrl = useMemo(() => {
     const q = new URLSearchParams();
@@ -104,25 +119,30 @@ export default function GitSyncPage() {
       const json = await res.json();
       if (res.status === 202) {
         setMessage(`Conflicts detected. Resolution agent started (session ${json.data?.sessionId}).`);
+        showToast("success", "Conflict resolution agent started");
         await refreshStatus();
         return;
       }
 
       if (res.status === 409 && json.data?.conflicted) {
         setError(json.error || "Merge conflicts detected");
+        showToast("error", "Merge conflicts detected");
         setConflictDiffs(Array.isArray(json.data.conflictDiffs) ? json.data.conflictDiffs : []);
         return;
       }
 
       if (!res.ok) {
         setError(json.error || "Pull failed");
+        showToast("error", json.error || "Pull failed");
         return;
       }
 
       setMessage("Pull completed successfully.");
+      showToast("success", "Pull completed successfully");
       await refreshStatus();
     } catch {
       setError("Pull failed");
+      showToast("error", "Pull failed");
     } finally {
       setPulling(false);
     }
@@ -146,13 +166,16 @@ export default function GitSyncPage() {
       const json = await res.json();
       if (!res.ok) {
         setError(json.error || "Push failed");
+        showToast("error", json.error || "Push failed");
         return;
       }
 
       setMessage("Push completed successfully.");
+      showToast("success", "Push completed successfully");
       await refreshStatus();
     } catch {
       setError("Push failed");
+      showToast("error", "Push failed");
     } finally {
       setPushing(false);
     }
@@ -238,6 +261,23 @@ export default function GitSyncPage() {
             </div>
           ))}
         </Card>
+      )}
+
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`px-4 py-2 rounded-lg shadow-lg text-sm font-medium transition-all animate-in fade-in slide-in-from-bottom-2 ${
+                toast.type === "success"
+                  ? "bg-green-600 text-white"
+                  : "bg-destructive text-destructive-foreground"
+              }`}
+            >
+              {toast.message}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

@@ -154,6 +154,12 @@ function ReleaseCard({
   );
 }
 
+interface Toast {
+  id: string;
+  type: "success" | "error";
+  message: string;
+}
+
 export default function ReleasesPage() {
   const params = useParams();
   const projectId = params.projectId as string;
@@ -161,6 +167,15 @@ export default function ReleasesPage() {
   const [doneEpics, setDoneEpics] = useState<Epic[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const showToast = useCallback((type: "success" | "error", message: string) => {
+    const id = crypto.randomUUID();
+    setToasts((prev) => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }, []);
 
   // GitHub config
   const { isConfigured: hasGitHub, loading: ghLoading } =
@@ -222,7 +237,10 @@ export default function ReleasesPage() {
       setPushToGitHub(false);
       setResumeSessionId(undefined);
       setDialogOpen(false);
+      showToast("success", "Release v" + version.trim() + " created");
       loadData();
+    } else {
+      showToast("error", "Failed to create release");
     }
 
     setCreating(false);
@@ -361,6 +379,23 @@ export default function ReleasesPage() {
               githubConfigured={hasGitHub}
               onPublished={loadData}
             />
+          ))}
+        </div>
+      )}
+
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`px-4 py-2 rounded-lg shadow-lg text-sm font-medium transition-all animate-in fade-in slide-in-from-bottom-2 ${
+                toast.type === "success"
+                  ? "bg-green-600 text-white"
+                  : "bg-destructive text-destructive-foreground"
+              }`}
+            >
+              {toast.message}
+            </div>
           ))}
         </div>
       )}
