@@ -1,0 +1,40 @@
+{
+  "migrationId": "2026-02-16T16-43-52-774Z",
+  "projectId": "cUfHlegssamR",
+  "capturedAt": "2026-02-16T16:43:52.774Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "tHu3rA7AB0wL",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "New Epic",
+        "status": "error",
+        "epic_id": null,
+        "provider": "opencode",
+        "created_at": "2026-02-16T16:40:00.769Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "XAMt6YZWZinu",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "tHu3rA7AB0wL",
+        "role": "user",
+        "content": "Ok on va continuer l'intégration de GIT. Dans la partie release, on créer des release qui vont déboucher sur la création d'une branche de release (on ne gère pas la CI/CD, on s'occupe juste de la partie branch) avec une release note créé par un agent\nOn va également avoir des bouton de gestion de GIT (on configure la branch principale, on se syncrhonise (pull / push avec la possibilité de dmander a un agent de gérer les conflits.\nEnfin, on va pouvoir lire les issue de github et créé des ticket automatiquement.",
+        "metadata": null,
+        "created_at": "2026-02-16T16:43:11.795Z"
+      },
+      {
+        "id": "TC_EvQoG7kid",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "tHu3rA7AB0wL",
+        "role": "assistant",
+        "content": "Error: opencode CLI not found. Ensure `opencode` is installed and available in PATH.",
+        "metadata": null,
+        "created_at": "2026-02-16T16:43:11.919Z"
+      }
+    ],
+    "attachments": []
+  }
+}

@@ -49,3 +49,21 @@ export const db = drizzle(sqlite, { schema });
     // Silently ignore — columns may not exist during build or before migration
   }
 }
+
+// ---------------------------------------------------------------------------
+// Backfill: fix raw opencode JSON stored in comments/messages (idempotent)
+// ---------------------------------------------------------------------------
+{
+  try {
+    const { backfillOpenCodeJson } = require("./backfill-opencode-json");
+    const result = backfillOpenCodeJson(sqlite);
+    const total = result.commentsFixed + result.messagesFixed + result.sessionsFixed + result.chunksFixed + result.qaReportsFixed;
+    if (total > 0) {
+      console.log(
+        `[backfill] Fixed opencode JSON: ${result.commentsFixed} comments, ${result.messagesFixed} messages, ${result.sessionsFixed} sessions, ${result.chunksFixed} chunks, ${result.qaReportsFixed} QA reports`
+      );
+    }
+  } catch {
+    // Silently ignore
+  }
+}

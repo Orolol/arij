@@ -49,10 +49,19 @@ export class OpenCodeProvider extends BaseCliProvider {
       if (!l.startsWith("{")) continue;
       try {
         const event = JSON.parse(l);
-        if (typeof event.text === "string") parts.push(event.text);
-        else if (typeof event.content === "string") parts.push(event.content);
-        else if (typeof event.result === "string") parts.push(event.result);
-        else if (typeof event.output === "string") parts.push(event.output);
+        // OpenCode event format: text content is nested in event.part.text
+        const part = event.part;
+        if (part && typeof part === "object" && typeof part.text === "string") {
+          parts.push(part.text);
+        } else if (typeof event.text === "string") {
+          parts.push(event.text);
+        } else if (typeof event.content === "string") {
+          parts.push(event.content);
+        } else if (typeof event.result === "string") {
+          parts.push(event.result);
+        } else if (typeof event.output === "string") {
+          parts.push(event.output);
+        }
       } catch {
         // skip
       }

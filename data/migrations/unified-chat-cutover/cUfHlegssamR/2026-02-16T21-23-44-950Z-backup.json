@@ -1,0 +1,68 @@
+{
+  "migrationId": "2026-02-16T21-23-44-950Z",
+  "projectId": "cUfHlegssamR",
+  "capturedAt": "2026-02-16T21:23:44.950Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "ubVPjpsJEOIl",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "Git Release & Integration",
+        "status": "active",
+        "epic_id": null,
+        "provider": "opencode",
+        "created_at": "2026-02-16T16:44:10.471Z"
+      },
+      {
+        "id": "DWgCSVqLkVKp",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "Git Release Integration Plan",
+        "status": "active",
+        "epic_id": null,
+        "provider": "opencode",
+        "created_at": "2026-02-16T16:47:02.262Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "OLAzDydukNGP",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "ubVPjpsJEOIl",
+        "role": "user",
+        "content": "Ok on va continuer l'intégration de GIT. Dans la partie release, on créer des release qui vont déboucher sur la création d'une branche de release (on ne gère pas la CI/CD, on s'occupe juste de la partie branch) avec une release note créé par un agent\nOn va également avoir des bouton de gestion de GIT (on configure la branch principale, on se syncrhonise (pull / push avec la possibilité de dmander a un agent de gérer les conflits.\nEnfin, on va pouvoir lire les issue de github et créé des ticket automatiquement.",
+        "metadata": null,
+        "created_at": "2026-02-16T16:44:15.015Z"
+      },
+      {
+        "id": "eiEA_jZi-C8d",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "ubVPjpsJEOIl",
+        "role": "assistant",
+        "content": "{\n  \"type\": \"error\",\n  \"timestamp\": 1771260255887,\n  \"sessionID\": \"ses_398a961adffeec27VSDpr6zq86\",\n  \"error\": {\n    \"name\": \"UnknownError\",\n    \"data\": {\n      \"message\": \"Model not found: kimi-k2.5-free/.\"\n    }\n  }\n}",
+        "metadata": null,
+        "created_at": "2026-02-16T16:44:15.961Z"
+      },
+      {
+        "id": "PVEEh27WMTT6",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "DWgCSVqLkVKp",
+        "role": "user",
+        "content": "Ok on va continuer l'intégration de GIT. Dans la partie release, on créer des release qui vont déboucher sur la création d'une branche de release (on ne gère pas la CI/CD, on s'occupe juste de la partie branch) avec une release note créé par un agent On va également avoir des bouton de gestion de GIT (on configure la branch principale, on se syncrhonise (pull / push avec la possibilité de dmander a un agent de gérer les conflits. Enfin, on va pouvoir lire les issue de github et créé des ticket automatiquement.",
+        "metadata": null,
+        "created_at": "2026-02-16T16:47:13.237Z"
+      },
+      {
+        "id": "595BHjuT1eAj",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "DWgCSVqLkVKp",
+        "role": "assistant",
+        "content": "Je vois que tu veux étendre l'intégration Git avec la gestion des releases et la synchronisation. Cela touche plusieurs domaines qui ont déjà des épics partiels :\n\n**Chevauchements détectés :**\n- \"GitHub Release Lifecycle\" et \"Release Workflow with GitHub Draft and Publish\" existent déjà\n- \"Git Sync UX in Epic Detail\" mentionne déjà la synchro Git\n- \"GitHub Remote Foundation and Configuration\" couvre la config\n\n**Questions de clarification :**\n\n1. **Le release note par agent** — Veux-tu un simple résumé des tickets mergés, ou un contenu plus élaboré (features, breaking changes, migrations) ? Et est-ce que l'agent peut aussi générer le tag Git ?\n\n2. **La gestion des conflits par agent** — C'est la partie la plus complexe. Imagines-tu un workflow où l'agent fait un `git merge`, analyse les conflits, les résout via Claude Code, puis commit ? Ou plutôt une assistance où l'agent guide l'utilisateur étape par étape ?\n\n3. **GitHub Issues → Tickets** — Souhaites-tu une importation manuelle (bouton \"Importer les issues ouvertes\") ou une synchronisation continue/automatique ? Et comment gérer les labels/milestones GitHub ?\n\n**Suggestion de découpage :**\nCet epic pourrait être divisé en 3 livrables indépendants :\n- **Release Branch Management** (création branche + release note agent)\n- **Git Sync with Agent Conflict Resolution** (pull/push/merge avec agent)\n- **GitHub Issues Importer** (lecture et création auto de tickets)\n\nQuelle approche préfères-tu ? Un epic unique ou ce découpage ?",
+        "metadata": null,
+        "created_at": "2026-02-16T16:47:27.496Z"
+      }
+    ],
+    "attachments": []
+  }
+}

@@ -345,6 +345,10 @@ function findSessionIdInValue(value: unknown): string | null {
   if (typeof value.sessionId === "string" && value.sessionId.trim().length > 0) {
     return value.sessionId.trim();
   }
+  // OpenCode uses sessionID (capital D)
+  if (typeof value.sessionID === "string" && value.sessionID.trim().length > 0) {
+    return value.sessionID.trim();
+  }
 
   const session = value.session;
   if (isRecord(session) && typeof session.id === "string" && session.id.trim().length > 0) {
@@ -452,6 +456,17 @@ function extractTextFromBlock(block: ClaudeJsonBlock): string {
 
   if (typeof block.text === "string") {
     return block.text;
+  }
+
+  // OpenCode event format: text content nested in part.text
+  const part = block.part;
+  if (
+    typeof part === "object" &&
+    part !== null &&
+    !Array.isArray(part) &&
+    typeof (part as Record<string, unknown>).text === "string"
+  ) {
+    return (part as Record<string, unknown>).text as string;
   }
 
   // Result field (top-level response object)
