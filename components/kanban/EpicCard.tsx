@@ -2,7 +2,7 @@
 
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { MouseEvent } from "react";
+import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import {
@@ -33,6 +33,8 @@ interface EpicCardProps {
   selected?: boolean;
   autoIncluded?: boolean;
   onToggleSelect?: () => void;
+  /** Flash highlight when ticket state changes */
+  highlight?: boolean;
 }
 
 const ACTIVITY_ICON_BY_TYPE: Record<
@@ -54,6 +56,7 @@ export function EpicCard({
   selected,
   autoIncluded,
   onToggleSelect,
+  highlight = false,
 }: EpicCardProps) {
   const {
     attributes,
@@ -63,6 +66,18 @@ export function EpicCard({
     transition,
     isDragging,
   } = useSortable({ id: epic.id });
+
+  // Flash highlight animation state
+  const [isHighlighted, setIsHighlighted] = useState(false);
+  const prevHighlight = useRef(highlight);
+  useEffect(() => {
+    if (highlight && !prevHighlight.current) {
+      setIsHighlighted(true);
+      const timer = setTimeout(() => setIsHighlighted(false), 1500);
+      return () => clearTimeout(timer);
+    }
+    prevHighlight.current = highlight;
+  }, [highlight]);
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -113,11 +128,13 @@ export function EpicCard({
         }
         onLinkedAgentHoverChange?.(null);
       }}
-      className={`p-2 gap-0 rounded-md shadow-none cursor-pointer hover:bg-accent/50 transition-colors ${
+      className={`p-2 gap-0 rounded-md shadow-none cursor-pointer hover:bg-accent/50 transition-all duration-300 motion-reduce:transition-none ${
         isOverlay ? "shadow-lg" : ""
       } ${isDragging ? "shadow-md" : ""} ${
         selected ? "ring-2 ring-primary" : autoIncluded ? "ring-2 ring-blue-400/50" : ""
-      } ${epic.type === "bug" ? "border-l-2 border-l-red-500" : ""}`}
+      } ${epic.type === "bug" ? "border-l-2 border-l-red-500" : ""} ${
+        isHighlighted ? "ring-2 ring-primary/70 bg-primary/5 motion-reduce:ring-0 motion-reduce:bg-transparent" : ""
+      }`}
     >
       <div className="flex items-start justify-between gap-2 mb-1">
         <div className="flex-1 min-w-0">
