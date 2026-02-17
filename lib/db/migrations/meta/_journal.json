@@ -120,6 +120,13 @@
       "when": 1771162200000,
       "tag": "0016_readable_ids_and_agent_names",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1771372800000,
+      "tag": "0020_epic_release_id",
+      "breakpoints": true
     }
   ]
 }

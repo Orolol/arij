@@ -26,14 +26,14 @@ export function backfillReleasedEpicIds(): { updated: number } {
       const epicIds: string[] = JSON.parse(release.epicIds);
       
       for (const epicId of epicIds) {
-        // Check if this epic exists and has no releaseId yet
+        // Check if this epic exists, is in "released" status, and has no releaseId yet
         const epic = db
-          .select({ id: epics.id, releaseId: epics.releaseId })
+          .select({ id: epics.id, releaseId: epics.releaseId, status: epics.status })
           .from(epics)
           .where(eq(epics.id, epicId))
           .get();
 
-        if (epic && !epic.releaseId) {
+        if (epic && !epic.releaseId && epic.status === "released") {
           db.update(epics)
             .set({ releaseId: release.id })
             .where(eq(epics.id, epicId))

@@ -1,11 +1,19 @@
 /**
  * Tests for the publish release endpoint.
+ *
+ * Route flow (current implementation):
+ * 1. Look up release by releaseId
+ * 2. Check release has githubReleaseId (no draft → 400)
+ * 3. Check release.projectId matches URL param (mismatch → 400)
+ * 4. Look up project for githubOwnerRepo (missing → 400)
+ * 5. Check if already published via getRelease (not draft → 409)
+ * 6. Publish via publishRelease
+ * 7. Update local record, log sync, return updated release
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-let projectGetResult: Record<string, unknown> | null = null;
-let releaseGetResult: Record<string, unknown> | null = null;
 let getCallCount = 0;
+let getResults: Array<Record<string, unknown> | null> = [];
 
 vi.mock("drizzle-orm", () => ({
   eq: vi.fn((...args: unknown[]) => ({ __eq: args })),
@@ -18,12 +26,9 @@ vi.mock("@/lib/db", () => {
     from: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
     get: vi.fn(() => {
+      const result = getResults[getCallCount] ?? null;
       getCallCount++;
-      // Call 1: project lookup
-      if (getCallCount === 1) return projectGetResult;
-      // Call 2: release lookup
-      if (getCallCount === 2) return releaseGetResult;
-      return null;
+      return result;
     }),
     update: vi.fn().mockReturnValue({
       set: vi.fn().mockReturnValue({
@@ -40,9 +45,11 @@ vi.mock("@/lib/db/schema", () => ({
 }));
 
 const mockPublishRelease = vi.fn();
+const mockGetRelease = vi.fn();
 
 vi.mock("@/lib/github/releases", () => ({
   publishRelease: (...args: unknown[]) => mockPublishRelease(...args),
+  getRelease: (...args: unknown[]) => mockGetRelease(...args),
 }));
 
 const mockLogSyncOperation = vi.fn();
@@ -57,52 +64,13 @@ function mockRequest() {
 describe("POST /releases/[releaseId]/publish", () => {
   beforeEach(() => {
     getCallCount = 0;
-    projectGetResult = null;
-    releaseGetResult = null;
+    getResults = [];
     vi.clearAllMocks();
   });
 
-  it("returns 404 when project not found", async () => {
-    projectGetResult = null;
-
-    const { POST } = await import(
-      "@/app/api/projects/[projectId]/releases/[releaseId]/publish/route"
-    );
-
-    const res = await POST(mockRequest(), {
-      params: Promise.resolve({ projectId: "proj-1", releaseId: "rel-1" }),
-    });
-
-    const json = await res.json();
-    expect(res.status).toBe(404);
-    expect(json.error).toContain("Project not found");
-  });
-
-  it("returns 400 when project has no GitHub config", async () => {
-    projectGetResult = {
-      id: "proj-1",
-      githubOwnerRepo: null,
-    };
-
-    const { POST } = await import(
-      "@/app/api/projects/[projectId]/releases/[releaseId]/publish/route"
-    );
-
-    const res = await POST(mockRequest(), {
-      params: Promise.resolve({ projectId: "proj-1", releaseId: "rel-1" }),
-    });
-
-    const json = await res.json();
-    expect(res.status).toBe(400);
-    expect(json.error).toContain("GitHub integration not configured");
-  });
-
   it("returns 404 when release not found", async () => {
-    projectGetResult = {
-      id: "proj-1",
-      githubOwnerRepo: "owner/repo",
-    };
-    releaseGetResult = null;
+    // Call 1 (release lookup): null
+    getResults = [null];
 
     const { POST } = await import(
       "@/app/api/projects/[projectId]/releases/[releaseId]/publish/route"
@@ -118,15 +86,10 @@ describe("POST /releases/[releaseId]/publish", () => {
   });
 
   it("returns 400 when release has no GitHub draft", async () => {
-    projectGetResult = {
-      id: "proj-1",
-      githubOwnerRepo: "owner/repo",
-    };
-    releaseGetResult = {
-      id: "rel-1",
-      projectId: "proj-1",
-      githubReleaseId: null,
-    };
+    // Call 1 (release lookup): release with no githubReleaseId
+    getResults = [
+      { id: "rel-1", projectId: "proj-1", githubReleaseId: null },
+    ];
 
     const { POST } = await import(
       "@/app/api/projects/[projectId]/releases/[releaseId]/publish/route"
@@ -138,24 +101,72 @@ describe("POST /releases/[releaseId]/publish", () => {
 
     const json = await res.json();
     expect(res.status).toBe(400);
-    expect(json.error).toContain("no associated GitHub draft");
+    expect(json.error).toContain("no draft release");
+  });
+
+  it("returns 400 when release does not belong to project", async () => {
+    // Call 1 (release lookup): release with different projectId
+    getResults = [
+      { id: "rel-1", projectId: "proj-other", githubReleaseId: 100 },
+    ];
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/releases/[releaseId]/publish/route"
+    );
+
+    const res = await POST(mockRequest(), {
+      params: Promise.resolve({ projectId: "proj-1", releaseId: "rel-1" }),
+    });
+
+    const json = await res.json();
+    expect(res.status).toBe(400);
+    expect(json.error).toContain("does not belong");
+  });
+
+  it("returns 400 when project has no GitHub config", async () => {
+    // Call 1 (release lookup): valid release
+    // Call 2 (project lookup): project without githubOwnerRepo
+    getResults = [
+      { id: "rel-1", projectId: "proj-1", githubReleaseId: 100 },
+      { id: "proj-1", githubOwnerRepo: null },
+    ];
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/releases/[releaseId]/publish/route"
+    );
+
+    const res = await POST(mockRequest(), {
+      params: Promise.resolve({ projectId: "proj-1", releaseId: "rel-1" }),
+    });
+
+    const json = await res.json();
+    expect(res.status).toBe(400);
+    expect(json.error).toContain("no GitHub repository");
   });
 
   it("publishes a draft release successfully", async () => {
-    projectGetResult = {
-      id: "proj-1",
-      githubOwnerRepo: "owner/repo",
-    };
-    releaseGetResult = {
+    const updatedRelease = {
       id: "rel-1",
       projectId: "proj-1",
       githubReleaseId: 100,
-      gitTag: "v1.0.0",
+      githubReleaseUrl: "https://github.com/owner/repo/releases/tag/v1.0.0",
+      pushedAt: "2026-02-17T00:00:00.000Z",
     };
+
+    // Call 1 (release lookup): valid release with github draft
+    // Call 2 (project lookup): project with github config
+    // Call 3 (updated release lookup after publish)
+    getResults = [
+      { id: "rel-1", projectId: "proj-1", githubReleaseId: 100, gitTag: "v1.0.0" },
+      { id: "proj-1", githubOwnerRepo: "owner/repo" },
+      updatedRelease,
+    ];
+
+    mockGetRelease.mockResolvedValue({ id: 100, draft: true });
 
     mockPublishRelease.mockResolvedValue({
       id: 100,
-      url: "https://github.com/owner/repo/releases/tag/v1.0.0",
+      htmlUrl: "https://github.com/owner/repo/releases/tag/v1.0.0",
       draft: false,
       tagName: "v1.0.0",
     });
@@ -170,8 +181,8 @@ describe("POST /releases/[releaseId]/publish", () => {
 
     const json = await res.json();
     expect(res.status).toBe(200);
-    expect(json.data.published).toBe(true);
-    expect(json.data.url).toContain("github.com");
+    expect(json.data).toBeDefined();
+    expect(json.data.githubReleaseUrl).toContain("github.com");
 
     expect(mockPublishRelease).toHaveBeenCalledWith({
       owner: "owner",

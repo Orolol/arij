@@ -56,7 +56,9 @@ const mockKanban = vi.hoisted(() => ({
       in_progress: [],
       review: [],
       done: [],
+      released: [],
     },
+    releaseGroups: [],
   },
   loading: false,
   moveEpic: vi.fn(),
@@ -77,6 +79,10 @@ vi.mock("@/components/kanban/Column", () => ({
 
 vi.mock("@/components/kanban/EpicCard", () => ({
   EpicCard: () => <div data-testid="epic-card-overlay" />,
+}));
+
+vi.mock("@/components/kanban/ReleasedColumn", () => ({
+  ReleasedColumn: () => <div data-testid="released-column" />,
 }));
 
 vi.mock("@dnd-kit/core", () => ({

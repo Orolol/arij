@@ -230,6 +230,87 @@ describe("validateTransition — invalid structure", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Guard: released state transitions
+// ---------------------------------------------------------------------------
+
+describe("validateTransition — released state", () => {
+  it("allows done -> released with system actor and release source", () => {
+    const result = validateTransition(
+      ctx("done", "released", { actor: "system", source: "release" })
+    );
+    expect(result.valid).toBe(true);
+  });
+
+  it("rejects done -> released with user actor", () => {
+    const result = validateTransition(
+      ctx("done", "released", { actor: "user", source: "release" })
+    );
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("only the system");
+  });
+
+  it("rejects done -> released with agent actor", () => {
+    const result = validateTransition(
+      ctx("done", "released", { actor: "agent", source: "release" })
+    );
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("only the system");
+  });
+
+  it("rejects drag to released", () => {
+    const result = validateTransition(
+      ctx("done", "released", { actor: "system", source: "drag" })
+    );
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("Cannot drag");
+  });
+
+  it("rejects transition away from released", () => {
+    const result = validateTransition(
+      ctx("released", "done", { actor: "system" })
+    );
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("Invalid transition");
+  });
+
+  it("rejects any non-done -> released transition", () => {
+    const result = validateTransition(
+      ctx("review", "released", { actor: "system", source: "release" })
+    );
+    expect(result.valid).toBe(false);
+    expect(result.error).toContain("Invalid transition");
+  });
+
+  it("allows same-column reorder in released", () => {
+    const result = validateTransition(ctx("released", "released"));
+    expect(result.valid).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Structural: done -> released is allowed
+// ---------------------------------------------------------------------------
+
+describe("isAllowedTransition — released", () => {
+  it("allows done -> released", () => {
+    expect(isAllowedTransition("done", "released")).toBe(true);
+  });
+
+  it("rejects released -> any", () => {
+    expect(isAllowedTransition("released", "done")).toBe(false);
+    expect(isAllowedTransition("released", "backlog")).toBe(false);
+    expect(isAllowedTransition("released", "review")).toBe(false);
+  });
+
+  it("rejects non-done -> released", () => {
+    expect(isAllowedTransition("backlog", "released")).toBe(false);
+    expect(isAllowedTransition("todo", "released")).toBe(false);
+    expect(isAllowedTransition("in_progress", "released")).toBe(false);
+    expect(isAllowedTransition("review", "released")).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Both UI and API transitions use the same validation
 // ---------------------------------------------------------------------------
 
@@ -270,6 +351,10 @@ describe("getAllowedTargets", () => {
   });
 
   it("returns valid targets for done", () => {
-    expect(getAllowedTargets("done")).toEqual(["review", "in_progress"]);
+    expect(getAllowedTargets("done")).toEqual(["review", "in_progress", "released"]);
+  });
+
+  it("returns empty targets for released (terminal state)", () => {
+    expect(getAllowedTargets("released")).toEqual([]);
   });
 });

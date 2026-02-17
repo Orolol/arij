@@ -26,7 +26,7 @@ interface SessionPickerProps {
   userStoryId?: string;
   agentType?: string;
   namedAgentId?: string | null;
-  provider: string;
+  provider?: string;
   selectedSessionId: string | undefined;
   onSelect: (sessionId: string | undefined) => void;
 }

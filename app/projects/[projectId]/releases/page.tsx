@@ -73,7 +73,12 @@ function ReleaseDetailDialog({
 
   useEffect(() => {
     if (!open) return;
-    const epicIds: string[] = release.epicIds ? JSON.parse(release.epicIds) : [];
+    let epicIds: string[] = [];
+    try {
+      epicIds = release.epicIds ? JSON.parse(release.epicIds) : [];
+    } catch {
+      // Ignore malformed JSON
+    }
     if (epicIds.length === 0) {
       setEpics([]);
       return;
@@ -346,9 +351,10 @@ export default function ReleasesPage() {
   const { agents: namedAgents } = useNamedAgentsList();
 
   // Resolve selected agent's provider for SessionPicker filtering
+  // When no named agent is selected, let the server resolve the default via agentType
   const selectedAgentProvider = namedAgentId
-    ? namedAgents.find((a) => a.id === namedAgentId)?.provider ?? "claude-code"
-    : "claude-code";
+    ? namedAgents.find((a) => a.id === namedAgentId)?.provider
+    : undefined;
 
   const loadData = useCallback(async () => {
     const [releasesRes, epicsRes] = await Promise.all([

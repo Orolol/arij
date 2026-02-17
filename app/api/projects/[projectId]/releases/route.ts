@@ -425,44 +425,59 @@ ${ticketContext}
     }
   }
 
-  // Save release
+  // Save release and transition epics atomically
   const id = createId();
-  db.insert(releases)
-    .values({
-      id,
-      projectId,
-      version,
-      title: title || null,
-      changelog,
-      epicIds: JSON.stringify(epicIds),
-      releaseBranch,
-      gitTag,
-      githubReleaseId,
-      githubReleaseUrl,
-      pushedAt,
-      createdAt: new Date().toISOString(),
-    })
-    .run();
 
-  // Transition included epics to "released" and stamp releaseId
+  // Pre-validate all epic transitions before committing anything
   for (const epic of selectedEpics) {
     const fromStatus = (epic.status ?? "backlog") as KanbanStatus;
-    const result = applyTransition({
-      projectId,
-      epicId: epic.id,
-      fromStatus,
-      toStatus: "released",
-      actor: "system",
-      source: "release",
-      reason: `Released in v${version}`,
-    });
-    if (result.valid) {
-      db.update(epics)
+    if (fromStatus !== "done") {
+      return NextResponse.json(
+        { error: `Epic "${epic.title}" has status "${fromStatus}" — only "done" epics can be released.` },
+        { status: 400 }
+      );
+    }
+  }
+
+  db.transaction((tx) => {
+    tx.insert(releases)
+      .values({
+        id,
+        projectId,
+        version,
+        title: title || null,
+        changelog,
+        epicIds: JSON.stringify(epicIds),
+        releaseBranch,
+        gitTag,
+        githubReleaseId,
+        githubReleaseUrl,
+        pushedAt,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+
+    // Transition included epics to "released" and stamp releaseId
+    for (const epic of selectedEpics) {
+      const fromStatus = (epic.status ?? "backlog") as KanbanStatus;
+      const result = applyTransition({
+        projectId,
+        epicId: epic.id,
+        fromStatus,
+        toStatus: "released",
+        actor: "system",
+        source: "release",
+        reason: `Released in v${version}`,
+      });
+      if (!result.valid) {
+        throw new Error(`Failed to transition epic "${epic.title}": ${result.error}`);
+      }
+      tx.update(epics)
         .set({ releaseId: id })
         .where(eq(epics.id, epic.id))
         .run();
     }
-  }
+  });
 
   // Emit release:created event for real-time board refresh
   emitReleaseCreated(projectId, id, version, epicIds);

@@ -12,7 +12,9 @@ const mockKanbanState = vi.hoisted(() => ({
       in_progress: [] as KanbanEpic[],
       review: [] as KanbanEpic[],
       done: [] as KanbanEpic[],
+      released: [] as KanbanEpic[],
     },
+    releaseGroups: [],
   },
   refresh: vi.fn(),
   moveEpic: vi.fn(),
@@ -55,6 +57,10 @@ vi.mock("@dnd-kit/sortable", () => ({
   SortableContext: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   verticalListSortingStrategy: {},
   sortableKeyboardCoordinates: vi.fn(),
+}));
+
+vi.mock("@/components/kanban/ReleasedColumn", () => ({
+  ReleasedColumn: () => <div data-testid="released-column" />,
 }));
 
 vi.mock("@dnd-kit/utilities", () => ({
@@ -104,7 +110,9 @@ function setBoardTodo(epic: KanbanEpic) {
       in_progress: [],
       review: [],
       done: [],
+      released: [],
     },
+    releaseGroups: [],
   };
 }
 

@@ -77,7 +77,12 @@ export function useKanban(projectId: string, options?: UseKanbanOptions) {
       }
 
       const releaseGroups: ReleaseGroup[] = releaseRows.map((rel) => {
-        const epicIds: string[] = rel.epicIds ? JSON.parse(rel.epicIds) : [];
+        let epicIds: string[] = [];
+        try {
+          epicIds = rel.epicIds ? JSON.parse(rel.epicIds) : [];
+        } catch {
+          // Ignore malformed JSON
+        }
         const groupEpics = epicIds
           .map((id) => releasedEpicMap.get(id))
           .filter((e): e is KanbanEpic => !!e);
