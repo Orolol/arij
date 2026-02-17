@@ -49,12 +49,22 @@ export async function createWorktree(
   const branches = await git.branchLocal();
   const branchExists = branches.all.includes(branchName);
 
+  // Determine the main branch to base new branches from
+  const mainBranch = branches.all.includes("main") ? "main" : "master";
+
   if (branchExists) {
     // Create worktree from existing branch
     await git.raw(["worktree", "add", worktreePath, branchName]);
   } else {
-    // Create new branch + worktree
-    await git.raw(["worktree", "add", "-b", branchName, worktreePath]);
+    // Create new branch + worktree, explicitly based from main
+    await git.raw([
+      "worktree",
+      "add",
+      "-b",
+      branchName,
+      worktreePath,
+      mainBranch,
+    ]);
   }
 
   return { worktreePath, branchName };

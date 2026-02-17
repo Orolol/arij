@@ -26,27 +26,110 @@ export interface FileDiff {
   hunks: DiffHunk[];
 }
 
+export interface DiffMetadata {
+  branchName: string;
+  baseBranch: string;
+  ahead: number;
+  behind: number;
+  hasUncommittedChanges: boolean;
+  mergeBaseCommit: string | null;
+}
+
+export interface DiffResult {
+  files: FileDiff[];
+  metadata: DiffMetadata;
+}
+
 /**
  * Generates a structured diff between an epic's worktree branch and
- * the main branch (or a specified base).
+ * the main branch (or a specified base), including metadata about
+ * branch divergence and uncommitted changes.
  */
 export async function getWorktreeDiff(
   worktreePath: string,
   baseBranch = "main"
-): Promise<FileDiff[]> {
+): Promise<DiffResult> {
   const git = simpleGit(worktreePath);
 
+  // Get current branch name
+  const branchName = (await git.revparse(["--abbrev-ref", "HEAD"])).trim();
+
   // Find the merge base so we only see the epic's changes
-  let mergeBase: string;
+  let mergeBase: string | null = null;
   try {
     mergeBase = (await git.raw(["merge-base", baseBranch, "HEAD"])).trim();
   } catch {
-    // If merge-base fails (e.g. unrelated histories), fall back to baseBranch
-    mergeBase = baseBranch;
+    // merge-base fails for unrelated histories or missing branches
   }
 
-  const rawDiff = await git.diff([mergeBase, "HEAD", "-U3"]);
-  return parseUnifiedDiff(rawDiff);
+  // Compute ahead/behind counts
+  let ahead = 0;
+  let behind = 0;
+  try {
+    const revList = (
+      await git.raw([
+        "rev-list",
+        "--left-right",
+        "--count",
+        `${baseBranch}...HEAD`,
+      ])
+    ).trim();
+    const parts = revList.split(/\s+/);
+    behind = parseInt(parts[0], 10) || 0;
+    ahead = parseInt(parts[1], 10) || 0;
+  } catch {
+    // If rev-list fails, counts stay at 0
+  }
+
+  // Check for uncommitted changes (staged + unstaged)
+  let hasUncommittedChanges = false;
+  try {
+    const status = await git.status();
+    hasUncommittedChanges =
+      status.modified.length > 0 ||
+      status.not_added.length > 0 ||
+      status.staged.length > 0 ||
+      status.deleted.length > 0 ||
+      status.renamed.length > 0 ||
+      status.created.length > 0;
+  } catch {
+    // Ignore status errors
+  }
+
+  // Get the committed diff from merge-base
+  let files: FileDiff[] = [];
+  if (mergeBase) {
+    const rawDiff = await git.diff([mergeBase, "HEAD", "-U3"]);
+    files = parseUnifiedDiff(rawDiff);
+  }
+
+  // If committed diff is empty but branch is ahead, try direct diff
+  // This handles the case where merge-base == HEAD (branch not diverged)
+  if (files.length === 0 && ahead === 0 && mergeBase) {
+    // The branch hasn't diverged from base — try showing uncommitted changes
+    try {
+      const uncommittedDiff = await git.diff(["-U3"]);
+      const stagedDiff = await git.diff(["--cached", "-U3"]);
+      const combined = [uncommittedDiff, stagedDiff].filter(Boolean).join("\n");
+      if (combined.trim()) {
+        files = parseUnifiedDiff(combined);
+      }
+    } catch {
+      // Ignore diff errors
+    }
+  }
+
+  return {
+    files,
+    metadata: {
+      branchName,
+      baseBranch,
+      ahead,
+      behind,
+      hasUncommittedChanges,
+      mergeBaseCommit: mergeBase,
+    },
+  };
 }
 
 /**
