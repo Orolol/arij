@@ -92,6 +92,18 @@ vi.mock("@/lib/db/schema", () => ({
     content: "content",
     createdAt: "createdAt",
   },
+  ticketActivityLog: {
+    _name: "ticketActivityLog",
+    id: "id",
+    projectId: "projectId",
+    epicId: "epicId",
+    fromStatus: "fromStatus",
+    toStatus: "toStatus",
+    actor: "actor",
+    reason: "reason",
+    sessionId: "sessionId",
+    createdAt: "createdAt",
+  },
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({
@@ -111,6 +123,14 @@ vi.mock("simple-git", () => ({
 
 vi.mock("@/lib/sync/export", () => ({
   tryExportArjiJson: vi.fn(),
+}));
+
+vi.mock("@/lib/workflow/log", () => ({
+  logTransition: vi.fn(),
+}));
+
+vi.mock("@/lib/events/emit", () => ({
+  emitTicketMoved: vi.fn(),
 }));
 
 describe("Review approval", () => {

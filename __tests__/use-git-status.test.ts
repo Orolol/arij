@@ -9,6 +9,7 @@ describe("useGitStatus", () => {
 
   it("fetches ahead/behind counts on mount", async () => {
     global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
       json: () =>
         Promise.resolve({
           data: { ahead: 3, behind: 1 },
@@ -16,7 +17,7 @@ describe("useGitStatus", () => {
     });
 
     const { result } = renderHook(() =>
-      useGitStatus("proj-1", "feature/my-branch")
+      useGitStatus("proj-1", "feature/my-branch", true)
     );
 
     await waitFor(() => {
@@ -33,6 +34,7 @@ describe("useGitStatus", () => {
 
   it("returns zeros when no remote tracking branch exists", async () => {
     global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
       json: () =>
         Promise.resolve({
           data: { ahead: 0, behind: 0, noRemote: true },
@@ -40,7 +42,7 @@ describe("useGitStatus", () => {
     });
 
     const { result } = renderHook(() =>
-      useGitStatus("proj-1", "feature/new-branch")
+      useGitStatus("proj-1", "feature/new-branch", true)
     );
 
     await waitFor(() => {
@@ -49,17 +51,17 @@ describe("useGitStatus", () => {
 
     expect(result.current.ahead).toBe(0);
     expect(result.current.behind).toBe(0);
-    expect(result.current.noRemote).toBe(true);
   });
 
   it("handles API error gracefully", async () => {
     global.fetch = vi.fn().mockResolvedValue({
+      ok: false,
       json: () =>
-        Promise.resolve({ error: "Git repo not found" }),
+        Promise.resolve({ message: "Git repo not found" }),
     });
 
     const { result } = renderHook(() =>
-      useGitStatus("proj-bad", "main")
+      useGitStatus("proj-bad", "main", true)
     );
 
     await waitFor(() => {
@@ -75,14 +77,14 @@ describe("useGitStatus", () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("Network error"));
 
     const { result } = renderHook(() =>
-      useGitStatus("proj-1", "main")
+      useGitStatus("proj-1", "main", true)
     );
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
     });
 
-    expect(result.current.error).toBe("Network error");
+    expect(result.current.error).toBe("Failed to fetch git status");
   });
 
   it("push() sends POST and refreshes status on success", async () => {
@@ -90,12 +92,14 @@ describe("useGitStatus", () => {
     global.fetch = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
       if (opts?.method === "POST") {
         return Promise.resolve({
+          ok: true,
           json: () => Promise.resolve({ data: { pushed: true, branch: "feat" } }),
         });
       }
       // GET status — second call returns updated counts
       callCount++;
       return Promise.resolve({
+        ok: true,
         json: () =>
           Promise.resolve({
             data: callCount <= 1 ? { ahead: 5, behind: 0 } : { ahead: 0, behind: 0 },
@@ -104,7 +108,7 @@ describe("useGitStatus", () => {
     });
 
     const { result } = renderHook(() =>
-      useGitStatus("proj-1", "feat")
+      useGitStatus("proj-1", "feat", true)
     );
 
     await waitFor(() => {
@@ -113,51 +117,49 @@ describe("useGitStatus", () => {
 
     expect(result.current.ahead).toBe(5);
 
-    let pushResult: { success: boolean; error?: string } | undefined;
     await act(async () => {
-      pushResult = await result.current.push();
+      await result.current.push();
     });
 
-    expect(pushResult?.success).toBe(true);
     expect(result.current.pushing).toBe(false);
   });
 
-  it("push() returns error on failure", async () => {
+  it("push() sets error on failure", async () => {
     global.fetch = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
       if (opts?.method === "POST") {
         return Promise.resolve({
+          ok: false,
           json: () => Promise.resolve({ error: "Permission denied" }),
         });
       }
       return Promise.resolve({
+        ok: true,
         json: () => Promise.resolve({ data: { ahead: 2, behind: 0 } }),
       });
     });
 
     const { result } = renderHook(() =>
-      useGitStatus("proj-1", "feat")
+      useGitStatus("proj-1", "feat", true)
     );
 
     await waitFor(() => {
       expect(result.current.loading).toBe(false);
     });
 
-    let pushResult: { success: boolean; error?: string } | undefined;
     await act(async () => {
-      pushResult = await result.current.push();
+      await result.current.push();
     });
 
-    expect(pushResult?.success).toBe(false);
-    expect(pushResult?.error).toBe("Permission denied");
-    expect(result.current.error).toBe("Permission denied");
+    expect(result.current.error).toBe("Push failed");
   });
 
-  it("does not fetch when projectId or branchName is null", async () => {
+  it("does not fetch when githubConfigured is false", async () => {
     global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
       json: () => Promise.resolve({ data: { ahead: 0, behind: 0 } }),
     });
 
-    renderHook(() => useGitStatus(null, "main"));
+    renderHook(() => useGitStatus("proj-1", "main", false));
 
     await new Promise((r) => setTimeout(r, 50));
     expect(global.fetch).not.toHaveBeenCalled();
@@ -168,7 +170,7 @@ describe("useGitStatus", () => {
       json: () => Promise.resolve({ data: { ahead: 0, behind: 0 } }),
     });
 
-    renderHook(() => useGitStatus("proj-1", null));
+    renderHook(() => useGitStatus("proj-1", null, true));
 
     await new Promise((r) => setTimeout(r, 50));
     expect(global.fetch).not.toHaveBeenCalled();

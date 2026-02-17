@@ -131,6 +131,12 @@ vi.mock("@/lib/db/schema", () => ({
     epicId: "epicId",
     status: "status",
   },
+  ticketActivityLog: {
+    _name: "ticketActivityLog",
+    id: "id",
+    projectId: "projectId",
+    epicId: "epicId",
+  },
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({ createId: vi.fn(() => "test-id") }));
@@ -196,6 +202,39 @@ vi.mock("@/lib/agent-sessions/lifecycle", () => ({
   markSessionRunning: vi.fn(),
   markSessionTerminal: vi.fn(),
   isSessionLifecycleConflictError: vi.fn(() => false),
+}));
+
+vi.mock("@/lib/events/emit", () => ({
+  emitTicketMoved: vi.fn(),
+  emitSessionStarted: vi.fn(),
+  emitSessionCompleted: vi.fn(),
+  emitSessionFailed: vi.fn(),
+  emitSessionProgress: vi.fn(),
+}));
+
+vi.mock("@/lib/workflow/log", () => ({
+  logTransition: vi.fn(),
+}));
+
+vi.mock("@/lib/sync/export", () => ({
+  tryExportArjiJson: vi.fn(),
+}));
+
+vi.mock("@/lib/workflow/engine", () => ({
+  validateTransition: vi.fn(() => ({ valid: true })),
+  isAllowedTransition: vi.fn(() => true),
+}));
+
+vi.mock("@/lib/workflow/context", () => ({
+  buildTransitionContext: vi.fn(() => ({
+    epicId: "epic-1",
+    fromStatus: "in_progress",
+    toStatus: "review",
+    hasOpenReviewComments: false,
+    hasCompletedReview: true,
+    hasRunningSession: false,
+    actor: "agent",
+  })),
 }));
 
 vi.mock("fs", () => ({

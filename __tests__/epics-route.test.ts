@@ -295,7 +295,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
 
     const json = await response.json();
     expect(response.status).toBe(400);
-    expect(json.error).toBe("Title is required");
+    expect(json.error).toBe("Validation failed");
   });
 
   it("rolls back epic creation when story insert fails inside transaction", async () => {

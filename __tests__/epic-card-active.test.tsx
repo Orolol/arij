@@ -74,10 +74,7 @@ describe("EpicCard", () => {
       "aria-label",
       "Build active: Claude Code agent 123abc"
     );
-    expect(indicator).toHaveAttribute(
-      "title",
-      "Build active: Claude Code agent 123abc"
-    );
+    // The component uses a Tooltip (not a title attribute) for the full label
   });
 
   it("renders user story count", () => {

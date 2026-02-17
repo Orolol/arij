@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { projects, epics, userStories, agentSessions, chatConversations } from "@/lib/db/schema";
+import { projects, epics, userStories, agentSessions, chatConversations, ticketComments } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { readArjiJson } from "./arji-json";
 import type { ArjiJsonComment } from "./arji-json";
@@ -64,6 +64,7 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
           status: epic.status,
           position: epic.position,
           branchName: epic.branchName,
+          type: epic.type ?? "feature",
           createdAt: now,
           updatedAt: now,
         })

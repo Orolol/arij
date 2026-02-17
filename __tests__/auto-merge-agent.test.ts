@@ -75,6 +75,25 @@ vi.mock("@/lib/db/schema", () => ({
   projects: {},
   epics: {},
   agentSessions: {},
+  ticketActivityLog: {
+    id: "id",
+    projectId: "projectId",
+    epicId: "epicId",
+    fromStatus: "fromStatus",
+    toStatus: "toStatus",
+    actor: "actor",
+    reason: "reason",
+    sessionId: "sessionId",
+    createdAt: "createdAt",
+  },
+}));
+
+vi.mock("@/lib/workflow/log", () => ({
+  logTransition: vi.fn(),
+}));
+
+vi.mock("@/lib/events/emit", () => ({
+  emitTicketMoved: vi.fn(),
 }));
 
 vi.mock("fs", () => ({

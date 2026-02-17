@@ -86,23 +86,22 @@ describe("Agent provider resolver", () => {
 
   it("resolveAgent returns provider + model from named agent assignment", async () => {
     const { resolveAgent } = await import("@/lib/agent-config/providers");
+    // resolveAgent first queries agentProviderDefaults for project scope (get),
+    // which returns a row with namedAgentId. Then it calls resolveFromRow which
+    // does a select().from(namedAgents).where(...).get() to look up the named agent.
     mockDb.getQueue = [
       {
-        agentType: "build",
+        // First get: project-scoped agentProviderDefaults row
         provider: "claude-code",
-        scope: "proj-1",
         namedAgentId: "na-1",
       },
-    ];
-    mockDb.allQueue = [
-      [
-        {
-          id: "na-1",
-          name: "Gemini Fast",
-          provider: "gemini-cli",
-          model: "gemini-2.0-flash",
-        },
-      ],
+      {
+        // Second get: named agent lookup by id
+        id: "na-1",
+        name: "Gemini Fast",
+        provider: "gemini-cli",
+        model: "gemini-2.0-flash",
+      },
     ];
 
     const resolved = await resolveAgent("build", "proj-1");

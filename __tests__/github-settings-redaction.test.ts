@@ -44,13 +44,17 @@ vi.mock("@/lib/db/schema", () => ({
   },
 }));
 
+vi.mock("@/lib/github/client", () => ({
+  GITHUB_PAT_SETTING_KEY: "github_pat",
+}));
+
 describe("GET /api/settings - GitHub PAT redaction", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbState.allQueue = [];
   });
 
-  it("redacts github_pat value, keeping prefix and last 4 chars", async () => {
+  it("redacts github_pat value, returning hasToken indicator", async () => {
     mockDbState.allQueue = [
       [
         {
@@ -65,10 +69,10 @@ describe("GET /api/settings - GitHub PAT redaction", () => {
     const response = await GET();
     const json = await response.json();
 
-    expect(json.data.github_pat).not.toBe("ghp_abcdefghijklmnopqrstuvwxyz1234");
-    expect(json.data.github_pat).toMatch(/^ghp_\*+1234$/);
-    // Ensure the raw token is not present
-    expect(json.data.github_pat).not.toContain("abcdefghijklmnopqrstuvwxyz");
+    // The API returns { hasToken: true } instead of the raw token
+    expect(json.data.github_pat).toEqual({ hasToken: true });
+    // Ensure the raw token is not present in the response
+    expect(JSON.stringify(json.data)).not.toContain("abcdefghijklmnopqrstuvwxyz");
   });
 
   it("does not touch other settings", async () => {
@@ -102,7 +106,7 @@ describe("GET /api/settings - GitHub PAT redaction", () => {
     const response = await GET();
     const json = await response.json();
 
-    // Short tokens get fully masked
-    expect(json.data.github_pat).toBe("****");
+    // Short tokens also return { hasToken: true }
+    expect(json.data.github_pat).toEqual({ hasToken: true });
   });
 });

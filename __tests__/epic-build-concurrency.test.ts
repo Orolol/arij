@@ -56,6 +56,36 @@ vi.mock("@/lib/db/schema", () => ({
     status: "status",
   },
   ticketComments: {},
+  reviewComments: {
+    id: "id",
+    epicId: "epicId",
+    status: "status",
+    createdAt: "createdAt",
+  },
+  ticketActivityLog: {
+    id: "id",
+    projectId: "projectId",
+    epicId: "epicId",
+    fromStatus: "fromStatus",
+    toStatus: "toStatus",
+    actor: "actor",
+    reason: "reason",
+    sessionId: "sessionId",
+    createdAt: "createdAt",
+  },
+}));
+
+vi.mock("@/lib/workflow/log", () => ({
+  logTransition: vi.fn(),
+}));
+
+vi.mock("@/lib/events/emit", () => ({
+  emitTicketMoved: vi.fn(),
+  emitTicketCreated: vi.fn(),
+  emitSessionStarted: vi.fn(),
+  emitSessionCompleted: vi.fn(),
+  emitSessionFailed: vi.fn(),
+  emitSessionProgress: vi.fn(),
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({

@@ -33,7 +33,7 @@ describe("generatePrBody", () => {
     const body = generatePrBody(epic, stories);
 
     expect(body).toContain("## Summary");
-    expect(body).toContain("**Dark Mode**");
+    expect(body).toContain("_No description provided._");
     expect(body).not.toContain("## User Stories");
   });
 

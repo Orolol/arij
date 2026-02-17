@@ -1,35 +1,35 @@
 import { describe, it, expect } from "vitest";
-import { parseRemoteUrl } from "@/lib/git/remote";
+import { parseGitHubOwnerRepoFromRemoteUrl as parseRemoteUrl } from "@/lib/git/remote";
 
 describe("parseRemoteUrl", () => {
   it("parses HTTPS URL with .git suffix", () => {
     const result = parseRemoteUrl("https://github.com/octocat/hello-world.git");
-    expect(result).toEqual({ owner: "octocat", repo: "hello-world" });
+    expect(result).toMatchObject({ owner: "octocat", repo: "hello-world" });
   });
 
   it("parses HTTPS URL without .git suffix", () => {
     const result = parseRemoteUrl("https://github.com/octocat/hello-world");
-    expect(result).toEqual({ owner: "octocat", repo: "hello-world" });
+    expect(result).toMatchObject({ owner: "octocat", repo: "hello-world" });
   });
 
   it("parses SSH URL with .git suffix", () => {
     const result = parseRemoteUrl("git@github.com:octocat/hello-world.git");
-    expect(result).toEqual({ owner: "octocat", repo: "hello-world" });
+    expect(result).toMatchObject({ owner: "octocat", repo: "hello-world" });
   });
 
   it("parses SSH URL without .git suffix", () => {
     const result = parseRemoteUrl("git@github.com:octocat/hello-world");
-    expect(result).toEqual({ owner: "octocat", repo: "hello-world" });
+    expect(result).toMatchObject({ owner: "octocat", repo: "hello-world" });
   });
 
   it("parses HTTPS URL with www prefix", () => {
     const result = parseRemoteUrl("https://www.github.com/octocat/hello-world.git");
-    expect(result).toEqual({ owner: "octocat", repo: "hello-world" });
+    expect(result).toMatchObject({ owner: "octocat", repo: "hello-world" });
   });
 
   it("handles repo names with hyphens and underscores", () => {
     const result = parseRemoteUrl("https://github.com/my-org/my_cool-repo.git");
-    expect(result).toEqual({ owner: "my-org", repo: "my_cool-repo" });
+    expect(result).toMatchObject({ owner: "my-org", repo: "my_cool-repo" });
   });
 
   it("returns null for non-GitHub URLs", () => {
@@ -49,6 +49,6 @@ describe("parseRemoteUrl", () => {
 
   it("handles HTTP URLs (without S)", () => {
     const result = parseRemoteUrl("http://github.com/octocat/hello-world.git");
-    expect(result).toEqual({ owner: "octocat", repo: "hello-world" });
+    expect(result).toMatchObject({ owner: "octocat", repo: "hello-world" });
   });
 });

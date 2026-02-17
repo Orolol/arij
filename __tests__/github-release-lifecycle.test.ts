@@ -72,9 +72,12 @@ vi.mock("@/lib/utils/nanoid", () => ({
 }));
 
 // Mock simple-git
+const mockGitPush = vi.fn();
+const mockGitAddTag = vi.fn();
 vi.mock("simple-git", () => ({
   default: vi.fn(() => ({
-    addTag: vi.fn(),
+    addTag: mockGitAddTag,
+    push: mockGitPush,
   })),
 }));
 
@@ -90,12 +93,6 @@ vi.mock("@/lib/claude/json-parser", () => ({
   parseClaudeOutput: vi.fn(() => ({ content: "" })),
 }));
 
-// Mock GitHub modules
-const mockPushTag = vi.fn();
-vi.mock("@/lib/git/remote", () => ({
-  pushTag: mockPushTag,
-}));
-
 const mockCreateDraftRelease = vi.fn();
 vi.mock("@/lib/github/releases", () => ({
   createDraftRelease: mockCreateDraftRelease,
@@ -105,6 +102,13 @@ vi.mock("@/lib/github/releases", () => ({
 const mockLogSyncOperation = vi.fn();
 vi.mock("@/lib/github/sync-log", () => ({
   logSyncOperation: mockLogSyncOperation,
+}));
+
+vi.mock("@/lib/activity-registry", () => ({
+  activityRegistry: {
+    register: vi.fn(),
+    unregister: vi.fn(),
+  },
 }));
 
 /* ------------------------------------------------------------------ */
@@ -160,7 +164,6 @@ describe("Release creation with pushToGitHub", () => {
     expect(json.data).toBeDefined();
 
     // GitHub functions should NOT have been called
-    expect(mockPushTag).not.toHaveBeenCalled();
     expect(mockCreateDraftRelease).not.toHaveBeenCalled();
     expect(mockLogSyncOperation).not.toHaveBeenCalled();
   });
@@ -175,7 +178,7 @@ describe("Release creation with pushToGitHub", () => {
       [{ id: "ep_1", title: "Epic 1", description: "desc" }],
     ];
 
-    mockPushTag.mockResolvedValue(undefined);
+    mockGitPush.mockResolvedValue(undefined);
     mockCreateDraftRelease.mockResolvedValue({
       id: 99,
       url: "https://github.com/owner/repo/releases/99",
@@ -201,8 +204,8 @@ describe("Release creation with pushToGitHub", () => {
     expect(res.status).toBe(201);
     expect(json.data).toBeDefined();
 
-    // pushTag should have been called
-    expect(mockPushTag).toHaveBeenCalledWith("/tmp/repo", "v1.0.0");
+    // git.push should have been called to push the tag
+    expect(mockGitPush).toHaveBeenCalledWith("origin", "v1.0.0");
 
     // createDraftRelease should have been called
     expect(mockCreateDraftRelease).toHaveBeenCalledWith(
@@ -219,7 +222,7 @@ describe("Release creation with pushToGitHub", () => {
     expect(mockLogSyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "proj_1",
-        operation: "tag",
+        operation: "tag_push",
         status: "success",
       })
     );
@@ -241,7 +244,7 @@ describe("Release creation with pushToGitHub", () => {
       [{ id: "ep_1", title: "Epic 1", description: "desc" }],
     ];
 
-    mockPushTag.mockRejectedValue(new Error("Network error"));
+    mockGitPush.mockRejectedValue(new Error("Network error"));
     mockCreateDraftRelease.mockRejectedValue(new Error("API error"));
 
     const { POST } = await import(
@@ -273,7 +276,7 @@ describe("Release creation with pushToGitHub", () => {
     // Failures logged
     expect(mockLogSyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
-        operation: "tag",
+        operation: "tag_push",
         status: "failure",
       })
     );
@@ -310,7 +313,6 @@ describe("Release creation with pushToGitHub", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(mockPushTag).not.toHaveBeenCalled();
     expect(mockCreateDraftRelease).not.toHaveBeenCalled();
   });
 

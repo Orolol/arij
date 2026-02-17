@@ -85,7 +85,7 @@ describe("EpicCard PR badge", () => {
     expect(link).toHaveAttribute("target", "_blank");
   });
 
-  it("applies green color for open status", () => {
+  it("renders link with muted foreground style for open status", () => {
     render(
       <EpicCard
         epic={makeEpic({
@@ -96,10 +96,10 @@ describe("EpicCard PR badge", () => {
       />
     );
     const link = screen.getByText("#1").closest("a");
-    expect(link?.className).toContain("text-green-500");
+    expect(link?.className).toContain("text-muted-foreground");
   });
 
-  it("applies purple color for merged status", () => {
+  it("renders link with muted foreground style for merged status", () => {
     render(
       <EpicCard
         epic={makeEpic({
@@ -110,10 +110,10 @@ describe("EpicCard PR badge", () => {
       />
     );
     const link = screen.getByText("#1").closest("a");
-    expect(link?.className).toContain("text-purple-500");
+    expect(link?.className).toContain("text-muted-foreground");
   });
 
-  it("applies red color for closed status", () => {
+  it("renders link with muted foreground style for closed status", () => {
     render(
       <EpicCard
         epic={makeEpic({
@@ -124,7 +124,7 @@ describe("EpicCard PR badge", () => {
       />
     );
     const link = screen.getByText("#1").closest("a");
-    expect(link?.className).toContain("text-red-500");
+    expect(link?.className).toContain("text-muted-foreground");
   });
 
   it("applies muted color for draft status", () => {
