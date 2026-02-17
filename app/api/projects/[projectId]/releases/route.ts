@@ -24,6 +24,7 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 import { processManager } from "@/lib/claude/process-manager";
 import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
+import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
 import fs from "fs";
 import path from "path";
 
@@ -56,6 +57,7 @@ export async function POST(
     generateChangelog = true,
     pushToGitHub = false,
     resumeSessionId,
+    namedAgentId,
   } = body as {
     version: string;
     title?: string;
@@ -63,6 +65,7 @@ export async function POST(
     generateChangelog?: boolean;
     pushToGitHub?: boolean;
     resumeSessionId?: string;
+    namedAgentId?: string;
   };
 
   if (!version) {
@@ -95,6 +98,10 @@ export async function POST(
     .where(and(inArray(epics.id, epicIds), eq(epics.projectId, projectId)))
     .all();
 
+  // Resolve which agent to use for changelog generation
+  const resolvedAgent = resolveAgentByNamedId("release_notes", projectId, namedAgentId);
+  const agentProvider = resolvedAgent.provider;
+
   let changelog = "";
   let releaseBranch: string | null = null;
 
@@ -107,7 +114,7 @@ export async function POST(
       projectId,
       type: "release",
       label: `Generating Changelog: v${version}`,
-      provider: "claude-code",
+      provider: agentProvider,
       startedAt: new Date().toISOString(),
     });
 
@@ -189,7 +196,7 @@ ${ticketContext}
 
       let cliSessionId: string | undefined;
       let resumeSession = false;
-      if (isResumableProvider("claude-code")) {
+      if (isResumableProvider(agentProvider)) {
         if (resumeSessionId) {
           const previous = db
             .select({
@@ -205,7 +212,7 @@ ${ticketContext}
           if (
             previous &&
             previous.projectId === projectId &&
-            previous.provider === "claude-code" &&
+            previous.provider === agentProvider &&
             (previous.cliSessionId || previous.claudeSessionId)
           ) {
             cliSessionId = previous.cliSessionId ?? previous.claudeSessionId ?? undefined;
@@ -221,15 +228,16 @@ ${ticketContext}
         id: sessionId,
         projectId,
         mode: "plan",
-        provider: "claude-code",
+        provider: agentProvider,
         prompt,
         logsPath,
         worktreePath: project.gitRepoPath || null,
         claudeSessionId: cliSessionId,
         cliSessionId,
         agentType: "release_notes",
-        namedAgentName: null,
-        model: null,
+        namedAgentName: resolvedAgent.name || null,
+        namedAgentId: resolvedAgent.namedAgentId || null,
+        model: resolvedAgent.model || null,
         createdAt: now,
       });
 
@@ -243,7 +251,7 @@ ${ticketContext}
           cliSessionId,
           resumeSession,
         },
-        "claude-code"
+        agentProvider
       );
 
       let info = processManager.getStatus(sessionId);

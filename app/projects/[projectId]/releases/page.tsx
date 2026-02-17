@@ -25,6 +25,8 @@ import {
 } from "lucide-react";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import { useReleasePublish } from "@/hooks/useReleasePublish";
+import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
+import { useNamedAgentsList } from "@/hooks/useNamedAgentsList";
 
 interface Epic {
   id: string;
@@ -190,6 +192,13 @@ export default function ReleasesPage() {
   const [pushToGitHub, setPushToGitHub] = useState(false);
   const [creating, setCreating] = useState(false);
   const [resumeSessionId, setResumeSessionId] = useState<string | undefined>(undefined);
+  const [namedAgentId, setNamedAgentId] = useState<string | null>(null);
+  const { agents: namedAgents } = useNamedAgentsList();
+
+  // Resolve selected agent's provider for SessionPicker filtering
+  const selectedAgentProvider = namedAgentId
+    ? namedAgents.find((a) => a.id === namedAgentId)?.provider ?? "claude-code"
+    : "claude-code";
 
   const loadData = useCallback(async () => {
     const [releasesRes, epicsRes] = await Promise.all([
@@ -203,7 +212,8 @@ export default function ReleasesPage() {
     setReleases(releasesData.data || []);
     setDoneEpics(
       (epicsData.data || []).filter(
-        (e: Epic) => e.status === "done" || e.status === "review"
+        (e: Epic & { releaseId?: string | null }) =>
+          e.status === "done" && !e.releaseId
       )
     );
     setLoading(false);
@@ -227,6 +237,7 @@ export default function ReleasesPage() {
         generateChangelog: true,
         pushToGitHub: hasGitHub && pushToGitHub,
         resumeSessionId,
+        namedAgentId: namedAgentId || undefined,
       }),
     });
 
@@ -236,6 +247,7 @@ export default function ReleasesPage() {
       setSelectedEpicIds(new Set());
       setPushToGitHub(false);
       setResumeSessionId(undefined);
+      setNamedAgentId(null);
       setDialogOpen(false);
       showToast("success", "Release v" + version.trim() + " created");
       loadData();
@@ -301,7 +313,7 @@ export default function ReleasesPage() {
                 </label>
                 {doneEpics.length === 0 ? (
                   <p className="text-sm text-muted-foreground">
-                    No completed/review epics available
+                    No completed epics available for release
                   </p>
                 ) : (
                   <div className="space-y-1 max-h-48 overflow-auto">
@@ -320,6 +332,20 @@ export default function ReleasesPage() {
                     ))}
                   </div>
                 )}
+              </div>
+
+              <div>
+                <label className="text-sm font-medium block mb-1">
+                  Changelog Agent
+                </label>
+                <NamedAgentSelect
+                  value={namedAgentId}
+                  onChange={(id) => {
+                    setNamedAgentId(id);
+                    setResumeSessionId(undefined);
+                  }}
+                  className="w-full h-9 text-sm"
+                />
               </div>
 
               {!ghLoading && hasGitHub && (
@@ -343,7 +369,8 @@ export default function ReleasesPage() {
               <SessionPicker
                 projectId={projectId}
                 agentType="release_notes"
-                provider="claude-code"
+                namedAgentId={namedAgentId}
+                provider={selectedAgentProvider}
                 selectedSessionId={resumeSessionId}
                 onSelect={setResumeSessionId}
               />
