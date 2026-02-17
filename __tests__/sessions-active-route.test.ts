@@ -42,6 +42,7 @@ vi.mock("@/lib/db/schema", () => ({
     mode: "mode",
     orchestrationMode: "orchestrationMode",
     provider: "provider",
+    agentType: "agentType",
     prompt: "prompt",
     startedAt: "startedAt",
     projectId: "projectId",
@@ -89,6 +90,7 @@ describe("sessions/active route activity typing", () => {
         mode: "code",
         orchestrationMode: "solo",
         provider: "codex",
+        agentType: null,
         prompt: null,
         startedAt: "2026-02-13T11:00:00.000Z",
         epicTitle: "Authentication",
@@ -156,6 +158,7 @@ describe("sessions/active route activity typing", () => {
         mode: "code",
         orchestrationMode: "solo",
         provider: "claude-code",
+        agentType: null,
         prompt: "## Merge Conflict Resolution\nA `git merge main` was started.",
         startedAt: "2026-02-12T10:00:00.000Z",
         epicTitle: "Payments",
@@ -194,6 +197,7 @@ describe("sessions/active route activity typing", () => {
         mode: "code",
         orchestrationMode: "solo",
         provider: "claude-code",
+        agentType: null,
         prompt:
           "You are performing a **security review** on the code changes for the ticket described above.",
         startedAt: "2026-02-12T10:05:00.000Z",
@@ -233,6 +237,7 @@ describe("sessions/active route activity typing", () => {
         mode: "code",
         orchestrationMode: "team",
         provider: "claude-code",
+        agentType: null,
         prompt: "team build prompt",
         startedAt: "2026-02-12T10:10:00.000Z",
         epicTitle: null,
@@ -258,6 +263,42 @@ describe("sessions/active route activity typing", () => {
       userStoryId: null,
       status: "running",
       mode: "code",
+    });
+  });
+
+  it("classifies release note sessions as release", async () => {
+    state.rows = [
+      {
+        id: "sess-release-1",
+        epicId: null,
+        userStoryId: null,
+        status: "running",
+        mode: "plan",
+        orchestrationMode: "solo",
+        provider: "claude-code",
+        agentType: "release_notes",
+        prompt: "Generate release notes",
+        startedAt: "2026-02-12T10:12:00.000Z",
+        epicTitle: null,
+        storyTitle: null,
+      },
+    ];
+
+    const { GET } = await import(
+      "@/app/api/projects/[projectId]/sessions/active/route"
+    );
+
+    const response = await GET({} as never, {
+      params: Promise.resolve({ projectId: "proj-1" }),
+    });
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data[0]).toMatchObject({
+      id: "sess-release-1",
+      type: "release",
+      label: "Generating release notes",
+      mode: "plan",
     });
   });
 });

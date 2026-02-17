@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { SessionPicker } from "@/components/shared/SessionPicker";
 import {
   Dialog,
   DialogContent,
@@ -173,6 +174,7 @@ export default function ReleasesPage() {
   );
   const [pushToGitHub, setPushToGitHub] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [resumeSessionId, setResumeSessionId] = useState<string | undefined>(undefined);
 
   const loadData = useCallback(async () => {
     const [releasesRes, epicsRes] = await Promise.all([
@@ -209,6 +211,7 @@ export default function ReleasesPage() {
         epicIds: Array.from(selectedEpicIds),
         generateChangelog: true,
         pushToGitHub: hasGitHub && pushToGitHub,
+        resumeSessionId,
       }),
     });
 
@@ -217,6 +220,7 @@ export default function ReleasesPage() {
       setTitle("");
       setSelectedEpicIds(new Set());
       setPushToGitHub(false);
+      setResumeSessionId(undefined);
       setDialogOpen(false);
       loadData();
     }
@@ -317,6 +321,14 @@ export default function ReleasesPage() {
                   </label>
                 </div>
               )}
+
+              <SessionPicker
+                projectId={projectId}
+                agentType="release_notes"
+                provider="claude-code"
+                selectedSessionId={resumeSessionId}
+                onSelect={setResumeSessionId}
+              />
 
               <Button
                 onClick={handleCreateRelease}

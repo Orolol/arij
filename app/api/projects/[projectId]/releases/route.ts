@@ -6,16 +6,26 @@ import {
   epics,
   userStories,
   settings,
+  agentSessions,
 } from "@/lib/db/schema";
 import { eq, desc, inArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
-import { spawnClaude } from "@/lib/claude/spawn";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import simpleGit from "simple-git";
 import { createDraftRelease } from "@/lib/github/releases";
 import { logSyncOperation } from "@/lib/github/sync-log";
 import { activityRegistry } from "@/lib/activity-registry";
 import { createReleaseBranchAndCommitChangelog } from "@/lib/git/release";
+import {
+  createQueuedSession,
+  markSessionRunning,
+  markSessionTerminal,
+  isSessionLifecycleConflictError,
+} from "@/lib/agent-sessions/lifecycle";
+import { processManager } from "@/lib/claude/process-manager";
+import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
+import fs from "fs";
+import path from "path";
 
 export async function GET(
   _request: NextRequest,
@@ -45,12 +55,14 @@ export async function POST(
     epicIds,
     generateChangelog = true,
     pushToGitHub = false,
+    resumeSessionId,
   } = body as {
     version: string;
     title?: string;
     epicIds: string[];
     generateChangelog?: boolean;
     pushToGitHub?: boolean;
+    resumeSessionId?: string;
   };
 
   if (!version) {
@@ -168,16 +180,101 @@ ${ticketContext}
 - Return ONLY the markdown changelog, no extra text`;
 
     try {
-      const { promise } = spawnClaude({
+      const sessionId = createId();
+      const now = new Date().toISOString();
+      const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
+      fs.mkdirSync(logsDir, { recursive: true });
+      const logsPath = path.join(logsDir, "logs.json");
+
+      let cliSessionId: string | undefined;
+      let resumeSession = false;
+      if (isResumableProvider("claude-code")) {
+        if (resumeSessionId) {
+          const previous = db
+            .select({
+              id: agentSessions.id,
+              projectId: agentSessions.projectId,
+              provider: agentSessions.provider,
+              cliSessionId: agentSessions.cliSessionId,
+              claudeSessionId: agentSessions.claudeSessionId,
+            })
+            .from(agentSessions)
+            .where(eq(agentSessions.id, resumeSessionId))
+            .get();
+          if (
+            previous &&
+            previous.projectId === projectId &&
+            previous.provider === "claude-code" &&
+            (previous.cliSessionId || previous.claudeSessionId)
+          ) {
+            cliSessionId = previous.cliSessionId ?? previous.claudeSessionId ?? undefined;
+            resumeSession = true;
+          }
+        }
+        if (!cliSessionId) {
+          cliSessionId = crypto.randomUUID();
+        }
+      }
+
+      createQueuedSession({
+        id: sessionId,
+        projectId,
         mode: "plan",
+        provider: "claude-code",
         prompt,
-        cwd: project.gitRepoPath || undefined,
+        logsPath,
+        worktreePath: project.gitRepoPath || null,
+        claudeSessionId: cliSessionId,
+        cliSessionId,
+        agentType: "release_notes",
+        namedAgentName: null,
+        model: null,
+        createdAt: now,
       });
 
-      const result = await promise;
-      if (result.success && result.result) {
-        const parsed = parseClaudeOutput(result.result);
-        changelog = parsed.content;
+      markSessionRunning(sessionId, now);
+      processManager.start(
+        sessionId,
+        {
+          mode: "plan",
+          prompt,
+          cwd: project.gitRepoPath || undefined,
+          cliSessionId,
+          resumeSession,
+        },
+        "claude-code"
+      );
+
+      let info = processManager.getStatus(sessionId);
+      while (info && info.status === "running") {
+        await new Promise((r) => setTimeout(r, 1200));
+        info = processManager.getStatus(sessionId);
+      }
+      const result = info?.result;
+
+      try {
+        fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
+      } catch {
+        // best effort
+      }
+
+      try {
+        markSessionTerminal(
+          sessionId,
+          {
+            success: !!result?.success,
+            error: result?.error || null,
+          },
+          new Date().toISOString()
+        );
+      } catch (error) {
+        if (!isSessionLifecycleConflictError(error)) {
+          console.error("[release] failed to finalize release-notes session", error);
+        }
+      }
+
+      if (result?.success && result.result) {
+        changelog = parseClaudeOutput(result.result).content;
       }
     } catch {
       // Fall back to auto-generated changelog
