@@ -56,7 +56,7 @@ export default function KanbanPage() {
   const [bugDialogOpen, setBugDialogOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [highlightedActivityId, setHighlightedActivityId] = useState<string | null>(null);
-  const { activities } = useAgentPolling(projectId, 3000, refreshTrigger);
+  const { activities, failedSessions } = useAgentPolling(projectId, 3000, refreshTrigger);
   const prevSessionIds = useRef<Set<string>>(new Set());
   const panelRef = useRef<UnifiedChatPanelHandle>(null);
 
@@ -159,6 +159,30 @@ export default function KanbanPage() {
       setToasts((t) => t.filter((toast) => toast.id !== id));
     }, 5000);
   }, []);
+
+  const handleRetryBuild = useCallback(async (epicId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/build`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          epicIds: [epicId],
+          mode: "parallel",
+          namedAgentId,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        addToast("error", data.error || "Failed to retry build");
+      } else {
+        addToast("success", `Retrying build for epic`);
+        setRefreshTrigger((t) => t + 1);
+      }
+    } catch {
+      addToast("error", "Failed to retry build");
+    }
+  }, [projectId, namedAgentId, addToast]);
 
   useEffect(() => {
     const deleted = searchParams.get("deleted");
@@ -591,6 +615,8 @@ export default function KanbanPage() {
                 activeAgentActivities={activeAgentActivities}
                 onLinkedAgentHoverChange={setHighlightedActivityId}
                 onMoveError={(error) => addToast("error", error)}
+                failedSessions={failedSessions}
+                onRetryBuild={handleRetryBuild}
               />
             </div>
 

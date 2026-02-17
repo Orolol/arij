@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 
 // Mock dnd-kit
 vi.mock("@dnd-kit/sortable", () => ({
@@ -81,5 +81,82 @@ describe("EpicCard", () => {
     render(<EpicCard epic={baseEpic} />);
 
     expect(screen.getByText("1/3 US")).toBeInTheDocument();
+  });
+
+  it("renders error badge when failedSession is provided and no active agent", () => {
+    render(
+      <EpicCard
+        epic={baseEpic}
+        failedSession={{
+          sessionId: "sess-fail-1",
+          error: "Process exited with code 1",
+          agentType: "build",
+        }}
+      />
+    );
+
+    const errorBadge = screen.getByTestId("epic-error-epic-1");
+    expect(errorBadge).toBeInTheDocument();
+    expect(errorBadge).toHaveAttribute("aria-label", "Agent session failed");
+  });
+
+  it("does not render error badge when activeAgentActivity is present even with failedSession", () => {
+    render(
+      <EpicCard
+        epic={baseEpic}
+        failedSession={{
+          sessionId: "sess-fail-1",
+          error: "Process exited with code 1",
+          agentType: "build",
+        }}
+        activeAgentActivity={{
+          sessionId: "sess-active-1",
+          actionType: "build",
+          agentName: "Claude Code agent abc123",
+        }}
+      />
+    );
+
+    expect(screen.queryByTestId("epic-error-epic-1")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("epic-retry-epic-1")).not.toBeInTheDocument();
+  });
+
+  it("renders retry button and calls onRetry when clicked", () => {
+    const onRetry = vi.fn();
+
+    render(
+      <EpicCard
+        epic={baseEpic}
+        failedSession={{
+          sessionId: "sess-fail-1",
+          error: "Process exited with code 1",
+          agentType: "build",
+        }}
+        onRetry={onRetry}
+      />
+    );
+
+    const retryBtn = screen.getByTestId("epic-retry-epic-1");
+    expect(retryBtn).toBeInTheDocument();
+    expect(retryBtn).toHaveAttribute("aria-label", "Retry failed agent session");
+
+    fireEvent.click(retryBtn);
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not render retry button when onRetry is not provided", () => {
+    render(
+      <EpicCard
+        epic={baseEpic}
+        failedSession={{
+          sessionId: "sess-fail-1",
+          error: "Process exited with code 1",
+          agentType: "build",
+        }}
+      />
+    );
+
+    expect(screen.getByTestId("epic-error-epic-1")).toBeInTheDocument();
+    expect(screen.queryByTestId("epic-retry-epic-1")).not.toBeInTheDocument();
   });
 });

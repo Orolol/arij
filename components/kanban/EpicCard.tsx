@@ -26,8 +26,11 @@ import {
   GitMerge,
   Bug,
   Bot,
+  AlertTriangle,
+  RotateCcw,
   type LucideIcon,
 } from "lucide-react";
+import type { FailedSessionInfo } from "@/hooks/useAgentPolling";
 
 function providerLabel(provider?: string): string {
   if (!provider) return "Agent";
@@ -49,6 +52,10 @@ interface EpicCardProps {
   onToggleSelect?: () => void;
   /** Flash highlight when ticket state changes */
   highlight?: boolean;
+  /** Info about the most recent failed agent session for this epic */
+  failedSession?: FailedSessionInfo;
+  /** Called when user clicks the retry button on a failed session indicator */
+  onRetry?: () => void;
 }
 
 const ACTIVITY_ICON_BY_TYPE: Record<
@@ -71,6 +78,8 @@ export function EpicCard({
   autoIncluded,
   onToggleSelect,
   highlight = false,
+  failedSession,
+  onRetry,
 }: EpicCardProps) {
   const {
     attributes,
@@ -207,6 +216,41 @@ export function EpicCard({
             >
               <Bot className="h-3.5 w-3.5" />
             </span>
+          )}
+          {failedSession && !activeAgentActivity && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className="inline-flex items-center gap-0.5 rounded-sm bg-red-500/15 text-red-500 px-1 py-0.5"
+                    aria-label="Agent session failed"
+                    data-testid={`epic-error-${epic.id}`}
+                  >
+                    <AlertTriangle className="h-3 w-3" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs max-w-xs">
+                  <div className="flex flex-col gap-1">
+                    <span className="font-medium text-red-400">Agent failed</span>
+                    <span className="text-muted-foreground break-words">{failedSession.error}</span>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+          {failedSession && !activeAgentActivity && onRetry && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetry();
+              }}
+              className="inline-flex items-center gap-0.5 rounded-sm bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 px-1.5 py-0.5 text-xs transition-colors"
+              aria-label="Retry failed agent session"
+              data-testid={`epic-retry-${epic.id}`}
+            >
+              <RotateCcw className="h-3 w-3" />
+              Retry
+            </button>
           )}
           <Badge
             className={`text-xs shrink-0 ${PRIORITY_COLORS[epic.priority] || PRIORITY_COLORS[0]}`}

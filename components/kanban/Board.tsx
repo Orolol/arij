@@ -24,6 +24,7 @@ import {
 } from "@/lib/types/kanban";
 import { useKanban } from "@/hooks/useKanban";
 import { BoardSkeleton } from "./BoardSkeleton";
+import type { FailedSessionInfo } from "@/hooks/useAgentPolling";
 
 interface BoardProps {
   projectId: string;
@@ -36,6 +37,8 @@ interface BoardProps {
   activeAgentActivities?: Record<string, KanbanEpicAgentActivity>;
   onLinkedAgentHoverChange?: (activityId: string | null) => void;
   onMoveError?: (error: string) => void;
+  failedSessions?: Record<string, FailedSessionInfo>;
+  onRetryBuild?: (epicId: string) => void;
 }
 
 function isAiCommentAuthor(author: string | null | undefined) {
@@ -54,6 +57,8 @@ export function Board({
   activeAgentActivities,
   onLinkedAgentHoverChange,
   onMoveError,
+  failedSessions,
+  onRetryBuild,
 }: BoardProps) {
   const { board, loading, moveEpic, refresh } = useKanban(projectId, { onMoveError });
   const [seenAiCommentIdsByEpic, setSeenAiCommentIdsByEpic] = useState<
@@ -228,6 +233,8 @@ export function Board({
             activeAgentActivities={activeAgentActivities}
             onLinkedAgentHoverChange={onLinkedAgentHoverChange}
             unreadAiByEpicId={unreadAiByEpicId}
+            failedSessions={failedSessions}
+            onRetryBuild={onRetryBuild}
           />
         ))}
       </div>
