@@ -1,9 +1,10 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { githubIssues, namedAgents, projects, epics } from "@/lib/db/schema";
+import { githubIssues, namedAgents, projects, epics, gitSyncLog } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 import { createOctokit, parseOwnerRepo } from "@/lib/github/client";
 import { generateReadableId } from "@/lib/db/readable-id";
+import { logSyncOperation } from "@/lib/github/sync-log";
 
 export interface RemoteIssue {
   issueNumber: number;
@@ -123,19 +124,46 @@ export async function syncProjectGitHubIssues(projectId: string): Promise<{ sync
     }
   }
 
+  // Remove non-imported issues that are no longer in the open set
+  // (imported issues are kept for reference even when closed on GitHub)
+  db.delete(githubIssues)
+    .where(
+      and(
+        eq(githubIssues.projectId, projectId),
+        sql`${githubIssues.syncedAt} != ${now}`,
+        sql`${githubIssues.importedEpicId} IS NULL`
+      )
+    )
+    .run();
+
+  logSyncOperation({
+    projectId,
+    operation: "issues_sync",
+    status: "success",
+    detail: { synced: issues.length },
+  });
+
   return { synced: issues.length };
 }
 
 export function isGitHubIssueSyncDue(projectId: string, intervalMinutes = 15): boolean {
   const last = db
-    .select({ syncedAt: sql<string | null>`MAX(${githubIssues.syncedAt})` })
-    .from(githubIssues)
-    .where(eq(githubIssues.projectId, projectId))
+    .select({ createdAt: gitSyncLog.createdAt })
+    .from(gitSyncLog)
+    .where(
+      and(
+        eq(gitSyncLog.projectId, projectId),
+        eq(gitSyncLog.operation, "issues_sync"),
+        eq(gitSyncLog.status, "success")
+      )
+    )
+    .orderBy(desc(gitSyncLog.createdAt))
+    .limit(1)
     .get();
 
-  if (!last?.syncedAt) return true;
+  if (!last?.createdAt) return true;
 
-  const lastAt = new Date(last.syncedAt).getTime();
+  const lastAt = new Date(last.createdAt).getTime();
   const intervalMs = intervalMinutes * 60_000;
   return Date.now() - lastAt > intervalMs;
 }
