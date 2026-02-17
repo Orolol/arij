@@ -29,6 +29,14 @@ export async function PATCH(
     return NextResponse.json({ error: "Epic not found" }, { status: 404 });
   }
 
+  // Prevent any changes to released epics' status
+  if (existing.status === "released" && body.status !== undefined && body.status !== "released") {
+    return NextResponse.json(
+      { error: "Cannot change status of a released epic. Released tickets cannot be moved." },
+      { status: 400 }
+    );
+  }
+
   // Validate workflow rules if status is changing
   if (body.status !== undefined && body.status !== existing.status) {
     const result = applyTransition({
