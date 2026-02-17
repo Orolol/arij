@@ -9,11 +9,16 @@ const mockDbState = vi.hoisted(() => ({
   allQueue: [] as unknown[],
   getQueue: [] as unknown[],
 }));
+const mockGitAddTag = vi.hoisted(() => vi.fn());
+const mockGitTag = vi.hoisted(() => vi.fn());
+const mockGitPush = vi.hoisted(() => vi.fn());
+const mockCreateReleaseBranchAndCommitChangelog = vi.hoisted(() => vi.fn());
 
 const mockSchema = vi.hoisted(() => ({
   releases: { __name: "releases" },
   projects: { __name: "projects" },
   epics: { __name: "epics" },
+  userStories: { __name: "user_stories" },
   settings: { __name: "settings" },
   gitSyncLog: { __name: "git_sync_log" },
 }));
@@ -74,7 +79,9 @@ vi.mock("@/lib/utils/nanoid", () => ({
 // Mock simple-git
 vi.mock("simple-git", () => ({
   default: vi.fn(() => ({
-    addTag: vi.fn(),
+    addTag: mockGitAddTag,
+    tag: mockGitTag,
+    push: mockGitPush,
   })),
 }));
 
@@ -90,10 +97,8 @@ vi.mock("@/lib/claude/json-parser", () => ({
   parseClaudeOutput: vi.fn(() => ({ content: "" })),
 }));
 
-// Mock GitHub modules
-const mockPushTag = vi.fn();
-vi.mock("@/lib/git/remote", () => ({
-  pushTag: mockPushTag,
+vi.mock("@/lib/git/release", () => ({
+  createReleaseBranchAndCommitChangelog: mockCreateReleaseBranchAndCommitChangelog,
 }));
 
 const mockCreateDraftRelease = vi.fn();
@@ -128,6 +133,15 @@ describe("Release creation with pushToGitHub", () => {
     mockDbState.updateCalls = [];
     mockDbState.allQueue = [];
     mockDbState.getQueue = [];
+    mockGitAddTag.mockReset();
+    mockGitTag.mockReset();
+    mockGitPush.mockReset();
+    mockCreateReleaseBranchAndCommitChangelog.mockReset();
+    mockCreateReleaseBranchAndCommitChangelog.mockResolvedValue({
+      releaseBranch: "release/v1.0.0",
+      changelogCommitted: true,
+      commitHash: "abc123",
+    });
   });
 
   it("creates a local-only release when pushToGitHub is false", async () => {
@@ -160,9 +174,9 @@ describe("Release creation with pushToGitHub", () => {
     expect(json.data).toBeDefined();
 
     // GitHub functions should NOT have been called
-    expect(mockPushTag).not.toHaveBeenCalled();
     expect(mockCreateDraftRelease).not.toHaveBeenCalled();
     expect(mockLogSyncOperation).not.toHaveBeenCalled();
+    expect(mockCreateReleaseBranchAndCommitChangelog).toHaveBeenCalled();
   });
 
   it("pushes tag and creates draft release when pushToGitHub is true", async () => {
@@ -175,7 +189,6 @@ describe("Release creation with pushToGitHub", () => {
       [{ id: "ep_1", title: "Epic 1", description: "desc" }],
     ];
 
-    mockPushTag.mockResolvedValue(undefined);
     mockCreateDraftRelease.mockResolvedValue({
       id: 99,
       url: "https://github.com/owner/repo/releases/99",
@@ -201,8 +214,14 @@ describe("Release creation with pushToGitHub", () => {
     expect(res.status).toBe(201);
     expect(json.data).toBeDefined();
 
-    // pushTag should have been called
-    expect(mockPushTag).toHaveBeenCalledWith("/tmp/repo", "v1.0.0");
+    expect(mockCreateReleaseBranchAndCommitChangelog).toHaveBeenCalledWith(
+      "/tmp/repo",
+      "1.0.0",
+      expect.any(String)
+    );
+
+    // Verify tag was created against the release commit hash, not HEAD
+    expect(mockGitTag).toHaveBeenCalledWith(["v1.0.0", "abc123"]);
 
     // createDraftRelease should have been called
     expect(mockCreateDraftRelease).toHaveBeenCalledWith(
@@ -219,7 +238,7 @@ describe("Release creation with pushToGitHub", () => {
     expect(mockLogSyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "proj_1",
-        operation: "tag",
+        operation: "tag_push",
         status: "success",
       })
     );
@@ -241,7 +260,7 @@ describe("Release creation with pushToGitHub", () => {
       [{ id: "ep_1", title: "Epic 1", description: "desc" }],
     ];
 
-    mockPushTag.mockRejectedValue(new Error("Network error"));
+    mockGitPush.mockRejectedValue(new Error("Network error"));
     mockCreateDraftRelease.mockRejectedValue(new Error("API error"));
 
     const { POST } = await import(
@@ -273,7 +292,7 @@ describe("Release creation with pushToGitHub", () => {
     // Failures logged
     expect(mockLogSyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
-        operation: "tag",
+        operation: "tag_push",
         status: "failure",
       })
     );
@@ -310,7 +329,6 @@ describe("Release creation with pushToGitHub", () => {
     });
 
     expect(res.status).toBe(201);
-    expect(mockPushTag).not.toHaveBeenCalled();
     expect(mockCreateDraftRelease).not.toHaveBeenCalled();
   });
 

@@ -7,6 +7,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { SessionPicker } from "@/components/shared/SessionPicker";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +38,7 @@ interface Release {
   title: string | null;
   changelog: string | null;
   epicIds: string | null;
+  releaseBranch: string | null;
   gitTag: string | null;
   githubReleaseId: number | null;
   githubReleaseUrl: string | null;
@@ -84,6 +86,11 @@ function ReleaseCard({
               <Badge variant="outline" className="text-xs">
                 <Tag className="h-3 w-3 mr-1" />
                 {release.gitTag}
+              </Badge>
+            )}
+            {release.releaseBranch && (
+              <Badge variant="outline" className="text-xs font-mono">
+                {release.releaseBranch}
               </Badge>
             )}
             {isDraft && (
@@ -147,6 +154,12 @@ function ReleaseCard({
   );
 }
 
+interface Toast {
+  id: string;
+  type: "success" | "error";
+  message: string;
+}
+
 export default function ReleasesPage() {
   const params = useParams();
   const projectId = params.projectId as string;
@@ -154,6 +167,15 @@ export default function ReleasesPage() {
   const [doneEpics, setDoneEpics] = useState<Epic[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const showToast = useCallback((type: "success" | "error", message: string) => {
+    const id = crypto.randomUUID();
+    setToasts((prev) => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }, []);
 
   // GitHub config
   const { isConfigured: hasGitHub, loading: ghLoading } =
@@ -167,6 +189,7 @@ export default function ReleasesPage() {
   );
   const [pushToGitHub, setPushToGitHub] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [resumeSessionId, setResumeSessionId] = useState<string | undefined>(undefined);
 
   const loadData = useCallback(async () => {
     const [releasesRes, epicsRes] = await Promise.all([
@@ -203,6 +226,7 @@ export default function ReleasesPage() {
         epicIds: Array.from(selectedEpicIds),
         generateChangelog: true,
         pushToGitHub: hasGitHub && pushToGitHub,
+        resumeSessionId,
       }),
     });
 
@@ -211,8 +235,12 @@ export default function ReleasesPage() {
       setTitle("");
       setSelectedEpicIds(new Set());
       setPushToGitHub(false);
+      setResumeSessionId(undefined);
       setDialogOpen(false);
+      showToast("success", "Release v" + version.trim() + " created");
       loadData();
+    } else {
+      showToast("error", "Failed to create release");
     }
 
     setCreating(false);
@@ -312,6 +340,14 @@ export default function ReleasesPage() {
                 </div>
               )}
 
+              <SessionPicker
+                projectId={projectId}
+                agentType="release_notes"
+                provider="claude-code"
+                selectedSessionId={resumeSessionId}
+                onSelect={setResumeSessionId}
+              />
+
               <Button
                 onClick={handleCreateRelease}
                 disabled={
@@ -343,6 +379,23 @@ export default function ReleasesPage() {
               githubConfigured={hasGitHub}
               onPublished={loadData}
             />
+          ))}
+        </div>
+      )}
+
+      {toasts.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+          {toasts.map((toast) => (
+            <div
+              key={toast.id}
+              className={`px-4 py-2 rounded-lg shadow-lg text-sm font-medium transition-all animate-in fade-in slide-in-from-bottom-2 ${
+                toast.type === "success"
+                  ? "bg-green-600 text-white"
+                  : "bg-destructive text-destructive-foreground"
+              }`}
+            >
+              {toast.message}
+            </div>
           ))}
         </div>
       )}

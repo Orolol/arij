@@ -21,17 +21,27 @@ export interface UnifiedActivity {
 }
 
 function inferDbActivityType(row: {
+  agentType: string | null;
   orchestrationMode: string | null;
   mode: string | null;
   prompt: string | null;
 }): UnifiedActivity["type"] {
+  if (row.agentType === "release_notes") {
+    return "release";
+  }
+
+  if (row.agentType === "merge") {
+    return "merge";
+  }
+
   if (row.orchestrationMode === "team") {
     return "build";
   }
 
+  // fallback prompt heuristics
   const prompt = (row.prompt || "").toLowerCase();
   if (
-    prompt.includes("merge conflict resolution") ||
+    prompt.includes("merge conflict") ||
     prompt.includes("git merge main")
   ) {
     return "merge";
@@ -51,6 +61,10 @@ function buildDbActivityLabel(
   type: UnifiedActivity["type"],
   row: { storyTitle: string | null; epicTitle: string | null }
 ): string {
+  if (type === "release") {
+    return "Generating release notes";
+  }
+
   if (type === "merge") {
     return row.epicTitle ? `Merging: ${row.epicTitle}` : "Merging";
   }
@@ -84,6 +98,7 @@ export async function GET(
       userStoryId: agentSessions.userStoryId,
       status: agentSessions.status,
       mode: agentSessions.mode,
+      agentType: agentSessions.agentType,
       orchestrationMode: agentSessions.orchestrationMode,
       provider: agentSessions.provider,
       namedAgentName: agentSessions.namedAgentName,
