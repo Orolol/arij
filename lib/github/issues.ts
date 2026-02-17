@@ -5,6 +5,7 @@ import { createId } from "@/lib/utils/nanoid";
 import { createOctokit, parseOwnerRepo } from "@/lib/github/client";
 import { generateReadableId } from "@/lib/db/readable-id";
 import { logSyncOperation } from "@/lib/github/sync-log";
+import { getLabelMapping, mapIssueTypeWithMapping } from "@/lib/github/label-mapping";
 
 export interface RemoteIssue {
   issueNumber: number;
@@ -18,23 +19,9 @@ export interface RemoteIssue {
   updatedAtGitHub: string;
 }
 
-function toLowerSet(values: string[]): Set<string> {
-  return new Set(values.map((v) => v.toLowerCase()));
-}
-
-function mapIssueType(labels: string[]): "feature" | "bug" {
-  const lower = toLowerSet(labels);
-  const bugLabels = ["bug", "defect", "error"];
-  if (bugLabels.some((label) => lower.has(label))) {
-    return "bug";
-  }
-
-  const featureLabels = ["feature", "enhancement", "epic"];
-  if (featureLabels.some((label) => lower.has(label))) {
-    return "feature";
-  }
-
-  return "feature";
+function mapIssueType(labels: string[], projectId?: string): "feature" | "bug" {
+  const mapping = getLabelMapping(projectId);
+  return mapIssueTypeWithMapping(labels, mapping);
 }
 
 function parseEpicMention(body: string | null): number | null {
@@ -237,7 +224,7 @@ export function importGitHubIssuesAsTickets(
       result.push({
         issueNumber: issue.issueNumber,
         epicId: issue.importedEpicId,
-        type: mapIssueType(issue.labels ? (JSON.parse(issue.labels) as string[]) : []),
+        type: mapIssueType(issue.labels ? (JSON.parse(issue.labels) as string[]) : [], projectId),
       });
       importedByIssueNumber.set(issue.issueNumber, issue.importedEpicId);
       continue;
@@ -245,7 +232,7 @@ export function importGitHubIssuesAsTickets(
 
     const labels = issue.labels ? (JSON.parse(issue.labels) as string[]) : [];
     const assignees = issue.assignees ? (JSON.parse(issue.assignees) as string[]) : [];
-    const ticketType = mapIssueType(labels);
+    const ticketType = mapIssueType(labels, projectId);
 
     const linkedEpicNumber = parseEpicMention(issue.body);
     const linkedEpicId = linkedEpicNumber

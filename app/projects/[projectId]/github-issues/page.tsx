@@ -20,6 +20,12 @@ interface GitHubIssueRow {
   importedEpicId: string | null;
 }
 
+interface Toast {
+  id: string;
+  type: "success" | "error";
+  message: string;
+}
+
 export default function GitHubIssuesPage() {
   const params = useParams();
   const projectId = params.projectId as string;
@@ -32,6 +38,18 @@ export default function GitHubIssuesPage() {
   const [milestoneFilter, setMilestoneFilter] = useState("");
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  const [featureLabels, setFeatureLabels] = useState("");
+  const [bugLabels, setBugLabels] = useState("");
+  const [savingMapping, setSavingMapping] = useState(false);
+  const [toasts, setToasts] = useState<Toast[]>([]);
+
+  const showToast = useCallback((type: "success" | "error", message: string) => {
+    const id = crypto.randomUUID();
+    setToasts((prev) => [...prev, { id, type, message }]);
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  }, []);
 
   const loadIssues = useCallback(async () => {
     setLoading(true);
@@ -59,11 +77,46 @@ export default function GitHubIssuesPage() {
     loadIssues();
   }, [loadIssues]);
 
+  useEffect(() => {
+    fetch(`/api/projects/${projectId}/github/label-mapping`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.data) {
+          setFeatureLabels(json.data.featureLabels.join(", "));
+          setBugLabels(json.data.bugLabels.join(", "));
+        }
+      })
+      .catch(() => {});
+  }, [projectId]);
+
+  async function saveMappingConfig() {
+    setSavingMapping(true);
+    try {
+      await fetch(`/api/projects/${projectId}/github/label-mapping`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          featureLabels: featureLabels
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+          bugLabels: bugLabels
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        }),
+      });
+    } finally {
+      setSavingMapping(false);
+    }
+  }
+
   async function syncNow() {
     setSyncing(true);
     try {
       await fetch(`/api/projects/${projectId}/github/issues/sync`, { method: "POST" });
       await loadIssues();
+      showToast("success", "Issues synced");
     } finally {
       setSyncing(false);
     }
@@ -82,12 +135,15 @@ export default function GitHubIssuesPage() {
       const json = await res.json();
       if (!res.ok) {
         setError(json.error || "Import failed");
+        showToast("error", json.error || "Import failed");
       } else {
         setSelected(new Set());
         await loadIssues();
+        showToast("success", "Imported " + selected.size + " issues");
       }
     } catch {
       setError("Import failed");
+      showToast("error", "Import failed");
     } finally {
       setImporting(false);
     }
@@ -181,6 +237,35 @@ export default function GitHubIssuesPage() {
           )}
         </Card>
       )}
+
+      <Card className="p-4 space-y-3">
+        <h3 className="text-sm font-semibold">Label Mapping Configuration</h3>
+        <p className="text-xs text-muted-foreground">
+          Configure which GitHub labels map to Feature (Epic) or Bug ticket types.
+        </p>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs text-muted-foreground">Feature labels (comma-separated)</label>
+            <Input
+              value={featureLabels}
+              onChange={(e) => setFeatureLabels(e.target.value)}
+              placeholder="feature, enhancement, epic"
+            />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Bug labels (comma-separated)</label>
+            <Input
+              value={bugLabels}
+              onChange={(e) => setBugLabels(e.target.value)}
+              placeholder="bug, defect, error"
+            />
+          </div>
+        </div>
+        <Button variant="outline" size="sm" onClick={saveMappingConfig} disabled={savingMapping}>
+          {savingMapping ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
+          Save Mapping
+        </Button>
+      </Card>
     </div>
   );
 }
