@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import {
   KANBAN_COLUMNS,
   type KanbanStatus,
@@ -9,7 +9,11 @@ import {
   type ReorderItem,
 } from "@/lib/types/kanban";
 
-export function useKanban(projectId: string) {
+export interface UseKanbanOptions {
+  onMoveError?: (error: string) => void;
+}
+
+export function useKanban(projectId: string, options?: UseKanbanOptions) {
   const [board, setBoard] = useState<BoardState>({
     columns: {
       backlog: [],
@@ -20,6 +24,8 @@ export function useKanban(projectId: string) {
     },
   });
   const [loading, setLoading] = useState(true);
+  const onMoveErrorRef = useRef(options?.onMoveError);
+  onMoveErrorRef.current = options?.onMoveError;
 
   const loadEpics = useCallback(async () => {
     try {
@@ -89,10 +95,6 @@ export function useKanban(projectId: string) {
       });
 
       // Build reorder items for all affected columns
-      const currentBoard = board; // use pre-optimistic state for fallback
-      const items: ReorderItem[] = [];
-
-      // We need to rebuild from the optimistic state - use a timeout to read updated state
       setTimeout(async () => {
         setBoard((current) => {
           const reorderItems: ReorderItem[] = [];
@@ -113,8 +115,16 @@ export function useKanban(projectId: string) {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ items: reorderItems }),
+          }).then(async (res) => {
+            if (!res.ok) {
+              const data = await res.json().catch(() => ({}));
+              const errorMsg = data.error || "Failed to move epic";
+              onMoveErrorRef.current?.(errorMsg);
+              // Rollback
+              loadEpics();
+            }
           }).catch(() => {
-            // Rollback on failure
+            // Rollback on network failure
             loadEpics();
           });
 
@@ -122,7 +132,7 @@ export function useKanban(projectId: string) {
         });
       }, 0);
     },
-    [projectId, board, loadEpics]
+    [projectId, loadEpics]
   );
 
   return { board, loading, moveEpic, refresh: loadEpics };

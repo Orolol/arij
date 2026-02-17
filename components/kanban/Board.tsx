@@ -35,6 +35,7 @@ interface BoardProps {
   runningEpicIds?: Set<string>;
   activeAgentActivities?: Record<string, KanbanEpicAgentActivity>;
   onLinkedAgentHoverChange?: (activityId: string | null) => void;
+  onMoveError?: (error: string) => void;
 }
 
 function isAiCommentAuthor(author: string | null | undefined) {
@@ -52,8 +53,9 @@ export function Board({
   runningEpicIds,
   activeAgentActivities,
   onLinkedAgentHoverChange,
+  onMoveError,
 }: BoardProps) {
-  const { board, loading, moveEpic, refresh } = useKanban(projectId);
+  const { board, loading, moveEpic, refresh } = useKanban(projectId, { onMoveError });
   const [seenAiCommentIdsByEpic, setSeenAiCommentIdsByEpic] = useState<
     Record<string, string>
   >({});

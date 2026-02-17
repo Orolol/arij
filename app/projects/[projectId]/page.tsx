@@ -557,6 +557,7 @@ export default function KanbanPage() {
                 runningEpicIds={runningEpicIds}
                 activeAgentActivities={activeAgentActivities}
                 onLinkedAgentHoverChange={setHighlightedActivityId}
+                onMoveError={(error) => addToast("error", error)}
               />
             </div>
 

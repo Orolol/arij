@@ -9,6 +9,9 @@ import {
 } from "@/lib/planning/permanent-delete";
 import { updateEpicSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
+import type { KanbanStatus } from "@/lib/types/kanban";
+import { validateTransition } from "@/lib/workflow/engine";
+import { buildTransitionContext } from "@/lib/workflow/context";
 
 export async function PATCH(
   request: NextRequest,
@@ -24,6 +27,20 @@ export async function PATCH(
   const existing = db.select().from(epics).where(eq(epics.id, epicId)).get();
   if (!existing) {
     return NextResponse.json({ error: "Epic not found" }, { status: 404 });
+  }
+
+  // Validate workflow rules if status is changing
+  if (body.status !== undefined && body.status !== existing.status) {
+    const ctx = buildTransitionContext({
+      epicId,
+      fromStatus: (existing.status ?? "backlog") as KanbanStatus,
+      toStatus: body.status as KanbanStatus,
+      actor: "user",
+    });
+    const result = validateTransition(ctx);
+    if (!result.valid) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
   }
 
   const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
