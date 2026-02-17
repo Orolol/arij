@@ -8,7 +8,7 @@ import {
   settings,
   agentSessions,
 } from "@/lib/db/schema";
-import { eq, desc, inArray } from "drizzle-orm";
+import { eq, desc, inArray, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import simpleGit from "simple-git";
@@ -92,7 +92,7 @@ export async function POST(
   const selectedEpics = db
     .select()
     .from(epics)
-    .where(inArray(epics.id, epicIds))
+    .where(and(inArray(epics.id, epicIds), eq(epics.projectId, projectId)))
     .all();
 
   let changelog = "";
@@ -119,10 +119,11 @@ export async function POST(
       .get();
     const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
 
+    const filteredEpicIds = selectedEpics.map((e) => e.id);
     const storiesByEpic = db
       .select()
       .from(userStories)
-      .where(inArray(userStories.epicId, epicIds))
+      .where(inArray(userStories.epicId, filteredEpicIds.length > 0 ? filteredEpicIds : ["__none__"]))
       .all()
       .reduce<Record<string, Array<{ title: string; acceptanceCriteria: string | null }>>>(
         (acc, story) => {
