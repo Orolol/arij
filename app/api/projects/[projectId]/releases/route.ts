@@ -15,7 +15,7 @@ import simpleGit from "simple-git";
 import { createDraftRelease } from "@/lib/github/releases";
 import { logSyncOperation } from "@/lib/github/sync-log";
 import { activityRegistry } from "@/lib/activity-registry";
-import { createReleaseBranchAndCommitChangelog } from "@/lib/git/release";
+import { createReleaseBranchAndCommitChangelog, type ReleaseBranchResult } from "@/lib/git/release";
 import {
   createQueuedSession,
   markSessionRunning,
@@ -322,8 +322,9 @@ ${ticketContext}
     }
   }
 
+  let releaseBranchResult: ReleaseBranchResult | null = null;
   if (project.gitRepoPath) {
-    const releaseBranchResult = await createReleaseBranchAndCommitChangelog(
+    releaseBranchResult = await createReleaseBranchAndCommitChangelog(
       project.gitRepoPath,
       version,
       changelog
@@ -331,13 +332,18 @@ ${ticketContext}
     releaseBranch = releaseBranchResult.releaseBranch;
   }
 
-  // Create git tag if repo is configured
+  // Create git tag targeting the release branch commit
   let gitTag: string | null = null;
   if (project.gitRepoPath) {
     try {
       const git = simpleGit(project.gitRepoPath);
       const tagName = `v${version}`;
-      await git.addTag(tagName);
+      if (releaseBranchResult?.commitHash) {
+        // Tag the specific release branch commit, not HEAD
+        await git.tag([tagName, releaseBranchResult.commitHash]);
+      } else {
+        await git.addTag(tagName);
+      }
       gitTag = tagName;
     } catch {
       // Tag creation failed, continue without it

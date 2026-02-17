@@ -10,6 +10,7 @@ const mockDbState = vi.hoisted(() => ({
   getQueue: [] as unknown[],
 }));
 const mockGitAddTag = vi.hoisted(() => vi.fn());
+const mockGitTag = vi.hoisted(() => vi.fn());
 const mockGitPush = vi.hoisted(() => vi.fn());
 const mockCreateReleaseBranchAndCommitChangelog = vi.hoisted(() => vi.fn());
 
@@ -79,6 +80,7 @@ vi.mock("@/lib/utils/nanoid", () => ({
 vi.mock("simple-git", () => ({
   default: vi.fn(() => ({
     addTag: mockGitAddTag,
+    tag: mockGitTag,
     push: mockGitPush,
   })),
 }));
@@ -132,6 +134,7 @@ describe("Release creation with pushToGitHub", () => {
     mockDbState.allQueue = [];
     mockDbState.getQueue = [];
     mockGitAddTag.mockReset();
+    mockGitTag.mockReset();
     mockGitPush.mockReset();
     mockCreateReleaseBranchAndCommitChangelog.mockReset();
     mockCreateReleaseBranchAndCommitChangelog.mockResolvedValue({
@@ -216,6 +219,9 @@ describe("Release creation with pushToGitHub", () => {
       "1.0.0",
       expect.any(String)
     );
+
+    // Verify tag was created against the release commit hash, not HEAD
+    expect(mockGitTag).toHaveBeenCalledWith(["v1.0.0", "abc123"]);
 
     // createDraftRelease should have been called
     expect(mockCreateDraftRelease).toHaveBeenCalledWith(
