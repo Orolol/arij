@@ -18,11 +18,6 @@ let projectId: string;
 let epicId: string;
 
 beforeEach(() => {
-  // Clean up any previous test data
-  db.delete(ticketActivityLog).run();
-  db.delete(epics).run();
-  db.delete(projects).run();
-
   projectId = createId();
   epicId = createId();
 
