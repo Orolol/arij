@@ -1,0 +1,186 @@
+{
+  "migrationId": "2026-02-17T13-06-30-666Z",
+  "projectId": "cUfHlegssamR",
+  "capturedAt": "2026-02-17T13:06:30.666Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "ubVPjpsJEOIl",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "Git Release & Integration",
+        "status": "active",
+        "epic_id": null,
+        "provider": "opencode",
+        "created_at": "2026-02-16T16:44:10.471Z"
+      },
+      {
+        "id": "DWgCSVqLkVKp",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "Git Release Integration Plan",
+        "status": "active",
+        "epic_id": null,
+        "provider": "opencode",
+        "created_at": "2026-02-16T16:47:02.262Z"
+      },
+      {
+        "id": "PYlcwh0BDrEt",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "New Epic",
+        "status": "active",
+        "epic_id": null,
+        "provider": "opencode",
+        "created_at": "2026-02-17T09:11:38.763Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "OLAzDydukNGP",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "ubVPjpsJEOIl",
+        "role": "user",
+        "content": "Ok on va continuer l'intégration de GIT. Dans la partie release, on créer des release qui vont déboucher sur la création d'une branche de release (on ne gère pas la CI/CD, on s'occupe juste de la partie branch) avec une release note créé par un agent\nOn va également avoir des bouton de gestion de GIT (on configure la branch principale, on se syncrhonise (pull / push avec la possibilité de dmander a un agent de gérer les conflits.\nEnfin, on va pouvoir lire les issue de github et créé des ticket automatiquement.",
+        "metadata": null,
+        "created_at": "2026-02-16T16:44:15.015Z"
+      },
+      {
+        "id": "eiEA_jZi-C8d",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "ubVPjpsJEOIl",
+        "role": "assistant",
+        "content": "{\n  \"type\": \"error\",\n  \"timestamp\": 1771260255887,\n  \"sessionID\": \"ses_398a961adffeec27VSDpr6zq86\",\n  \"error\": {\n    \"name\": \"UnknownError\",\n    \"data\": {\n      \"message\": \"Model not found: kimi-k2.5-free/.\"\n    }\n  }\n}",
+        "metadata": null,
+        "created_at": "2026-02-16T16:44:15.961Z"
+      },
+      {
+        "id": "PVEEh27WMTT6",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "DWgCSVqLkVKp",
+        "role": "user",
+        "content": "Ok on va continuer l'intégration de GIT. Dans la partie release, on créer des release qui vont déboucher sur la création d'une branche de release (on ne gère pas la CI/CD, on s'occupe juste de la partie branch) avec une release note créé par un agent On va également avoir des bouton de gestion de GIT (on configure la branch principale, on se syncrhonise (pull / push avec la possibilité de dmander a un agent de gérer les conflits. Enfin, on va pouvoir lire les issue de github et créé des ticket automatiquement.",
+        "metadata": null,
+        "created_at": "2026-02-16T16:47:13.237Z"
+      },
+      {
+        "id": "595BHjuT1eAj",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "DWgCSVqLkVKp",
+        "role": "assistant",
+        "content": "Je vois que tu veux étendre l'intégration Git avec la gestion des releases et la synchronisation. Cela touche plusieurs domaines qui ont déjà des épics partiels :\n\n**Chevauchements détectés :**\n- \"GitHub Release Lifecycle\" et \"Release Workflow with GitHub Draft and Publish\" existent déjà\n- \"Git Sync UX in Epic Detail\" mentionne déjà la synchro Git\n- \"GitHub Remote Foundation and Configuration\" couvre la config\n\n**Questions de clarification :**\n\n1. **Le release note par agent** — Veux-tu un simple résumé des tickets mergés, ou un contenu plus élaboré (features, breaking changes, migrations) ? Et est-ce que l'agent peut aussi générer le tag Git ?\n\n2. **La gestion des conflits par agent** — C'est la partie la plus complexe. Imagines-tu un workflow où l'agent fait un `git merge`, analyse les conflits, les résout via Claude Code, puis commit ? Ou plutôt une assistance où l'agent guide l'utilisateur étape par étape ?\n\n3. **GitHub Issues → Tickets** — Souhaites-tu une importation manuelle (bouton \"Importer les issues ouvertes\") ou une synchronisation continue/automatique ? Et comment gérer les labels/milestones GitHub ?\n\n**Suggestion de découpage :**\nCet epic pourrait être divisé en 3 livrables indépendants :\n- **Release Branch Management** (création branche + release note agent)\n- **Git Sync with Agent Conflict Resolution** (pull/push/merge avec agent)\n- **GitHub Issues Importer** (lecture et création auto de tickets)\n\nQuelle approche préfères-tu ? Un epic unique ou ce découpage ?",
+        "metadata": null,
+        "created_at": "2026-02-16T16:47:27.496Z"
+      },
+      {
+        "id": "HjQLJn_zriOA",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "DWgCSVqLkVKp",
+        "role": "user",
+        "content": "1 Un contenu relativement élaboré oui\n2 C'est déjà utilisé dans le merge de branch d'un ticket, je veux le même méchanisme\n3 Une importation automatique, mais avec une page dédié pour pouvoir trier les issue github que l'on va réellement importé dans Arij\n\nUne epic unique ça peut le faire je pense",
+        "metadata": null,
+        "created_at": "2026-02-17T08:33:41.307Z"
+      },
+      {
+        "id": "c7tVsuxteVc1",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "DWgCSVqLkVKp",
+        "role": "assistant",
+        "content": "Je vois que tu veux consolider la gestion Git/GitHub en un epic unique. Comparé aux existants, cela semble bien distinct :\n\n- **\"GitHub Release Lifecycle\"** semble axé sur la publication\n- **\"Git Sync UX in Epic Detail\"** est au niveau ticket\n- **Ton epic** couvre la *création* de release (branche + notes élaborées), la synchro globale, et l'import d'issues\n\n**Questions de clarification :**\n\n1. **Release Note Agent** — Quand l'agent génère la note (au moment de créer la release branch ?), quelles sont ses sources ? Uniquement les tickets \"Done\" depuis la dernière release, ou aussi les commits/merges Git ? Et veux-tu qu'il propose un changelog structuré (Features/Bugfixes/Breaking Changes) ?\n\n2. **Import d'Issues GitHub** — La \"page de tri\" : imagines-tu un tableau Kanban temporaire où on sélectionne/coche les issues à importer, avec aperçu du titre/description ? Ou plutôt une liste simple avec cases à cocher ? Et une fois importées, deviennent-elles automatiquement des Epics ou des Tickets selon un critère (labels, milestones) ?\n\nUne fois ces points clarifiés, on pourra structurer l'epic avec ses user stories et critères d'acceptation.",
+        "metadata": null,
+        "created_at": "2026-02-17T08:33:58.553Z"
+      },
+      {
+        "id": "mJUf7ZAlaB1t",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "DWgCSVqLkVKp",
+        "role": "user",
+        "content": "1 Oui quand on créé, en se basant sur les ticket inclus dans la release\n2 Simple liste",
+        "metadata": null,
+        "created_at": "2026-02-17T08:55:08.582Z"
+      },
+      {
+        "id": "BAS2lFH6FCow",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "DWgCSVqLkVKp",
+        "role": "assistant",
+        "content": "Bon, je vois le scope. Cet epic couvre bien des aspects distincts des existants. Quelques clarifications avant de structurer :\n\n**1. Release Notes Agent** — Tu veux un contenu élaboré. Est-ce que l'agent doit aussi suggérer un numéro de version (semver) basé sur les changements, ou c'est l'utilisateur qui définit la version ? Et la release note est-elle stockée uniquement dans Git (tag annotation) ou aussi en base Arij ?\n\n**2. Import GitHub Issues** — Quand tu dis \"automatique\", est-ce que ça veut dire : \n   - A) À intervalle régulier Arij pull les nouvelles issues et les affiche dans la page de tri ?\n   - B) Ou c'est manuel mais une fois sur la page de tri, l'import est en masse (plusieurs issues d'un coup) ?\n\n**3. Critères d'import** — Pour la conversion Issue GitHub → Ticket Arij : est-ce que tout devient un Bug par défaut, ou tu veux un mapping (ex: label \"feature\" → Epic, label \"bug\" → Bug ticket) ?\n\nUne fois ces points clarifiés, je te propose de structurer l'epic avec les 3 user stories principales : Release Branch Management, Git Sync Agent, et Issues Importer. Ça te va comme découpage ?",
+        "metadata": null,
+        "created_at": "2026-02-17T08:55:20.417Z"
+      },
+      {
+        "id": "DANYOTas5_Ez",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "DWgCSVqLkVKp",
+        "role": "user",
+        "content": "Generate the final epic with user stories based on our discussion.",
+        "metadata": null,
+        "created_at": "2026-02-17T08:55:42.344Z"
+      },
+      {
+        "id": "b69U6cnuVhvo",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "DWgCSVqLkVKp",
+        "role": "assistant",
+        "content": "```json\n{\n  \"title\": \"Git Release Management, Sync & GitHub Issues Import\",\n  \"description\": \"Comprehensive Git workflow integration covering automated release branch creation with AI-generated release notes, bidirectional Git sync with agent-powered conflict resolution, and automated GitHub issues import with manual triage. The implementation will extend the existing Git foundation to support:\\n\\n1. **Release Branch Management**: Users can create releases that automatically spawn release branches and generate elaborated release notes via AI agent analysis of included tickets. The agent will categorize changes (Features, Bugfixes, Breaking Changes) and suggest migration guides when needed.\\n\\n2. **Git Sync with Agent Conflict Resolution**: Unified interface for pull/push operations with intelligent conflict detection. When conflicts arise, the system dispatches an agent (using the existing ticket merge resolution pattern) to analyze and resolve conflicts automatically, falling back to manual resolution if the agent cannot resolve cleanly.\\n\\n3. **GitHub Issues Auto-Importer**: Background sync that fetches open GitHub issues and presents them in a dedicated triage page. Users can review, select, and bulk-import issues as Epics or Bug tickets based on labels (feature→Epic, bug→Bug ticket by default). The import maintains bidirectional references to track which GitHub issues have been imported.\\n\\nAll three features integrate with the existing Agent Session system for resume capability and use the unified chat interface for user feedback during long-running operations.\",\n  \"userStories\": [\n    {\n      \"title\": \"As a project manager, I want to create a release that spawns a release branch and generates AI-written release notes so that I can prepare deployments with proper documentation\",\n      \"description\": \"Implement release creation workflow where users define release version and select tickets to include. The system creates a release branch from main, aggregates ticket data (titles, descriptions, acceptance criteria), and dispatches an agent to generate structured release notes with sections for Features, Bugfixes, and Breaking Changes. The notes are stored in Arij and committed to the release branch as CHANGELOG.md.\",\n      \"acceptanceCriteria\": \"- [ ] Release creation UI with version input and ticket multi-selector\\n- [ ] Automatic release branch creation (format: release/v{version})\\n- [ ] Agent prompt includes all selected ticket details for context\\n- [ ] Generated release notes include Features, Bugfixes, Breaking Changes sections\\n- [ ] CHANGELOG.md committed to release branch with release notes\\n- [ ] Release record stored in database with branch reference and ticket list\"\n    },\n    {\n      \"title\": \"As a developer, I want to sync my local repository with remote using pull/push operations with automatic conflict resolution by an agent so that I can stay synchronized without manual merge conflict handling\",\n      \"description\": \"Implement Git sync UI with Pull and Push buttons. For pull operations, if merge conflicts are detected, automatically dispatch a conflict resolution agent that analyzes conflicting files, applies intelligent resolutions using the existing ticket merge pattern, and commits the resolution. If the agent cannot resolve cleanly, present conflicts in the UI for manual resolution. Push operations include pre-push validation.\",\n      \"acceptanceCriteria\": \"- [ ] Git Sync panel with Pull and Push buttons showing current branch status\\n- [ ] Pull operation detects conflicts and triggers agent resolution workflow\\n- [ ] Agent uses existing session resume capability for long conflict resolution tasks\\n- [ ] Agent commits resolved files with descriptive message listing resolution approach\\n- [ ] Unresolvable conflicts shown in UI with file-level diff view\\n- [ ] Push operation validates no uncommitted changes and fast-forward only\"\n    },\n    {\n      \"title\": \"As a project manager, I want GitHub issues to be automatically fetched and presented in a triage page so that I can selectively import relevant issues as Arij tickets\",\n      \"description\": \"Implement background sync that periodically fetches open GitHub issues via API. Issues are displayed in a dedicated triage page as a simple list with checkboxes, showing title, labels, and creation date. Users can filter by label/milestone, select multiple issues, and bulk-import them. The system maps labels to ticket types (feature→Epic, bug→Bug) and maintains GitHub issue references for future sync.\",\n      \"acceptanceCriteria\": \"- [ ] Background job fetches open GitHub issues every 15 minutes\\n- [ ] Triage page shows simple list with checkboxes for each issue\\n- [ ] List displays issue title, GitHub labels, and creation date\\n- [ ] Filter controls for labels and milestones\\n- [ ] Bulk import button creates tickets based on label mapping rules\\n- [ ] Imported issues tracked in database with GitHub issue number reference\\n- [ ] Visual indicator for already-imported issues\"\n    },\n    {\n      \"title\": \"As a developer, I want imported GitHub issues to be properly categorized as Epics or Bug tickets based on their labels so that the project structure remains consistent\",\n      \"description\": \"Implement intelligent mapping system that analyzes GitHub issue labels during import. Issues labeled as 'feature', 'enhancement', or 'epic' become Epics with associated User Stories. Issues labeled as 'bug', 'defect', or 'error' become Bug tickets. Issues without clear labels default to Epics. The system preserves GitHub issue descriptions, comments, and assignee mappings where possible.\",\n      \"acceptanceCriteria\": \"- [ ] Label mapping configuration (default: feature→Epic, bug→Bug)\\n- [ ] Epic creation from feature-labeled issues with description migration\\n- [ ] Bug ticket creation from bug-labeled issues linked to appropriate Epic if mentioned\\n- [ ] GitHub assignee mapped to Arij named agent if name matches\\n- [ ] GitHub issue body converted to Arij ticket description preserving markdown\\n- [ ] Original GitHub URL stored in ticket for reference\"\n    },\n    {\n      \"title\": \"As a user, I want to see real-time progress and agent feedback during Git operations so that I can monitor long-running sync and release tasks\",\n      \"description\": \"Integrate Git operations with the existing agent monitoring system. All Git-related agent tasks (release note generation, conflict resolution) appear in the Sessions tab with real-time logs. Users receive toast notifications when operations complete or fail. The chat interface can be used to ask the agent questions about generated release notes or conflict resolutions.\",\n      \"acceptanceCriteria\": \"- [ ] Git agent sessions visible in Sessions tab with activity type label\\n- [ ] Real-time log streaming for release note generation progress\\n- [ ] Toast notifications for operation completion/failure\\n- [ ] Chat integration allowing questions about release notes or conflicts\\n- [ ] Session resume capability for interrupted long-running Git operations\"\n    }\n  ],\n  \"dependencies\": [\"GitHub Remote Foundation and Configuration\", \"Git Sync UX in Epic Detail\"]\n}\n```",
+        "metadata": null,
+        "created_at": "2026-02-17T08:56:01.543Z"
+      },
+      {
+        "id": "_x1MblvfBHRo",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "user",
+        "content": "Il faut refaire une apsse sur le flow des tickets qui est un peu erratique des fois. Il faut aussi s'assurer que l'utilisateur n'a jamais besoin de rafrachir la page pour voir els changements s'afficher. On pourrait également prévoir une petite animation quand les ticket passe d'une colonne a l'autre",
+        "metadata": null,
+        "created_at": "2026-02-17T09:13:12.831Z"
+      },
+      {
+        "id": "ndG8aEz_lu6I",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "assistant",
+        "content": "Je vois que vous voulez stabiliser le flow des tickets et améliorer la réactivité de l'interface Kanban. Cela touche à plusieurs aspects : la logique métier des transitions (tickets qui passent à \"Done\" prématurément), la synchronisation temps réel des états, et l'expérience visuelle (animations).\n\nConcernant le flow erratique, je vois déjà des tickets existants comme \"TIckets are sometimes sent to 'Done' even if no review has been done\" et \"When we give a task to an agent, and the agent instead of doign it, ask a question in comments, the ticket need to stay in progress\". S'agit-il de ces mêmes problèmes ou y a-t-il d'autres cas spécifiques que vous rencontrez ?\n\nPour les mises à jour sans refresh, utilisez-vous déjà un mécanisme de polling, ou souhaitez-vous implémenter des WebSockets/SSE pour du vrai temps réel ? Et concernant les animations dnd-kit, souhaitez-vous enrichir l'existant ou ajouter des animations supplémentaires (sons, effets visuels) lors des transitions ?",
+        "metadata": null,
+        "created_at": "2026-02-17T09:13:30.643Z"
+      },
+      {
+        "id": "czXEeqPua81P",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "user",
+        "content": "C'est plus un ticket général sur des comportement erratique, il faut passer tout en revue\nOui un websocket ça serait bien. \nJe te laisse voir pour les animations",
+        "metadata": null,
+        "created_at": "2026-02-17T09:20:10.898Z"
+      },
+      {
+        "id": "D0pH3SfK6W_Z",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "assistant",
+        "content": "Je vois que vous voulez une refonte complète du flow de tickets avec trois volets : la stabilité des transitions d'état, la synchronisation temps réel via WebSocket, et les animations visuelles. C'est un périmètre conséquent qui touche à la logique métier, au transport de données, et à l'UI.\n\nAvant de structurer l'epic, j'ai besoin de précisions :\n\n1. **Scope du flow** : Voulez-vous corriger uniquement la logique des transitions Kanban (quand un ticket passe de \"In Progress\" à \"Done\"), ou inclure aussi les hooks agent qui déclenchent ces transitions (ex: quand l'agent termine son travetree, quand la review est complète) ?\n\n2. **WebSocket** : Diffusion globale de tous les changements de tickets, ou uniquement pour le board actuellement visualisé ? Et concerne-t-il aussi les mises à jour des sessions agent en temps réel, ou seulement les mouvements de tickets ?\n\n3. **Animations** : Vous voulez enrichir le drag-and-drop existant de dnd-kit, ou ajouter des animations aussi sur les changements d'état programmatiques (quand un agent déplace un ticket sans interaction utilisateur) ?\n\nConcernant les epics existants, je vois que \"TIckets are sometimes sent to 'Done' even if no review has been done\" et \"When we give a task to an agent...\" sont des bugs spécifiques qui seront résolus par cette refonte. L'epic \"Non-Modal Kanban Ticket Details\" est orthogonal (UI de détail vs flow d'état). Votre epic serait donc bien différencié comme une **Refonte Systémique du Workflow Kanban**.",
+        "metadata": null,
+        "created_at": "2026-02-17T09:20:30.457Z"
+      },
+      {
+        "id": "mQ6ewxAuyl0n",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "user",
+        "content": "Generate the final epic with user stories based on our discussion.",
+        "metadata": null,
+        "created_at": "2026-02-17T09:21:20.308Z"
+      },
+      {
+        "id": "pDdSPb926Rao",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "PYlcwh0BDrEt",
+        "role": "assistant",
+        "content": "```json\n{\n  \"title\": \"Kanban Workflow Stability & Real-Time Synchronization\",\n  \"description\": \"Comprehensive refactor of the ticket workflow system to eliminate erratic behaviors, ensure consistent state transitions, and provide real-time updates without page refresh. This epic addresses critical bugs where tickets move to 'Done' prematurely or don't respect review workflows, while adding WebSocket-based live synchronization and enhanced visual feedback through animations.\\n\\nImplementation Plan:\\n1. **Workflow Rule Engine**: Implement strict state machine for ticket transitions with explicit guards (e.g., no 'Done' without completed review, no premature closure when agent asks questions)\\n2. **WebSocket Infrastructure**: Set up Socket.io or native WebSocket server for bidirectional communication, broadcasting ticket updates, agent session status, and column movements to all connected clients\\n3. **Event-Driven Architecture**: Unify agent hooks (build complete, review complete) and manual user actions under consistent event bus that enforces workflow rules\\n4. **Animation System**: Enhance dnd-kit with custom transitions for programmatic moves (agent-triggered) and add visual indicators (sounds optional, glow effects) for state changes\\n5. **Optimistic UI Updates**: Implement optimistic updates with rollback capability for instant feedback, confirmed by WebSocket events\\n6. **Agent Session Integration**: Ensure agent session lifecycle (start, resume, completion) properly gates ticket transitions and broadcasts status in real-time\",\n  \"userStories\": [\n    {\n      \"title\": \"As a user, I want ticket state transitions to follow strict business rules so that tickets don't move to incorrect columns prematurely\",\n      \"description\": \"Implement a state machine that enforces valid transitions: tickets cannot move to 'Done' without completed review and merged branch; tickets stay 'In Progress' when agents ask questions instead of completing work; manual drag-and-drop respects the same validation rules as programmatic transitions.\",\n      \"acceptanceCriteria\": \"- [ ] State machine validates all transitions (Backlog → In Progress → Review → Done)\\n- [ ] Tickets cannot be moved to 'Done' if review is not marked complete\\n- [ ] Tickets remain 'In Progress' when agent response contains questions rather than deliverables\\n- [ ] Invalid transitions show error toast with explanation\\n- [ ] Both UI drag-and-drop and API calls use the same validation logic\"\n    },\n    {\n      \"title\": \"As a user, I want WebSocket real-time updates so that I see ticket changes immediately without refreshing\",\n      \"description\": \"Implement WebSocket server that broadcasts ticket CRUD operations, column movements, and status changes to all connected clients viewing the project. Changes made by agents or other users appear instantly.\",\n      \"acceptanceCriteria\": \"- [ ] WebSocket server established with room-based project isolation\\n- [ ] Ticket movements broadcast to all clients in same project\\n- [ ] New tickets appear instantly without page refresh\\n- [ ] Agent session status changes (started, completed, error) broadcast in real-time\\n- [ ] Connection status indicator shows when offline/reconnecting\\n- [ ] Graceful fallback to polling if WebSocket unavailable\"\n    },\n    {\n      \"title\": \"As a user, I want visual animations when tickets move between columns so that I have clear feedback on state changes\",\n      \"description\": \"Enhance the Kanban board with smooth animations for all ticket movements. Distinguish between user-initiated drags (dnd-kit native) and programmatic moves (agent-triggered) with different visual treatments. Add subtle glow or highlight effects when tickets change state.\",\n      \"acceptanceCriteria\": \"- [ ] Smooth CSS transitions when tickets enter/leave columns\\n- [ ] Programmatic moves show animated 'fly' effect from source to destination\\n- [ ] Flash/highlight effect on ticket card when its state changes\\n- [ ] Column headers briefly highlight when tickets are added\\n- [ ] Animations respect reduced-motion accessibility preference\\n- [ ] No layout shift or jarring jumps during transitions\"\n    },\n    {\n      \"title\": \"As a user, I want agent-triggered ticket transitions to respect the same workflow rules so that automation doesn't bypass validation\",\n      \"description\": \"Ensure all agent hooks (worktree completion, review completion, build success/failure) use the same workflow engine as manual actions. Agent cannot force a ticket to 'Done' without following the proper sequence.\",\n      \"acceptanceCriteria\": \"- [ ] Agent session completion triggers review creation, not direct 'Done' status\\n- [ ] Review agent completion moves ticket to 'Review' column, not 'Done'\\n- [ ] Manual approval required to move from 'Review' to 'Done'\\n- [ ] Failed builds keep ticket in 'In Progress' with error indicator\\n- [ ] All agent-triggered transitions logged with reason in ticket activity\"\n    },\n    {\n      \"title\": \"As a user, I want to see real-time agent session status updates so that I know when work is in progress\",\n      \"description\": \"Display live agent session status in the Kanban board - show which tickets have active agent sessions, current step (analyzing, coding, reviewing), and progress. Visual indicator updates in real-time via WebSocket.\",\n      \"acceptanceCriteria\": \"- [ ] Ticket cards show pulsing indicator when agent session is active\\n- [ ] Tooltip/status bar shows current agent step and provider (Claude Code, Codex, Gemini)\\n- [ ] Session completion removes active indicator and moves ticket per workflow\\n- [ ] Session errors show error state on ticket with retry option\\n- [ ] Multiple concurrent sessions shown in project header with count\"\n    },\n    {\n      \"title\": \"As a developer, I want a unified event system for ticket state changes so that the system is maintainable and consistent\",\n      \"description\": \"Refactor the codebase to use a centralized event bus for all ticket state modifications. Replace direct API calls with events that flow through the workflow engine, ensuring single source of truth for business logic.\",\n      \"acceptanceCriteria\": \"- [ ] All ticket state changes route through central event bus\\n- [ ] Workflow engine subscribes to events and applies validation rules\\n- [ ] WebSocket broadcasts are triggered by events, not direct API calls\\n- [ ] Audit log captures all events with timestamp and actor (user/agent)\\n- [ ] Easy to add new transition rules or states in one location\"\n    }\n  ],\n  \"dependencies\": []\n}\n```",
+        "metadata": null,
+        "created_at": "2026-02-17T09:21:40.828Z"
+      }
+    ],
+    "attachments": []
+  }
+}

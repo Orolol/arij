@@ -1,316 +1,194 @@
 # Arij
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js >= 20.9](https://img.shields.io/badge/Node.js-%3E%3D20.9-green.svg)](https://nodejs.org)
+**Your AI-powered project manager that actually writes the code.**
 
-A local-first, AI-powered project orchestrator that transforms your development workflow. Manage multiple projects through a Kanban interface while Claude Code (or Codex/Gemini) handles the implementation.
+Arij is a local-first web app that lets you plan, organize, and build software projects using AI coding agents like Claude Code, OpenAI Codex, or Gemini CLI. Describe what you want, and Arij orchestrates the AI to implement it — managing git branches, worktrees, code reviews, and merges automatically.
 
-## Key Features
+Everything runs on your machine. No cloud. No account. No telemetry.
 
-- **Multi-Project Dashboard** — Overview all projects at a glance
-- **Kanban Board** — Drag-and-drop epic management per project
-- **AI Chat Panel** — Brainstorm, plan, and iterate with Claude in plan mode
-- **Spec-Driven Development** — Generate code from specifications, not prompts
-- **Multi-Provider Support** — Claude Code, OpenAI Codex, or Gemini CLI
-- **Git Integration** — Automatic worktrees, branches, and PR creation
-- **Document Upload** — Convert PDF/DOCX to Markdown for AI context
-- **Dependency Management** — Track epic dependencies with DAG scheduling
-- **Team Orchestration** — Coordinate multiple agents for complex tasks
-
-## Quick Start
-
-```bash
-# Clone and install
-git clone https://github.com/yourorg/arij.git
-cd arij && npm install
-
-# Start development server
-npm run dev
-
-# Open http://localhost:3000
-```
-
-First run auto-creates the SQLite database at `data/arij.db`.
+![Dashboard](public/screenshots/dashboard.png)
 
 ---
 
-## Design Philosophy
+## Why Arij?
 
-1. **Local-first** — Everything runs on localhost. No cloud, no account, no telemetry.
-2. **Claude Code native** — All AI interactions go through the `claude` CLI, leveraging your existing Pro/Max subscription.
-3. **Convention over configuration** — Sensible defaults, minimal setup.
-4. **Spec-driven development** — Every line of generated code traces back to a spec.
-5. **Progressive disclosure** — Simple by default, depth on demand.
+Most AI coding tools work at the file level — you prompt, you get code, you paste it in. Arij works at the **project level**:
 
----
-
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Browser                               │
-│  ┌─────────────┐ ┌──────────────┐ ┌──────────────────┐  │
-│  │ Dashboard   │ │  Kanban      │ │  Chat Panel      │  │
-│  │ Multi-proj  │ │  per project │ │  (CC plan mode)  │  │
-│  └─────────────┘ └──────────────┘ └──────────────────┘  │
-│  ┌──────────────────┐ ┌────────────────────────────┐    │
-│  │ Agent Monitor   │ │  Document Viewer / Upload   │    │
-│  │ (polling)       │ │  (PDF, DOCX → Markdown)    │    │
-│  └──────────────────┘ └────────────────────────────┘    │
-└────────────────────────┬────────────────────────────────┘
-                         │ HTTP
-┌────────────────────────▼────────────────────────────────┐
-│              Next.js 16 Backend (API Routes)             │
-│  ┌────────────┐ ┌───────────────┐ ┌──────────────────┐  │
-│  │ Projects   │ │ Claude Code   │ │ Prompt Builder   │  │
-│  │ CRUD       │ │ Process Mgr   │ │ (spec → prompt)  │  │
-│  └─────┬──────┘ └───────┬───────┘ └──────────────────┘  │
-│        │                │                                │
-│  ┌─────▼──────┐ ┌───────▼───────┐ ┌──────────────────┐  │
-│  │  SQLite    │ │ Git Manager   │ │ File Converter   │  │
-│  │  (Drizzle) │ │ (worktrees)   │ │ (docx/pdf → md)  │  │
-│  └────────────┘ └───────────────┘ └──────────────────┘  │
-└─────────────────────────────────────────────────────────┘
-```
+- **You describe features as epics**, not individual prompts
+- **AI agents build, review, and merge** code in isolated git worktrees
+- **A Kanban board** tracks progress from backlog to done
+- **Multiple AI providers** can work in parallel on different tasks
+- **Everything is local** — your code never leaves your machine
 
 ---
 
-## Tech Stack
+## Features
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Framework | Next.js 16 (App Router, Turbopack) | Fullstack React |
-| UI | Tailwind CSS v4 + shadcn/ui | Dark mode, accessible components |
-| Database | SQLite via better-sqlite3 + Drizzle ORM | Local-first, zero config |
-| Kanban DnD | dnd-kit | Drag and drop |
-| AI Engine | Claude Code CLI (`claude`) | Plan mode + code mode |
-| AI Engine | OpenAI Codex CLI (`codex`) | Alternative provider |
-| AI Engine | Gemini CLI (`gemini`) | Alternative provider |
-| Git | simple-git | Worktrees, branches |
-| Doc Conversion | mammoth, pdf-parse | DOCX/PDF to Markdown |
-| Markdown | unified / remark / rehype | Parsing and rendering |
-| Tests | Vitest + Playwright | Unit + E2E |
+### Project Dashboard
+Manage multiple projects from a single overview. Each project card shows progress, current phase, and recent activity.
+
+![Dashboard](public/screenshots/dashboard.png)
+
+### Kanban Board
+Organize your work into epics and bugs across workflow columns: Backlog, To Do, In Progress, Review, and Done. Drag and drop to reprioritize. Click any card to see details, comments, and agent activity.
+
+![Kanban Board](public/screenshots/kanban.png)
+
+### AI Chat Panel
+Brainstorm ideas, create new epics, or refine your project spec — all through a chat interface powered by Claude Code (or another provider). The chat panel lives alongside the Kanban board in a resizable split view with tabbed conversations.
+
+### One-Click Build
+Select an epic and hit "Build". Arij will:
+1. Create an isolated git worktree and branch
+2. Compose a structured prompt from your spec, epic details, and project context
+3. Spawn an AI agent to implement the feature
+4. Track the session in real-time
+5. Move the card to Review when done
+
+### Multi-Provider Support
+Use whichever AI coding tool you prefer:
+
+| Provider | What it uses |
+|----------|-------------|
+| **Claude Code** | `claude` CLI — primary provider with plan + code modes |
+| **OpenAI Codex** | `codex` CLI via Codex SDK |
+| **Gemini CLI** | `gemini` CLI via Google |
+
+Create "Named Agents" to mix and match providers and models — e.g., use Claude Opus for complex builds, Gemini Flash for quick bug fixes.
+
+### Automated Code Review
+After an agent builds a feature, trigger AI-powered reviews:
+- **Security audit** — checks for vulnerabilities
+- **Code review** — best practices and quality
+- **Compliance check** — accessibility and standards
+
+Review results are posted as comments on the epic.
+
+### Agent Session Monitoring
+Track every AI agent session with detailed status, duration, provider info, and logs. See what's running, what's completed, and what failed.
+
+![Sessions](public/screenshots/sessions.png)
+
+### Git Automation
+Arij handles all the git plumbing:
+- **Worktrees** — each epic gets its own isolated working directory
+- **Branches** — automatic branch creation and naming
+- **Push & PR** — push to remote and create pull requests from the UI
+- **Merge** — merge completed work back to main
+
+### Project Specification
+Write and edit your project spec in Markdown. Use it as context for all AI interactions — the spec is automatically injected into agent prompts so the AI always understands your project.
+
+### Document Upload
+Upload reference documents (PDF, DOCX, Markdown, images) to your project. Documents are converted to Markdown and available as context for AI agents. Use `@filename` mentions in chat to reference specific docs.
+
+### QA & Tech Checks
+Run AI-powered quality audits on your entire project. Get a detailed report and create epics directly from the findings.
+
+### Release Management
+Create releases by selecting completed epics. Arij generates changelogs, creates git tags, and supports GitHub draft releases.
+
+### Dependency Management
+Set dependencies between epics. Arij builds a DAG and schedules agent work in the correct order — parallel where possible, sequential where required.
+
+### Team Mode
+For large features, enable Team Mode to have a single Claude Code session orchestrate multiple sub-agents working on different tickets simultaneously.
 
 ---
 
-## Installation
+## Getting Started
 
 ### Prerequisites
 
 - **Node.js** >= 20.9
-- **Claude Code CLI** — Install via `npm install -g @anthropic-ai/claude-code` and authenticate with `claude auth`
-- **Git** — For worktree and branch management
+- **Git** installed
+- At least one AI coding CLI:
+  - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `npm install -g @anthropic-ai/claude-code`, then `claude auth`
+  - [OpenAI Codex](https://github.com/openai/codex) — optional
+  - [Gemini CLI](https://github.com/google-gemini/gemini-cli) — optional
 
-### Setup
+### Install & Run
 
 ```bash
+# Clone the repository
+git clone https://github.com/yourorg/arij.git
+cd arij
+
 # Install dependencies
 npm install
 
-# Start dev server (Turbopack)
+# Start the app
 npm run dev
-
-# Database migrations
-npx drizzle-kit generate   # Generate migrations
-npx drizzle-kit push        # Push schema to DB
 ```
 
-### Production
+Open **http://localhost:3000** in your browser. The database is created automatically on first run.
 
-```bash
-npm run build    # Production build
-npm run start    # Start production server
-```
+### Your First Project
 
----
+1. Click **"+ New Project"** on the dashboard
+2. Give it a name, description, and point it to a local git repository
+3. Write a project spec (or let the AI help you generate one via Chat)
+4. Create epics by chatting with the AI — describe what you want and click "Create Epic & Generate Stories"
+5. Drag epics to "To Do" and hit **Build** to start an agent
 
-## Project Structure
+Or **Import** an existing codebase — Arij will analyze it and suggest epics automatically.
 
-```
-app/                    → Next.js App Router routes and layouts
-  api/                  → REST API endpoints
-    projects/           → Project CRUD, epics, stories, sessions
-    agent-config/       → Prompts, providers, named agents
-    qa/                 → QA reports and prompts
-    settings/           → Global settings
-components/             → React components
-  kanban/               → Board, columns, cards
-  chat/                 → Chat panel, messages
-  dashboard/            → Project grid
-  monitor/              → Agent session monitor
-  agent-config/         → Prompt/provider configuration
-  documents/            → Document upload and viewer
-  github/               → GitHub integration UI
-lib/                    → Server-side utilities
-  db/                   → Database schema and connection
-  claude/               → Claude Code process management
-  git/                  → Git operations and worktrees
-  agent-config/         → Prompt resolution and provider defaults
-hooks/                  → Client-side React hooks
-data/                   → Local data (SQLite DB, logs) — gitignored
-__tests__/              → Unit tests (Vitest)
-e2e/                    → End-to-end tests (Playwright)
-```
-
----
-
-## Core Concepts
-
-### Projects
-
-A project represents a codebase with its own spec, epics, and git repository. Import an existing folder or start fresh.
-
-### Epics & User Stories
-
-- **Epics** — High-level features or bugs (Kanban cards)
-- **User Stories** — Granular tasks within an epic
-- Both support: status tracking, comments, dependencies
-
-### Agent Sessions
-
-When you click "Build", Arij spawns an AI agent:
-
-```
-queued → running → completed
-                  → failed
-                  → cancelled
-```
-
-Sessions are tracked with full prompt history and logs for debugging.
-
-### Dependencies
-
-Epics can depend on other epics. Arij builds a DAG and schedules builds in topological order.
-
----
-
-## Key Patterns
-
-### Provider Pattern (Prompt Resolution)
-
-Each agent type has its own system prompt with 3-level fallback:
-
-```
-Project Custom → Global Custom → Built-in Default
-     (highest)      (fallback)      (empty string)
-```
-
-Agent types: `build`, `review_security`, `review_code`, `review_compliance`, `review_feature`, `chat`, `spec_generation`, `team_build`, `ticket_build`, `merge`, `tech_check`.
-
-### State Machine (Agent Sessions)
-
-```
-queued → running → completed | failed | cancelled
-```
-
-### Multi-Provider Support
-
-| Provider | CLI Command | Notes |
-|----------|-------------|-------|
-| Claude Code | `claude` | Primary, plan + code modes |
-| OpenAI Codex | `codex` | Alternative via Codex SDK |
-| Gemini CLI | `gemini` | Alternative via Google CLI |
-
-Configure defaults per agent type at global or project level.
-
----
-
-## API Reference
-
-### Projects
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/projects` | List all projects |
-| POST | `/api/projects` | Create project |
-| GET | `/api/projects/:id` | Get project |
-| PATCH | `/api/projects/:id` | Update project |
-| DELETE | `/api/projects/:id` | Delete project |
-| POST | `/api/projects/import` | Import from folder |
-
-### Epics
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/projects/:id/epics` | List epics |
-| POST | `/api/projects/:id/epics` | Create epic |
-| POST | `/api/projects/:id/epics/:epicId/build` | Start build |
-| POST | `/api/projects/:id/epics/:epicId/review` | Start review |
-| POST | `/api/projects/:id/epics/:epicId/merge` | Merge to main |
-
-### Sessions
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/projects/:id/sessions` | List sessions |
-| GET | `/api/projects/:id/sessions/active` | Active sessions |
-| GET | `/api/projects/:id/sessions/resumable` | Resumable sessions |
-
-### Chat
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/projects/:id/conversations` | List conversations |
-| POST | `/api/projects/:id/chat/stream` | Stream chat response |
-
----
-
-## Testing
-
-```bash
-# Unit tests
-npm test                    # Run once
-npm run test:watch          # Watch mode
-npm run test:coverage       # Coverage report
-
-# E2E tests
-npm run test:e2e            # Run Playwright
-npm run test:e2e:ui         # Interactive UI
-```
-
----
-
-## Configuration
-
-### Environment Variables
+### Configuration
 
 Create `.env.local` for optional settings:
 
 ```env
-# GitHub integration (optional)
+# GitHub integration (for push, PR creation, releases)
 GITHUB_TOKEN=ghp_xxx
 
-# Custom Claude path (optional)
+# Custom Claude CLI path
 CLAUDE_PATH=/usr/local/bin/claude
 ```
 
-### Agent Prompts
-
-Customize system prompts per agent type via the UI or `agent_prompts` table. Scope to global or project-specific.
-
-### Named Agents
-
-Create reusable agent profiles with specific provider/model combinations. Assign Greek names for easy identification.
+Customize agent behavior through the **Agent Configuration** panel in the sidebar:
+- **Prompts** — edit system prompts per agent type (build, review, chat, etc.)
+- **Named Agents** — create provider+model combinations for different tasks
+- **Provider Defaults** — set which agent handles each type of work
 
 ---
 
-## Database Schema
+## How It Works
 
-Key tables:
+```
+You describe a feature
+        |
+        v
+  Arij creates an epic with user stories
+        |
+        v
+  You click "Build"
+        |
+        v
+  Arij creates a git worktree + branch
+        |
+        v
+  AI agent implements the feature
+        |
+        v
+  Card moves to "Review"
+        |
+        v
+  You trigger AI code review
+        |
+        v
+  You merge to main
+```
 
-| Table | Purpose |
-|-------|---------|
-| `projects` | Projects with spec and git config |
-| `epics` | Features/bugs with status and PR info |
-| `user_stories` | Granular tasks within epics |
-| `agent_sessions` | AI execution history |
-| `chat_conversations` | Chat threads |
-| `agent_prompts` | Custom system prompts |
-| `named_agents` | Reusable agent profiles |
-| `ticket_dependencies` | Epic dependency graph |
-| `releases` | Version releases |
-| `pull_requests` | PR tracking |
-| `qa_reports` | QA check results |
+All agent work happens in isolated git worktrees, so multiple features can be built in parallel without conflicts.
+
+---
+
+## Production Build
+
+```bash
+npm run build
+npm run start
+```
 
 ---
 
@@ -320,14 +198,6 @@ Key tables:
 2. Create a feature branch: `git checkout -b feat/my-feature`
 3. Commit with conventional commits: `feat(scope): description`
 4. Push and open a pull request
-
-### Development Guidelines
-
-- Use `@/` import alias for project root
-- Use `nanoid` for all IDs
-- API routes return `{ data }` or `{ error }`
-- Dark mode is default
-- Components use shadcn/ui primitives
 
 ---
 
