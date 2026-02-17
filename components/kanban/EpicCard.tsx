@@ -6,12 +6,19 @@ import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   PRIORITY_LABELS,
   PRIORITY_COLORS,
   type KanbanEpic,
   type KanbanAgentActionType,
   type KanbanEpicAgentActivity,
 } from "@/lib/types/kanban";
+import { formatElapsed } from "@/lib/utils/format-elapsed";
 import {
   GitPullRequest,
   Hammer,
@@ -21,6 +28,13 @@ import {
   Bot,
   type LucideIcon,
 } from "lucide-react";
+
+function providerLabel(provider?: string): string {
+  if (!provider) return "Agent";
+  if (provider === "gemini-cli") return "Gemini";
+  if (provider === "codex") return "Codex";
+  return "Claude Code";
+}
 
 interface EpicCardProps {
   epic: KanbanEpic;
@@ -90,9 +104,19 @@ export function EpicCard({
     ? ACTIVITY_ICON_BY_TYPE[activeAgentActivity.actionType]
     : null;
   const linkedActivityId = activeAgentActivity?.sessionId ?? null;
-  const activityTooltip = activityConfig
-    ? `${activityConfig.label} active: ${activeAgentActivity!.agentName}`
-    : null;
+
+  // Elapsed time ticker for active agent
+  const [elapsedText, setElapsedText] = useState("");
+  useEffect(() => {
+    if (!activeAgentActivity?.startedAt) {
+      setElapsedText("");
+      return;
+    }
+    const update = () => setElapsedText(formatElapsed(activeAgentActivity.startedAt!));
+    update();
+    const interval = setInterval(update, 1000);
+    return () => clearInterval(interval);
+  }, [activeAgentActivity?.startedAt]);
 
   function handleCardClick(event: MouseEvent) {
     const additiveSelection = event.metaKey || event.ctrlKey || event.shiftKey;
@@ -140,14 +164,29 @@ export function EpicCard({
         <div className="flex-1 min-w-0">
           <div className="flex items-start gap-2">
             {activityConfig && (
-              <span
-                className="shrink-0 mt-0.5 inline-flex items-center justify-center rounded-sm bg-yellow-500/10 text-yellow-600 p-0.5"
-                title={activityTooltip ?? undefined}
-                aria-label={activityTooltip ?? undefined}
-                data-testid={`epic-activity-${epic.id}`}
-              >
-                <activityConfig.Icon className="h-3.5 w-3.5" />
-              </span>
+              <TooltipProvider delayDuration={200}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      className="relative shrink-0 mt-0.5 inline-flex items-center justify-center rounded-sm bg-yellow-500/10 text-yellow-600 p-0.5"
+                      aria-label={`${activityConfig.label} active: ${activeAgentActivity!.agentName}`}
+                      data-testid={`epic-activity-${epic.id}`}
+                    >
+                      <span className="absolute inset-0 rounded-sm bg-yellow-500/20 animate-pulse motion-reduce:animate-none" />
+                      <activityConfig.Icon className="relative h-3.5 w-3.5" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="text-xs">
+                    <div className="flex flex-col gap-0.5">
+                      <span className="font-medium">{activityConfig.label}: {activeAgentActivity!.agentName}</span>
+                      <span className="text-muted-foreground">
+                        {providerLabel(activeAgentActivity!.provider)}
+                        {elapsedText && ` \u00B7 ${elapsedText}`}
+                      </span>
+                    </div>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             )}
             <div className="flex-1 min-w-0">
               <span className="text-xs text-muted-foreground font-mono">{epic.readableId || epic.id}</span>

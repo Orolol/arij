@@ -17,7 +17,7 @@ export interface UnifiedActivity {
   cancellable: boolean;
 }
 
-export function useAgentPolling(projectId: string, intervalMs = 3000) {
+export function useAgentPolling(projectId: string, intervalMs = 3000, refreshTrigger?: number) {
   const [activities, setActivities] = useState<UnifiedActivity[]>([]);
 
   const poll = useCallback(async () => {
@@ -36,5 +36,10 @@ export function useAgentPolling(projectId: string, intervalMs = 3000) {
     return () => clearInterval(interval);
   }, [poll, intervalMs]);
 
-  return { activities };
+  // Immediate re-poll when SSE triggers a refresh
+  useEffect(() => {
+    if (refreshTrigger) poll();
+  }, [refreshTrigger, poll]);
+
+  return { activities, refresh: poll };
 }

@@ -63,6 +63,8 @@ export interface KanbanEpicAgentActivity {
   sessionId: string;
   actionType: KanbanAgentActionType;
   agentName: string;
+  provider?: string;
+  startedAt?: string;
 }
 
 export interface BoardState {

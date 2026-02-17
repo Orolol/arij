@@ -3,6 +3,7 @@
  * - EpicCard highlight prop triggers visual highlight class
  * - Column detects new arrivals and highlights them
  * - Reduced motion preference removes animations
+ * - Agent activity pulsing indicator
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -24,6 +25,14 @@ vi.mock("@dnd-kit/sortable", () => ({
 
 vi.mock("@dnd-kit/utilities", () => ({
   CSS: { Transform: { toString: () => undefined } },
+}));
+
+// Mock tooltip to render children without Radix portals
+vi.mock("@/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: React.ReactNode }) => <div data-testid="tooltip-content">{children}</div>,
+  TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
 
 function makeEpic(overrides?: Partial<KanbanEpic>): KanbanEpic {
@@ -94,5 +103,57 @@ describe("EpicCard — highlight animation", () => {
     );
 
     expect(container.firstElementChild).toBeTruthy();
+  });
+});
+
+describe("EpicCard — agent activity indicator", () => {
+  it("shows pulsing indicator when agent is active", () => {
+    const { container } = render(
+      <EpicCard
+        epic={makeEpic()}
+        activeAgentActivity={{
+          sessionId: "session-1",
+          actionType: "build",
+          agentName: "Test Agent",
+          provider: "claude-code",
+          startedAt: new Date().toISOString(),
+        }}
+      />
+    );
+
+    const activityEl = container.querySelector('[data-testid="epic-activity-epic-1"]');
+    expect(activityEl).toBeTruthy();
+    // Check for the pulsing overlay span
+    const pulseEl = activityEl!.querySelector(".animate-pulse");
+    expect(pulseEl).toBeTruthy();
+  });
+
+  it("shows tooltip content with provider and agent name", () => {
+    const { getByTestId } = render(
+      <EpicCard
+        epic={makeEpic()}
+        activeAgentActivity={{
+          sessionId: "session-1",
+          actionType: "review",
+          agentName: "Review Bot",
+          provider: "gemini-cli",
+          startedAt: new Date().toISOString(),
+        }}
+      />
+    );
+
+    const tooltip = getByTestId("tooltip-content");
+    expect(tooltip.textContent).toContain("Review");
+    expect(tooltip.textContent).toContain("Review Bot");
+    expect(tooltip.textContent).toContain("Gemini");
+  });
+
+  it("does not show activity indicator when no agent is active", () => {
+    const { container } = render(
+      <EpicCard epic={makeEpic()} />
+    );
+
+    const activityEl = container.querySelector('[data-testid="epic-activity-epic-1"]');
+    expect(activityEl).toBeNull();
   });
 });

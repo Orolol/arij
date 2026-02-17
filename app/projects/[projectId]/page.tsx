@@ -56,11 +56,11 @@ export default function KanbanPage() {
   const [bugDialogOpen, setBugDialogOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [highlightedActivityId, setHighlightedActivityId] = useState<string | null>(null);
-  const { activities } = useAgentPolling(projectId);
+  const { activities } = useAgentPolling(projectId, 3000, refreshTrigger);
   const prevSessionIds = useRef<Set<string>>(new Set());
   const panelRef = useRef<UnifiedChatPanelHandle>(null);
 
-  // Real-time events via SSE — auto-refresh board on ticket changes
+  // Real-time events via SSE — auto-refresh board on ticket/session changes
   const { status: sseStatus } = useProjectEvents(projectId, {
     "ticket:moved": () => setRefreshTrigger((t) => t + 1),
     "ticket:created": () => setRefreshTrigger((t) => t + 1),
@@ -69,6 +69,7 @@ export default function KanbanPage() {
     "session:started": () => setRefreshTrigger((t) => t + 1),
     "session:completed": () => setRefreshTrigger((t) => t + 1),
     "session:failed": () => setRefreshTrigger((t) => t + 1),
+    "session:progress": () => setRefreshTrigger((t) => t + 1),
   });
   const activeAgentActivities = useMemo<Record<string, KanbanEpicAgentActivity>>(
     () => {
@@ -82,6 +83,8 @@ export default function KanbanPage() {
           sessionId: activity.id,
           actionType: activity.type as KanbanEpicAgentActivity["actionType"],
           agentName: activity.namedAgentName || `Agent ${activity.id.slice(0, 6)}`,
+          provider: activity.provider,
+          startedAt: activity.startedAt,
         };
       }
 
