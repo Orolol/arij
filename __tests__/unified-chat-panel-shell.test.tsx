@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn() }),
@@ -248,6 +249,7 @@ describe("UnifiedChatPanel shell + tabs", () => {
   });
 
   it("creates a new tab with plus button and keeps newest tab on the right", async () => {
+    const user = userEvent.setup();
     render(
       <UnifiedChatPanel projectId="proj1">
         <div>board</div>
@@ -256,7 +258,11 @@ describe("UnifiedChatPanel shell + tabs", () => {
 
     fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
 
-    fireEvent.click(screen.getByTestId("new-conversation-tab"));
+    await user.click(screen.getByTestId("new-conversation-tab"));
+    await waitFor(() => {
+      expect(screen.getByTestId("new-tab-brainstorm")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("new-tab-brainstorm"));
 
     await waitFor(() => {
       expect(mockCreateConversation).toHaveBeenCalledTimes(1);
@@ -269,6 +275,7 @@ describe("UnifiedChatPanel shell + tabs", () => {
   });
 
   it("switches active conversation when tab is clicked", async () => {
+    const user = userEvent.setup();
     render(
       <UnifiedChatPanel projectId="proj1">
         <div>board</div>
@@ -276,7 +283,11 @@ describe("UnifiedChatPanel shell + tabs", () => {
     );
 
     fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
-    fireEvent.click(screen.getByTestId("new-conversation-tab"));
+    await user.click(screen.getByTestId("new-conversation-tab"));
+    await waitFor(() => {
+      expect(screen.getByTestId("new-tab-brainstorm")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("new-tab-brainstorm"));
 
     await waitFor(() => {
       expect(screen.getByTestId("conversation-tab-conv2")).toBeInTheDocument();
@@ -288,6 +299,7 @@ describe("UnifiedChatPanel shell + tabs", () => {
   });
 
   it("close tab deletes the conversation and keeps the last tab non-closable", async () => {
+    const user = userEvent.setup();
     const { unmount } = render(
       <UnifiedChatPanel projectId="proj1">
         <div>board</div>
@@ -295,7 +307,11 @@ describe("UnifiedChatPanel shell + tabs", () => {
     );
 
     fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
-    fireEvent.click(screen.getByTestId("new-conversation-tab"));
+    await user.click(screen.getByTestId("new-conversation-tab"));
+    await waitFor(() => {
+      expect(screen.getByTestId("new-tab-brainstorm")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("new-tab-brainstorm"));
 
     await waitFor(() => {
       expect(screen.getByTestId("close-tab-conv1")).toBeInTheDocument();
