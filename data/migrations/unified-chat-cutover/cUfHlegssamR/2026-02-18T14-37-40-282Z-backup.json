@@ -1,0 +1,94 @@
+{
+  "migrationId": "2026-02-18T14-37-40-282Z",
+  "projectId": "cUfHlegssamR",
+  "capturedAt": "2026-02-18T14:37:40.282Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "Dc6ZEXzxpvRX",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "New Epic",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-18T11:33:49.584Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "DrUgU0HVQ7_Y",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "Dc6ZEXzxpvRX",
+        "role": "user",
+        "content": "On va rajouter un système de notifications global. Quand un agent a fini son job, quelque soit ce job, on va ajouter une notifications à la liste, et incrémenter un petit compteur. Bref, un ssystème de notif. Comme le but c'est d'être cross projet, il faut que chaque notif indique clairement de quel projet il s'agit. QUand on clicque sur une notif, on se retrouve sur la page adéquat (Par exemple la page QA du projet X si c'est là que s'est terminé le job de l'agent)\nLes notifications s'affichent quand on clique sur l'icon (en haut a droite a côté de sync=, on peut scroll pour voir l'historique, mais pas besoin d'en faire plus. Une fois qu'on a cliqué pour voir les notifs, le nombre de notiofs non lus est remis a 0\nOn va également mettre dans le title de la page le nombre de notifs non lu \"(5) - Arij\" pour que ça s'affiche dans l'onlget du nav",
+        "metadata": null,
+        "created_at": "2026-02-18T11:37:38.944Z"
+      },
+      {
+        "id": "hYrn8PCJjYra",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "Dc6ZEXzxpvRX",
+        "role": "assistant",
+        "content": "(empty response)",
+        "metadata": null,
+        "created_at": "2026-02-18T11:44:00.723Z"
+      },
+      {
+        "id": "k0Y6ZPajqVwg",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "Dc6ZEXzxpvRX",
+        "role": "user",
+        "content": "Ok ?",
+        "metadata": null,
+        "created_at": "2026-02-18T11:55:27.732Z"
+      },
+      {
+        "id": "wq-_tB7tF2ig",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "Dc6ZEXzxpvRX",
+        "role": "assistant",
+        "content": "Agent completed successfully (no textual output).",
+        "metadata": null,
+        "created_at": "2026-02-18T11:55:44.492Z"
+      },
+      {
+        "id": "y5FlLQ7Wp0DQ",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "Dc6ZEXzxpvRX",
+        "role": "user",
+        "content": "Generate the final epic with user stories based on our discussion.",
+        "metadata": null,
+        "created_at": "2026-02-18T12:01:23.559Z"
+      },
+      {
+        "id": "CSqrUaeh18aJ",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "Dc6ZEXzxpvRX",
+        "role": "assistant",
+        "content": "Here's the final epic:\n\n---\n\n## Epic: Global Notification System\n\n**Description:**\nAdd a persistent, cross-project notification system so users are always aware when any agent finishes a job — regardless of which project page they're currently viewing. A bell icon in the global sidebar shows an unread count badge, and clicking it opens a scrollable popover with notification history. Each notification indicates the project, agent action, and result (success/failure), and clicking it navigates directly to the relevant page. The browser tab title also reflects the unread count (e.g. \"(3) Arij\").\n\n---\n\n### User Stories\n\n**US-1: Notification Database Schema**\n> As a developer, I need `notifications` and `notification_read_cursor` tables in SQLite so that notification data is persisted across page refreshes and server restarts.\n\nAcceptance Criteria:\n- A `notifications` table exists with columns: `id`, `project_id`, `project_name`, `session_id`, `agent_type`, `status` (completed|failed), `title`, `target_url`, `created_at`\n- A `notification_read_cursor` table exists with a single-row design: `id` (always 1), `read_at` (ISO timestamp)\n- Tables are auto-created on startup via `CREATE TABLE IF NOT EXISTS` in `lib/db/index.ts`\n- An index exists on `notifications.created_at` for efficient sorting\n\n**US-2: Server-Side Notification Creation on Session Completion**\n> As a user, I want a notification to be automatically created every time an agent session completes or fails, so I don't have to manually check each project.\n\nAcceptance Criteria:\n- A `createNotificationFromSession(sessionId)` helper in `lib/notifications/create.ts` looks up the session, project name, and optional epic context, then inserts a notification row\n- `emitSessionCompleted()` and `emitSessionFailed()` in `lib/events/emit.ts` call `createNotificationFromSession()` after emitting the SSE event\n- The notification `title` is human-readable (e.g. \"Build completed — E-proj-003: Login feature\" or \"Tech check failed\")\n- The `targetUrl` maps correctly: `tech_check`/`e2e_test` → `/projects/{pid}/qa`, all others → `/projects/{pid}/sessions/{sid}`\n- Old notifications are pruned to keep at most 200 rows\n\n**US-3: Notification API Endpoints**\n> As a frontend developer, I need API endpoints to fetch notifications and mark them as read, so the UI can display and manage notification state.\n\nAcceptance Criteria:\n- `GET /api/notifications?limit=50` returns `{ data: Notification[], unreadCount: number }`\n- Notifications are ordered by `created_at DESC`\n- `unreadCount` is computed as notifications where `created_at > readCursor.readAt` (0 if no cursor row exists, meaning all are unread)\n- `POST /api/notifications/read` upserts the read cursor with the current timestamp and returns `{ ok: true }`\n\n**US-4: Notification Bell with Popover in Global Sidebar**\n> As a user, I want a bell icon in the global sidebar that shows a badge with the number of unread notifications and opens a scrollable list when clicked.\n\nAcceptance Criteria:\n- A `NotificationBell` component is rendered in the global sidebar (between Agent Config and Theme Toggle)\n- The sidebar is extracted into a client component (`components/layout/Sidebar.tsx`) while `app/layout.tsx` remains a server component for metadata\n- A red/primary badge on the bell shows the unread count (hidden when 0)\n- Clicking the bell opens a shadcn/ui Popover with a scrollable list (max ~400px height)\n- Each notification item shows: status icon (green check / red X), project name (muted), title, relative time\n- Clicking a notification navigates to its `targetUrl` and closes the popover\n- Opening the popover triggers mark-as-read (unread count resets to 0)\n\n**US-5: Browser Tab Title with Unread Count**\n> As a user, I want the browser tab to show the unread notification count so I can see at a glance if an agent has finished, even when the tab is in the background.\n\nAcceptance Criteria:\n- When `unreadCount > 0`, the document title is `\"(N) Arij\"` where N is the count\n- When `unreadCount === 0`, the document title is `\"Arij\"`\n- The title updates reactively via the `useNotifications` hook (5-second polling interval)",
+        "metadata": null,
+        "created_at": "2026-02-18T12:01:55.719Z"
+      },
+      {
+        "id": "qLDE8mtFsIVX",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "Dc6ZEXzxpvRX",
+        "role": "user",
+        "content": "Output ONLY the JSON code block for the epic. Start your response with ```json and end with ```. No other text.",
+        "metadata": null,
+        "created_at": "2026-02-18T12:01:55.799Z"
+      },
+      {
+        "id": "yMzzUuMBw1pE",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "Dc6ZEXzxpvRX",
+        "role": "assistant",
+        "content": "```json\n{\n  \"title\": \"Global Notification System\",\n  \"description\": \"Add a persistent, cross-project notification system so users are always aware when any agent finishes a job — regardless of which project page they're viewing. A bell icon in the global sidebar shows an unread count badge, and clicking it opens a scrollable popover with notification history. Each notification indicates the project, agent action, and result (success/failure), and clicking it navigates directly to the relevant page (e.g. QA tab, session detail). The browser tab title also reflects the unread count (e.g. \\\"(3) Arij\\\").\",\n  \"priority\": 2,\n  \"status\": \"backlog\",\n  \"type\": \"feature\",\n  \"userStories\": [\n    {\n      \"title\": \"Notification Database Schema\",\n      \"description\": \"Add `notifications` and `notification_read_cursor` tables in SQLite so that notification data is persisted across page refreshes and server restarts.\",\n      \"acceptanceCriteria\": \"- [ ] A `notifications` table exists with columns: id, project_id, project_name (denormalized), session_id, agent_type, status (completed|failed), title, target_url, created_at\\n- [ ] A `notification_read_cursor` table exists with single-row design: id (always 1), read_at (ISO timestamp)\\n- [ ] Tables are auto-created on startup via CREATE TABLE IF NOT EXISTS in lib/db/index.ts\\n- [ ] An index exists on notifications.created_at for efficient sorting\\n- [ ] Drizzle schema definitions added in lib/db/schema.ts with proper FK references and types exported\"\n    },\n    {\n      \"title\": \"Server-Side Notification Creation on Session Completion\",\n      \"description\": \"Automatically create a notification row every time an agent session completes or fails, by hooking into the existing event emission layer.\",\n      \"acceptanceCriteria\": \"- [ ] A createNotificationFromSession(sessionId) helper exists in lib/notifications/create.ts\\n- [ ] The helper looks up session row, project name, and optional epic context (title, readableId) from the DB\\n- [ ] emitSessionCompleted() and emitSessionFailed() in lib/events/emit.ts call createNotificationFromSession() after emitting the SSE event\\n- [ ] Notification title is human-readable (e.g. \\\"Build completed — E-proj-003: Login feature\\\" or \\\"Tech check failed\\\")\\n- [ ] targetUrl maps correctly: tech_check/e2e_test → /projects/{pid}/qa, all others → /projects/{pid}/sessions/{sid}\\n- [ ] Old notifications are pruned to keep at most 200 rows\"\n    },\n    {\n      \"title\": \"Notification API Endpoints\",\n      \"description\": \"Provide REST endpoints to fetch the notification list with unread count and to mark all notifications as read.\",\n      \"acceptanceCriteria\": \"- [ ] GET /api/notifications?limit=50 returns { data: Notification[], unreadCount: number }\\n- [ ] Notifications are ordered by created_at DESC\\n- [ ] unreadCount is computed as count of notifications where created_at > readCursor.readAt (all unread if no cursor row exists)\\n- [ ] POST /api/notifications/read upserts the read cursor with the current timestamp and returns { ok: true }\"\n    },\n    {\n      \"title\": \"Notification Bell with Popover in Global Sidebar\",\n      \"description\": \"Add a bell icon in the global sidebar that shows a badge with unread count and opens a scrollable notification list when clicked.\",\n      \"acceptanceCriteria\": \"- [ ] A NotificationBell component is rendered in the global sidebar between Agent Config and Theme Toggle\\n- [ ] The sidebar is extracted into a client component (components/layout/Sidebar.tsx) while app/layout.tsx remains a server component for metadata\\n- [ ] A red/primary badge on the bell shows the unread count (hidden when 0)\\n- [ ] Clicking the bell opens a shadcn/ui Popover with a scrollable list (max ~400px height)\\n- [ ] Each notification item shows: status icon (green check / red X), project name (muted), title, relative time\\n- [ ] Clicking a notification navigates to its targetUrl and closes the popover\\n- [ ] Opening the popover triggers mark-as-read (unread count resets to 0)\\n- [ ] useNotifications hook polls GET /api/notifications every 5 seconds\"\n    },\n    {\n      \"title\": \"Browser Tab Title with Unread Count\",\n      \"description\": \"Update the browser tab title to reflect the unread notification count so users can see at a glance if an agent has finished, even when the tab is in the background.\",\n      \"acceptanceCriteria\": \"- [ ] When unreadCount > 0, document.title is \\\"(N) Arij\\\" where N is the count\\n- [ ] When unreadCount === 0, document.title is \\\"Arij\\\"\\n- [ ] Title updates reactively via the useNotifications hook\"\n    }\n  ]\n}\n```",
+        "metadata": null,
+        "created_at": "2026-02-18T12:03:32.542Z"
+      }
+    ],
+    "attachments": []
+  }
+}
