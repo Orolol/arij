@@ -14,7 +14,7 @@ import {
   buildReviewPrompt,
   type ReviewType,
 } from "@/lib/claude/prompt-builder";
-import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import { checkSessionLock } from "@/lib/session-lock";
 import fs from "fs";
 import path from "path";
@@ -329,9 +329,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         }
 
         // Post review as comment with label
-        const output = result?.result
-          ? parseClaudeOutput(result.result).content
-          : result?.error || "Review agent completed without output.";
+        const output = resolveSessionOutput(result, sid, "Review agent completed without output.");
 
         db.insert(ticketComments)
           .values({

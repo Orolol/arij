@@ -10,7 +10,7 @@ import {
 } from "@/lib/db/schema";
 import { eq, desc, inArray, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
-import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import simpleGit from "simple-git";
 import { createDraftRelease } from "@/lib/github/releases";
 import { logSyncOperation } from "@/lib/github/sync-log";
@@ -286,7 +286,7 @@ ${ticketContext}
       }
 
       if (result?.success && result.result) {
-        changelog = parseClaudeOutput(result.result).content;
+        changelog = resolveSessionOutput(result, sessionId, "");
       }
     } catch {
       // Fall back to auto-generated changelog

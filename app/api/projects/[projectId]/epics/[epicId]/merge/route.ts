@@ -7,7 +7,7 @@ import { tryExportArjiJson } from "@/lib/sync/export";
 import { createId } from "@/lib/utils/nanoid";
 import { processManager } from "@/lib/claude/process-manager";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import {
   createQueuedSession,
   markSessionRunning,
@@ -223,9 +223,7 @@ export async function POST(
       }
 
       // Post output as epic comment
-      const mergeOutput = agentResult?.result
-        ? parseClaudeOutput(agentResult.result).content
-        : agentResult?.error || "Agent session completed without output.";
+      const mergeOutput = resolveSessionOutput(agentResult, sessionId);
 
       db.insert(ticketComments)
         .values({

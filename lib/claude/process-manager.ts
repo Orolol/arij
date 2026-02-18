@@ -6,6 +6,7 @@ import {
   isTerminalStatus,
 } from "@/lib/sessions/status-machine";
 import { appendSessionChunk } from "@/lib/agent-sessions/chunks";
+import { parseClaudeOutput, isNoTextualOutputFallback } from "./json-parser";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -181,6 +182,11 @@ class ClaudeProcessManager {
           this.persistCliSessionId(sessionId, resolvedCliSessionId);
         }
 
+        // For Claude Code sessions, persist result text as a session chunk
+        // so that lastNonEmptyText gets populated (non-CC providers do this
+        // via the onChunk callback during execution).
+        this.persistResultAsChunk(sessionId, result, tracked.provider);
+
         // Only transition if the move is valid (e.g. not already cancelled)
         if (isValidTransition(tracked.status, targetStatus)) {
           tracked.status = targetStatus;
@@ -301,6 +307,41 @@ class ClaudeProcessManager {
   // -------------------------------------------------------------------------
   // Internal helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Persist the result text from a completed session as a session chunk.
+   *
+   * Non-Claude-Code providers stream chunks via onChunk during execution,
+   * which populates `lastNonEmptyText`. Claude Code only returns stdout on
+   * exit, so we need to do it here.
+   */
+  private persistResultAsChunk(
+    sessionId: string,
+    result: ClaudeResult,
+    provider: ProviderType,
+  ): void {
+    if (!result.result) return;
+
+    try {
+      const parsed = parseClaudeOutput(result.result);
+      const text = parsed.content;
+
+      // Skip if we only got a fallback message — nothing useful to persist
+      if (!text || isNoTextualOutputFallback(text)) return;
+
+      appendSessionChunk({
+        sessionId,
+        streamType: "output",
+        content: text,
+        chunkKey: `result-${sessionId}`,
+      });
+    } catch (error) {
+      console.error(
+        `[process-manager] Failed to persist result chunk for ${provider} session ${sessionId}`,
+        error,
+      );
+    }
+  }
 
   private toSessionInfo(session: TrackedSession): SessionInfo {
     const info: SessionInfo = {

@@ -4,6 +4,8 @@ import {
   extractJsonFromOutput,
   extractCliSessionIdFromOutput,
   hasAskUserQuestion,
+  isNoTextualOutputFallback,
+  NO_TEXTUAL_OUTPUT_FALLBACK,
 } from "@/lib/claude/json-parser";
 
 describe("parseClaudeOutput", () => {
@@ -178,6 +180,99 @@ describe("parseClaudeOutput", () => {
     ].join("\n");
     const result = parseClaudeOutput(ndjson);
     expect(result.content).toBe("Only the response should be shown.");
+  });
+
+  // --- Result envelope with object result containing content array ---
+
+  it("extracts text from result envelope with content-array result (mixed text + tool_use)", () => {
+    const envelope = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: {
+        content: [
+          { type: "text", text: "I'll implement the changes now." },
+          { type: "tool_use", id: "toolu_1", name: "Edit", input: { file: "foo.ts" } },
+          { type: "text", text: "All changes have been applied successfully." },
+        ],
+      },
+      session_id: "sess-123",
+    });
+    const result = parseClaudeOutput(envelope);
+    expect(result.content).toContain("I'll implement the changes now.");
+    expect(result.content).toContain("All changes have been applied successfully.");
+    expect(result.content).not.toContain("no textual output");
+  });
+
+  it("extracts text from result envelope with JSON-stringified content-array result", () => {
+    const contentArray = [
+      { type: "text", text: "Here is my analysis." },
+      { type: "tool_use", id: "toolu_2", name: "Read", input: {} },
+    ];
+    const envelope = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: JSON.stringify({ content: contentArray }),
+      session_id: "sess-456",
+    });
+    const result = parseClaudeOutput(envelope);
+    expect(result.content).toContain("Here is my analysis.");
+    expect(result.content).not.toContain("no textual output");
+  });
+
+  it("still falls back for result envelope with only tool_use blocks in content", () => {
+    const envelope = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: {
+        content: [
+          { type: "tool_use", id: "toolu_1", name: "Edit", input: {} },
+          { type: "tool_use", id: "toolu_2", name: "Write", input: {} },
+        ],
+      },
+      session_id: "sess-789",
+    });
+    const result = parseClaudeOutput(envelope);
+    expect(result.content).toBe(NO_TEXTUAL_OUTPUT_FALLBACK);
+  });
+
+  // --- NDJSON with assistant events containing text + tool_use ---
+
+  it("extracts text from NDJSON assistant events with mixed content", () => {
+    const ndjson = [
+      JSON.stringify({ type: "system", text: "" }),
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          content: [
+            { type: "text", text: "Starting implementation..." },
+            { type: "tool_use", id: "toolu_1", name: "Edit", input: {} },
+          ],
+        },
+      }),
+      JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "",
+      }),
+    ].join("\n");
+    const result = parseClaudeOutput(ndjson);
+    expect(result.content).toContain("Starting implementation...");
+  });
+});
+
+describe("isNoTextualOutputFallback", () => {
+  it("detects the primary fallback message", () => {
+    expect(isNoTextualOutputFallback(NO_TEXTUAL_OUTPUT_FALLBACK)).toBe(true);
+  });
+
+  it("detects alternative fallback messages", () => {
+    expect(isNoTextualOutputFallback("Agent session completed without output.")).toBe(true);
+    expect(isNoTextualOutputFallback("Review agent completed without output.")).toBe(true);
+  });
+
+  it("returns false for actual content", () => {
+    expect(isNoTextualOutputFallback("The review found no issues.")).toBe(false);
+    expect(isNoTextualOutputFallback("")).toBe(false);
   });
 });
 

@@ -16,7 +16,7 @@ import {
   type TeamEpic,
 } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 
 import fs from "fs";
 import path from "path";
@@ -319,9 +319,7 @@ export async function POST(
         }
 
         // Post output as comment on each epic
-        const teamOutput = result?.result
-          ? parseClaudeOutput(result.result).content
-          : result?.error || "Agent session completed without output.";
+        const teamOutput = resolveSessionOutput(result, sessionId);
 
         for (const eid of allEpicIds) {
           db.insert(ticketComments)
@@ -530,9 +528,7 @@ export async function POST(
       }
 
       // Post output as epic comment
-      const output = result?.result
-        ? parseClaudeOutput(result.result).content
-        : result?.error || "Agent session completed without output.";
+      const output = resolveSessionOutput(result, sessionId);
 
       db.insert(ticketComments)
         .values({
