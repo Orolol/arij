@@ -1,0 +1,9 @@
+[     558ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/api/projects/MaelXNfuJ6cp/conversations:0
+[     734ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:3000/api/projects/MaelXNfuJ6cp:0
+[    3420ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/api/projects/MaelXNfuJ6cp/conversations:0
+[    6423ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/api/projects/MaelXNfuJ6cp/conversations:0
+[    9424ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/api/projects/MaelXNfuJ6cp/conversations:0
+[   12420ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/api/projects/MaelXNfuJ6cp/conversations:0
+[   15459ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/api/projects/MaelXNfuJ6cp/conversations:0
+[   18428ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/api/projects/MaelXNfuJ6cp/conversations:0
+[   21428ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:3000/api/projects/MaelXNfuJ6cp/conversations:0

@@ -1,0 +1,33 @@
+{
+  "migrationId": "2026-02-18T11-44-27-342Z",
+  "projectId": "MaelXNfuJ6cp",
+  "startedAt": "2026-02-18T11:44:27.342Z",
+  "completedAt": "2026-02-18T11:44:27.343Z",
+  "backupPath": "/home/orolol/workspace/arji/data/migrations/unified-chat-cutover/MaelXNfuJ6cp/2026-02-18T11-44-27-342Z-backup.json",
+  "reportPath": "/home/orolol/workspace/arji/data/migrations/unified-chat-cutover/MaelXNfuJ6cp/2026-02-18T11-44-27-342Z-report.json",
+  "before": {
+    "conversations": 0,
+    "messages": 0,
+    "attachments": 0,
+    "orphanMessages": 0
+  },
+  "actions": {
+    "createdFallbackConversation": false,
+    "fallbackConversationId": null,
+    "messagesReassigned": 0
+  },
+  "after": {
+    "conversations": 0,
+    "messages": 0,
+    "attachments": 0,
+    "orphanMessages": 0
+  },
+  "integrity": {
+    "missingConversationReferences": 0,
+    "duplicateConversationIds": 0,
+    "duplicateMessageIds": 0,
+    "zeroMissingConversations": true,
+    "zeroDuplicateConversations": true,
+    "zeroDuplicateMessages": true
+  }
+}

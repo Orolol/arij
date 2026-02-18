@@ -1,0 +1,31 @@
+{
+  "migrationId": "2026-02-18T11-51-02-123Z",
+  "projectId": "88kZQUSbRU2A",
+  "capturedAt": "2026-02-18T11:51:02.123Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "ru5BC-Ci8UGP",
+        "project_id": "88kZQUSbRU2A",
+        "type": "brainstorm",
+        "label": "Brainstorm",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-15T15:34:59.462Z"
+      },
+      {
+        "id": "lNeio3JpcSyC",
+        "project_id": "88kZQUSbRU2A",
+        "type": "epic_creation",
+        "label": "New Epic",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-15T15:35:36.446Z"
+      }
+    ],
+    "messages": [],
+    "attachments": []
+  }
+}

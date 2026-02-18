@@ -57,6 +57,13 @@ sqlite.exec(`
   )
 `);
 
+// Ensure release_id column exists on epics (added after initial schema)
+try {
+  sqlite.exec(`ALTER TABLE epics ADD COLUMN release_id TEXT REFERENCES releases(id) ON DELETE SET NULL`);
+} catch {
+  // Column already exists — ignore
+}
+
 export const db = drizzle(sqlite, { schema });
 
 // ---------------------------------------------------------------------------
