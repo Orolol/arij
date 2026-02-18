@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chatConversations, chatMessages, namedAgents } from "@/lib/db/schema";
+import { chatConversations, chatMessages, namedAgents, projects } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveAgent } from "@/lib/agent-config/providers";
@@ -32,6 +32,13 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
+
+  // Verify project exists before attempting any inserts
+  const project = db.select({ id: projects.id }).from(projects).where(eq(projects.id, projectId)).get();
+  if (!project) {
+    return NextResponse.json({ data: [] });
+  }
+
   runUnifiedChatCutoverMigrationOnce(projectId);
 
   let conversations = db

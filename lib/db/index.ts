@@ -33,6 +33,13 @@ sqlite.exec(`
 sqlite.exec(`CREATE INDEX IF NOT EXISTS ticket_activity_log_epic_idx ON ticket_activity_log(epic_id)`);
 sqlite.exec(`CREATE INDEX IF NOT EXISTS ticket_activity_log_project_idx ON ticket_activity_log(project_id)`);
 
+// Ensure release_id column exists on epics (added after initial schema)
+try {
+  sqlite.exec(`ALTER TABLE epics ADD COLUMN release_id TEXT REFERENCES releases(id) ON DELETE SET NULL`);
+} catch {
+  // Column already exists — ignore
+}
+
 export const db = drizzle(sqlite, { schema });
 
 // ---------------------------------------------------------------------------

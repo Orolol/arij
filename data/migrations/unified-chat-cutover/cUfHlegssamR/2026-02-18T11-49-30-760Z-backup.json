@@ -1,0 +1,40 @@
+{
+  "migrationId": "2026-02-18T11-49-30-760Z",
+  "projectId": "cUfHlegssamR",
+  "capturedAt": "2026-02-18T11:49:30.760Z",
+  "snapshot": {
+    "conversations": [
+      {
+        "id": "Dc6ZEXzxpvRX",
+        "project_id": "cUfHlegssamR",
+        "type": "epic_creation",
+        "label": "New Epic",
+        "status": "active",
+        "epic_id": null,
+        "provider": "claude-code",
+        "created_at": "2026-02-18T11:33:49.584Z"
+      }
+    ],
+    "messages": [
+      {
+        "id": "DrUgU0HVQ7_Y",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "Dc6ZEXzxpvRX",
+        "role": "user",
+        "content": "On va rajouter un système de notifications global. Quand un agent a fini son job, quelque soit ce job, on va ajouter une notifications à la liste, et incrémenter un petit compteur. Bref, un ssystème de notif. Comme le but c'est d'être cross projet, il faut que chaque notif indique clairement de quel projet il s'agit. QUand on clicque sur une notif, on se retrouve sur la page adéquat (Par exemple la page QA du projet X si c'est là que s'est terminé le job de l'agent)\nLes notifications s'affichent quand on clique sur l'icon (en haut a droite a côté de sync=, on peut scroll pour voir l'historique, mais pas besoin d'en faire plus. Une fois qu'on a cliqué pour voir les notifs, le nombre de notiofs non lus est remis a 0\nOn va également mettre dans le title de la page le nombre de notifs non lu \"(5) - Arij\" pour que ça s'affiche dans l'onlget du nav",
+        "metadata": null,
+        "created_at": "2026-02-18T11:37:38.944Z"
+      },
+      {
+        "id": "hYrn8PCJjYra",
+        "project_id": "cUfHlegssamR",
+        "conversation_id": "Dc6ZEXzxpvRX",
+        "role": "assistant",
+        "content": "(empty response)",
+        "metadata": null,
+        "created_at": "2026-02-18T11:44:00.723Z"
+      }
+    ],
+    "attachments": []
+  }
+}
