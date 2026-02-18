@@ -33,6 +33,30 @@ sqlite.exec(`
 sqlite.exec(`CREATE INDEX IF NOT EXISTS ticket_activity_log_epic_idx ON ticket_activity_log(epic_id)`);
 sqlite.exec(`CREATE INDEX IF NOT EXISTS ticket_activity_log_project_idx ON ticket_activity_log(project_id)`);
 
+// Ensure notifications table exists
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS notifications (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_name TEXT NOT NULL,
+    session_id TEXT REFERENCES agent_sessions(id) ON DELETE SET NULL,
+    agent_type TEXT,
+    status TEXT NOT NULL,
+    title TEXT NOT NULL,
+    target_url TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`);
+sqlite.exec(`CREATE INDEX IF NOT EXISTS notifications_created_at_idx ON notifications(created_at)`);
+
+// Ensure notification_read_cursor table exists (single-row design, id always 1)
+sqlite.exec(`
+  CREATE TABLE IF NOT EXISTS notification_read_cursor (
+    id INTEGER PRIMARY KEY,
+    read_at TEXT NOT NULL
+  )
+`);
+
 // Ensure release_id column exists on epics (added after initial schema)
 try {
   sqlite.exec(`ALTER TABLE epics ADD COLUMN release_id TEXT REFERENCES releases(id) ON DELETE SET NULL`);

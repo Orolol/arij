@@ -3,6 +3,7 @@
  */
 
 import { eventBus, type TicketEventType } from "./bus";
+import { createNotificationFromSession } from "@/lib/notifications/create";
 
 function emit(
   type: TicketEventType,
@@ -63,6 +64,11 @@ export function emitSessionCompleted(
   sessionId: string
 ) {
   emit("session:completed", projectId, epicId, { sessionId });
+  try {
+    createNotificationFromSession(sessionId);
+  } catch {
+    // Non-critical — don't break session flow if notification fails
+  }
 }
 
 export function emitSessionFailed(
@@ -72,6 +78,11 @@ export function emitSessionFailed(
   error: string
 ) {
   emit("session:failed", projectId, epicId, { sessionId, error });
+  try {
+    createNotificationFromSession(sessionId);
+  } catch {
+    // Non-critical — don't break session flow if notification fails
+  }
 }
 
 export function emitSessionProgress(

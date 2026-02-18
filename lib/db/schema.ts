@@ -505,3 +505,38 @@ export const ticketActivityLog = sqliteTable(
 
 export type TicketActivityLog = typeof ticketActivityLog.$inferSelect;
 export type NewTicketActivityLog = typeof ticketActivityLog.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------
+
+export const notifications = sqliteTable(
+  "notifications",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    projectName: text("project_name").notNull(), // denormalized for fast reads
+    sessionId: text("session_id").references(() => agentSessions.id, {
+      onDelete: "set null",
+    }),
+    agentType: text("agent_type"),
+    status: text("status").notNull(), // completed | failed
+    title: text("title").notNull(),
+    targetUrl: text("target_url").notNull(),
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    createdAtIdx: index("notifications_created_at_idx").on(table.createdAt),
+  })
+);
+
+export const notificationReadCursor = sqliteTable("notification_read_cursor", {
+  id: integer("id").primaryKey(), // always 1
+  readAt: text("read_at").notNull(), // ISO timestamp
+});
+
+export type Notification = typeof notifications.$inferSelect;
+export type NewNotification = typeof notifications.$inferInsert;
+export type NotificationReadCursor = typeof notificationReadCursor.$inferSelect;
