@@ -89,7 +89,7 @@ describe("Prompt builder snapshot regression", () => {
   });
 
   it("buildTechCheckPrompt", () => {
-    expect(buildTechCheckPrompt(project, docs, "Check performance", systemPrompt)).toMatchSnapshot();
+    expect(buildTechCheckPrompt(project, "Check performance", systemPrompt)).toMatchSnapshot();
   });
 
   it("buildImportPrompt", () => {

@@ -78,9 +78,8 @@ vi.mock("@/lib/agent-config/providers", () => ({
   resolveAgentByNamedId: mockResolvers.resolveAgentByNamedId,
 }));
 
-vi.mock("@/lib/documents/query", () => ({
-  listProjectTextDocuments: vi.fn(() => []),
-}));
+// listProjectTextDocuments is no longer used by the QA check route —
+// QA prompts intentionally exclude project documents.
 
 vi.mock("@/lib/agent-sessions/lifecycle", () => ({
   createQueuedSession: mockLifecycle.createQueuedSession,
