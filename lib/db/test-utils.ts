@@ -310,6 +310,26 @@ const CREATE_TABLES_SQL = `
     updated_at TEXT DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX review_comments_epic_file_idx ON review_comments (epic_id, file_path);
+
+  -- ===== Level 5: notifications =====
+
+  CREATE TABLE notifications (
+    id TEXT PRIMARY KEY,
+    project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_name TEXT NOT NULL,
+    session_id TEXT REFERENCES agent_sessions(id) ON DELETE SET NULL,
+    agent_type TEXT,
+    status TEXT NOT NULL,
+    title TEXT NOT NULL,
+    target_url TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX notifications_created_at_idx ON notifications(created_at);
+
+  CREATE TABLE notification_read_cursor (
+    id INTEGER PRIMARY KEY,
+    read_at TEXT NOT NULL
+  );
 `;
 
 /**
