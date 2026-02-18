@@ -214,7 +214,6 @@ export function buildSpecPrompt(
  */
 export function buildTechCheckPrompt(
   project: PromptProject,
-  documents: PromptDocument[],
   customPrompt?: string | null,
   systemPrompt?: string | null,
 ): string {
@@ -223,7 +222,6 @@ export function buildTechCheckPrompt(
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(specSection(project.spec));
-  parts.push(documentsSection(documents));
 
   if (customPrompt && customPrompt.trim()) {
     parts.push(`## Additional Instructions\n\n${customPrompt.trim()}\n`);
@@ -294,7 +292,6 @@ Your response should be a well-formatted markdown report.
  */
 export function buildE2eTestPrompt(
   project: PromptProject,
-  documents: PromptDocument[],
   customPrompt?: string | null,
   systemPrompt?: string | null,
 ): string {
@@ -303,7 +300,6 @@ export function buildE2eTestPrompt(
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(specSection(project.spec));
-  parts.push(documentsSection(documents));
 
   if (customPrompt && customPrompt.trim()) {
     parts.push(`## Additional Instructions\n\n${customPrompt.trim()}\n`);

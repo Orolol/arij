@@ -10,7 +10,6 @@ import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import { buildTechCheckPrompt, buildE2eTestPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
-import { listProjectTextDocuments } from "@/lib/documents/query";
 import type { AgentType } from "@/lib/agent-config/constants";
 import {
   createQueuedSession,
@@ -90,14 +89,13 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
-  const docs = listProjectTextDocuments(projectId);
   const systemPrompt = await resolveAgentPrompt(agentType, projectId);
   const resolvedAgent = resolveAgentByNamedId(agentType, projectId, namedAgentId);
 
   const prompt =
     checkType === "e2e_test"
-      ? buildE2eTestPrompt(project, docs, customPrompt, systemPrompt)
-      : buildTechCheckPrompt(project, docs, customPrompt, systemPrompt);
+      ? buildE2eTestPrompt(project, customPrompt, systemPrompt)
+      : buildTechCheckPrompt(project, customPrompt, systemPrompt);
 
   const sessionId = createId();
   const reportId = createId();

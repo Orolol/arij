@@ -3,6 +3,7 @@ import {
   buildBuildPrompt,
   buildChatPrompt,
   buildCustomEpicReviewPrompt,
+  buildE2eTestPrompt,
   buildEpicReviewPrompt,
   buildReviewPrompt,
   buildSpecPrompt,
@@ -68,7 +69,6 @@ describe("Prompt builders with resolved system prompts", () => {
     );
     const techCheck = buildTechCheckPrompt(
       project,
-      docs,
       "Focus on auth/session flows.",
       systemPrompt
     );
@@ -255,5 +255,28 @@ describe("Prompt builders with resolved system prompts", () => {
     expect(review).toContain("## Epic Under Review");
     expect(review).toContain("feature completeness review");
     expect(review).toContain("## User Stories");
+  });
+
+  it("QA prompts (tech check and e2e) never include project documents", () => {
+    const techCheck = buildTechCheckPrompt(
+      project,
+      "Custom instructions",
+      "System prompt"
+    );
+    const e2e = buildE2eTestPrompt(
+      project,
+      "Custom instructions",
+      "System prompt"
+    );
+
+    // Neither prompt should contain a reference documents section
+    expect(techCheck).not.toContain("Reference Documents");
+    expect(e2e).not.toContain("Reference Documents");
+
+    // Both should still contain core sections
+    expect(techCheck).toContain("# Project: Arij");
+    expect(techCheck).toContain("Comprehensive Tech Check");
+    expect(e2e).toContain("# Project: Arij");
+    expect(e2e).toContain("Comprehensive E2E Test");
   });
 });
