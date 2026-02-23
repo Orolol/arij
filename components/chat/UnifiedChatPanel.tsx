@@ -23,6 +23,12 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
 import { MessageList } from "@/components/chat/MessageList";
@@ -543,17 +549,38 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
             );
           })}
 
-          <button
-            type="button"
-            data-testid="new-conversation-tab"
-            onClick={() =>
-              void createNewConversationTab({ type: "brainstorm", label: "Brainstorm" })
-            }
-            className="flex items-center justify-center w-7 h-7 mx-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
-            title="New conversation"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="new-conversation-tab"
+                className="flex items-center justify-center w-7 h-7 mx-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                title="New conversation"
+              >
+                <Plus className="h-3.5 w-3.5" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              <DropdownMenuItem
+                data-testid="new-tab-brainstorm"
+                onClick={() =>
+                  void createNewConversationTab({ type: "brainstorm", label: "Brainstorm" })
+                }
+              >
+                <MessageSquare className="h-4 w-4 mr-2" />
+                Brainstorm
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-testid="new-tab-epic"
+                onClick={() =>
+                  void createNewConversationTab({ type: "epic_creation", label: "New Epic" })
+                }
+              >
+                <Sparkles className="h-4 w-4 mr-2" />
+                New Epic
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         <div className="p-3 border-b border-border flex items-center justify-between gap-2">

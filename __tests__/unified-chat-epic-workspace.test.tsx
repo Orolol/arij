@@ -12,6 +12,7 @@
 import { createRef } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, act } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -399,6 +400,7 @@ describe("Story 2: Chat workspace collapsed on the right by default", () => {
   });
 
   it("collapsing the panel preserves open tabs and active tab", async () => {
+    const user = userEvent.setup();
     const ref = createRef<UnifiedChatPanelHandle>();
 
     render(
@@ -412,8 +414,12 @@ describe("Story 2: Chat workspace collapsed on the right by default", () => {
       ref.current!.openChat();
     });
 
-    // Create an extra tab
-    fireEvent.click(screen.getByTestId("new-conversation-tab"));
+    // Create an extra tab via dropdown
+    await user.click(screen.getByTestId("new-conversation-tab"));
+    await waitFor(() => {
+      expect(screen.getByTestId("new-tab-brainstorm")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("new-tab-brainstorm"));
 
     await waitFor(() => {
       expect(screen.getAllByTestId(/^conversation-tab-/).length).toBe(2);
@@ -652,6 +658,7 @@ describe("Story 4: Agent type selection pre-populated on every new chat tab", ()
     ];
     mockActiveId = "conv1";
 
+    const user = userEvent.setup();
     render(
       <UnifiedChatPanel projectId="proj1">
         <div>board</div>
@@ -659,7 +666,11 @@ describe("Story 4: Agent type selection pre-populated on every new chat tab", ()
     );
 
     fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
-    fireEvent.click(screen.getByTestId("new-conversation-tab"));
+    await user.click(screen.getByTestId("new-conversation-tab"));
+    await waitFor(() => {
+      expect(screen.getByTestId("new-tab-brainstorm")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("new-tab-brainstorm"));
 
     await waitFor(() => {
       expect(mockCreateConversation).toHaveBeenCalledWith(
@@ -706,6 +717,7 @@ describe("Story 4: Agent type selection pre-populated on every new chat tab", ()
   });
 
   it("creates new brainstorm tab with default type when active has no special provider set", async () => {
+    const user = userEvent.setup();
     mockConversations = [
       {
         id: "conv1",
@@ -727,7 +739,11 @@ describe("Story 4: Agent type selection pre-populated on every new chat tab", ()
     );
 
     fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
-    fireEvent.click(screen.getByTestId("new-conversation-tab"));
+    await user.click(screen.getByTestId("new-conversation-tab"));
+    await waitFor(() => {
+      expect(screen.getByTestId("new-tab-brainstorm")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("new-tab-brainstorm"));
 
     await waitFor(() => {
       expect(mockCreateConversation).toHaveBeenCalledWith(
