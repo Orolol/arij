@@ -27,6 +27,7 @@ import {
   GitBranch,
   Calendar,
 } from "lucide-react";
+import { MarkdownContent } from "@/components/chat/MarkdownContent";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import { useReleasePublish } from "@/hooks/useReleasePublish";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
@@ -97,7 +98,7 @@ function ReleaseDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
+      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             v{release.version}
@@ -179,8 +180,8 @@ function ReleaseDetailDialog({
           {release.changelog && (
             <div>
               <h4 className="text-sm font-medium mb-2">Changelog</h4>
-              <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap text-sm text-muted-foreground bg-muted/20 rounded-lg p-4">
-                {release.changelog}
+              <div className="text-sm text-muted-foreground bg-muted/20 rounded-lg p-4">
+                <MarkdownContent content={release.changelog} />
               </div>
             </div>
           )}
