@@ -155,4 +155,43 @@ describe("EpicCard", () => {
       expect(paragraphs).toHaveLength(0);
     });
   });
+
+  describe("two-row layout: title and badges on separate rows", () => {
+    it("renders the title with line-clamp-2 instead of truncate", () => {
+      render(<EpicCard epic={makeEpic({ title: "A very long title that should be allowed to wrap to two lines" })} />);
+      const title = screen.getByText("A very long title that should be allowed to wrap to two lines");
+      expect(title.tagName).toBe("H4");
+      expect(title.className).toContain("line-clamp-2");
+      expect(title.className).not.toContain("truncate");
+    });
+
+    it("renders badges in a wrapping flex container below the title", () => {
+      const { container } = render(
+        <EpicCard
+          epic={makeEpic({ priority: 2, type: "bug" })}
+          hasUnreadAiUpdate
+          failedSession={{ sessionId: "s1", error: "timeout", epicId: "e1" }}
+        />
+      );
+      // Find the badges row by its flex-wrap class
+      const badgesRow = container.querySelector(".flex-wrap");
+      expect(badgesRow).not.toBeNull();
+      // It should contain the priority badge, bug badge, AI update and error indicators
+      expect(badgesRow!.querySelector("[data-testid='epic-unread-ai-epic-abc123']")).not.toBeNull();
+      expect(badgesRow!.querySelector("[data-testid='epic-error-epic-abc123']")).not.toBeNull();
+      expect(badgesRow!.textContent).toContain("High");
+      expect(badgesRow!.textContent).toContain("Bug");
+    });
+
+    it("title and badges are not on the same flex row", () => {
+      const { container } = render(
+        <EpicCard epic={makeEpic()} />
+      );
+      // The old layout used justify-between on the parent to put title and badges side-by-side
+      // The new layout should NOT have justify-between on the parent wrapper
+      const card = container.firstChild as HTMLElement;
+      const firstDiv = card.querySelector("div");
+      expect(firstDiv!.className).not.toContain("justify-between");
+    });
+  });
 });

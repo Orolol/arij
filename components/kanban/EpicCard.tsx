@@ -169,44 +169,42 @@ export function EpicCard({
         isHighlighted ? "ring-2 ring-primary/70 bg-primary/5 motion-reduce:ring-0 motion-reduce:bg-transparent" : ""
       }`}
     >
-      <div className="flex items-start justify-between gap-2 mb-1">
-        <div className="flex-1 min-w-0">
-          <div className="flex items-start gap-2">
-            {activityConfig && (
-              <TooltipProvider delayDuration={200}>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span
-                      className="relative shrink-0 mt-0.5 inline-flex items-center justify-center rounded-sm bg-yellow-500/10 text-yellow-600 p-0.5"
-                      aria-label={`${activityConfig.label} active: ${activeAgentActivity!.agentName}`}
-                      data-testid={`epic-activity-${epic.id}`}
-                    >
-                      <span className="absolute inset-0 rounded-sm bg-yellow-500/20 animate-pulse motion-reduce:animate-none" />
-                      <activityConfig.Icon className="relative h-3.5 w-3.5" />
+      <div className="mb-1">
+        <div className="flex items-start gap-2">
+          {activityConfig && (
+            <TooltipProvider delayDuration={200}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span
+                    className="relative shrink-0 mt-0.5 inline-flex items-center justify-center rounded-sm bg-yellow-500/10 text-yellow-600 p-0.5"
+                    aria-label={`${activityConfig.label} active: ${activeAgentActivity!.agentName}`}
+                    data-testid={`epic-activity-${epic.id}`}
+                  >
+                    <span className="absolute inset-0 rounded-sm bg-yellow-500/20 animate-pulse motion-reduce:animate-none" />
+                    <activityConfig.Icon className="relative h-3.5 w-3.5" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="text-xs">
+                  <div className="flex flex-col gap-0.5">
+                    <span className="font-medium">{activityConfig.label}: {activeAgentActivity!.agentName}</span>
+                    <span className="text-muted-foreground">
+                      {providerLabel(activeAgentActivity!.provider)}
+                      {elapsedText && ` \u00B7 ${elapsedText}`}
                     </span>
-                  </TooltipTrigger>
-                  <TooltipContent side="right" className="text-xs">
-                    <div className="flex flex-col gap-0.5">
-                      <span className="font-medium">{activityConfig.label}: {activeAgentActivity!.agentName}</span>
-                      <span className="text-muted-foreground">
-                        {providerLabel(activeAgentActivity!.provider)}
-                        {elapsedText && ` \u00B7 ${elapsedText}`}
-                      </span>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            )}
-            <div className="flex-1 min-w-0">
-              <span className="text-xs text-muted-foreground font-mono">{epic.readableId || epic.id}</span>
-              <h4 className="text-sm font-medium leading-tight truncate">{epic.title}</h4>
-            </div>
-          </div>
-          {epic.description && (
-            <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{epic.description}</p>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
+          <div className="flex-1 min-w-0">
+            <span className="text-xs text-muted-foreground font-mono">{epic.readableId || epic.id}</span>
+            <h4 className="text-sm font-medium leading-tight line-clamp-2">{epic.title}</h4>
+          </div>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        {epic.description && (
+          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{epic.description}</p>
+        )}
+        <div className="flex items-center gap-1 flex-wrap mt-1">
           {hasUnreadAiUpdate && (
             <span
               className="inline-flex items-center justify-center rounded-sm bg-sky-500/15 text-sky-600 p-0.5"
@@ -253,12 +251,12 @@ export function EpicCard({
             </button>
           )}
           <Badge
-            className={`text-xs shrink-0 ${PRIORITY_COLORS[epic.priority] || PRIORITY_COLORS[0]}`}
+            className={`text-xs ${PRIORITY_COLORS[epic.priority] || PRIORITY_COLORS[0]}`}
           >
             {PRIORITY_LABELS[epic.priority] || "Low"}
           </Badge>
           {epic.type === "bug" && (
-            <Badge className="text-xs shrink-0 bg-red-500/10 text-red-400">
+            <Badge className="text-xs bg-red-500/10 text-red-400">
               <Bug className="h-3 w-3 mr-0.5" />
               Bug
             </Badge>
