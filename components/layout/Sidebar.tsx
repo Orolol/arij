@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { LayoutDashboard, Settings, FolderKanban } from "lucide-react";
+import Image from "next/image";
+import { LayoutDashboard, Settings } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AgentConfigButton } from "@/components/agent-config/AgentConfigButton";
 import { NotificationBell } from "./NotificationBell";
@@ -11,9 +12,15 @@ export function Sidebar() {
     <aside className="w-16 border-r border-border bg-sidebar flex flex-col items-center py-4 gap-4">
       <Link
         href="/"
-        className="flex items-center justify-center w-10 h-10 rounded-lg font-bold text-lg text-primary"
+        className="flex items-center justify-center"
       >
-        <FolderKanban className="h-6 w-6" />
+        <Image
+          src="/icons/favicon.svg"
+          alt="Arij"
+          width={32}
+          height={32}
+          className="rounded-lg"
+        />
       </Link>
       <div className="flex-1 flex flex-col items-center gap-2 mt-4">
         <Link

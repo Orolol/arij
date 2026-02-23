@@ -85,23 +85,20 @@ export const db = drizzle(sqlite, { schema });
 }
 
 // ---------------------------------------------------------------------------
-// Backfill readable IDs and agent names (idempotent, no-op when already done)
+// Backfills (idempotent, wrapped in a function to avoid side-effects on load)
 // ---------------------------------------------------------------------------
-{
+export function runBackfills() {
+  // Backfill readable IDs and agent names
   try {
     const { backfillReadableIds } = require("./backfill");
     const { backfillAgentNames } = require("../identity");
     backfillReadableIds();
     backfillAgentNames();
   } catch {
-    // Silently ignore — columns may not exist during build or before migration
+    // Silently ignore
   }
-}
 
-// ---------------------------------------------------------------------------
-// Backfill: fix raw opencode JSON stored in comments/messages (idempotent)
-// ---------------------------------------------------------------------------
-{
+  // Backfill: fix raw opencode JSON stored in comments/messages
   try {
     const { backfillOpenCodeJson } = require("./backfill-opencode-json");
     const result = backfillOpenCodeJson(sqlite);
@@ -114,12 +111,8 @@ export const db = drizzle(sqlite, { schema });
   } catch {
     // Silently ignore
   }
-}
 
-// ---------------------------------------------------------------------------
-// Backfill: populate releaseId for released epics from releases.epicIds (idempotent)
-// ---------------------------------------------------------------------------
-{
+  // Backfill: populate releaseId for released epics
   try {
     const { backfillReleasedEpicIds } = require("./backfill-release-ids");
     const result = backfillReleasedEpicIds();
@@ -127,6 +120,6 @@ export const db = drizzle(sqlite, { schema });
       console.log(`[backfill] Populated releaseId for ${result.updated} released epics`);
     }
   } catch {
-    // Silently ignore — columns may not exist during build or before migration
+    // Silently ignore
   }
 }

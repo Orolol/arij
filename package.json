@@ -2,6 +2,20 @@
   "name": "arij",
   "version": "0.1.0",
   "description": "A local, AI-first project orchestrator with a web interface for managing multi-project workflows with Claude Code as the execution engine.",
+  "author": "Gaetan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/orolol/arij.git"
+  },
+  "keywords": [
+    "ai",
+    "project-management",
+    "claude-code",
+    "local-first",
+    "orchestrator",
+    "Next.js"
+  ],
   "bin": {
     "arij": "./bin/arij.mjs"
   },

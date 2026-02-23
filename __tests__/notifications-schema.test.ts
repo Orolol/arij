@@ -17,7 +17,7 @@ describe("Schema: notifications table", () => {
   });
 
   it("has index on created_at", () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const extraConfig = (schema.notifications as any)[Symbol.for("drizzle:ExtraConfigBuilder")](
       schema.notifications
     );

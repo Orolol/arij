@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 120" fill="none">
+  <defs>
+    <linearGradient id="p1" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" style="stop-color:#c4956a"/>
+      <stop offset="100%" style="stop-color:#3d6b41"/>
+    </linearGradient>
+  </defs>
+  
+  <!-- Icon: Abstract "A" made of horizontal flow lines -->
+  <g transform="translate(8, 8)">
+    <!-- Triangle outline forming the A -->
+    <path d="M 42 6 L 8 94" stroke="#3d3027" stroke-width="5" stroke-linecap="round" fill="none"/>
+    <path d="M 42 6 L 76 94" stroke="#3d3027" stroke-width="5" stroke-linecap="round" fill="none"/>
+    
+    <!-- Horizontal flow lines cutting through (Kanban lanes / pipeline stages) -->
+    <line x1="2" y1="72" x2="82" y2="72" stroke="#c4956a" stroke-width="3" stroke-linecap="round" opacity="0.4"/>
+    <line x1="2" y1="52" x2="82" y2="52" stroke="#5a8a5e" stroke-width="3" stroke-linecap="round" opacity="0.5"/>
+    <line x1="2" y1="32" x2="82" y2="32" stroke="#c4956a" stroke-width="3" stroke-linecap="round" opacity="0.6"/>
+    
+    <!-- Moving dots on the flow lines (tasks moving through pipeline) -->
+    <circle cx="56" cy="72" r="4" fill="#c4956a"/>
+    <circle cx="38" cy="52" r="4" fill="#5a8a5e"/>
+    <circle cx="48" cy="32" r="4" fill="#8b5e3c"/>
+    
+    <!-- Apex dot -->
+    <circle cx="42" cy="6" r="4.5" fill="#3d3027"/>
+  </g>
+  
+  <!-- Wordmark - clean sans-serif -->
+  <g transform="translate(110, 20)">
+    <text x="0" y="62" font-family="'Trebuchet MS', 'Gill Sans', sans-serif" font-size="72" font-weight="700" fill="#3d3027" letter-spacing="-3">arij</text>
+  </g>
+  
+  <!-- Tagline -->
+  <text x="114" y="104" font-family="'Trebuchet MS', 'Gill Sans', sans-serif" font-size="11.5" fill="#8b7b6b" letter-spacing="3" font-weight="400">AI  PROJECT  MANAGER</text>
+</svg>

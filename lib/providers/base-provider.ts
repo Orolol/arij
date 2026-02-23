@@ -188,11 +188,7 @@ export abstract class BaseCliProvider implements AgentProvider {
     const args = this.buildArgs(options);
     const callbacks = this.buildChunkCallbacks(options);
 
-    console.log(
-      `[spawn] ${this.binaryName}`,
-      args.map((a) => (a.length > 100 ? a.slice(0, 100) + "..." : a)).join(" "),
-    );
-    console.log("[spawn] cwd:", effectiveCwd);
+    // Debug logging removed for production
 
     // Optional NDJSON logging
     let logCtx: StreamLogContext | null = null;
@@ -306,23 +302,7 @@ export abstract class BaseCliProvider implements AgentProvider {
           callbacks.onResponseChunk?.({ text: result, emittedAt });
         }
 
-        console.log(
-          `[spawn] ${this.binaryName} exited, code:`,
-          code,
-          "duration:",
-          duration + "ms",
-          "output:",
-          result.length,
-          "bytes, stderr:",
-          stderr.length,
-          "bytes",
-        );
-        if (stderr.trim()) {
-          console.log("[spawn] stderr:", stderr.slice(0, 500));
-        }
-        if (result) {
-          console.log("[spawn] output preview:", result.slice(0, 300));
-        }
+        // Debug logging removed for production
 
         // Log session end
         if (logCtx) {

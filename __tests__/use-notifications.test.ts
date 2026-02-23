@@ -3,7 +3,7 @@ import { renderHook, waitFor, act } from "@testing-library/react";
 import { useNotifications } from "@/hooks/useNotifications";
 
 describe("useNotifications", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   let fetchSpy: any;
 
   beforeEach(() => {

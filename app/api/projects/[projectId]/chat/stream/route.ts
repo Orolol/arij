@@ -207,7 +207,7 @@ export async function POST(
   if (!cliSessionId && providerSupportsResume) {
     cliSessionId = crypto.randomUUID();
   }
-  let effectivePrompt = resumeSession ? userContent : prompt;
+  const effectivePrompt = resumeSession ? userContent : prompt;
 
   function persistConversationSessionId(nextCliSessionId?: string) {
     if (!conversationId || !nextCliSessionId) return;

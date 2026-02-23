@@ -103,8 +103,7 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
 
   const effectiveCwd = cwd || process.cwd();
 
-  console.log("[spawn] claude", args.map(a => a.length > 100 ? a.slice(0, 100) + "..." : a).join(" "));
-  console.log("[spawn] cwd:", effectiveCwd);
+  // Debug logging removed for production
 
   let child: ChildProcess | null = null;
   let killed = false;
@@ -155,13 +154,7 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
         extractCliSessionIdFromOutput(stdout) ?? cliSessionId;
       const endedWithQuestion = hasAskUserQuestion(stdout);
 
-      console.log("[spawn] Process exited, code:", code, "duration:", duration + "ms", "stdout:", stdout.length, "bytes, stderr:", stderr.length, "bytes");
-      if (stderr.trim()) {
-        console.log("[spawn] stderr:", stderr.slice(0, 500));
-      }
-      if (stdout.trim()) {
-        console.log("[spawn] stdout preview:", stdout.slice(0, 300));
-      }
+      // Debug logging removed for production
 
       if (killed) {
         resolve({
@@ -296,15 +289,14 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
 
   const effectiveCwd = cwd || process.cwd();
 
-  console.log("[stream-spawn] claude", args.map(a => a.length > 100 ? a.slice(0, 100) + "..." : a).join(" "));
-  console.log("[stream-spawn] cwd:", effectiveCwd);
+  // Debug logging removed for production
 
   // Initialize log if identifier provided
   let logCtx: StreamLogContext | null = null;
   if (logIdentifier) {
     try {
       logCtx = createStreamLog(logIdentifier, args, prompt);
-      console.log("[stream-spawn] logging to:", logCtx.filePath);
+      // Debug logging removed for production
     } catch (err) {
       console.warn("[stream-spawn] Failed to create log:", err);
     }
