@@ -51,7 +51,7 @@ function NotificationRow({
         <p className="text-xs text-muted-foreground truncate">
           {notification.projectName}
         </p>
-        <p className="text-sm leading-tight truncate">{notification.title}</p>
+        <p className="text-sm leading-tight">{notification.title}</p>
         <p className="text-xs text-muted-foreground mt-0.5">
           {timeAgo(notification.createdAt)}
         </p>
@@ -96,7 +96,7 @@ export function NotificationBell() {
       <PopoverContent
         side="right"
         align="start"
-        className="w-80 p-0"
+        className="w-96 p-0"
         sideOffset={8}
       >
         <div className="px-3 py-2 border-b">
