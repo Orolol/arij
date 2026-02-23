@@ -197,4 +197,39 @@ describe("NotificationBell", () => {
     fireEvent.click(screen.getByText("Build completed"));
     expect(mockPush).toHaveBeenCalledWith("/projects/p1/sessions/s1");
   });
+
+  it("displays long notification titles without truncation", async () => {
+    const longTitle =
+      "This is a very long notification title that should be fully visible without being truncated by CSS overflow rules";
+
+    mockUseNotifications.mockReturnValue({
+      notifications: [
+        {
+          id: "n1",
+          projectId: "p1",
+          projectName: "My Project",
+          sessionId: "s1",
+          agentType: "build",
+          status: "completed",
+          title: longTitle,
+          targetUrl: "/projects/p1/sessions/s1",
+          createdAt: new Date().toISOString(),
+        },
+      ],
+      unreadCount: 1,
+      loading: false,
+      markAsRead: vi.fn(),
+      refresh: vi.fn(),
+    });
+
+    render(<NotificationBell />);
+    fireEvent.click(screen.getByTitle("Notifications"));
+
+    await waitFor(() => {
+      const titleEl = screen.getByText(longTitle);
+      expect(titleEl).toBeDefined();
+      // Title element should NOT have the truncate class
+      expect(titleEl.className).not.toContain("truncate");
+    });
+  });
 });
