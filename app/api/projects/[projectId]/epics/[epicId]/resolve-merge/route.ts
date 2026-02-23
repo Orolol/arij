@@ -16,7 +16,7 @@ import {
 } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
-import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import {
@@ -262,9 +262,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
 
     // Post agent output as epic comment
-    const output = result?.result
-      ? parseClaudeOutput(result.result).content
-      : result?.error || "Merge resolution agent completed without output.";
+    const output = resolveSessionOutput(result, sessionId, "Merge resolution agent completed without output.");
 
     db.insert(ticketComments)
       .values({

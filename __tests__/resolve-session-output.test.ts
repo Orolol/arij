@@ -1,0 +1,130 @@
+import { describe, expect, it, vi, beforeEach } from "vitest";
+import { NO_TEXTUAL_OUTPUT_FALLBACK } from "@/lib/claude/json-parser";
+
+const mockGet = vi.fn();
+
+vi.mock("@/lib/db", () => ({
+  db: {
+    select: () => ({
+      from: () => ({
+        where: () => ({
+          get: mockGet,
+        }),
+      }),
+    }),
+  },
+  sqlite: null,
+}));
+
+vi.mock("@/lib/db/schema", () => ({
+  agentSessions: {
+    id: "id",
+    lastNonEmptyText: "last_non_empty_text",
+  },
+}));
+
+vi.mock("drizzle-orm", () => ({
+  eq: vi.fn(),
+}));
+
+// Import after mocks
+const { resolveSessionOutput } = await import("@/lib/claude/resolve-session-output");
+
+beforeEach(() => {
+  mockGet.mockReset();
+});
+
+describe("resolveSessionOutput", () => {
+  it("returns parsed content when result has textual output", () => {
+    const result = {
+      success: true,
+      result: JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "The build completed successfully with all tests passing.",
+      }),
+      duration: 5000,
+    };
+    const output = resolveSessionOutput(result, "test-session-1");
+    expect(output).toBe("The build completed successfully with all tests passing.");
+  });
+
+  it("falls back to lastNonEmptyText when result is (no textual output)", () => {
+    const result = {
+      success: true,
+      result: JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "",
+        session_id: "sess-123",
+      }),
+      duration: 5000,
+    };
+    mockGet.mockReturnValue({
+      lastNonEmptyText: "Applied 3 file edits and ran tests successfully.",
+    });
+    const output = resolveSessionOutput(result, "test-session-2");
+    expect(output).toBe("Applied 3 file edits and ran tests successfully.");
+  });
+
+  it("returns error message when result failed and no lastNonEmptyText", () => {
+    const result = {
+      success: false,
+      error: "Context window exceeded",
+      duration: 5000,
+    };
+    mockGet.mockReturnValue(null);
+    const output = resolveSessionOutput(result, "test-session-3");
+    expect(output).toBe("Context window exceeded");
+  });
+
+  it("returns default message when no result and no DB fallback", () => {
+    mockGet.mockReturnValue(null);
+    const output = resolveSessionOutput(null, "test-session-4");
+    expect(output).toBe("Agent session completed without output.");
+  });
+
+  it("returns custom default message", () => {
+    mockGet.mockReturnValue(null);
+    const output = resolveSessionOutput(null, "test-session-5", "Custom fallback message.");
+    expect(output).toBe("Custom fallback message.");
+  });
+
+  it("uses lastNonEmptyText over the fallback constant", () => {
+    const result = {
+      success: true,
+      result: JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: "",
+      }),
+      duration: 5000,
+    };
+    mockGet.mockReturnValue({
+      lastNonEmptyText: "Chunk-based text from streaming provider.",
+    });
+    const output = resolveSessionOutput(result, "test-session-6");
+    expect(output).toBe("Chunk-based text from streaming provider.");
+    expect(output).not.toBe(NO_TEXTUAL_OUTPUT_FALLBACK);
+  });
+
+  it("handles result with content-array in result field", () => {
+    const result = {
+      success: true,
+      result: JSON.stringify({
+        type: "result",
+        subtype: "success",
+        result: {
+          content: [
+            { type: "text", text: "I made the requested changes." },
+            { type: "tool_use", id: "toolu_1", name: "Edit", input: {} },
+          ],
+        },
+      }),
+      duration: 5000,
+    };
+    const output = resolveSessionOutput(result, "test-session-7");
+    expect(output).toContain("I made the requested changes.");
+    expect(output).not.toBe(NO_TEXTUAL_OUTPUT_FALLBACK);
+  });
+});

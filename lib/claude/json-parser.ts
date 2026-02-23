@@ -23,6 +23,24 @@ export interface ParsedClaudeOutput {
 }
 
 /**
+ * Fallback message returned when the result envelope has no textual content.
+ * Exported so callers can detect this sentinel and try alternative text sources.
+ */
+export const NO_TEXTUAL_OUTPUT_FALLBACK =
+  "Agent completed successfully (no textual output).";
+
+/**
+ * Returns true if the given text is one of the known "no output" fallback messages.
+ */
+export function isNoTextualOutputFallback(text: string): boolean {
+  return (
+    text === NO_TEXTUAL_OUTPUT_FALLBACK ||
+    text === "Agent session completed without output." ||
+    text === "Review agent completed without output."
+  );
+}
+
+/**
  * Attempts to extract a CLI session ID from provider JSON output.
  *
  * Supports common field names used by CLI providers:
@@ -416,11 +434,21 @@ function parseSingleObject(
   const content = extractTextFromBlock(record as ClaudeJsonBlock);
 
   // If this is a Claude CLI result envelope (type: "result") with no textual
-  // content, produce a human-readable fallback instead of dumping raw JSON.
+  // content, try harder to extract text before producing a fallback.
   if (!content && record.type === "result") {
+    // Some providers return `result` as an object with a `content` array
+    // containing mixed text + tool_use blocks. Try extracting text from those.
+    const deeperContent = extractTextFromResultValue(record.result);
+    if (deeperContent) {
+      return {
+        content: deeperContent,
+        metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
+      };
+    }
+
     const subtype = record.subtype as string | undefined;
     const fallback = subtype === "success"
-      ? "Agent completed successfully (no textual output)."
+      ? NO_TEXTUAL_OUTPUT_FALLBACK
       : subtype === "error"
         ? `Agent finished with an error.${record.error ? ` ${record.error}` : ""}`
         : "Agent session completed without output.";
@@ -436,6 +464,64 @@ function parseSingleObject(
   };
 }
 
+/**
+ * Attempts to extract text from the `result` value of a CLI result envelope.
+ *
+ * When Claude Code completes a session that consists mostly of tool calls,
+ * the `result` field can be:
+ *   - An empty string (common case — no final text message)
+ *   - An object with a `content` array containing mixed text + tool_use blocks
+ *   - A JSON-stringified version of the above
+ *
+ * This function handles all of these shapes and extracts any text blocks
+ * found within.
+ */
+function extractTextFromResultValue(value: unknown): string {
+  if (!value) return "";
+
+  // If it's a string, try to parse it as JSON first
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const parsed = tryParseJson(trimmed);
+    if (parsed !== null) {
+      return extractTextFromResultValue(parsed);
+    }
+    // Plain string — return as-is
+    return trimmed;
+  }
+
+  // If it's an array, treat as content blocks
+  if (Array.isArray(value)) {
+    const parts: string[] = [];
+    for (const item of value) {
+      if (typeof item === "string") {
+        if (item.trim()) parts.push(item);
+      } else if (isRecord(item)) {
+        if (typeof item.text === "string" && item.text.trim()) {
+          parts.push(item.text);
+        } else {
+          const nested = extractTextFromBlock(item as ClaudeJsonBlock);
+          if (nested) parts.push(nested);
+        }
+      }
+    }
+    return parts.join("\n");
+  }
+
+  // If it's an object, look for content array or text fields
+  if (isRecord(value)) {
+    // Try content array (Anthropic message format)
+    if (Array.isArray(value.content)) {
+      return extractTextFromResultValue(value.content);
+    }
+    // Delegate to general block extraction
+    return extractTextFromBlock(value as ClaudeJsonBlock);
+  }
+
+  return "";
+}
+
 function extractTextFromBlock(block: ClaudeJsonBlock): string {
   if (typeof block.response === "string") {
     return block.response;
@@ -447,6 +533,12 @@ function extractTextFromBlock(block: ClaudeJsonBlock): string {
 
   if (typeof block.message === "string") {
     return block.message;
+  }
+
+  // Assistant event format: { type: "assistant", message: { content: [...] } }
+  if (isRecord(block.message) && Array.isArray((block.message as Record<string, unknown>).content)) {
+    const nested = extractTextFromResultValue((block.message as Record<string, unknown>).content);
+    if (nested) return nested;
   }
 
   // Direct text or content fields

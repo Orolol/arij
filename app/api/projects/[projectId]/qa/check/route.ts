@@ -6,7 +6,7 @@ import { db } from "@/lib/db";
 import { projects, qaReports } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 import { processManager } from "@/lib/claude/process-manager";
-import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import { buildTechCheckPrompt, buildE2eTestPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
@@ -174,9 +174,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
 
     const fallbackLabel = CHECK_TYPE_LABELS[checkType];
-    const output = result?.result
-      ? parseClaudeOutput(result.result).content
-      : result?.error || `${fallbackLabel} completed without output.`;
+    const output = resolveSessionOutput(result, sessionId, `${fallbackLabel} completed without output.`);
 
     const reportStatus =
       info?.status === "cancelled"

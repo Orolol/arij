@@ -13,7 +13,7 @@ import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import { buildBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
 import {
   createAgentAlreadyRunningPayload,
@@ -371,9 +371,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
 
     // Post output as epic comment
-    const output = result?.result
-      ? parseClaudeOutput(result.result).content
-      : result?.error || "Agent session completed without output.";
+    const output = resolveSessionOutput(result, sessionId);
 
     db.insert(ticketComments)
       .values({
