@@ -1,14 +1,18 @@
 import { NextResponse } from "next/server";
-import { sqlite } from "@/lib/db";
+import { db } from "@/lib/db";
+import { notificationReadCursor } from "@/lib/db/schema";
 
 export async function POST() {
   const now = new Date().toISOString();
 
-  sqlite
-    .prepare(
-      "INSERT OR REPLACE INTO notification_read_cursor (id, read_at) VALUES (1, ?)"
-    )
-    .run(now);
+  // Single-row cursor (id is always 1): insert it, or move it forward.
+  db.insert(notificationReadCursor)
+    .values({ id: 1, readAt: now })
+    .onConflictDoUpdate({
+      target: notificationReadCursor.id,
+      set: { readAt: now },
+    })
+    .run();
 
   return NextResponse.json({ data: { ok: true } });
 }

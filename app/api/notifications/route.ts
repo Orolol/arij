@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { desc } from "drizzle-orm";
-import { db, sqlite } from "@/lib/db";
-import { notifications } from "@/lib/db/schema";
+import { count, desc, eq, gt } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { notificationReadCursor, notifications } from "@/lib/db/schema";
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -16,22 +16,20 @@ export async function GET(request: Request) {
     .all();
 
   // Compute unread count: notifications where created_at > read cursor
-  const cursor = sqlite
-    .prepare("SELECT read_at FROM notification_read_cursor WHERE id = 1")
-    .get() as { read_at: string } | undefined;
+  // (no cursor row yet => everything is unread).
+  const cursor = db
+    .select({ readAt: notificationReadCursor.readAt })
+    .from(notificationReadCursor)
+    .where(eq(notificationReadCursor.id, 1))
+    .get();
 
-  let unreadCount: number;
-  if (cursor) {
-    const result = sqlite
-      .prepare("SELECT COUNT(*) AS cnt FROM notifications WHERE created_at > ?")
-      .get(cursor.read_at) as { cnt: number };
-    unreadCount = result.cnt;
-  } else {
-    const result = sqlite
-      .prepare("SELECT COUNT(*) AS cnt FROM notifications")
-      .get() as { cnt: number };
-    unreadCount = result.cnt;
-  }
+  const unread = db
+    .select({ cnt: count() })
+    .from(notifications)
+    .where(cursor ? gt(notifications.createdAt, cursor.readAt) : undefined)
+    .get();
+
+  const unreadCount = unread?.cnt ?? 0;
 
   return NextResponse.json({ data: { notifications: rows, unreadCount } });
 }

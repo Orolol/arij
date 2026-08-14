@@ -1,6 +1,9 @@
 ALTER TABLE epics ADD COLUMN github_issue_number integer;
+--> statement-breakpoint
 ALTER TABLE epics ADD COLUMN github_issue_url text;
+--> statement-breakpoint
 ALTER TABLE epics ADD COLUMN github_issue_state text;
+--> statement-breakpoint
 
 CREATE TABLE IF NOT EXISTS github_issues (
   id text PRIMARY KEY NOT NULL,
@@ -18,9 +21,11 @@ CREATE TABLE IF NOT EXISTS github_issues (
   imported_epic_id text REFERENCES epics(id) ON DELETE set null,
   imported_at text
 );
+--> statement-breakpoint
 
 CREATE UNIQUE INDEX IF NOT EXISTS github_issues_project_issue_unique
   ON github_issues(project_id, issue_number);
+--> statement-breakpoint
 
 CREATE INDEX IF NOT EXISTS github_issues_project_synced_idx
   ON github_issues(project_id, synced_at);

@@ -146,6 +146,33 @@ describe("session chunk persistence", () => {
     expect(store.listChunks("s4", "raw")).toHaveLength(1);
   });
 
+  it("appends chunks without a chunkKey and never dedupes them", () => {
+    const db = createTestDb();
+    seedSession(db, "s6");
+    const store = createSessionChunkStore(db);
+
+    const first = store.appendChunk({
+      sessionId: "s6",
+      streamType: "raw",
+      content: "keyless",
+    });
+    const second = store.appendChunk({
+      sessionId: "s6",
+      streamType: "raw",
+      content: "keyless",
+      chunkKey: null,
+    });
+
+    expect(first.inserted).toBe(true);
+    expect(second.inserted).toBe(true);
+    expect(first.chunk.chunkKey).toBeNull();
+    expect(second.chunk.chunkKey).toBeNull();
+
+    const stored = store.listChunks("s6", "raw");
+    expect(stored.map((chunk) => chunk.sequence)).toEqual([1, 2]);
+    expect(stored.every((chunk) => chunk.chunkKey === null)).toBe(true);
+  });
+
   it("derives and stores lastNonEmptyText from output/response chunks", () => {
     const db = createTestDb();
     seedSession(db, "s5");
