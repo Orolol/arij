@@ -3,19 +3,24 @@
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    get: vi.fn(() => null),
-  };
-  return { db: chain };
+// Real @/lib/db/schema (side-effect-free); only the db module is mocked.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
 
-vi.mock("@/lib/db/schema", () => ({
-  settings: {},
-}));
+/**
+ * Re-mocks @/lib/db so every `.get()` returns `row` (the settings lookup is
+ * read once per call, so a constant beats a queue here).
+ */
+function doMockSettingsRow(row: unknown) {
+  vi.doMock("@/lib/db", async () => {
+    const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+    const mod = dbModuleMock();
+    mod.db.get.mockImplementation(() => row);
+    return mod;
+  });
+}
 
 describe("parseOwnerRepo", () => {
   it("parses valid owner/repo string", async () => {
@@ -51,32 +56,16 @@ describe("getGitHubTokenFromSettings", () => {
   });
 
   it("returns null when no setting exists", async () => {
-    vi.doMock("@/lib/db", () => {
-      const chain = {
-        select: vi.fn().mockReturnThis(),
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        get: vi.fn(() => null),
-      };
-      return { db: chain };
-    });
+    doMockSettingsRow(null);
 
     const { getGitHubTokenFromSettings } = await import("@/lib/github/client");
     expect(getGitHubTokenFromSettings()).toBeNull();
   });
 
   it("returns token when setting exists with valid value", async () => {
-    vi.doMock("@/lib/db", () => {
-      const chain = {
-        select: vi.fn().mockReturnThis(),
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        get: vi.fn(() => ({
-          key: "github_pat",
-          value: JSON.stringify("ghp_abc123"),
-        })),
-      };
-      return { db: chain };
+    doMockSettingsRow({
+      key: "github_pat",
+      value: JSON.stringify("ghp_abc123"),
     });
 
     const { getGitHubTokenFromSettings } = await import("@/lib/github/client");
@@ -84,17 +73,9 @@ describe("getGitHubTokenFromSettings", () => {
   });
 
   it("returns null for empty string token", async () => {
-    vi.doMock("@/lib/db", () => {
-      const chain = {
-        select: vi.fn().mockReturnThis(),
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        get: vi.fn(() => ({
-          key: "github_pat",
-          value: JSON.stringify(""),
-        })),
-      };
-      return { db: chain };
+    doMockSettingsRow({
+      key: "github_pat",
+      value: JSON.stringify(""),
     });
 
     const { getGitHubTokenFromSettings } = await import("@/lib/github/client");
@@ -108,32 +89,16 @@ describe("createOctokit", () => {
   });
 
   it("throws when no token is configured", async () => {
-    vi.doMock("@/lib/db", () => {
-      const chain = {
-        select: vi.fn().mockReturnThis(),
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        get: vi.fn(() => null),
-      };
-      return { db: chain };
-    });
+    doMockSettingsRow(null);
 
     const { createOctokit } = await import("@/lib/github/client");
     expect(() => createOctokit()).toThrow("GitHub PAT not configured");
   });
 
   it("returns Octokit instance when token is configured", async () => {
-    vi.doMock("@/lib/db", () => {
-      const chain = {
-        select: vi.fn().mockReturnThis(),
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        get: vi.fn(() => ({
-          key: "github_pat",
-          value: JSON.stringify("ghp_testtoken"),
-        })),
-      };
-      return { db: chain };
+    doMockSettingsRow({
+      key: "github_pat",
+      value: JSON.stringify("ghp_testtoken"),
     });
 
     const { createOctokit } = await import("@/lib/github/client");

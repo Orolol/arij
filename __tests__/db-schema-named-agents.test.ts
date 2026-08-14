@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 
 describe("Schema: namedAgents table and provider types", () => {
   it("namedAgents table is exported with correct columns", async () => {
-    const { namedAgents } = await import("../schema");
+    const { namedAgents } = await import("@/lib/db/schema");
     expect(namedAgents).toBeDefined();
 
     // Verify column names exist
@@ -15,14 +15,14 @@ describe("Schema: namedAgents table and provider types", () => {
   });
 
   it("agentProviderDefaults has namedAgentId FK column", async () => {
-    const { agentProviderDefaults } = await import("../schema");
+    const { agentProviderDefaults } = await import("@/lib/db/schema");
     const columnNames = Object.keys(agentProviderDefaults);
     expect(columnNames).toContain("namedAgentId");
   });
 
   it("NamedAgent type is exported", async () => {
     // This test verifies the type export works at runtime via the schema
-    const schema = await import("../schema");
+    const schema = await import("@/lib/db/schema");
     expect(schema.namedAgents).toBeDefined();
   });
 

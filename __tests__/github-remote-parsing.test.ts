@@ -32,8 +32,26 @@ describe("parseRemoteUrl", () => {
     expect(result).toMatchObject({ owner: "my-org", repo: "my_cool-repo" });
   });
 
+  it("returns the full parsed shape including ownerRepo", () => {
+    expect(parseRemoteUrl("git@github.com:octocat/hello-world.git")).toEqual({
+      owner: "octocat",
+      repo: "hello-world",
+      ownerRepo: "octocat/hello-world",
+    });
+    expect(parseRemoteUrl("https://github.com/octocat/hello-world")).toEqual({
+      owner: "octocat",
+      repo: "hello-world",
+      ownerRepo: "octocat/hello-world",
+    });
+  });
+
   it("returns null for non-GitHub URLs", () => {
     const result = parseRemoteUrl("https://gitlab.com/octocat/hello-world.git");
+    expect(result).toBeNull();
+  });
+
+  it("returns null for non-GitHub SSH remotes", () => {
+    const result = parseRemoteUrl("git@gitlab.com:octocat/hello-world.git");
     expect(result).toBeNull();
   });
 

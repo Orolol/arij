@@ -1,59 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  getDbChainMock,
+  resetDbMockState,
+} from "@/__tests__/helpers/db-mock";
+import { gitSyncLog } from "@/lib/db/schema";
 
-const mockDbState = vi.hoisted(() => ({
-  insertCalls: [] as Array<{ table: unknown; payload: unknown }>,
-  allQueue: [] as unknown[],
-}));
-
-const mockSchema = vi.hoisted(() => ({
-  gitSyncLog: {
-    __name: "git_sync_log",
-    id: "id",
-    projectId: "projectId",
-    operation: "operation",
-    branch: "branch",
-    status: "status",
-    detail: "detail",
-    createdAt: "createdAt",
-  },
-}));
-
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  desc: vi.fn(() => ({})),
-  sql: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn(),
-    from: vi.fn(),
-    where: vi.fn(),
-    orderBy: vi.fn(),
-    limit: vi.fn(),
-    get: vi.fn(),
-    all: vi.fn(),
-    insert: vi.fn(),
-  };
-
-  chain.select.mockReturnValue(chain);
-  chain.from.mockReturnValue(chain);
-  chain.where.mockReturnValue(chain);
-  chain.orderBy.mockReturnValue(chain);
-  chain.limit.mockReturnValue(chain);
-  chain.all.mockImplementation(() => mockDbState.allQueue.shift() ?? []);
-  chain.get.mockReturnValue(null);
-  chain.insert.mockImplementation((table: unknown) => ({
-    values: vi.fn((payload: unknown) => {
-      mockDbState.insertCalls.push({ table, payload });
-      return { run: vi.fn() };
-    }),
-  }));
-
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
+// builders, and the chain mock ignores their output. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => mockSchema);
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "test-id-123"),
@@ -62,8 +20,7 @@ vi.mock("@/lib/utils/nanoid", () => ({
 describe("logSyncOperation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.insertCalls = [];
-    mockDbState.allQueue = [];
+    resetDbMockState();
   });
 
   it("inserts a sync log entry with all fields", async () => {
@@ -77,9 +34,9 @@ describe("logSyncOperation", () => {
       detail: "Pushed 3 commits",
     });
 
-    expect(mockDbState.insertCalls).toHaveLength(1);
-    expect(mockDbState.insertCalls[0].table).toBe(mockSchema.gitSyncLog);
-    expect(mockDbState.insertCalls[0].payload).toEqual(
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    expect(getDbChainMock().insert).toHaveBeenCalledWith(gitSyncLog);
+    expect(dbMockState.insertCalls[0]).toEqual(
       expect.objectContaining({
         id: "test-id-123",
         projectId: "proj_1",
@@ -100,8 +57,8 @@ describe("logSyncOperation", () => {
       status: "failure",
     });
 
-    expect(mockDbState.insertCalls).toHaveLength(1);
-    expect(mockDbState.insertCalls[0].payload).toEqual(
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    expect(dbMockState.insertCalls[0]).toEqual(
       expect.objectContaining({
         projectId: "proj_2",
         operation: "fetch",
@@ -134,8 +91,8 @@ describe("logSyncOperation", () => {
       },
     });
 
-    expect(mockDbState.insertCalls).toHaveLength(1);
-    const payload = mockDbState.insertCalls[0].payload as Record<
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    const payload = dbMockState.insertCalls[0] as Record<
       string,
       unknown
     >;
@@ -163,8 +120,8 @@ describe("logSyncOperation", () => {
       detail: { tag: "v1.0.0" },
     });
 
-    expect(mockDbState.insertCalls).toHaveLength(1);
-    expect(mockDbState.insertCalls[0].payload).toEqual(
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    expect(dbMockState.insertCalls[0]).toEqual(
       expect.objectContaining({
         id: "test-id-123",
         projectId: "proj-1",
@@ -180,8 +137,7 @@ describe("logSyncOperation", () => {
 describe("getRecentSyncLogs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.insertCalls = [];
-    mockDbState.allQueue = [];
+    resetDbMockState();
   });
 
   it("returns sync log entries for the project", async () => {
@@ -206,7 +162,7 @@ describe("getRecentSyncLogs", () => {
       },
     ];
 
-    mockDbState.allQueue = [mockLogs];
+    dbMockState.allQueue = [mockLogs];
 
     const { getRecentSyncLogs } = await import("@/lib/github/sync-log");
     const result = getRecentSyncLogs("proj_1");
@@ -217,7 +173,7 @@ describe("getRecentSyncLogs", () => {
   });
 
   it("returns empty array when no logs exist", async () => {
-    mockDbState.allQueue = [[]];
+    dbMockState.allQueue = [[]];
 
     const { getRecentSyncLogs } = await import("@/lib/github/sync-log");
     const result = getRecentSyncLogs("proj_1");

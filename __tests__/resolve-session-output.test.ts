@@ -1,37 +1,19 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { NO_TEXTUAL_OUTPUT_FALLBACK } from "@/lib/claude/json-parser";
+import { dbMockState, resetDbMockState } from "@/__tests__/helpers/db-mock";
 
-const mockGet = vi.fn();
-
-vi.mock("@/lib/db", () => ({
-  db: {
-    select: () => ({
-      from: () => ({
-        where: () => ({
-          get: mockGet,
-        }),
-      }),
-    }),
-  },
-  sqlite: null,
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: {
-    id: "id",
-    lastNonEmptyText: "last_non_empty_text",
-  },
-}));
-
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(),
-}));
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
+// column identity, so no fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
+});
 
 // Import after mocks
 const { resolveSessionOutput } = await import("@/lib/claude/resolve-session-output");
 
 beforeEach(() => {
-  mockGet.mockReset();
+  resetDbMockState();
 });
 
 describe("resolveSessionOutput", () => {
@@ -60,9 +42,9 @@ describe("resolveSessionOutput", () => {
       }),
       duration: 5000,
     };
-    mockGet.mockReturnValue({
-      lastNonEmptyText: "Applied 3 file edits and ran tests successfully.",
-    });
+    dbMockState.getQueue = [
+      { lastNonEmptyText: "Applied 3 file edits and ran tests successfully." },
+    ];
     const output = resolveSessionOutput(result, "test-session-2");
     expect(output).toBe("Applied 3 file edits and ran tests successfully.");
   });
@@ -73,19 +55,19 @@ describe("resolveSessionOutput", () => {
       error: "Context window exceeded",
       duration: 5000,
     };
-    mockGet.mockReturnValue(null);
+    dbMockState.getQueue = [null];
     const output = resolveSessionOutput(result, "test-session-3");
     expect(output).toBe("Context window exceeded");
   });
 
   it("returns default message when no result and no DB fallback", () => {
-    mockGet.mockReturnValue(null);
+    dbMockState.getQueue = [null];
     const output = resolveSessionOutput(null, "test-session-4");
     expect(output).toBe("Agent session completed without output.");
   });
 
   it("returns custom default message", () => {
-    mockGet.mockReturnValue(null);
+    dbMockState.getQueue = [null];
     const output = resolveSessionOutput(null, "test-session-5", "Custom fallback message.");
     expect(output).toBe("Custom fallback message.");
   });
@@ -100,9 +82,9 @@ describe("resolveSessionOutput", () => {
       }),
       duration: 5000,
     };
-    mockGet.mockReturnValue({
-      lastNonEmptyText: "Chunk-based text from streaming provider.",
-    });
+    dbMockState.getQueue = [
+      { lastNonEmptyText: "Chunk-based text from streaming provider." },
+    ];
     const output = resolveSessionOutput(result, "test-session-6");
     expect(output).toBe("Chunk-based text from streaming provider.");
     expect(output).not.toBe(NO_TEXTUAL_OUTPUT_FALLBACK);

@@ -21,8 +21,8 @@ import {
   DEFAULT_NAMED_AGENT_PROVIDER,
   LEGACY_BASELINE_MS,
   initDb,
-} from "../init";
-import * as schema from "../schema";
+} from "@/lib/db/init";
+import * as schema from "@/lib/db/schema";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
 
@@ -264,7 +264,7 @@ describe("lib/db module import", () => {
     vi.resetModules();
     try {
       process.chdir(dir);
-      await import("../index");
+      await import("@/lib/db");
       expect(fs.existsSync(path.join(dir, "data"))).toBe(false);
     } finally {
       process.chdir(originalCwd);

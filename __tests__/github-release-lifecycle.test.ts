@@ -1,92 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 /* ------------------------------------------------------------------ */
 /* Hoisted mock state                                                  */
 /* ------------------------------------------------------------------ */
-const mockDbState = vi.hoisted(() => ({
-  insertCalls: [] as Array<{ table: unknown; payload: unknown }>,
-  updateCalls: [] as Array<{ table: unknown; values: unknown }>,
-  allQueue: [] as unknown[],
-  getQueue: [] as unknown[],
-}));
 const mockGitAddTag = vi.hoisted(() => vi.fn());
 const mockGitTag = vi.hoisted(() => vi.fn());
 const mockGitPush = vi.hoisted(() => vi.fn());
 const mockCreateReleaseBranchAndCommitChangelog = vi.hoisted(() => vi.fn());
 
-const mockSchema = vi.hoisted(() => ({
-  releases: { __name: "releases", id: "id", projectId: "projectId", epicIds: "epicIds" },
-  projects: { __name: "projects", id: "id" },
-  epics: { __name: "epics", id: "id", projectId: "projectId", status: "status" },
-  userStories: { __name: "user_stories", epicId: "epicId" },
-  settings: { __name: "settings", key: "key" },
-  agentSessions: { __name: "agent_sessions", id: "id", projectId: "projectId", provider: "provider", cliSessionId: "cliSessionId", claudeSessionId: "claudeSessionId" },
-  gitSyncLog: { __name: "git_sync_log" },
-  agentProviderDefaults: { __name: "agent_provider_defaults" },
-  namedAgents: { __name: "named_agents" },
-}));
-
 /* ------------------------------------------------------------------ */
 /* Mock external modules                                               */
 /* ------------------------------------------------------------------ */
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn((...args: unknown[]) => ({ __eq: args })),
-  desc: vi.fn(() => ({})),
-  inArray: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
-  sql: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  function createChain() {
-    const chain: Record<string, ReturnType<typeof vi.fn>> = {
-      select: vi.fn(),
-      from: vi.fn(),
-      where: vi.fn(),
-      orderBy: vi.fn(),
-      limit: vi.fn(),
-      get: vi.fn(),
-      all: vi.fn(),
-      insert: vi.fn(),
-      update: vi.fn(),
-      set: vi.fn(),
-      transaction: vi.fn(),
-    };
-
-    chain.select.mockReturnValue(chain);
-    chain.from.mockReturnValue(chain);
-    chain.where.mockReturnValue(chain);
-    chain.orderBy.mockReturnValue(chain);
-    chain.limit.mockReturnValue(chain);
-    chain.all.mockImplementation(() => mockDbState.allQueue.shift() ?? []);
-    chain.get.mockImplementation(() => mockDbState.getQueue.shift() ?? null);
-    chain.insert.mockImplementation((table: unknown) => ({
-      values: vi.fn((payload: unknown) => {
-        mockDbState.insertCalls.push({ table, payload });
-        return { run: vi.fn() };
-      }),
-    }));
-    chain.update.mockImplementation((table: unknown) => ({
-      set: vi.fn((values: unknown) => {
-        mockDbState.updateCalls.push({ table, values });
-        return {
-          where: vi.fn().mockReturnValue({ run: vi.fn() }),
-        };
-      }),
-    }));
-    // transaction(fn) calls fn(tx) where tx has the same interface
-    chain.transaction.mockImplementation((fn: (tx: unknown) => void) => {
-      const tx = createChain();
-      fn(tx);
-    });
-
-    return chain;
-  }
-
-  return { db: createChain() };
+// Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
+// builders, and the chain mock ignores their output. No fake column maps.
+// `transaction(fn)` runs fn against the same chain, which shares the queues.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
 
-vi.mock("@/lib/db/schema", () => mockSchema);
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "test-release-id"),
 }));
@@ -174,11 +112,11 @@ vi.mock("@/lib/events/emit", () => ({
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
 /* ------------------------------------------------------------------ */
-function createMockRequest(body: unknown): Request {
-  return new Request("http://localhost/api/projects/proj_1/releases", {
+function createMockRequest(body: unknown) {
+  return mockNextRequest({
+    url: "http://localhost/api/projects/proj_1/releases",
     method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body,
   });
 }
 
@@ -188,10 +126,7 @@ function createMockRequest(body: unknown): Request {
 describe("Release creation with pushToGitHub", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.insertCalls = [];
-    mockDbState.updateCalls = [];
-    mockDbState.allQueue = [];
-    mockDbState.getQueue = [];
+    resetDbMockState();
     mockGitAddTag.mockReset();
     mockGitTag.mockReset();
     mockGitPush.mockReset();
@@ -205,11 +140,11 @@ describe("Release creation with pushToGitHub", () => {
 
   it("creates a local-only release when pushToGitHub is false", async () => {
     // Setup: project without GitHub, selected epics, release result
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj_1", name: "Test Project", gitRepoPath: "/tmp/repo", githubOwnerRepo: null },
       { id: "test-release-id", version: "1.0.0" },
     ];
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       [{ id: "ep_1", title: "Epic 1", description: "desc", status: "done" }],
     ];
 
@@ -224,9 +159,7 @@ describe("Release creation with pushToGitHub", () => {
       pushToGitHub: false,
     });
 
-    const res = await POST(req as any, {
-      params: Promise.resolve({ projectId: "proj_1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "proj_1" }));
     const json = await res.json();
 
     expect(res.status).toBe(201);
@@ -240,11 +173,11 @@ describe("Release creation with pushToGitHub", () => {
 
   it("pushes tag and creates draft release when pushToGitHub is true", async () => {
     // Setup: project with GitHub configured
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj_1", name: "Test Project", gitRepoPath: "/tmp/repo", githubOwnerRepo: "owner/repo" },
       { id: "test-release-id", version: "1.0.0", githubReleaseId: 99, githubReleaseUrl: "https://github.com/owner/repo/releases/99" },
     ];
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       [{ id: "ep_1", title: "Epic 1", description: "desc", status: "done" }],
     ];
 
@@ -265,9 +198,7 @@ describe("Release creation with pushToGitHub", () => {
       pushToGitHub: true,
     });
 
-    const res = await POST(req as any, {
-      params: Promise.resolve({ projectId: "proj_1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "proj_1" }));
     const json = await res.json();
 
     expect(res.status).toBe(201);
@@ -311,11 +242,11 @@ describe("Release creation with pushToGitHub", () => {
   });
 
   it("creates local release even when GitHub push fails", async () => {
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj_1", name: "Test Project", gitRepoPath: "/tmp/repo", githubOwnerRepo: "owner/repo" },
       { id: "test-release-id", version: "2.0.0" },
     ];
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       [{ id: "ep_1", title: "Epic 1", description: "desc", status: "done" }],
     ];
 
@@ -333,9 +264,7 @@ describe("Release creation with pushToGitHub", () => {
       pushToGitHub: true,
     });
 
-    const res = await POST(req as any, {
-      params: Promise.resolve({ projectId: "proj_1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "proj_1" }));
     const json = await res.json();
 
     // Release still created successfully
@@ -364,11 +293,11 @@ describe("Release creation with pushToGitHub", () => {
   });
 
   it("skips GitHub operations when project has no githubOwnerRepo", async () => {
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj_1", name: "Test Project", gitRepoPath: "/tmp/repo", githubOwnerRepo: null },
       { id: "test-release-id", version: "1.0.0" },
     ];
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       [{ id: "ep_1", title: "Epic 1", description: "desc", status: "done" }],
     ];
 
@@ -383,9 +312,7 @@ describe("Release creation with pushToGitHub", () => {
       pushToGitHub: true, // true but no github config
     });
 
-    const res = await POST(req as any, {
-      params: Promise.resolve({ projectId: "proj_1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "proj_1" }));
 
     expect(res.status).toBe(201);
     expect(mockCreateDraftRelease).not.toHaveBeenCalled();
@@ -400,9 +327,7 @@ describe("Release creation with pushToGitHub", () => {
       epicIds: ["ep_1"],
     });
 
-    const res = await POST(req as any, {
-      params: Promise.resolve({ projectId: "proj_1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "proj_1" }));
 
     expect(res.status).toBe(400);
     const json = await res.json();
@@ -420,9 +345,7 @@ describe("Release creation with pushToGitHub", () => {
       epicIds: [],
     });
 
-    const res = await POST(req as any, {
-      params: Promise.resolve({ projectId: "proj_1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "proj_1" }));
 
     expect(res.status).toBe(400);
     const json = await res.json();

@@ -33,8 +33,10 @@ export async function PATCH(
   if (isErrorResponse(found)) return found;
   const existing = found.epic;
 
-  // Prevent any changes to released epics' status
-  if (existing.status === "released" && body.status !== undefined && body.status !== "released") {
+  // Prevent any changes to released epics' status. updateEpicSchema never
+  // accepts "released" as an input status, so any defined body.status here
+  // is necessarily a change away from released.
+  if (existing.status === "released" && body.status !== undefined) {
     return NextResponse.json(
       { error: "Cannot change status of a released epic. Released tickets cannot be moved." },
       { status: 400 }

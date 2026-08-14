@@ -2,78 +2,40 @@
  * Tests that the epic build route returns 409 when a session lock is active.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mockJsonRequest, mockRouteContext } from "@/__tests__/helpers/db-mock";
 
-let getCallCount = 0;
 const mockGetRunningForTarget = vi.hoisted(() => vi.fn());
+/** `.get()` call counter, reset per test (survives `vi.resetModules()`). */
+const getCalls = vi.hoisted(() => ({ count: 0 }));
 
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockReturnThis(),
-    get: vi.fn(() => {
-      getCallCount++;
-      if (getCallCount === 1) {
-        // Epic lookup
-        return {
-          id: "epic-1",
-          title: "Test Epic",
-          status: "in_progress",
-          branchName: "feature/test",
-        };
-      }
-      // Project lookup
+// Shared chain mock + real @/lib/db/schema (side-effect-free, and the chain
+// ignores the tables it is handed, so a rename now breaks the test like prod).
+// `.get()` keeps the hand-rolled "epic once, then project forever" behavior:
+// the route re-reads the project past the two scoped lookups, so a drained
+// queue would 404.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  const mod = dbModuleMock();
+  mod.db.get.mockImplementation(() => {
+    getCalls.count++;
+    if (getCalls.count === 1) {
+      // Epic lookup
       return {
-        id: "proj-1",
-        name: "Test Project",
-        gitRepoPath: "/repos/test",
+        id: "epic-1",
+        title: "Test Epic",
+        status: "in_progress",
+        branchName: "feature/test",
       };
-    }),
-    all: vi.fn().mockReturnValue([]),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockReturnValue({ run: vi.fn() }),
-    }),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({ run: vi.fn() }),
-      }),
-    }),
-  };
-  return { db: chain };
+    }
+    // Project lookup
+    return {
+      id: "proj-1",
+      name: "Test Project",
+      gitRepoPath: "/repos/test",
+    };
+  });
+  return mod;
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  projects: {},
-  epics: { id: "id" },
-  userStories: { epicId: "epicId", position: "position", status: "status" },
-  documents: { projectId: "projectId" },
-  agentSessions: {
-    id: "id",
-    epicId: "epicId",
-    userStoryId: "userStoryId",
-    mode: "mode",
-    status: "status",
-  },
-  ticketComments: {},
-  reviewComments: {
-    id: "id",
-    epicId: "epicId",
-    status: "status",
-    createdAt: "createdAt",
-  },
-  ticketActivityLog: {
-    id: "id",
-    projectId: "projectId",
-    epicId: "epicId",
-    fromStatus: "fromStatus",
-    toStatus: "toStatus",
-    actor: "actor",
-    reason: "reason",
-    sessionId: "sessionId",
-    createdAt: "createdAt",
-  },
-}));
 
 vi.mock("@/lib/workflow/log", () => ({
   logTransition: vi.fn(),
@@ -161,15 +123,15 @@ vi.mock("@/lib/agent-sessions/lifecycle", () => ({
   isSessionLifecycleConflictError: vi.fn(() => false),
 }));
 
-function mockRequest(body: Record<string, unknown> = {}) {
-  return {
-    json: () => Promise.resolve(body),
-  } as unknown as import("next/server").NextRequest;
-}
+const mockRequest = (body: Record<string, unknown> = {}) =>
+  mockJsonRequest(body);
+
+const routeParams = () =>
+  mockRouteContext({ projectId: "proj-1", epicId: "epic-1" });
 
 describe("Epic Build Route - Concurrency Guard", () => {
   beforeEach(() => {
-    getCallCount = 0;
+    getCalls.count = 0;
     mockGetRunningForTarget.mockReturnValue(null);
     vi.resetModules();
   });
@@ -189,9 +151,7 @@ describe("Epic Build Route - Concurrency Guard", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/build/route"
     );
 
-    const res = await POST(mockRequest({}), {
-      params: Promise.resolve({ projectId: "proj-1", epicId: "epic-1" }),
-    });
+    const res = await POST(mockRequest({}), routeParams());
 
     const json = await res.json();
     expect(res.status).toBe(409);
@@ -206,9 +166,7 @@ describe("Epic Build Route - Concurrency Guard", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/build/route"
     );
 
-    const res = await POST(mockRequest({}), {
-      params: Promise.resolve({ projectId: "proj-1", epicId: "epic-1" }),
-    });
+    const res = await POST(mockRequest({}), routeParams());
 
     const json = await res.json();
     expect(res.status).toBe(200);

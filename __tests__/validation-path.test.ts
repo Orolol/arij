@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { validatePath } from "../path";
+import { validatePath } from "@/lib/validation/path";
 import * as fs from "node:fs/promises";
 
 vi.mock("node:fs/promises");

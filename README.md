@@ -200,6 +200,30 @@ All agent work happens in isolated git worktrees, so multiple features can be bu
 
 ---
 
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| Framework | Next.js 16 (App Router, Turbopack) |
+| UI | React 19, Tailwind CSS v4 + shadcn/ui |
+| Kanban drag & drop | dnd-kit |
+| Database | SQLite via better-sqlite3 + Drizzle ORM |
+| Agent execution | Claude Code CLI (`claude`) spawned as a child process — plus Codex, Gemini, and other CLI providers |
+
+---
+
+## Architecture
+
+Arij is a single local Next.js app — no external services:
+
+- **Web UI** — App Router pages render the dashboard, Kanban board, and the Chat Panel (`app/`, `components/`).
+- **API routes** — server-side route handlers orchestrate planning, builds, reviews, and git operations (`app/api/`).
+- **Provider layer** — each AI CLI (Claude Code, Codex, Gemini, …) is wrapped in a provider that spawns the tool as a child process and parses its output (`lib/providers/`, `lib/claude/`).
+- **Database** — a local SQLite file managed with Drizzle ORM stores projects, epics, stories, sessions, and chat history (`lib/db/`).
+- **Git layer** — every build runs in its own git worktree on a dedicated branch, keeping parallel agent work isolated until you merge (`lib/git/`).
+
+---
+
 ## Production Build
 
 ```bash

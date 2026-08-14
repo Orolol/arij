@@ -1,63 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mockDbState = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-  allQueue: [] as unknown[],
-  insertCalls: [] as Array<{ table: unknown; payload: unknown }>,
-  deleteCalls: [] as Array<{ table: unknown }>,
-}));
+import {
+  dbMockState,
+  resetDbMockState,
+  mockJsonRequest,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockIdState = vi.hoisted(() => ({ value: 1 }));
 
-const mockSchema = vi.hoisted(() => ({
-  ticketDependencies: { __name: "ticketDependencies" },
-  epics: { __name: "epics" },
-}));
-
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
-  or: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain: Record<string, ReturnType<typeof vi.fn>> = {
-    select: vi.fn(),
-    from: vi.fn(),
-    where: vi.fn(),
-    orderBy: vi.fn(),
-    get: vi.fn(),
-    all: vi.fn(),
-    insert: vi.fn(),
-    delete: vi.fn(),
-  };
-
-  chain.select.mockReturnValue(chain);
-  chain.from.mockReturnValue(chain);
-  chain.where.mockReturnValue(chain);
-  chain.orderBy.mockReturnValue(chain);
-  chain.get.mockImplementation(() => mockDbState.getQueue.shift() ?? null);
-  chain.all.mockImplementation(() => mockDbState.allQueue.shift() ?? []);
-  chain.insert.mockImplementation((table: unknown) => ({
-    values: vi.fn((payload: unknown) => {
-      mockDbState.insertCalls.push({ table, payload });
-      return { run: vi.fn() };
-    }),
-  }));
-  chain.delete.mockImplementation((table: unknown) => {
-    mockDbState.deleteCalls.push({ table });
-    return chain;
-  });
-
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
+// builders, and the chain mock ignores their output. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  ticketDependencies: mockSchema.ticketDependencies,
-  epics: mockSchema.epics,
-  projects: { __name: "projects" },
-  userStories: { __name: "userStories" },
-}));
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => {
@@ -93,17 +50,10 @@ vi.mock("@/lib/dependencies/validation", () => ({
   },
 }));
 
-function mockRequest(body: Record<string, unknown>) {
-  return {
-    json: () => Promise.resolve(body),
-  } as unknown as import("next/server").NextRequest;
-}
-
 describe("GET /api/projects/[projectId]/dependencies", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.getQueue = [];
-    mockDbState.allQueue = [];
+    resetDbMockState();
   });
 
   it("returns all dependencies for a project", async () => {
@@ -117,8 +67,8 @@ describe("GET /api/projects/[projectId]/dependencies", () => {
       "@/app/api/projects/[projectId]/dependencies/route"
     );
     const response = await GET(
-      mockRequest({}),
-      { params: Promise.resolve({ projectId: "proj1" }) }
+      mockNextRequest(),
+      mockRouteContext({ projectId: "proj1" })
     );
 
     const json = await response.json();
@@ -130,7 +80,7 @@ describe("GET /api/projects/[projectId]/dependencies", () => {
 describe("POST /api/projects/[projectId]/dependencies", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.insertCalls = [];
+    resetDbMockState();
     mockIdState.value = 1;
   });
 
@@ -139,8 +89,8 @@ describe("POST /api/projects/[projectId]/dependencies", () => {
       "@/app/api/projects/[projectId]/dependencies/route"
     );
     const response = await POST(
-      mockRequest({}),
-      { params: Promise.resolve({ projectId: "proj1" }) }
+      mockJsonRequest({}),
+      mockRouteContext({ projectId: "proj1" })
     );
 
     expect(response.status).toBe(400);
@@ -153,8 +103,8 @@ describe("POST /api/projects/[projectId]/dependencies", () => {
       "@/app/api/projects/[projectId]/dependencies/route"
     );
     const response = await POST(
-      mockRequest({ edges: [] }),
-      { params: Promise.resolve({ projectId: "proj1" }) }
+      mockJsonRequest({ edges: [] }),
+      mockRouteContext({ projectId: "proj1" })
     );
 
     expect(response.status).toBe(400);
@@ -165,8 +115,8 @@ describe("POST /api/projects/[projectId]/dependencies", () => {
       "@/app/api/projects/[projectId]/dependencies/route"
     );
     const response = await POST(
-      mockRequest({ edges: [{ ticketId: "A", dependsOnTicketId: "A" }] }),
-      { params: Promise.resolve({ projectId: "proj1" }) }
+      mockJsonRequest({ edges: [{ ticketId: "A", dependsOnTicketId: "A" }] }),
+      mockRouteContext({ projectId: "proj1" })
     );
 
     expect(response.status).toBe(400);
@@ -184,8 +134,8 @@ describe("POST /api/projects/[projectId]/dependencies", () => {
       "@/app/api/projects/[projectId]/dependencies/route"
     );
     const response = await POST(
-      mockRequest({ edges: [{ ticketId: "A", dependsOnTicketId: "B" }] }),
-      { params: Promise.resolve({ projectId: "proj1" }) }
+      mockJsonRequest({ edges: [{ ticketId: "A", dependsOnTicketId: "B" }] }),
+      mockRouteContext({ projectId: "proj1" })
     );
 
     expect(response.status).toBe(201);
@@ -206,8 +156,8 @@ describe("POST /api/projects/[projectId]/dependencies", () => {
       "@/app/api/projects/[projectId]/dependencies/route"
     );
     const response = await POST(
-      mockRequest({ edges: [{ ticketId: "A", dependsOnTicketId: "B" }] }),
-      { params: Promise.resolve({ projectId: "proj1" }) }
+      mockJsonRequest({ edges: [{ ticketId: "A", dependsOnTicketId: "B" }] }),
+      mockRouteContext({ projectId: "proj1" })
     );
 
     expect(response.status).toBe(422);
@@ -226,8 +176,8 @@ describe("POST /api/projects/[projectId]/dependencies", () => {
       "@/app/api/projects/[projectId]/dependencies/route"
     );
     const response = await POST(
-      mockRequest({ edges: [{ ticketId: "A", dependsOnTicketId: "X" }] }),
-      { params: Promise.resolve({ projectId: "proj1" }) }
+      mockJsonRequest({ edges: [{ ticketId: "A", dependsOnTicketId: "X" }] }),
+      mockRouteContext({ projectId: "proj1" })
     );
 
     expect(response.status).toBe(422);

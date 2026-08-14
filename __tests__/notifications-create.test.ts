@@ -1,43 +1,25 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { dbMockState, resetDbMockState } from "@/__tests__/helpers/db-mock";
 
 // ---- Mocks must be hoisted above all imports ----
-const mockDbState = vi.hoisted(() => ({
-  insertCalls: [] as Array<{ payload: unknown }>,
-  getQueue: [] as Array<unknown>,
+// Only the raw-sqlite prune helper needs a bespoke stub; the drizzle chain and
+// the real @/lib/db/schema come from the shared helpers.
+const mockSqliteState = vi.hoisted(() => ({
   pruneCount: { cnt: 5 },
 }));
 
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDbState.getQueue.shift()),
-    insert: vi.fn(() => ({
-      values: vi.fn((payload: unknown) => {
-        mockDbState.insertCalls.push({ payload });
-        return { run: vi.fn() };
-      }),
-    })),
-  };
-
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
   return {
-    db: chain,
+    ...dbModuleMock(),
     sqlite: {
       prepare: vi.fn(() => ({
-        get: vi.fn(() => mockDbState.pruneCount),
+        get: vi.fn(() => mockSqliteState.pruneCount),
       })),
       exec: vi.fn(),
     },
   };
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: { id: "id", projectId: "project_id", epicId: "epic_id", status: "status", agentType: "agent_type" },
-  projects: { name: "name", id: "id" },
-  epics: { id: "id", title: "title", readableId: "readable_id" },
-  notifications: { __name: "notifications" },
-}));
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "notif-123"),
@@ -107,13 +89,12 @@ describe("buildTargetUrl()", () => {
 
 describe("createNotificationFromSession()", () => {
   beforeEach(() => {
-    mockDbState.insertCalls.length = 0;
-    mockDbState.getQueue.length = 0;
-    mockDbState.pruneCount = { cnt: 5 };
+    resetDbMockState();
+    mockSqliteState.pruneCount = { cnt: 5 };
   });
 
   it("creates notification for completed session with epic context", () => {
-    mockDbState.getQueue.push(
+    dbMockState.getQueue.push(
       { id: "s1", projectId: "p1", epicId: "e1", status: "completed", agentType: "build" },
       { name: "My Project" },
       { title: "Login feature", readableId: "E-proj-003" }
@@ -121,8 +102,8 @@ describe("createNotificationFromSession()", () => {
 
     createNotificationFromSession("s1");
 
-    expect(mockDbState.insertCalls).toHaveLength(1);
-    const payload = mockDbState.insertCalls[0].payload as Record<string, unknown>;
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    const payload = dbMockState.insertCalls[0] as Record<string, unknown>;
     expect(payload.id).toBe("notif-123");
     expect(payload.projectId).toBe("p1");
     expect(payload.projectName).toBe("My Project");
@@ -134,49 +115,49 @@ describe("createNotificationFromSession()", () => {
   });
 
   it("creates notification for failed session with QA target", () => {
-    mockDbState.getQueue.push(
+    dbMockState.getQueue.push(
       { id: "s2", projectId: "p1", epicId: null, status: "failed", agentType: "tech_check" },
       { name: "My Project" }
     );
 
     createNotificationFromSession("s2");
 
-    expect(mockDbState.insertCalls).toHaveLength(1);
-    const payload = mockDbState.insertCalls[0].payload as Record<string, unknown>;
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    const payload = dbMockState.insertCalls[0] as Record<string, unknown>;
     expect(payload.status).toBe("failed");
     expect(payload.title).toBe("Tech Check failed");
     expect(payload.targetUrl).toBe("/projects/p1/qa");
   });
 
   it("does nothing when session not found", () => {
-    mockDbState.getQueue.push(undefined);
+    dbMockState.getQueue.push(undefined);
 
     createNotificationFromSession("missing");
 
-    expect(mockDbState.insertCalls).toHaveLength(0);
+    expect(dbMockState.insertCalls).toHaveLength(0);
   });
 
   it("does nothing when project not found", () => {
-    mockDbState.getQueue.push(
+    dbMockState.getQueue.push(
       { id: "s1", projectId: "p-gone", epicId: null, status: "completed", agentType: "build" },
       undefined
     );
 
     createNotificationFromSession("s1");
 
-    expect(mockDbState.insertCalls).toHaveLength(0);
+    expect(dbMockState.insertCalls).toHaveLength(0);
   });
 
   it("creates notification without epic context when epicId is null", () => {
-    mockDbState.getQueue.push(
+    dbMockState.getQueue.push(
       { id: "s3", projectId: "p1", epicId: null, status: "completed", agentType: "review_security" },
       { name: "Security Proj" }
     );
 
     createNotificationFromSession("s3");
 
-    expect(mockDbState.insertCalls).toHaveLength(1);
-    const payload = mockDbState.insertCalls[0].payload as Record<string, unknown>;
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    const payload = dbMockState.insertCalls[0] as Record<string, unknown>;
     expect(payload.title).toBe("Review: Security completed");
     expect(payload.projectName).toBe("Security Proj");
   });

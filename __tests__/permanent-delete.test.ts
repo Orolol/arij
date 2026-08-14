@@ -1,89 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import Database from "better-sqlite3";
+import type Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import * as schema from "@/lib/db/schema";
+import { createTestDb } from "@/lib/db/test-utils";
 
-const BASE_SCHEMA_SQL = `
-  CREATE TABLE epics (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    title TEXT NOT NULL,
-    description TEXT,
-    priority INTEGER,
-    status TEXT,
-    position INTEGER,
-    branch_name TEXT,
-    pr_number INTEGER,
-    pr_url TEXT,
-    pr_status TEXT,
-    confidence REAL,
-    evidence TEXT,
-    created_at TEXT,
-    updated_at TEXT,
-    type TEXT,
-    linked_epic_id TEXT,
-    images TEXT,
-    readable_id TEXT
-  );
-
-  CREATE TABLE user_stories (
-    id TEXT PRIMARY KEY,
-    epic_id TEXT NOT NULL REFERENCES epics(id) ON DELETE CASCADE,
-    title TEXT NOT NULL,
-    description TEXT,
-    acceptance_criteria TEXT,
-    status TEXT,
-    position INTEGER,
-    created_at TEXT
-  );
-
-  CREATE TABLE agent_sessions (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    epic_id TEXT REFERENCES epics(id),
-    user_story_id TEXT REFERENCES user_stories(id),
-    status TEXT,
-    mode TEXT,
-    orchestration_mode TEXT,
-    provider TEXT,
-    prompt TEXT,
-    logs_path TEXT,
-    branch_name TEXT,
-    worktree_path TEXT,
-    started_at TEXT,
-    ended_at TEXT,
-    completed_at TEXT,
-    last_non_empty_text TEXT,
-    error TEXT,
-    created_at TEXT
-  );
-
-  CREATE TABLE ticket_comments (
-    id TEXT PRIMARY KEY,
-    user_story_id TEXT REFERENCES user_stories(id) ON DELETE CASCADE,
-    epic_id TEXT REFERENCES epics(id) ON DELETE CASCADE,
-    author TEXT NOT NULL,
-    content TEXT NOT NULL,
-    agent_session_id TEXT REFERENCES agent_sessions(id),
-    created_at TEXT
-  );
-
-  CREATE TABLE chat_conversations (
-    id TEXT PRIMARY KEY,
-    project_id TEXT NOT NULL,
-    type TEXT NOT NULL DEFAULT 'brainstorm',
-    label TEXT NOT NULL DEFAULT 'Brainstorm',
-    status TEXT,
-    epic_id TEXT REFERENCES epics(id),
-    provider TEXT,
-    created_at TEXT
-  );
-`;
-
+/**
+ * Builds a real in-memory database from the actual drizzle migration chain
+ * (lib/db/test-utils), so the fixture can never drift from the production
+ * schema the way the previous hand-maintained DDL did. Both projects are
+ * seeded up front because epics/agent_sessions/chat_conversations carry
+ * NOT NULL foreign keys to projects.
+ */
 function createInMemoryDb() {
-  const sqlite = new Database(":memory:");
-  sqlite.pragma("foreign_keys = ON");
-  sqlite.exec(BASE_SCHEMA_SQL);
+  const { sqlite } = createTestDb();
+  sqlite.exec(`
+    INSERT INTO projects (id, name) VALUES
+      ('proj-1', 'Project 1'),
+      ('proj-2', 'Project 2');
+  `);
   return sqlite;
 }
 

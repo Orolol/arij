@@ -2,6 +2,13 @@
  * Tests for the review comments CRUD API route.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  getDbChainMock,
+  resetDbMockState,
+  mockJsonRequest,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockEpic = {
   id: "epic-1",
@@ -24,68 +31,26 @@ const mockComment = {
 
 let storedComments: typeof mockComment[] = [];
 
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn(function (this: typeof chain) {
-      return this;
-    }),
-    orderBy: vi.fn(function (this: typeof chain) {
-      return this;
-    }),
-    get: vi.fn(() => mockEpic),
-    all: vi.fn(() => storedComments),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockReturnValue({ run: vi.fn() }),
-    }),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({ run: vi.fn() }),
-      }),
-    }),
-    delete: vi.fn().mockReturnValue({
-      where: vi.fn().mockReturnValue({ run: vi.fn() }),
-    }),
-  };
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
+// column identity, so no fake column maps. get()/all() are pinned in
+// beforeEach to reproduce the previous always-return-mockEpic behavior.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  reviewComments: {
-    id: "id",
-    epicId: "epicId",
-    filePath: "filePath",
-    lineNumber: "lineNumber",
-    body: "body",
-    author: "author",
-    status: "status",
-    createdAt: "createdAt",
-    updatedAt: "updatedAt",
-  },
-  epics: { id: "id" },
-  ticketComments: {
-    id: "id",
-    epicId: "epicId",
-    author: "author",
-    content: "content",
-    createdAt: "createdAt",
-  },
-}));
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "new-comment-id"),
 }));
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn((...args: unknown[]) => args),
-  and: vi.fn((...args: unknown[]) => args),
-}));
-
 describe("review-comments route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetDbMockState();
     storedComments = [mockComment];
+    const chain = getDbChainMock();
+    chain.get.mockReturnValue(mockEpic);
+    chain.all.mockImplementation(() => storedComments);
   });
 
   it("GET returns all comments for an epic", async () => {
@@ -93,10 +58,10 @@ describe("review-comments route", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/review-comments/route"
     );
 
-    const req = new Request("http://localhost/api/projects/p1/epics/epic-1/review-comments");
-    const res = await GET(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
+    const req = mockNextRequest({
+      url: "http://localhost/api/projects/p1/epics/epic-1/review-comments",
     });
+    const res = await GET(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     const json = await res.json();
     expect(res.status).toBe(200);
@@ -108,15 +73,10 @@ describe("review-comments route", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/review-comments/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ filePath: "src/app.ts" }), // missing lineNumber and body
-    });
+    // missing lineNumber and body
+    const req = mockJsonRequest({ filePath: "src/app.ts" });
 
-    const res = await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     const json = await res.json();
     expect(res.status).toBe(400);
@@ -128,19 +88,13 @@ describe("review-comments route", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/review-comments/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filePath: "src/app.ts",
-        lineNumber: 42,
-        body: "Needs null check",
-      }),
+    const req = mockJsonRequest({
+      filePath: "src/app.ts",
+      lineNumber: 42,
+      body: "Needs null check",
     });
 
-    const res = await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     expect(res.status).toBe(201);
   });
@@ -150,15 +104,9 @@ describe("review-comments route", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/review-comments/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status: "resolved" }),
-    });
+    const req = mockNextRequest({ method: "PATCH", body: { status: "resolved" } });
 
-    const res = await PATCH(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    const res = await PATCH(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     expect(res.status).toBe(400);
   });
@@ -168,15 +116,9 @@ describe("review-comments route", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/review-comments/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
+    const req = mockNextRequest({ method: "DELETE", body: {} });
 
-    const res = await DELETE(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    const res = await DELETE(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     expect(res.status).toBe(400);
   });

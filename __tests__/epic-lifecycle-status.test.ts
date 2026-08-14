@@ -190,9 +190,18 @@ vi.mock("@/lib/agent-config/constants", () => ({
   },
 }));
 
-vi.mock("@/lib/claude/json-parser", () => ({
-  parseClaudeOutput: vi.fn((text: string) => ({ content: text })),
-}));
+vi.mock("@/lib/claude/json-parser", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/claude/json-parser")>();
+  return {
+    // Mirror the real module surface (isNoTextualOutputFallback,
+    // extractCliSessionIdFromOutput, …) so consumers like
+    // lib/claude/resolve-session-output keep working; only override
+    // parseClaudeOutput to echo the raw text back as content.
+    ...actual,
+    parseClaudeOutput: vi.fn((text: string) => ({ content: text })),
+  };
+});
 
 vi.mock("@/lib/agents/concurrency", () => ({
   getRunningSessionForTarget: vi.fn().mockReturnValue(null),

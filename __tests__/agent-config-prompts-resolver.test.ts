@@ -1,39 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { dbMockState, resetDbMockState } from "@/__tests__/helpers/db-mock";
 
-const mockDb = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-  allQueue: [] as unknown[],
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDb.getQueue.shift() ?? null),
-    all: vi.fn(() => mockDb.allQueue.shift() ?? []),
-  };
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
+// builders, and the chain mock ignores their output. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  agentPrompts: {
-    agentType: "agentType",
-    systemPrompt: "systemPrompt",
-    scope: "scope",
-  },
-}));
 
 describe("Agent prompt resolver", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.getQueue = [];
-    mockDb.allQueue = [];
+    resetDbMockState();
   });
 
   it("resolveAgentPrompt prioritizes project override over global", async () => {
     const { resolveAgentPrompt } = await import("@/lib/agent-config/prompts");
-    mockDb.getQueue = [{ systemPrompt: "Project prompt" }];
+    dbMockState.getQueue = [{ systemPrompt: "Project prompt" }];
 
     const prompt = await resolveAgentPrompt("build", "proj-1");
     expect(prompt).toBe("Project prompt");
@@ -41,7 +24,7 @@ describe("Agent prompt resolver", () => {
 
   it("resolveAgentPrompt falls back to global prompt", async () => {
     const { resolveAgentPrompt } = await import("@/lib/agent-config/prompts");
-    mockDb.getQueue = [null, { systemPrompt: "Global prompt" }];
+    dbMockState.getQueue = [null, { systemPrompt: "Global prompt" }];
 
     const prompt = await resolveAgentPrompt("build", "proj-1");
     expect(prompt).toBe("Global prompt");
@@ -49,7 +32,7 @@ describe("Agent prompt resolver", () => {
 
   it("resolveAgentPrompt falls back to built-in default", async () => {
     const { resolveAgentPrompt } = await import("@/lib/agent-config/prompts");
-    mockDb.getQueue = [null, null];
+    dbMockState.getQueue = [null, null];
 
     const prompt = await resolveAgentPrompt("build", "proj-1");
     expect(prompt).toBe("");
@@ -59,7 +42,7 @@ describe("Agent prompt resolver", () => {
     const { listMergedProjectAgentPrompts } = await import(
       "@/lib/agent-config/prompts"
     );
-    mockDb.allQueue = [
+    dbMockState.allQueue = [
       [{ agentType: "chat", systemPrompt: "Global chat", scope: "global" }],
       [{ agentType: "build", systemPrompt: "Project build", scope: "proj-1" }],
     ];

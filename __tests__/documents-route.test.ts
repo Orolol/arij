@@ -1,48 +1,21 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mockDbState = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-  allQueue: [] as unknown[],
-  insertedValues: [] as unknown[],
-}));
+import {
+  dbMockState,
+  resetDbMockState,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockConvertToMarkdown = vi.hoisted(() => vi.fn());
 const mockWriteFileSync = vi.hoisted(() => vi.fn());
 const mockMkdirSync = vi.hoisted(() => vi.fn());
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
-  sql: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDbState.getQueue.shift() ?? null),
-    all: vi.fn(() => mockDbState.allQueue.shift() ?? []),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn((payload: unknown) => {
-        mockDbState.insertedValues.push(payload);
-        return { run: vi.fn() };
-      }),
-    }),
-  };
-
-  return { db: chain };
+// Real drizzle-orm and real @/lib/db/schema (no fake column maps: a schema
+// rename must break this test the same way it would break prod).
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  documents: {
-    id: "id",
-    projectId: "projectId",
-    originalFilename: "originalFilename",
-    createdAt: "createdAt",
-  },
-}));
 
 vi.mock("@/lib/converters", () => ({
   convertToMarkdown: mockConvertToMarkdown,
@@ -74,7 +47,7 @@ function createMockFile(content: string | Uint8Array, name: string, type: string
   const buffer = bytes.buffer.slice(
     bytes.byteOffset,
     bytes.byteOffset + bytes.byteLength
-  );
+  ) as ArrayBuffer;
 
   return {
     name,
@@ -95,14 +68,12 @@ function makeRequest(file: MockUploadFile) {
 describe("Documents route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.getQueue = [];
-    mockDbState.allQueue = [];
-    mockDbState.insertedValues = [];
+    resetDbMockState();
     mockConvertToMarkdown.mockResolvedValue("# Converted markdown");
   });
 
   it("stores text uploads as markdown in DB", async () => {
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       null,
       {
         id: "doc-1",
@@ -116,16 +87,14 @@ describe("Documents route", () => {
     const { POST } = await import("@/app/api/projects/[projectId]/documents/route");
     const file = createMockFile("hello", "spec.md", "text/markdown");
 
-    const res = await POST(makeRequest(file), {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await POST(makeRequest(file), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(201);
     expect(mockConvertToMarkdown).toHaveBeenCalledTimes(1);
     expect(mockWriteFileSync).not.toHaveBeenCalled();
 
-    expect(mockDbState.insertedValues[0]).toMatchObject({
+    expect(dbMockState.insertCalls[0]).toMatchObject({
       projectId: "proj-1",
       originalFilename: "spec.md",
       kind: "text",
@@ -138,7 +107,7 @@ describe("Documents route", () => {
   });
 
   it("stores image uploads on disk and only persists metadata in DB", async () => {
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       null,
       {
         id: "doc-1",
@@ -153,9 +122,7 @@ describe("Documents route", () => {
     const { POST } = await import("@/app/api/projects/[projectId]/documents/route");
     const file = createMockFile(new Uint8Array([1, 2, 3]), "diagram.png", "image/png");
 
-    const res = await POST(makeRequest(file), {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await POST(makeRequest(file), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(201);
@@ -163,7 +130,7 @@ describe("Documents route", () => {
     expect(mockMkdirSync).toHaveBeenCalledTimes(1);
     expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
 
-    expect(mockDbState.insertedValues[0]).toMatchObject({
+    expect(dbMockState.insertCalls[0]).toMatchObject({
       projectId: "proj-1",
       originalFilename: "diagram.png",
       kind: "image",
@@ -176,23 +143,21 @@ describe("Documents route", () => {
   });
 
   it("rejects duplicate filenames case-insensitively within the same project", async () => {
-    mockDbState.getQueue = [{ id: "existing-doc" }];
+    dbMockState.getQueue = [{ id: "existing-doc" }];
 
     const { POST } = await import("@/app/api/projects/[projectId]/documents/route");
     const file = createMockFile("hello", "Spec.MD", "text/markdown");
 
-    const res = await POST(makeRequest(file), {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await POST(makeRequest(file), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(409);
     expect(json.error).toContain("already exists");
-    expect(mockDbState.insertedValues).toHaveLength(0);
+    expect(dbMockState.insertCalls).toHaveLength(0);
   });
 
   it("allows the same filename in different projects", async () => {
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       null,
       {
         id: "doc-1",
@@ -205,19 +170,17 @@ describe("Documents route", () => {
     const { POST } = await import("@/app/api/projects/[projectId]/documents/route");
     const file = createMockFile("hello", "README.md", "text/markdown");
 
-    const res = await POST(makeRequest(file), {
-      params: Promise.resolve({ projectId: "proj-2" }),
-    });
+    const res = await POST(makeRequest(file), mockRouteContext({ projectId: "proj-2" }));
 
     expect(res.status).toBe(201);
-    expect(mockDbState.insertedValues[0]).toMatchObject({
+    expect(dbMockState.insertCalls[0]).toMatchObject({
       projectId: "proj-2",
       originalFilename: "README.md",
     });
   });
 
   it("lists project documents", async () => {
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       [
         {
           id: "doc-1",
@@ -230,9 +193,7 @@ describe("Documents route", () => {
 
     const { GET } = await import("@/app/api/projects/[projectId]/documents/route");
 
-    const res = await GET({} as import("next/server").NextRequest, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);

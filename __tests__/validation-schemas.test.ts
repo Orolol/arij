@@ -8,7 +8,7 @@ import {
   createStorySchema,
   updateStorySchema,
   updateStoryByIdSchema,
-} from "../schemas";
+} from "@/lib/validation/schemas";
 
 describe("createProjectSchema", () => {
   it("accepts valid project with name only", () => {

@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockDeleteEpicPermanently = vi.hoisted(() => vi.fn());
 const mockTryExportArjiJson = vi.hoisted(() => vi.fn());
@@ -12,7 +16,10 @@ const ScopedDeleteNotFoundError = vi.hoisted(
     },
 );
 
-vi.mock("@/lib/db", () => ({ db: {} }));
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
+});
 
 vi.mock("@/lib/planning/permanent-delete", () => ({
   deleteEpicPermanently: mockDeleteEpicPermanently,
@@ -31,9 +38,10 @@ describe("DELETE /api/projects/[projectId]/epics/[epicId]", () => {
   it("deletes epic and exports project snapshot", async () => {
     const { DELETE } = await import("@/app/api/projects/[projectId]/epics/[epicId]/route");
 
-    const response = await DELETE(new Request("http://localhost"), {
-      params: Promise.resolve({ projectId: "proj-1", epicId: "epic-1" }),
-    });
+    const response = await DELETE(
+      mockNextRequest({ method: "DELETE" }),
+      mockRouteContext({ projectId: "proj-1", epicId: "epic-1" }),
+    );
 
     const json = await response.json();
     expect(response.status).toBe(200);
@@ -49,9 +57,10 @@ describe("DELETE /api/projects/[projectId]/epics/[epicId]", () => {
 
     const { DELETE } = await import("@/app/api/projects/[projectId]/epics/[epicId]/route");
 
-    const response = await DELETE(new Request("http://localhost"), {
-      params: Promise.resolve({ projectId: "proj-1", epicId: "epic-1" }),
-    });
+    const response = await DELETE(
+      mockNextRequest({ method: "DELETE" }),
+      mockRouteContext({ projectId: "proj-1", epicId: "epic-1" }),
+    );
 
     const json = await response.json();
     expect(response.status).toBe(404);
@@ -66,9 +75,10 @@ describe("DELETE /api/projects/[projectId]/epics/[epicId]", () => {
 
     const { DELETE } = await import("@/app/api/projects/[projectId]/epics/[epicId]/route");
 
-    const response = await DELETE(new Request("http://localhost"), {
-      params: Promise.resolve({ projectId: "proj-1", epicId: "epic-1" }),
-    });
+    const response = await DELETE(
+      mockNextRequest({ method: "DELETE" }),
+      mockRouteContext({ projectId: "proj-1", epicId: "epic-1" }),
+    );
 
     const json = await response.json();
     expect(response.status).toBe(409);

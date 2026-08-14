@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { NextRequest } from "next/server";
 import { z } from "zod";
-import { validateBody, isValidationError } from "../validate";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
 
 const testSchema = z.object({
   name: z.string().min(1),

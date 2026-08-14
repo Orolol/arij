@@ -2,6 +2,11 @@
  * Tests for Named Agents API routes.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  mockJsonRequest,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockList = vi.hoisted(() => vi.fn());
 const mockCreate = vi.hoisted(() => vi.fn());
@@ -27,12 +32,6 @@ vi.mock("@/lib/agent-config/constants", () => ({
   ),
   isAgentType: vi.fn(() => true),
 }));
-
-function mockRequest(body?: Record<string, unknown>) {
-  return {
-    json: body !== undefined ? () => Promise.resolve(body) : () => Promise.reject(new Error("no body")),
-  } as unknown as import("next/server").NextRequest;
-}
 
 describe("Named Agents API Routes", () => {
   beforeEach(() => {
@@ -80,7 +79,7 @@ describe("Named Agents API Routes", () => {
       mockCreate.mockReturnValue({ data: created });
 
       const { POST } = await import("@/app/api/agent-config/named-agents/route");
-      const res = await POST(mockRequest({
+      const res = await POST(mockJsonRequest({
         name: "CC Opus",
         provider: "claude-code",
         model: "claude-opus-4-6",
@@ -93,7 +92,7 @@ describe("Named Agents API Routes", () => {
 
     it("validates name is required", async () => {
       const { POST } = await import("@/app/api/agent-config/named-agents/route");
-      const res = await POST(mockRequest({ provider: "claude-code", model: "m1" }));
+      const res = await POST(mockJsonRequest({ provider: "claude-code", model: "m1" }));
       const json = await res.json();
 
       expect(res.status).toBe(400);
@@ -103,7 +102,7 @@ describe("Named Agents API Routes", () => {
 
     it("validates provider is valid", async () => {
       const { POST } = await import("@/app/api/agent-config/named-agents/route");
-      const res = await POST(mockRequest({
+      const res = await POST(mockJsonRequest({
         name: "Test",
         provider: "invalid",
         model: "m1",
@@ -117,7 +116,7 @@ describe("Named Agents API Routes", () => {
 
     it("validates model is required", async () => {
       const { POST } = await import("@/app/api/agent-config/named-agents/route");
-      const res = await POST(mockRequest({
+      const res = await POST(mockJsonRequest({
         name: "Test",
         provider: "claude-code",
       }));
@@ -134,7 +133,7 @@ describe("Named Agents API Routes", () => {
       });
 
       const { POST } = await import("@/app/api/agent-config/named-agents/route");
-      const res = await POST(mockRequest({
+      const res = await POST(mockJsonRequest({
         name: "CC Opus",
         provider: "claude-code",
         model: "m1",
@@ -156,7 +155,7 @@ describe("Named Agents API Routes", () => {
       mockCreate.mockReturnValue({ data: created });
 
       const { POST } = await import("@/app/api/agent-config/named-agents/route");
-      const res = await POST(mockRequest({
+      const res = await POST(mockJsonRequest({
         name: "Gemini Flash",
         provider: "gemini-cli",
         model: "gemini-2.0-flash",
@@ -174,9 +173,7 @@ describe("Named Agents API Routes", () => {
       mockGet.mockReturnValue(agent);
 
       const { GET } = await import("@/app/api/agent-config/named-agents/[agentId]/route");
-      const res = await GET(mockRequest(), {
-        params: Promise.resolve({ agentId: "a1" }),
-      });
+      const res = await GET(mockNextRequest(), mockRouteContext({ agentId: "a1" }));
       const json = await res.json();
 
       expect(res.status).toBe(200);
@@ -187,9 +184,7 @@ describe("Named Agents API Routes", () => {
       mockGet.mockReturnValue(undefined);
 
       const { GET } = await import("@/app/api/agent-config/named-agents/[agentId]/route");
-      const res = await GET(mockRequest(), {
-        params: Promise.resolve({ agentId: "nonexistent" }),
-      });
+      const res = await GET(mockNextRequest(), mockRouteContext({ agentId: "nonexistent" }));
 
       expect(res.status).toBe(404);
     });
@@ -201,9 +196,7 @@ describe("Named Agents API Routes", () => {
       mockUpdate.mockReturnValue({ data: updated });
 
       const { PUT } = await import("@/app/api/agent-config/named-agents/[agentId]/route");
-      const res = await PUT(mockRequest({ name: "Updated" }), {
-        params: Promise.resolve({ agentId: "a1" }),
-      });
+      const res = await PUT(mockJsonRequest({ name: "Updated" }), mockRouteContext({ agentId: "a1" }));
       const json = await res.json();
 
       expect(res.status).toBe(200);
@@ -216,9 +209,7 @@ describe("Named Agents API Routes", () => {
       });
 
       const { PUT } = await import("@/app/api/agent-config/named-agents/[agentId]/route");
-      const res = await PUT(mockRequest({ name: "Test" }), {
-        params: Promise.resolve({ agentId: "a1" }),
-      });
+      const res = await PUT(mockJsonRequest({ name: "Test" }), mockRouteContext({ agentId: "a1" }));
 
       expect(res.status).toBe(404);
     });
@@ -229,18 +220,14 @@ describe("Named Agents API Routes", () => {
       });
 
       const { PUT } = await import("@/app/api/agent-config/named-agents/[agentId]/route");
-      const res = await PUT(mockRequest({ name: "Taken" }), {
-        params: Promise.resolve({ agentId: "a1" }),
-      });
+      const res = await PUT(mockJsonRequest({ name: "Taken" }), mockRouteContext({ agentId: "a1" }));
 
       expect(res.status).toBe(409);
     });
 
     it("validates provider when provided", async () => {
       const { PUT } = await import("@/app/api/agent-config/named-agents/[agentId]/route");
-      const res = await PUT(mockRequest({ provider: "invalid" }), {
-        params: Promise.resolve({ agentId: "a1" }),
-      });
+      const res = await PUT(mockJsonRequest({ provider: "invalid" }), mockRouteContext({ agentId: "a1" }));
 
       expect(res.status).toBe(400);
       const json = await res.json();
@@ -254,9 +241,7 @@ describe("Named Agents API Routes", () => {
       mockDelete.mockReturnValue(true);
 
       const { DELETE } = await import("@/app/api/agent-config/named-agents/[agentId]/route");
-      const res = await DELETE(mockRequest(), {
-        params: Promise.resolve({ agentId: "a1" }),
-      });
+      const res = await DELETE(mockNextRequest(), mockRouteContext({ agentId: "a1" }));
       const json = await res.json();
 
       expect(res.status).toBe(200);
@@ -267,9 +252,7 @@ describe("Named Agents API Routes", () => {
       mockDelete.mockReturnValue(false);
 
       const { DELETE } = await import("@/app/api/agent-config/named-agents/[agentId]/route");
-      const res = await DELETE(mockRequest(), {
-        params: Promise.resolve({ agentId: "nonexistent" }),
-      });
+      const res = await DELETE(mockNextRequest(), mockRouteContext({ agentId: "nonexistent" }));
 
       expect(res.status).toBe(404);
     });

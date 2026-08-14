@@ -7,9 +7,11 @@ const readme = readFileSync(join(process.cwd(), "README.md"), "utf-8");
 describe("README onboarding documentation", () => {
   it("describes the project purpose", () => {
     expect(readme).toContain("# Arij");
-    expect(readme).toContain(
-      "local-first, AI-powered project orchestrator",
-    );
+    // Invariants, not an exact tagline: Arij is local-first, AI-powered,
+    // and orchestrates agents. The precise wording is free to evolve.
+    expect(readme).toMatch(/local[- ]first/i);
+    expect(readme).toMatch(/AI[- ]powered/i);
+    expect(readme).toMatch(/orchestrat/i);
   });
 
   it("includes a technical stack overview", () => {

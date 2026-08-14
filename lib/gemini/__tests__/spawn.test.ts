@@ -7,9 +7,14 @@ import { describe, it, expect, vi } from "vitest";
 
 vi.mock("child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("child_process")>();
+  const execSync = vi.fn(() => "/usr/bin/gemini");
   return {
     ...actual,
-    execSync: vi.fn(() => "/usr/bin/gemini"),
+    execSync,
+    // CJS interop: `import { execSync } from "child_process"` in the provider
+    // may resolve through the namespace's `default` (the CJS module object),
+    // so the override must be present there too or the real binary check runs.
+    default: { ...actual, execSync },
   };
 });
 

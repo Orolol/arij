@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import Database from "better-sqlite3";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { sql, eq } from "drizzle-orm";
-import * as schema from "../db/schema";
+import * as schema from "@/lib/db/schema";
 
 describe("chatAttachments schema", () => {
   let sqlite: ReturnType<typeof Database>;

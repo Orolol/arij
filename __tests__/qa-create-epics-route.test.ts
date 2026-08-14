@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
-
-const mockDb = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-  allQueue: [] as unknown[],
-  insertedValues: [] as unknown[],
-}));
+import {
+  dbMockState,
+  resetDbMockState,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockSpawnClaude = vi.hoisted(() => vi.fn());
 const mockExtractJson = vi.hoisted(() => vi.fn());
@@ -14,43 +14,13 @@ const mockCreateId = vi.hoisted(() => vi.fn());
 const mockGetProvider = vi.hoisted(() => vi.fn());
 const mockIsResumableProvider = vi.hoisted(() => vi.fn());
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
-  sql: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const makeInsert = (sink: unknown[]) =>
-    vi.fn().mockReturnValue({
-      values: vi.fn((payload: unknown) => ({
-        run: vi.fn(() => {
-          sink.push(payload);
-        }),
-      })),
-    });
-
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    all: vi.fn(() => mockDb.allQueue.shift() ?? []),
-    get: vi.fn(() => mockDb.getQueue.shift() ?? null),
-    insert: makeInsert(mockDb.insertedValues),
-    transaction: vi.fn((callback: (tx: { insert: ReturnType<typeof makeInsert> }) => unknown) =>
-      callback({ insert: makeInsert(mockDb.insertedValues) }),
-    ),
-  };
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock records
+// insert(...).values(payload) payloads in dbMockState.insertCalls and hands the
+// same chain to transaction() callbacks.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  projects: { id: "id" },
-  qaReports: { id: "id", projectId: "projectId" },
-  epics: { position: "position", projectId: "projectId" },
-  userStories: { id: "id" },
-  agentSessions: { id: "id", provider: "provider", model: "model", cliSessionId: "cli_session_id", claudeSessionId: "claude_session_id", namedAgentId: "named_agent_id" },
-}));
 
 vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentByNamedId: mockResolveAgent,
@@ -79,9 +49,7 @@ vi.mock("@/lib/agent-sessions/validate-resume", () => ({
 describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.getQueue = [];
-    mockDb.allQueue = [];
-    mockDb.insertedValues = [];
+    resetDbMockState();
     mockCreateId
       .mockReset()
       .mockReturnValueOnce("epic-1")
@@ -115,14 +83,12 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
 
   it("returns 404 when report is missing or empty", async () => {
     // getQueue: project, report (null)
-    mockDb.getQueue = [{ id: "proj-1", gitRepoPath: "/tmp/repo" }, null];
+    dbMockState.getQueue = [{ id: "proj-1", gitRepoPath: "/tmp/repo" }, null];
 
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
     );
-    const res = await POST({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "missing" }),
-    });
+    const res = await POST(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "missing" }));
     const json = await res.json();
 
     expect(res.status).toBe(404);
@@ -131,7 +97,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
 
   it("creates epics and stories from parsed QA output", async () => {
     // getQueue: project, report, originalSession (null - no session), maxPosition
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
       { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null, agentSessionId: null },
       // no originalSession lookup since agentSessionId is null
@@ -141,23 +107,21 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
     );
-    const res = await POST({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
-    });
+    const res = await POST(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "report-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
     expect(json.data.epics).toHaveLength(1);
     expect(json.data.epics[0].id).toBe("epic-1");
-    expect(mockDb.insertedValues).toHaveLength(2);
-    expect((mockDb.insertedValues[0] as Array<Record<string, unknown>>)[0]).toEqual(
+    expect(dbMockState.insertCalls).toHaveLength(2);
+    expect((dbMockState.insertCalls[0] as Array<Record<string, unknown>>)[0]).toEqual(
       expect.objectContaining({
         id: "epic-1",
         title: "Stabilize Chat Resume Flow",
         type: "feature",
       }),
     );
-    expect((mockDb.insertedValues[1] as Array<Record<string, unknown>>)[0]).toEqual(
+    expect((dbMockState.insertCalls[1] as Array<Record<string, unknown>>)[0]).toEqual(
       expect.objectContaining({
         id: "story-1",
         epicId: "epic-1",
@@ -172,7 +136,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
       promise: Promise.resolve({ success: true, result: longOutput }),
     });
     mockExtractJson.mockReturnValue("just text");
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
       { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null, agentSessionId: null },
     ];
@@ -181,16 +145,14 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
     );
-    const res = await POST({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
-    });
+    const res = await POST(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "report-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(500);
     expect(json.error).toBe("Failed to parse epics JSON from agent response");
     expect(json.rawSnippet).toContain("[truncated]");
     expect(json.rawSnippet.length).toBeLessThan(longOutput.length);
-    expect(mockDb.insertedValues).toHaveLength(0);
+    expect(dbMockState.insertCalls).toHaveLength(0);
     expect(consoleErrorSpy).toHaveBeenCalled();
   });
 
@@ -210,7 +172,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
         ],
       },
     ]);
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
       { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null, agentSessionId: null },
       { max: 0 },
@@ -219,14 +181,12 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
     );
-    const res = await POST({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
-    });
+    const res = await POST(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "report-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
     expect(json.data.epics).toHaveLength(1);
-    expect((mockDb.insertedValues[0] as Array<Record<string, unknown>>)[0]).toEqual(
+    expect((dbMockState.insertCalls[0] as Array<Record<string, unknown>>)[0]).toEqual(
       expect.objectContaining({
         type: "feature",
       }),
@@ -252,7 +212,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
         },
       ],
     });
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
       { id: "report-1", projectId: "proj-1", reportContent: "# Findings", namedAgentId: null, agentSessionId: null },
       { max: 0 },
@@ -261,14 +221,12 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
     );
-    const res = await POST({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
-    });
+    const res = await POST(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "report-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
     expect(json.data.epics).toEqual([{ id: "epic-1", title: "Session Resume Reliability" }]);
-    expect((mockDb.insertedValues[0] as Array<Record<string, unknown>>)[0]).toEqual(
+    expect((dbMockState.insertCalls[0] as Array<Record<string, unknown>>)[0]).toEqual(
       expect.objectContaining({
         id: "epic-1",
         title: "Session Resume Reliability",
@@ -277,7 +235,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
         type: "feature",
       }),
     );
-    expect((mockDb.insertedValues[1] as Array<Record<string, unknown>>)[0]).toEqual(
+    expect((dbMockState.insertCalls[1] as Array<Record<string, unknown>>)[0]).toEqual(
       expect.objectContaining({
         id: "story-1",
         title: "Handle expired resume sessions",
@@ -290,7 +248,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
   it("uses the same agent and resumes session from the QA report's original session", async () => {
     mockIsResumableProvider.mockReturnValue(true);
     // getQueue: project, report, originalSession, maxPosition
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
       {
         id: "report-1",
@@ -314,9 +272,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
     );
-    const res = await POST({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
-    });
+    const res = await POST(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "report-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -354,7 +310,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     // getQueue: project, report, originalSession, maxPosition
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
       {
         id: "report-1",
@@ -376,9 +332,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
     );
-    const res = await POST({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
-    });
+    const res = await POST(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "report-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -424,7 +378,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const consoleWarnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
 
     // getQueue: project, report, originalSession, maxPosition
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
       {
         id: "report-1",
@@ -446,9 +400,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
     );
-    const res = await POST({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
-    });
+    const res = await POST(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "report-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -491,7 +443,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     mockGetProvider.mockReturnValue({ spawn: mockProviderSpawn });
 
     // getQueue: project, report, originalSession, maxPosition
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
       {
         id: "report-1",
@@ -513,9 +465,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
     );
-    const res = await POST({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
-    });
+    const res = await POST(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "report-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -544,7 +494,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     mockGetProvider.mockReturnValue({ spawn: mockProviderSpawn });
 
     // getQueue: project, report, originalSession, maxPosition
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", gitRepoPath: "/tmp/repo" },
       {
         id: "report-1",
@@ -566,9 +516,7 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/create-epics/route"
     );
-    const res = await POST({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "report-1" }),
-    });
+    const res = await POST(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "report-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);

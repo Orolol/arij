@@ -18,21 +18,12 @@ vi.mock("child_process", () => {
   };
 });
 
-vi.mock("@/lib/db", () => ({
-  db: {
-    select: vi.fn(() => ({
-      from: vi.fn(() => ({
-        where: vi.fn(() => ({
-          get: vi.fn(() => null),
-        })),
-      })),
-    })),
-  },
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: {},
-}));
+// Real @/lib/db/schema; the shared chain mock returns null from get() while
+// its queue is empty, matching the previous hand-rolled stub.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
+});
 
 import { getProvider } from "@/lib/providers";
 import { MistralVibeProvider } from "@/lib/providers/mistral-vibe";

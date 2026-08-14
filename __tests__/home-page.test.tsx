@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import Home from "../page";
+import Home from "@/app/page";
 
 vi.mock("@/components/dashboard/ProjectGrid", () => ({
   ProjectGrid: () => <div data-testid="project-grid">Projects Grid</div>,

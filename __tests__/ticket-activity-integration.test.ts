@@ -5,6 +5,10 @@
  * centralised activity history.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  mockJsonRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockEpic = {
   id: "epic-1",
@@ -89,19 +93,13 @@ describe("Ticket activity integration", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/review-comments/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filePath: "src/app.ts",
-        lineNumber: 42,
-        body: "Needs null check",
-      }),
+    const req = mockJsonRequest({
+      filePath: "src/app.ts",
+      lineNumber: 42,
+      body: "Needs null check",
     });
 
-    await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     // Should have two insert calls: one for reviewComments, one for ticketComments
     const reviewInsert = insertCalls.find((c) => c.table === "reviewComments");
@@ -116,19 +114,13 @@ describe("Ticket activity integration", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/review-comments/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filePath: "lib/utils.ts",
-        lineNumber: 99,
-        body: "Extract this function",
-      }),
+    const req = mockJsonRequest({
+      filePath: "lib/utils.ts",
+      lineNumber: 99,
+      body: "Extract this function",
     });
 
-    await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     const ticketInsert = insertCalls.find((c) => c.table === "ticketComments");
     expect(ticketInsert).toBeDefined();
@@ -143,19 +135,13 @@ describe("Ticket activity integration", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/review-comments/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        filePath: "src/app.ts",
-        lineNumber: 10,
-        body: "Fix this",
-      }),
+    const req = mockJsonRequest({
+      filePath: "src/app.ts",
+      lineNumber: 10,
+      body: "Fix this",
     });
 
-    await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     const ticketInsert = insertCalls.find((c) => c.table === "ticketComments");
     expect(ticketInsert!.values.author).toBe("user");

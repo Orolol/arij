@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeAll } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { MessageList } from "../MessageList";
+import { MessageList } from "@/components/chat/MessageList";
 
 beforeAll(() => {
   // jsdom doesn't implement scrollIntoView

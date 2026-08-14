@@ -1,32 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  getDbChainMock,
+  resetDbMockState,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
-const { dbChain } = vi.hoisted(() => ({
-  dbChain: {
-    select: vi.fn(),
-    from: vi.fn(),
-    where: vi.fn(),
-    get: vi.fn(),
-    update: vi.fn(),
-  },
-}));
-
-vi.mock("@/lib/db", () => ({
-  db: dbChain,
-  sqlite: {
-    prepare: vi.fn(),
-    transaction: vi.fn(),
-  },
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: {
-    id: "id",
-    status: "status",
-    startedAt: "startedAt",
-    endedAt: "endedAt",
-    completedAt: "completedAt",
-  },
-}));
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
+// column identity, so no fake column maps. `sqlite` keeps the local stub
+// because the helper only supplies an empty object.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return {
+    ...dbModuleMock(),
+    sqlite: {
+      prepare: vi.fn(),
+      transaction: vi.fn(),
+    },
+  };
+});
 
 vi.mock("@/lib/claude/process-manager", () => ({
   processManager: {
@@ -41,18 +33,11 @@ vi.mock("@/lib/agent-sessions/backfill", () => ({
 describe("sessions/[sessionId] DELETE lifecycle guard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbChain.select.mockReturnValue(dbChain);
-    dbChain.from.mockReturnValue(dbChain);
-    dbChain.where.mockReturnValue(dbChain);
-    dbChain.update.mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({ run: vi.fn() }),
-      }),
-    });
+    resetDbMockState();
   });
 
   it("returns 409 and machine-readable code for invalid transitions", async () => {
-    dbChain.get.mockReturnValue({
+    getDbChainMock().get.mockReturnValue({
       id: "sess-1",
       status: "completed",
       startedAt: "2026-02-12T00:00:00.000Z",
@@ -64,12 +49,7 @@ describe("sessions/[sessionId] DELETE lifecycle guard", () => {
       "@/app/api/projects/[projectId]/sessions/[sessionId]/route"
     );
 
-    const response = await DELETE({} as never, {
-      params: Promise.resolve({
-        projectId: "proj-1",
-        sessionId: "sess-1",
-      }),
-    });
+    const response = await DELETE(mockNextRequest(), mockRouteContext({ projectId: "proj-1", sessionId: "sess-1" }));
 
     const json = await response.json();
     expect(response.status).toBe(409);
@@ -82,7 +62,7 @@ describe("sessions/[sessionId] DELETE lifecycle guard", () => {
   });
 
   it("includes lastNonEmptyText in session detail payload", async () => {
-    dbChain.get.mockReturnValue({
+    getDbChainMock().get.mockReturnValue({
       id: "sess-2",
       status: "running",
       lastNonEmptyText: "Implementing API route",
@@ -93,12 +73,7 @@ describe("sessions/[sessionId] DELETE lifecycle guard", () => {
       "@/app/api/projects/[projectId]/sessions/[sessionId]/route"
     );
 
-    const response = await GET({} as never, {
-      params: Promise.resolve({
-        projectId: "proj-1",
-        sessionId: "sess-2",
-      }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1", sessionId: "sess-2" }));
 
     const json = await response.json();
     expect(response.status).toBe(200);

@@ -3,15 +3,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Mock the database and validation module
 const mockGraph = new Map<string, Set<string>>();
 
-vi.mock("@/lib/db", () => ({
-  db: {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    all: vi.fn(() => []),
-    get: vi.fn(() => null),
-  },
-}));
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
+});
 
 vi.mock("@/lib/dependencies/validation", () => ({
   topologicalSort: vi.fn((_projectId: string, ticketIds: string[]) => {

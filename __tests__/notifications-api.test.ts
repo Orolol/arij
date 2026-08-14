@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb } from "@/lib/db/test-utils";
+import { mockNextRequest } from "@/__tests__/helpers/db-mock";
 import { notificationReadCursor, notifications } from "@/lib/db/schema";
 
 // The routes are pure Drizzle now, so the test runs them against a real
@@ -24,7 +25,7 @@ import { GET } from "@/app/api/notifications/route";
 import { POST } from "@/app/api/notifications/read/route";
 
 function makeRequest(url: string): Request {
-  return new Request(url);
+  return mockNextRequest({ url });
 }
 
 function seedNotification(

@@ -1,53 +1,30 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
-const { dbChain } = vi.hoisted(() => ({
-  dbChain: {
-    select: vi.fn(),
-    from: vi.fn(),
-    where: vi.fn(),
-    leftJoin: vi.fn(),
-    get: vi.fn(),
-    delete: vi.fn(),
-    update: vi.fn(),
-    set: vi.fn(),
-    run: vi.fn(),
-  },
-}));
-
-vi.mock("@/lib/db", () => ({
-  db: dbChain,
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  chatConversations: {
-    id: "id",
-    projectId: "projectId",
-    type: "type",
-    label: "label",
-    status: "status",
-    epicId: "epicId",
-    provider: "provider",
-    namedAgentId: "namedAgentId",
-    createdAt: "createdAt",
-  },
-  namedAgents: { id: "id", readableAgentName: "readableAgentName" },
-}));
+// Real @/lib/db/schema: side-effect-free pure builders that the chain mock
+// ignores. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
+});
 
 vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgent: vi.fn(() => ({ provider: "claude-code" })),
 }));
 
 function setupChainReturn(data: unknown) {
-  dbChain.select.mockReturnValue(dbChain);
-  dbChain.from.mockReturnValue(dbChain);
-  dbChain.leftJoin.mockReturnValue(dbChain);
-  dbChain.where.mockReturnValue(dbChain);
-  dbChain.get.mockReturnValue(data);
+  dbMockState.getQueue = data === undefined ? [] : [data];
 }
 
 describe("conversation GET route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    resetDbMockState();
   });
 
   it("returns conversation with namedAgentName", async () => {
@@ -67,9 +44,7 @@ describe("conversation GET route", () => {
     const { GET } = await import(
       "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
     );
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", conversationId: "conv-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1", conversationId: "conv-1" }));
 
     const json = await response.json();
     expect(response.status).toBe(200);
@@ -84,9 +59,7 @@ describe("conversation GET route", () => {
     const { GET } = await import(
       "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
     );
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", conversationId: "nonexistent" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1", conversationId: "nonexistent" }));
 
     const json = await response.json();
     expect(response.status).toBe(404);
@@ -101,9 +74,7 @@ describe("conversation GET route", () => {
     const { GET } = await import(
       "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
     );
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "wrong-proj", conversationId: "conv-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "wrong-proj", conversationId: "conv-1" }));
 
     const json = await response.json();
     expect(response.status).toBe(404);

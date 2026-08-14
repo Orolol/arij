@@ -1,19 +1,26 @@
 /**
  * Tests for the ticket activity audit log API.
+ *
+ * Runs against an isolated in-memory database built from the real migration
+ * chain (`createTestDb`), so the developer's `data/arij.db` is never touched.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { db } from "@/lib/db";
+import { createTestDb } from "@/lib/db/test-utils";
+import type { ArijDatabase } from "@/lib/db";
 import { ticketActivityLog, projects, epics } from "@/lib/db/schema";
 import { logTransition } from "@/lib/workflow/log";
 import { eq, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 
+let db: ArijDatabase;
 let projectId: string;
 let epic1Id: string;
 let epic2Id: string;
 
 beforeEach(() => {
+  db = createTestDb().db;
+
   projectId = createId();
   epic1Id = createId();
   epic2Id = createId();
@@ -53,6 +60,7 @@ beforeEach(() => {
 
   // Seed activity log
   logTransition({
+    database: db,
     projectId,
     epicId: epic1Id,
     fromStatus: "backlog",
@@ -61,6 +69,7 @@ beforeEach(() => {
     reason: "Drag-and-drop",
   });
   logTransition({
+    database: db,
     projectId,
     epicId: epic1Id,
     fromStatus: "todo",
@@ -70,6 +79,7 @@ beforeEach(() => {
     sessionId: "session-1",
   });
   logTransition({
+    database: db,
     projectId,
     epicId: epic2Id,
     fromStatus: "todo",

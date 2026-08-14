@@ -1,73 +1,35 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
-// ---- db mock: two independent chains (sessions + conversations) ----
-const { sessionsChain, conversationsChain } = vi.hoisted(() => {
-  const makeChain = () => ({
-    select: vi.fn(),
-    from: vi.fn(),
-    where: vi.fn(),
-    orderBy: vi.fn(),
-    leftJoin: vi.fn(),
-    all: vi.fn(),
-  });
-  return { sessionsChain: makeChain(), conversationsChain: makeChain() };
+// The route runs two sequential queries (agent sessions, then chat
+// conversations); the shared chain mock serves them from allQueue in order.
+// Real drizzle-orm + real @/lib/db/schema, so no fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-// The db.select() is called twice: first for agent sessions, then for conversations.
-// We use callCount to route to the correct chain.
-let selectCallCount = 0;
-const dbProxy = {
-  select: vi.fn(() => {
-    selectCallCount++;
-    return selectCallCount === 1 ? sessionsChain : conversationsChain;
-  }),
-};
-
-vi.mock("@/lib/db", () => ({
-  db: dbProxy,
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: { projectId: "projectId", createdAt: "createdAt" },
-  chatConversations: {
-    id: "id",
-    projectId: "projectId",
-    type: "type",
-    label: "label",
-    status: "status",
-    epicId: "epicId",
-    provider: "provider",
-    namedAgentId: "namedAgentId",
-    createdAt: "createdAt",
-  },
-  chatMessages: { conversationId: "conversationId" },
-  namedAgents: { id: "id", readableAgentName: "readableAgentName" },
-}));
 
 vi.mock("@/lib/agent-sessions/backfill", () => ({
   runBackfillRecentSessionLastNonEmptyTextOnce: vi.fn(),
 }));
 
 function setupSessionsChain(data: unknown[]) {
-  sessionsChain.select.mockReturnValue(sessionsChain);
-  sessionsChain.from.mockReturnValue(sessionsChain);
-  sessionsChain.where.mockReturnValue(sessionsChain);
-  sessionsChain.orderBy.mockReturnValue(sessionsChain);
-  sessionsChain.all.mockReturnValue(data);
+  dbMockState.allQueue[0] = data;
 }
 
 function setupConversationsChain(data: unknown[]) {
-  conversationsChain.select.mockReturnValue(conversationsChain);
-  conversationsChain.from.mockReturnValue(conversationsChain);
-  conversationsChain.where.mockReturnValue(conversationsChain);
-  conversationsChain.leftJoin.mockReturnValue(conversationsChain);
-  conversationsChain.all.mockReturnValue(data);
+  dbMockState.allQueue[1] = data;
 }
 
 describe("sessions list route (unified)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    selectCallCount = 0;
+    resetDbMockState();
   });
 
   it("returns agent sessions with kind='agent_session'", async () => {
@@ -82,9 +44,7 @@ describe("sessions list route (unified)", () => {
     setupConversationsChain([]);
 
     const { GET } = await import("@/app/api/projects/[projectId]/sessions/route");
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
 
     const json = await response.json();
     expect(response.status).toBe(200);
@@ -110,9 +70,7 @@ describe("sessions list route (unified)", () => {
     ]);
 
     const { GET } = await import("@/app/api/projects/[projectId]/sessions/route");
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
 
     const json = await response.json();
     expect(json.data).toHaveLength(1);
@@ -148,9 +106,7 @@ describe("sessions list route (unified)", () => {
     ]);
 
     const { GET } = await import("@/app/api/projects/[projectId]/sessions/route");
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
 
     const json = await response.json();
     expect(json.data).toHaveLength(3);
@@ -180,9 +136,7 @@ describe("sessions list route (unified)", () => {
     setupConversationsChain([]);
 
     const { GET } = await import("@/app/api/projects/[projectId]/sessions/route");
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
 
     const json = await response.json();
     const session = json.data[0];

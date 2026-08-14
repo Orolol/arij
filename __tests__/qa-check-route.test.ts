@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mockDb = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-  insertedValues: [] as unknown[],
-  updatedValues: [] as unknown[],
-}));
+import {
+  dbMockState,
+  resetDbMockState,
+  mockJsonRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockCreateId = vi.hoisted(() => vi.fn());
 
@@ -25,42 +25,12 @@ const mockResolvers = vi.hoisted(() => ({
   resolveAgentByNamedId: vi.fn(),
 }));
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDb.getQueue.shift() ?? null),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn((payload: unknown) => {
-        mockDb.insertedValues.push(payload);
-        return { run: vi.fn() };
-      }),
-    }),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn((payload: unknown) => {
-        mockDb.updatedValues.push(payload);
-        return {
-          where: vi.fn(() => ({ run: vi.fn() })),
-        };
-      }),
-    }),
-  };
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
+// column identity, so no fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  projects: {
-    id: "id",
-  },
-  qaReports: {
-    id: "id",
-  },
-}));
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: mockCreateId,
@@ -109,18 +79,10 @@ vi.mock("path", () => ({
   },
 }));
 
-function mockRequest(body: Record<string, unknown>) {
-  return {
-    json: () => Promise.resolve(body),
-  } as unknown as import("next/server").NextRequest;
-}
-
 describe("POST /api/projects/[projectId]/qa/check", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.getQueue = [];
-    mockDb.insertedValues = [];
-    mockDb.updatedValues = [];
+    resetDbMockState();
     mockCreateId
       .mockReset()
       .mockReturnValueOnce("session-1")
@@ -139,14 +101,12 @@ describe("POST /api/projects/[projectId]/qa/check", () => {
   });
 
   it("returns 404 when project does not exist", async () => {
-    mockDb.getQueue = [null];
+    dbMockState.getQueue = [null];
 
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/check/route"
     );
-    const res = await POST(mockRequest({}), {
-      params: Promise.resolve({ projectId: "missing" }),
-    });
+    const res = await POST(mockJsonRequest({}), mockRouteContext({ projectId: "missing" }));
     const json = await res.json();
 
     expect(res.status).toBe(404);
@@ -154,16 +114,14 @@ describe("POST /api/projects/[projectId]/qa/check", () => {
   });
 
   it("returns 400 when project has no git repo path", async () => {
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", name: "Arij", gitRepoPath: null, spec: "Spec" },
     ];
 
     const { POST } = await import(
       "@/app/api/projects/[projectId]/qa/check/route"
     );
-    const res = await POST(mockRequest({}), {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await POST(mockJsonRequest({}), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(400);
@@ -171,7 +129,7 @@ describe("POST /api/projects/[projectId]/qa/check", () => {
   });
 
   it("creates a running QA report and launches a tech_check session", async () => {
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1", name: "Arij", gitRepoPath: "/tmp/repo", spec: "Spec" },
     ];
 
@@ -179,10 +137,8 @@ describe("POST /api/projects/[projectId]/qa/check", () => {
       "@/app/api/projects/[projectId]/qa/check/route"
     );
     const res = await POST(
-      mockRequest({ customPrompt: "Focus on architecture" }),
-      {
-        params: Promise.resolve({ projectId: "proj-1" }),
-      },
+      mockJsonRequest({ customPrompt: "Focus on architecture" }),
+      mockRouteContext({ projectId: "proj-1" }),
     );
     const json = await res.json();
 

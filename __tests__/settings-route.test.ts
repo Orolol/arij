@@ -1,56 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockJsonRequest,
+} from "@/__tests__/helpers/db-mock";
 
-const mockDbState = vi.hoisted(() => ({
-  allRows: [] as Array<{ key: string; value: string }>,
-  getQueue: [] as Array<unknown>,
-  insertCalls: [] as Array<Record<string, unknown>>,
-}));
-
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    all: vi.fn(() => mockDbState.allRows),
-    get: vi.fn(() => mockDbState.getQueue.shift() ?? null),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn((payload: Record<string, unknown>) => {
-        mockDbState.insertCalls.push(payload);
-        return { run: vi.fn() };
-      }),
-    }),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({ run: vi.fn() }),
-      }),
-    }),
-  };
-
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
+// column identity, so no fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  settings: {
-    key: "key",
-    value: "value",
-    updatedAt: "updatedAt",
-  },
-}));
 
 describe("Settings route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.allRows = [];
-    mockDbState.getQueue = [];
-    mockDbState.insertCalls = [];
+    resetDbMockState();
   });
 
   it("GET redacts github_pat while preserving hasToken", async () => {
-    mockDbState.allRows = [
+    dbMockState.allRows = [
       { key: "global_prompt", value: JSON.stringify("Always write tests") },
       { key: "github_pat", value: JSON.stringify("ghp_super_secret") },
     ];
@@ -66,7 +35,7 @@ describe("Settings route", () => {
   });
 
   it("GET shows hasToken false when PAT is blank", async () => {
-    mockDbState.allRows = [
+    dbMockState.allRows = [
       { key: "github_pat", value: JSON.stringify("") },
     ];
 
@@ -81,9 +50,7 @@ describe("Settings route", () => {
     const { PATCH } = await import("@/app/api/settings/route");
 
     const res = await PATCH(
-      {
-        json: () => Promise.resolve({ github_pat: { token: "ghp_bad" } }),
-      } as unknown as import("next/server").NextRequest
+      mockJsonRequest({ github_pat: { token: "ghp_bad" } })
     );
     const json = await res.json();
 
@@ -92,19 +59,17 @@ describe("Settings route", () => {
   });
 
   it("PATCH persists github_pat string value", async () => {
-    mockDbState.getQueue = [null];
+    dbMockState.getQueue = [null];
     const { PATCH } = await import("@/app/api/settings/route");
 
     const res = await PATCH(
-      {
-        json: () => Promise.resolve({ github_pat: "ghp_123" }),
-      } as unknown as import("next/server").NextRequest
+      mockJsonRequest({ github_pat: "ghp_123" })
     );
     const json = await res.json();
 
     expect(res.status).toBe(200);
     expect(json.data.updated).toBe(true);
-    expect(mockDbState.insertCalls).toContainEqual(
+    expect(dbMockState.insertCalls).toContainEqual(
       expect.objectContaining({
         key: "github_pat",
         value: JSON.stringify("ghp_123"),

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { EpicCard } from "../EpicCard";
+import { EpicCard } from "@/components/kanban/EpicCard";
 import type { KanbanEpic } from "@/lib/types/kanban";
 
 vi.mock("@dnd-kit/sortable", () => ({
