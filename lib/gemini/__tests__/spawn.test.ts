@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
 
 // These tests verify the spawn arguments and provider structure
-// without actually spawning processes. We test the extractGeminiOutput
-// function indirectly and the provider interface.
+// without actually spawning processes. The standalone spawnGemini module
+// was folded into GeminiCliProvider (lib/providers/gemini-cli.ts), so the
+// provider module is the target for all checks.
 
 vi.mock("child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("child_process")>();
@@ -54,10 +55,10 @@ describe("GeminiCliProvider", () => {
   });
 });
 
-describe("GeminiOptions", () => {
-  it("exports GeminiOptions interface type check (via spawn module)", async () => {
-    const mod = await import("../spawn");
-    expect(typeof mod.spawnGemini).toBe("function");
+describe("GeminiCliProvider module", () => {
+  it("exposes the spawn entry point (formerly spawnGemini)", async () => {
+    const mod = await import("@/lib/providers/gemini-cli");
+    expect(typeof mod.GeminiCliProvider.prototype.spawn).toBe("function");
   });
 });
 
@@ -83,13 +84,13 @@ describe("Provider factory includes gemini-cli", () => {
   });
 });
 
-describe("spawnGemini function", () => {
-  it("spawn returns promise and kill function", async () => {
-    // Don't test the actual spawn, just that the function signature is correct
-    const mod = await import("../spawn");
-    expect(typeof mod.spawnGemini).toBe("function");
+describe("extractGeminiResult function", () => {
+  it("is exported for output parsing (formerly part of spawnGemini)", async () => {
+    // Don't test the actual spawn, just that the parsing entry point exists
+    const mod = await import("@/lib/providers/gemini-cli");
+    expect(typeof mod.extractGeminiResult).toBe("function");
 
-    // The function takes GeminiOptions and returns SpawnedClaude
+    // The provider takes ProviderSpawnOptions and returns a ProviderSession
     // Verified by TypeScript compilation
   });
 });

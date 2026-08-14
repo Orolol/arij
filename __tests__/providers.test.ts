@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Mock external dependencies before importing
 vi.mock("@/lib/claude/spawn", () => ({
@@ -13,35 +13,17 @@ vi.mock("@/lib/claude/spawn", () => ({
   })),
 }));
 
-vi.mock("@/lib/codex/spawn", () => ({
-  spawnCodex: vi.fn(() => ({
-    promise: Promise.resolve({
-      success: true,
-      result: "Codex output",
-      duration: 500,
-      endedWithQuestion: false,
-    }),
-    kill: vi.fn(),
-  })),
-}));
-
-vi.mock("@/lib/gemini/spawn", () => ({
-  spawnGemini: vi.fn(() => ({
-    promise: Promise.resolve({
-      success: true,
-      result: "Gemini output",
-      duration: 400,
-      endedWithQuestion: false,
-    }),
-    kill: vi.fn(),
-  })),
+const { mockSpawn } = vi.hoisted(() => ({
+  mockSpawn: vi.fn(),
 }));
 
 vi.mock("child_process", () => {
   const execSync = vi.fn();
   return {
+    spawn: mockSpawn,
     execSync,
     default: {
+      spawn: mockSpawn,
       execSync,
     },
   };
@@ -53,8 +35,6 @@ import { CodexProvider } from "@/lib/providers/codex";
 import { GeminiCliProvider } from "@/lib/providers/gemini-cli";
 import type { ProviderSpawnOptions } from "@/lib/providers/types";
 import { spawnClaude } from "@/lib/claude/spawn";
-import { spawnCodex } from "@/lib/codex/spawn";
-import { spawnGemini } from "@/lib/gemini/spawn";
 
 const baseOptions: ProviderSpawnOptions = {
   sessionId: "test-session-1",
@@ -62,6 +42,57 @@ const baseOptions: ProviderSpawnOptions = {
   cwd: "/tmp/test",
   mode: "code",
 };
+
+type Listener = (...args: unknown[]) => void;
+
+/** Fake child process whose stdout/stderr/exit events tests can drive. */
+function createFakeChild() {
+  const listeners = new Map<string, Listener[]>();
+  const stdoutListeners: Array<(chunk: Buffer) => void> = [];
+  const stderrListeners: Array<(chunk: Buffer) => void> = [];
+
+  return {
+    stdout: {
+      on: (event: string, fn: (chunk: Buffer) => void) => {
+        if (event === "data") stdoutListeners.push(fn);
+      },
+    },
+    stderr: {
+      on: (event: string, fn: (chunk: Buffer) => void) => {
+        if (event === "data") stderrListeners.push(fn);
+      },
+    },
+    on: (event: string, fn: Listener) => {
+      const arr = listeners.get(event) ?? [];
+      arr.push(fn);
+      listeners.set(event, arr);
+    },
+    kill: vi.fn(),
+    killed: false,
+    emitStdout(text: string) {
+      for (const fn of stdoutListeners) fn(Buffer.from(text));
+    },
+    emitStderr(text: string) {
+      for (const fn of stderrListeners) fn(Buffer.from(text));
+    },
+    emitClose(code: number | null) {
+      for (const fn of listeners.get("close") ?? []) fn(code);
+    },
+  };
+}
+
+let fakeChild: ReturnType<typeof createFakeChild>;
+
+beforeEach(() => {
+  fakeChild = createFakeChild();
+  mockSpawn.mockClear();
+  mockSpawn.mockImplementation(() => fakeChild);
+  vi.spyOn(console, "log").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe("Provider Factory", () => {
   it("returns ClaudeCodeProvider for 'claude-code'", () => {
@@ -165,47 +196,47 @@ describe("CodexProvider", () => {
 
   it("spawn resolves with ProviderResult from Codex CLI", async () => {
     const session = provider.spawn(baseOptions);
+    fakeChild.emitStdout("Codex output");
+    fakeChild.emitClose(0);
+
     const result = await session.promise;
     expect(result.success).toBe(true);
     expect(result.result).toContain("Codex output");
     expect(result.endedWithQuestion).toBe(false);
   });
 
-  it("preserves endedWithQuestion from Codex spawn result", async () => {
-    vi.mocked(spawnCodex).mockReturnValueOnce({
-      promise: Promise.resolve({
-        success: true,
-        result: "Need user decision",
-        duration: 300,
-        endedWithQuestion: true,
-      }),
-      kill: vi.fn(),
-    });
-
+  it("preserves endedWithQuestion from Codex output", async () => {
     const session = provider.spawn(baseOptions);
+    fakeChild.emitStdout("Need user decision AskUserQuestion");
+    fakeChild.emitClose(0);
+
     const result = await session.promise;
     expect(result.endedWithQuestion).toBe(true);
   });
 
   it("cancel calls kill on the session", () => {
-    const session = provider.spawn(baseOptions);
-    const result = provider.cancel(session);
-    expect(result).toBe(true);
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    try {
+      const session = provider.spawn(baseOptions);
+      const result = provider.cancel(session);
+      expect(result).toBe(true);
+      expect(fakeChild.kill).toHaveBeenCalledWith("SIGTERM");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
-  it("does not forward resume fields to spawnCodex (exec is non-resumable)", () => {
+  it("uses the codex exec resume subcommand when resuming", () => {
     provider.spawn({
       ...baseOptions,
       cliSessionId: "cli-codex-1",
       resumeSession: true,
     });
 
-    expect(spawnCodex).toHaveBeenCalledWith(
-      expect.not.objectContaining({
-        sessionId: expect.anything(),
-        resumeSession: expect.anything(),
-      })
-    );
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    expect(mockSpawn.mock.calls[0][0]).toBe("codex");
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args.slice(0, 3)).toEqual(["exec", "resume", "cli-codex-1"]);
   });
 });
 
@@ -225,40 +256,34 @@ describe("GeminiCliProvider", () => {
 
   it("spawn resolves with ProviderResult from Gemini CLI", async () => {
     const session = provider.spawn(baseOptions);
+    fakeChild.emitStdout(JSON.stringify({ result: "Gemini output" }));
+    fakeChild.emitClose(0);
+
     const result = await session.promise;
     expect(result.success).toBe(true);
     expect(result.result).toContain("Gemini output");
     expect(result.endedWithQuestion).toBe(false);
   });
 
-  it("preserves endedWithQuestion from Gemini spawn result", async () => {
-    vi.mocked(spawnGemini).mockReturnValueOnce({
-      promise: Promise.resolve({
-        success: true,
-        result: "Need clarification",
-        duration: 200,
-        endedWithQuestion: true,
-      }),
-      kill: vi.fn(),
-    });
-
+  it("preserves endedWithQuestion from Gemini output", async () => {
     const session = provider.spawn(baseOptions);
+    fakeChild.emitStdout("Need clarification AskUserQuestion");
+    fakeChild.emitClose(0);
+
     const result = await session.promise;
     expect(result.endedWithQuestion).toBe(true);
   });
 
-  it("forwards cliSessionId and resumeSession to spawnGemini", () => {
+  it("forwards cliSessionId and resumeSession as --resume args", () => {
     provider.spawn({
       ...baseOptions,
       cliSessionId: "cli-gem-1",
       resumeSession: true,
     });
 
-    expect(spawnGemini).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "cli-gem-1",
-        resumeSession: true,
-      })
-    );
+    expect(mockSpawn).toHaveBeenCalledOnce();
+    expect(mockSpawn.mock.calls[0][0]).toBe("gemini");
+    const args = mockSpawn.mock.calls[0][1] as string[];
+    expect(args.slice(0, 2)).toEqual(["--resume", "cli-gem-1"]);
   });
 });

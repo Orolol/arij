@@ -30,7 +30,6 @@ import {
 } from "@/lib/claude/json-parser";
 import type {
   AgentProvider,
-  ProviderChunk,
   ProviderResult,
   ProviderSession,
   ProviderSpawnOptions,
@@ -49,19 +48,49 @@ export interface BaseProviderChunkCallbacks {
 }
 
 /**
+ * Mutable per-spawn state created by prepareSpawn() and threaded through
+ * buildArgs/extractResult/handleExit/cleanupSpawnContext. Providers that
+ * need pre-spawn resources (e.g. Codex's temp -o file) store them here so
+ * concurrent spawns on the same provider instance never share state.
+ */
+export type ProviderSpawnContext = Record<string, unknown>;
+
+/**
+ * Everything handleExit() needs to turn a finished process into a
+ * ProviderResult.
+ */
+export interface ProviderExitInfo {
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  duration: number;
+  killed: boolean;
+  options: ProviderSpawnOptions;
+  spawnContext?: ProviderSpawnContext;
+}
+
+/**
  * Abstract base class for CLI agent providers.
  *
  * Subclasses must implement:
  * - `binaryName` — the CLI binary to spawn (e.g. "claude", "codex")
- * - `buildArgs(options)` — construct CLI arguments from spawn options
- * - `extractResult(stdout, stderr)` — extract the agent's final text from output
+ * - `buildArgs(options, spawnContext?)` — construct CLI arguments from spawn options
+ * - `extractResult(stdout, stderr, spawnContext?)` — extract the agent's final text from output
  *
  * Subclasses may override:
+ * - `prepareSpawn(options)` — create per-spawn state before args are built (temp files, …)
+ * - `beforeSpawn(args, cwd, spawnContext)` — hook right before the process starts (debug logging, …)
  * - `parseSessionId(stdout, stderr, fallback)` — custom session ID extraction
  * - `isAvailable()` — custom availability check (default: `which <binaryName>`)
  * - `buildEnv()` — custom environment variables
  * - `buildChunkCallbacks(options)` — map ProviderSpawnOptions.onChunk to raw/output/response callbacks
- * - `handleExit(...)` — custom exit handling for providers that need special error detection
+ * - `buildSpawnErrorMessage(err)` — message when the process cannot be spawned (ENOENT, …)
+ * - `buildExitError(code, stdout, stderr)` — error detection/mapping for non-zero exits
+ * - `emitFinalChunks(result, callbacks, spawnContext)` — final output/response chunk emission
+ * - `cleanupSpawnContext(spawnContext)` — release per-spawn resources (temp files, …)
+ * - `handleExit(info, callbacks, logCtx)` — custom exit handling for providers that need
+ *   full control over how collected output becomes a ProviderResult
+ * - `handlePrefix` / `logPrefix` — prefixes for session handles and NDJSON log names
  */
 export abstract class BaseCliProvider implements AgentProvider {
   abstract readonly type: ProviderType;
@@ -69,11 +98,49 @@ export abstract class BaseCliProvider implements AgentProvider {
   /** The CLI binary name (e.g. "claude", "codex", "gemini"). */
   abstract get binaryName(): string;
 
+  /** Prefix for ProviderSession.handle (default: the provider type). */
+  protected get handlePrefix(): string {
+    return this.type;
+  }
+
+  /** Prefix for NDJSON stream-log identifiers (default: the provider type). */
+  protected get logPrefix(): string {
+    return this.type;
+  }
+
+  /**
+   * Create per-spawn state before args are built (e.g. temp file paths).
+   * The returned object is passed to buildArgs, extractResult, handleExit
+   * and cleanupSpawnContext. Default: no per-spawn state.
+   */
+  protected prepareSpawn(
+    _options: ProviderSpawnOptions,
+  ): ProviderSpawnContext | undefined {
+    return undefined;
+  }
+
   /** Build CLI arguments from spawn options. */
-  abstract buildArgs(options: ProviderSpawnOptions): string[];
+  abstract buildArgs(
+    options: ProviderSpawnOptions,
+    spawnContext?: ProviderSpawnContext,
+  ): string[];
+
+  /**
+   * Called right before the child process is spawned. Default: no-op.
+   * Providers can use this for debug logging of the final command.
+   */
+  protected beforeSpawn(
+    _args: string[],
+    _cwd: string,
+    _spawnContext?: ProviderSpawnContext,
+  ): void {}
 
   /** Extract the agent's final result text from stdout/stderr. */
-  abstract extractResult(stdout: string, stderr: string): string;
+  abstract extractResult(
+    stdout: string,
+    stderr: string,
+    spawnContext?: ProviderSpawnContext,
+  ): string;
 
   /**
    * Extract a CLI session ID from output. Override for providers with
@@ -178,23 +245,136 @@ export abstract class BaseCliProvider implements AgentProvider {
   }
 
   /**
+   * Build the error message used when the process could not be spawned at
+   * all (the child "error" event, e.g. ENOENT when the binary is missing).
+   */
+  protected buildSpawnErrorMessage(err: Error): string {
+    return err.message.includes("ENOENT")
+      ? `${this.binaryName} CLI not found. Ensure \`${this.binaryName}\` is installed and available in PATH.`
+      : `Failed to spawn ${this.binaryName} CLI: ${err.message}`;
+  }
+
+  /**
+   * Build the error message for a non-zero exit code. Providers with
+   * recognizable failure modes (auth, network, …) override this to map
+   * the collected output to actionable messages.
+   */
+  protected buildExitError(
+    code: number | null,
+    stdout: string,
+    stderr: string,
+  ): string {
+    return stderr.trim() || `${this.binaryName} CLI exited with code ${code}`;
+  }
+
+  /**
+   * Emit the final output/response chunks once the process has exited.
+   * Default: both chunks carry the extracted result.
+   */
+  protected emitFinalChunks(
+    result: string,
+    callbacks: BaseProviderChunkCallbacks,
+    _spawnContext?: ProviderSpawnContext,
+  ): void {
+    if (result) {
+      const emittedAt = new Date().toISOString();
+      callbacks.onOutputChunk?.({ text: result, emittedAt });
+      callbacks.onResponseChunk?.({ text: result, emittedAt });
+    }
+  }
+
+  /**
+   * Release per-spawn resources (temp files, …). Called after the process
+   * exits and when the spawn itself fails. Default: nothing to clean up.
+   */
+  protected cleanupSpawnContext(_spawnContext?: ProviderSpawnContext): void {}
+
+  /**
+   * Turn a finished process into a ProviderResult. This is the exit hook:
+   * most providers customize behavior by overriding the narrower
+   * extractResult/buildExitError/emitFinalChunks hooks that this default
+   * implementation calls; providers that need full control (custom result
+   * assembly, extra debug output) can override handleExit itself.
+   */
+  protected handleExit(
+    info: ProviderExitInfo,
+    callbacks: BaseProviderChunkCallbacks,
+    logCtx: StreamLogContext | null,
+  ): ProviderResult {
+    const { code, stdout, stderr, duration, killed, options, spawnContext } = info;
+    const result = this.extractResult(stdout, stderr, spawnContext);
+    const parsedCliSessionId = this.parseSessionId(
+      stdout,
+      stderr,
+      options.cliSessionId,
+    );
+    const endedWithQuestion = this.detectEndedWithQuestion(
+      stdout,
+      stderr,
+      result,
+    );
+
+    // Emit final output/response chunks
+    this.emitFinalChunks(result, callbacks, spawnContext);
+
+    // Log session end
+    if (logCtx) {
+      try {
+        if (result) appendStreamEvent(logCtx, result);
+        endStreamLog(logCtx, {
+          exitCode: code,
+          error: code !== 0 ? stderr.slice(0, 500) : undefined,
+        });
+      } catch {
+        /* best-effort */
+      }
+    }
+
+    if (killed) {
+      return {
+        success: false,
+        error: "Process was cancelled.",
+        duration,
+      };
+    }
+
+    if (code !== 0) {
+      return {
+        success: false,
+        error: this.buildExitError(code, stdout, stderr),
+        result: result || undefined,
+        duration,
+        cliSessionId: parsedCliSessionId,
+        endedWithQuestion,
+      };
+    }
+
+    return {
+      success: true,
+      result: result || stdout.trim(),
+      duration,
+      cliSessionId: parsedCliSessionId,
+      endedWithQuestion,
+    };
+  }
+
+  /**
    * Spawn the CLI process. This is the core method that orchestrates
    * the entire lifecycle. Most subclasses should NOT override this.
    */
   spawn(options: ProviderSpawnOptions): ProviderSession {
-    const { sessionId, prompt, cwd, logIdentifier, cliSessionId } = options;
+    const { sessionId, prompt, cwd, logIdentifier } = options;
     const effectiveCwd = cwd || process.cwd();
-    const args = this.buildArgs(options);
+    const spawnContext = this.prepareSpawn(options);
+    const args = this.buildArgs(options, spawnContext);
     const callbacks = this.buildChunkCallbacks(options);
-
-    // Debug logging removed for production
 
     // Optional NDJSON logging
     let logCtx: StreamLogContext | null = null;
     if (logIdentifier) {
       try {
         logCtx = createStreamLog(
-          `${this.type}-${logIdentifier}`,
+          `${this.logPrefix}-${logIdentifier}`,
           [this.binaryName, ...args],
           prompt,
         );
@@ -212,6 +392,8 @@ export abstract class BaseCliProvider implements AgentProvider {
       const stderrChunks: Buffer[] = [];
       let stdoutChunkIndex = 0;
       let stderrChunkIndex = 0;
+
+      this.beforeSpawn(args, effectiveCwd, spawnContext);
 
       child = nodeSpawn(this.binaryName, args, {
         cwd: effectiveCwd,
@@ -259,9 +441,8 @@ export abstract class BaseCliProvider implements AgentProvider {
 
       child.on("error", (err) => {
         const duration = Date.now() - startTime;
-        const errorMsg = err.message.includes("ENOENT")
-          ? `${this.binaryName} CLI not found. Ensure \`${this.binaryName}\` is installed and available in PATH.`
-          : `Failed to spawn ${this.binaryName} CLI: ${err.message}`;
+        this.cleanupSpawnContext(spawnContext);
+        const errorMsg = this.buildSpawnErrorMessage(err);
 
         if (logCtx) {
           try {
@@ -282,68 +463,17 @@ export abstract class BaseCliProvider implements AgentProvider {
         const duration = Date.now() - startTime;
         const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
         const stderr = Buffer.concat(stderrChunks).toString("utf-8");
-        const result = this.extractResult(stdout, stderr);
-        const parsedCliSessionId = this.parseSessionId(
-          stdout,
-          stderr,
-          cliSessionId,
-        );
-        const endedWithQuestion = this.detectEndedWithQuestion(
-          stdout,
-          stderr,
-          result,
-        );
 
-        // Emit final output/response chunks
-        if (result) {
-          const emittedAt = new Date().toISOString();
-          callbacks.onOutputChunk?.({ text: result, emittedAt });
-          callbacks.onResponseChunk?.({ text: result, emittedAt });
+        try {
+          const providerResult = this.handleExit(
+            { code, stdout, stderr, duration, killed, options, spawnContext },
+            callbacks,
+            logCtx,
+          );
+          resolve(providerResult);
+        } finally {
+          this.cleanupSpawnContext(spawnContext);
         }
-
-        // Debug logging removed for production
-
-        // Log session end
-        if (logCtx) {
-          try {
-            if (result) appendStreamEvent(logCtx, result);
-            endStreamLog(logCtx, {
-              exitCode: code,
-              error: code !== 0 ? stderr.slice(0, 500) : undefined,
-            });
-          } catch {
-            /* best-effort */
-          }
-        }
-
-        if (killed) {
-          resolve({
-            success: false,
-            error: "Process was cancelled.",
-            duration,
-          });
-          return;
-        }
-
-        if (code !== 0) {
-          resolve({
-            success: false,
-            error: stderr.trim() || `${this.binaryName} CLI exited with code ${code}`,
-            result: result || undefined,
-            duration,
-            cliSessionId: parsedCliSessionId,
-            endedWithQuestion,
-          });
-          return;
-        }
-
-        resolve({
-          success: true,
-          result: result || stdout.trim(),
-          duration,
-          cliSessionId: parsedCliSessionId,
-          endedWithQuestion,
-        });
       });
     });
 
@@ -364,7 +494,7 @@ export abstract class BaseCliProvider implements AgentProvider {
     const command = this.buildDisplayCommand(args, prompt);
 
     return {
-      handle: `${this.type}-${sessionId}`,
+      handle: `${this.handlePrefix}-${sessionId}`,
       kill,
       promise,
       command,
