@@ -13,27 +13,27 @@ Légende : ☐ à faire · chaque item cite fichier:ligne.
 
 ## Phase 0 — Hygiène git (trivial, une seule PR)
 
-- [ ] `git rm -r --cached data/migrations/` — 180 backups/reports JSON de la migration
+- [x] `git rm -r --cached data/migrations/` — 180 backups/reports JSON de la migration
       `unified-chat-cutover` (~1,3 Mo) générés au runtime par
       `lib/chat/unified-cutover-migration.ts`. **⚠️ Ils contiennent des messages de chat
       utilisateur verbatim** ; ils restent dans l'historique git — si le repo devient
       public, prévoir un `git filter-repo`.
-- [ ] Ajouter `migrations/` à `data/.gitignore` (il ne couvre que `arij.db*`, `sessions/`,
+- [x] Ajouter `migrations/` à `data/.gitignore` (il ne couvre que `arij.db*`, `sessions/`,
       `logs/`, `uploads/`).
-- [ ] `git rm -r --cached .playwright-mcp/` — 13 logs console de debug ; ajouter
+- [x] `git rm -r --cached .playwright-mcp/` — 13 logs console de debug ; ajouter
       `.playwright-mcp/` au `.gitignore` racine.
-- [ ] `git rm test-snapshot-*.md` — 3 dumps d'arbre d'accessibilité Playwright à la racine
+- [x] `git rm test-snapshot-*.md` — 3 dumps d'arbre d'accessibilité Playwright à la racine
       (2 sont octet-pour-octet identiques) ; ajouter `test-snapshot-*.md` au `.gitignore`
       à côté de la règle `test*.png` existante.
-- [ ] `CLAUDE.md:26` : « data/ — gitignored » devient vrai une fois les règles corrigées.
+- [x] `CLAUDE.md:26` : « data/ — gitignored » devient vrai une fois les règles corrigées.
 - [ ] **Décision `arji.json`** (744 Ko, réécrit à chaque sync, 29 commits de churn,
       transcripts de conversations complets embarqués) : soit on assume le tracking mais on
       exclut les corps de messages de l'export (`lib/sync/export.ts`), soit `/arji.json`
       passe en gitignore.
-- [ ] `package.json:22` : la whitelist `files` exclut `lib/`, `components/`, `hooks/`,
+- [x] `package.json:22` : la whitelist `files` exclut `lib/`, `components/`, `hooks/`,
       `middleware.ts` → un paquet npm publié serait cassé (et perdrait le middleware de
       sécurité localhost). Ajouter les dossiers manquants ou déclarer `"private": true`.
-- [ ] Docs : renommer `docs/CLI.md` (c'est un dump de recherche FR sur les CLI LLM tiers,
+- [x] Docs : renommer `docs/CLI.md` (c'est un dump de recherche FR sur les CLI LLM tiers,
       pas la doc du binaire `arij`) → `docs/research/headless-llm-clis.md` ; supprimer
       `docs/TECHNICAL_AUDIT_REPORT.md` (obsolète, supplanté par `TECH_AUDIT_2026-02-23.md`) ;
       archiver les 7 plans datés de `docs/plans/` (travail mergé) dans `docs/plans/archive/`.
@@ -44,112 +44,112 @@ Légende : ☐ à faire · chaque item cite fichier:ligne.
 
 ### Fichiers entiers — lib/ (~1 100 lignes)
 
-- [ ] `lib/claude/prompt-resolver.ts` (148 l.) — supplanté par `lib/agent-config/prompts.ts`, 0 import.
-- [ ] `lib/types/agent-config.ts` (35 l.) — seul importeur : le fichier ci-dessus.
-- [ ] `lib/sessions/last-text.ts` (133 l.) + son test — 3ᵉ implémentation parallèle de
+- [x] `lib/claude/prompt-resolver.ts` (148 l.) — supplanté par `lib/agent-config/prompts.ts`, 0 import.
+- [x] `lib/types/agent-config.ts` (35 l.) — seul importeur : le fichier ci-dessus.
+- [x] `lib/sessions/last-text.ts` (133 l.) + son test — 3ᵉ implémentation parallèle de
       l'extraction de dernier texte.
-- [ ] `lib/sessions/log-writer.ts` (150 l.) + son test — supplanté par `lib/claude/logger.ts`.
-- [ ] `lib/utils/markdown.ts` — `markdownToHtml` n'a aucun consommateur ; épingle 5 deps npm.
-- [ ] `lib/id.ts` + test — doublonne la convention `createId` de `lib/utils/nanoid.ts`.
-- [ ] `lib/slug.ts` + test — scaffolding test-only.
-- [ ] `lib/validators.ts` + test — supplanté par les schémas zod de `lib/validation/`.
+- [x] `lib/sessions/log-writer.ts` (150 l.) + son test — supplanté par `lib/claude/logger.ts`.
+- [x] `lib/utils/markdown.ts` — `markdownToHtml` n'a aucun consommateur ; épingle 5 deps npm.
+- [x] `lib/id.ts` + test — doublonne la convention `createId` de `lib/utils/nanoid.ts`.
+- [x] `lib/slug.ts` + test — scaffolding test-only.
+- [x] `lib/validators.ts` + test — supplanté par les schémas zod de `lib/validation/`.
 
 ### Fichiers entiers — components/ & hooks/
 
-- [ ] `components/SidebarNav.tsx` — doublon plus ancien de `components/layout/Sidebar.tsx`.
-- [ ] `components/github/ConnectBanner.tsx` — doublon mort de `GitHubConnectBanner.tsx`.
-- [ ] `components/kanban/EpicPrControls.tsx` — rôle repris inline dans `EpicDetail.tsx`.
-- [ ] `components/monitor/LogViewer.tsx` + `__tests__/log-viewer.test.tsx` — test-only.
-- [ ] `components/shared/ProviderSelect.tsx` — supplanté par `NamedAgentSelect`. Changement
+- [x] `components/SidebarNav.tsx` — doublon plus ancien de `components/layout/Sidebar.tsx`.
+- [x] `components/github/ConnectBanner.tsx` — doublon mort de `GitHubConnectBanner.tsx`.
+- [x] `components/kanban/EpicPrControls.tsx` — rôle repris inline dans `EpicDetail.tsx`.
+- [x] `components/monitor/LogViewer.tsx` + `__tests__/log-viewer.test.tsx` — test-only.
+- [x] `components/shared/ProviderSelect.tsx` — supplanté par `NamedAgentSelect`. Changement
       coordonné : supprimer `provider-select.test.tsx`, les `vi.mock` périmés dans 5 tests,
       et réécrire/supprimer `no-runtime-provider-select.test.ts` (qui épingle l'existence
       du fichier via `fs.existsSync`).
-- [ ] `components/review/index.ts` — barrel jamais importé.
-- [ ] `hooks/useCodexAvailable.ts` : supprimer le wrapper `useCodexAvailable` (test-only),
+- [x] `components/review/index.ts` — barrel jamais importé.
+- [x] `hooks/useCodexAvailable.ts` : supprimer le wrapper `useCodexAvailable` (test-only),
       renommer le fichier `useProvidersAvailable.ts` (l'export survivant).
 
 ### Exports morts dans des fichiers vivants — lib/
 
-- [ ] `lib/claude/prompt-builder.ts` : `buildSpecPrompt` (l.199), `buildEpicCreationPrompt`
+- [x] `lib/claude/prompt-builder.ts` : `buildSpecPrompt` (l.199), `buildEpicCreationPrompt`
       (l.560), `buildCustomReviewPrompt` (l.1100), `buildCustomEpicReviewPrompt` (l.1157)
       — ~200 l., test-only.
-- [ ] `lib/git/manager.ts` : `removeWorktree`, `listBranches`, `getCurrentBranch`,
+- [x] `lib/git/manager.ts` : `removeWorktree`, `listBranches`, `getCurrentBranch`,
       `listWorktrees`. **⚠️ Garder `epicBranchName`** — le claim initial a été réfuté :
       il est appelé en interne par `createWorktree` (manager.ts:34).
-- [ ] `lib/git/remote.ts:130` : `pullGitBranchFfOnly` + `FastForwardOnlyPullError` (l.29)
+- [x] `lib/git/remote.ts:130` : `pullGitBranchFfOnly` + `FastForwardOnlyPullError` (l.29)
       — paire morte qui ne se référence qu'elle-même.
-- [ ] `lib/agent-config/providers.ts:142` : `resolveAgentProvider` (test-only).
+- [x] `lib/agent-config/providers.ts:142` : `resolveAgentProvider` (test-only).
       **⚠️ `GLOBAL_DEFAULT_AGENT_NAME` est vivant**, ne pas le supprimer.
-- [ ] `lib/dependencies/scheduler.ts:57` : `executeDagPlan` (~90 l.) — ou le brancher si
+- [x] `lib/dependencies/scheduler.ts:57` : `executeDagPlan` (~90 l.) — ou le brancher si
       l'exécution auto du DAG est encore prévue (cf. Phase 2).
-- [ ] `lib/dependencies/crud.ts:88` : `removeDependency` / `removeDependencyEdge` — 0 réf.
-- [ ] `lib/agents/concurrency.ts:120` : `insertRunningSessionWithGuard` — supplanté par le
+- [x] `lib/dependencies/crud.ts:88` : `removeDependency` / `removeDependencyEdge` — 0 réf.
+- [x] `lib/agents/concurrency.ts:120` : `insertRunningSessionWithGuard` — supplanté par le
       flux queued→running de `lib/agent-sessions/lifecycle.ts`.
-- [ ] `lib/chat/conversation-agent.ts` : `createCustomReviewConversationAgentType`,
+- [x] `lib/chat/conversation-agent.ts` : `createCustomReviewConversationAgentType`,
       `parseCustomReviewConversationAgentId`, `isUnselectedConversationAgentType`,
       `isBuiltinConversationAgentType` (~25 l.).
-- [ ] `lib/github/client.ts:45` : alias `getGitHubToken` ; `lib/events/emit.ts:88` :
+- [x] `lib/github/client.ts:45` : alias `getGitHubToken` ; `lib/events/emit.ts:88` :
       `emitSessionProgress` ; `lib/workflow/engine.ts:154` : `getAllowedTargets`.
-- [ ] `lib/agent-config/named-agents.ts:7` : re-export `resolveAgent` (seul consommateur :
+- [x] `lib/agent-config/named-agents.ts:7` : re-export `resolveAgent` (seul consommateur :
       un test — le pointer sur `../providers`).
-- [ ] `lib/chat/parity-contract.ts` : `applyLegacyConversationFilter` est un **no-op
+- [x] `lib/chat/parity-contract.ts` : `applyLegacyConversationFilter` est un **no-op
       fonctionnel** (les deux branches retournent `[...conversations]`) appelé depuis
       `UnifiedChatPanel.tsx` et `useConversations.ts` — supprimer fonction + call-sites ;
       supprimer les constantes test-only `LEGACY_CHAT_TAB_TAXONOMY`,
       `LEGACY_CONVERSATION_FILTERS`, `LEGACY_CONVERSATION_SORTS`.
-- [ ] `lib/codex/spawn.ts:30` : champ `sessionId` de `CodexOptions` — documenté « ignoré »
+- [x] `lib/codex/spawn.ts:30` : champ `sessionId` de `CodexOptions` — documenté « ignoré »
       et jamais lu.
 
 ### Micro-morts — components/
 
-- [ ] `EpicActions.tsx:140` et `StoryActions.tsx:145` : variable `lockedTooltip` jamais lue +
+- [x] `EpicActions.tsx:140` et `StoryActions.tsx:145` : variable `lockedTooltip` jamais lue +
       imports `Tooltip/TooltipContent/TooltipTrigger` inutilisés (ou brancher le tooltip
       sur les boutons disabled si c'était l'intention).
-- [ ] `Board.tsx:176` : `handleDragOver` vide + la prop `onDragOver` du DndContext (l.228).
-- [ ] Imports inutilisés : `chatMessages` dans `app/api/projects/[projectId]/sessions/route.ts:6`,
+- [x] `Board.tsx:176` : `handleDragOver` vide + la prop `onDragOver` du DndContext (l.228).
+- [x] Imports inutilisés : `chatMessages` dans `app/api/projects/[projectId]/sessions/route.ts:6`,
       `and` dans `app/api/projects/[projectId]/user-stories/route.ts:4`.
 
 ### Routes API sans appelant (8)
 
 Vérifié par grep des URLs (y compris construction par template literals) :
 
-- [ ] `GET /api/projects/[projectId]/activity` et `GET .../epics/[epicId]/activity` —
+- [x] `GET /api/projects/[projectId]/activity` et `GET .../epics/[epicId]/activity` —
       0 appelant ; l'onglet « Activity » d'EpicDetail rend `CommentThread`, pas ces routes.
       → supprimer **ou** brancher l'onglet dessus (cf. Phase 2).
-- [ ] `GET .../git/config` — payload consommé nulle part.
-- [ ] `GET .../git/sync-log` — les tests testent la lib, pas la route.
-- [ ] `POST .../git/fetch` — test-only, aucun bouton Fetch dans l'UI.
-- [ ] `POST .../dependencies/plan` — test-only (feature plan d'exécution jamais surfacée).
-- [ ] `PATCH/DELETE /api/qa/prompts/[promptId]` — aucune UI d'édition/suppression.
-- [ ] `GET /api/health` — 0 référence (ni playwright webServer, ni bin/, ni CI). Si sonde
+- [x] `GET .../git/config` — payload consommé nulle part.
+- [x] `GET .../git/sync-log` — les tests testent la lib, pas la route.
+- [x] `POST .../git/fetch` — test-only, aucun bouton Fetch dans l'UI.
+- [x] `POST .../dependencies/plan` — test-only (feature plan d'exécution jamais surfacée).
+- [x] `PATCH/DELETE /api/qa/prompts/[promptId]` — aucune UI d'édition/suppression.
+- [x] `GET /api/health` — 0 référence (ni playwright webServer, ni bin/, ni CI). Si sonde
       externe voulue : documenter + ajouter l'exemption middleware promise par
       `docs/plans/2026-02-14-security-hardening.md` (absente de `middleware.ts`).
 
 ### Dépendances npm (7)
 
-- [ ] `@openai/codex-sdk` — 0 import ; Codex passe par le spawn du CLI (`lib/codex/spawn.ts`).
-- [ ] `unified`, `remark-parse`, `remark-rehype`, `rehype-stringify`, `rehype-sanitize` —
+- [x] `@openai/codex-sdk` — 0 import ; Codex passe par le spawn du CLI (`lib/codex/spawn.ts`).
+- [x] `unified`, `remark-parse`, `remark-rehype`, `rehype-stringify`, `rehype-sanitize` —
       importés uniquement par `lib/utils/markdown.ts` (mort). Garder `react-markdown` +
       `remark-gfm` (rendu vivant dans `MarkdownContent.tsx`).
-- [ ] `@types/pdf-parse` (typings v1, pdf-parse v2 embarque les siens) — vérifier avec
+- [x] `@types/pdf-parse` (typings v1, pdf-parse v2 embarque les siens) — vérifier avec
       `tsc --noEmit` après retrait.
 
 ### Tests morts / doublons
 
-- [ ] **`e2e/home.spec.ts` : les 5 tests visent la page boilerplate create-next-app**
+- [x] **`e2e/home.spec.ts` : les 5 tests visent la page boilerplate create-next-app**
       (`toHaveTitle("Create Next App")`) — `npm run test:e2e` est garanti rouge. Réécrire
       un smoke test réel (le plumbing Playwright est correct) ou supprimer.
-- [ ] **`__tests__/cli.test.mjs` n'est jamais exécuté** : `vitest.config.ts:11`
+- [x] **`__tests__/cli.test.mjs` n'est jamais exécuté** : `vitest.config.ts:11`
       `include: ["**/*.test.{ts,tsx}"]` exclut `.mjs`. Renommer en `.ts` ou élargir le glob,
       puis vérifier qu'il passe encore.
-- [ ] Supprimer `__tests__/publish-release-route.test.ts` (sous-ensemble strict de
+- [x] Supprimer `__tests__/publish-release-route.test.ts` (sous-ensemble strict de
       `github-release-publish.test.ts`).
-- [ ] Supprimer `__tests__/agent-config-named-agents-routes.test.ts` (sous-ensemble de
+- [x] Supprimer `__tests__/agent-config-named-agents-routes.test.ts` (sous-ensemble de
       `named-agents-routes.test.ts`).
-- [ ] Supprimer `__tests__/resolve-agent.test.ts` (subsumé par
+- [x] Supprimer `__tests__/resolve-agent.test.ts` (subsumé par
       `legacy-fallback-named-agents.test.ts` — qui est vivant ; envisager de le renommer
       pour perdre le préfixe « legacy » trompeur).
-- [ ] Fusionner `git-sync-log.test.ts` dans `github-sync-log.test.ts` (il teste un alias :
+- [x] Fusionner `git-sync-log.test.ts` dans `github-sync-log.test.ts` (il teste un alias :
       `writeGitSyncLog = logSyncOperation`).
 
 ---
@@ -159,15 +159,15 @@ Vérifié par grep des URLs (y compris construction par template literals) :
 Chaque item est du code injoignable aujourd'hui, mais qui ressemble à une feature voulue.
 Trancher : brancher ou supprimer.
 
-- [ ] **`runBackfills()` (`lib/db/index.ts:90`) n'est appelé nulle part** → les 4 modules
+- [x] **`runBackfills()` (`lib/db/index.ts:90`) n'est appelé nulle part** → les 4 modules
       de backfill (`backfill.ts`, `backfill-opencode-json.ts`, `backfill-release-ids.ts`,
       `backfillAgentNames` de `lib/identity.ts`, ~360 l.) sont injoignables. Si les vieilles
       bases doivent être backfillées : l'appeler au démarrage (instrumentation hook).
       Sinon : tout supprimer.
-- [ ] Onglet Activity : brancher les 2 routes activity ou les supprimer.
-- [ ] Plan d'exécution DAG : `executeDagPlan` + route `dependencies/plan` — feature
+- [x] Onglet Activity : brancher les 2 routes activity ou les supprimer.
+- [x] Plan d'exécution DAG : `executeDagPlan` + route `dependencies/plan` — feature
       abandonnée ou à venir ?
-- [ ] Édition des prompts QA : ajouter l'UI ou supprimer les handlers `[promptId]`.
+- [x] Édition des prompts QA : ajouter l'UI ou supprimer les handlers `[promptId]`.
 - [ ] Rétirement de la migration chat : `runUnifiedChatCutoverMigrationOnce` tourne à chaque
       `GET /conversations` (`app/api/projects/[projectId]/conversations/route.ts:42`),
       ~400 l. + la couche « legacy parity ». Plan : marqueur de migration persisté →
@@ -303,3 +303,30 @@ Phase 1, `lib/sessions/` devient vide → supprimer le dossier. Consolider aussi
 4. **Phase 3** dans l'ordre 3.1 → 3.4 → 3.5 → 3.3 → 3.2 → 3.7 → 3.6 → 3.8 (les helpers API
    et les fusions UI débloquent le plus de churn quotidien ; les découpes de composants
    géants peuvent attendre un moment calme).
+
+---
+
+## État final — exécuté le 2026-08-14
+
+Toutes les phases exécutées en 9 commits (`20ba2c6`…`41f06f7`), ~31 400 lignes
+supprimées / ~9 700 ajoutées sur 538 fichiers. Suite de tests : 15 fichiers /
+28 tests en échec au départ → **157/157 fichiers, 1425/1425 tests verts, zéro
+unhandled error**. Erreurs tsc en code de production : 0.
+
+### Follow-ups restants (volontairement différés)
+
+1. **Décision `arji.json`** (case non cochée ci-dessus) : choix produit entre
+   exclure les corps de messages de l'export ou gitignorer le fichier.
+2. **Rétirement de la migration chat-cutover** : nécessite un marqueur de
+   migration persisté avant de retirer `runUnifiedChatCutoverMigrationOnce`
+   du GET /conversations et de supprimer le module (~400 l.).
+3. **Colonnes `claude_session_id`** : le code n'écrit plus que `cli_session_id`
+   (fallback de lecture unique dans `lib/db/resolve-cli-session-id.ts`) ;
+   reste à backfiller puis dropper les colonnes + le helper.
+4. **Snapshots drizzle-kit périmés** : `meta/*_snapshot.json` s'arrête à 0013
+   alors que le journal va à 0022 — `npx drizzle-kit generate` mal-diffferait ;
+   continuer à écrire les migrations à la main ou régénérer les snapshots.
+5. **Historique git** : les backups de migration (contenu de chat utilisateur)
+   restent dans l'historique ; `git filter-repo` requis si le repo devient public.
+6. **~25 erreurs tsc dans les tests** (casts de signatures de providers,
+   fixtures partielles) — bruit préexistant, sans impact runtime.
