@@ -85,15 +85,6 @@ export function emitSessionFailed(
   }
 }
 
-export function emitSessionProgress(
-  projectId: string,
-  epicId: string,
-  sessionId: string,
-  step: string
-) {
-  emit("session:progress", projectId, epicId, { sessionId, step });
-}
-
 export function emitReleaseCreated(
   projectId: string,
   releaseId: string,

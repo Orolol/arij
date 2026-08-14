@@ -77,8 +77,8 @@ vi.mock("@/hooks/useChat", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useCodexAvailable", () => ({
-  useCodexAvailable: () => ({ codexAvailable: true, codexInstalled: true }),
+vi.mock("@/hooks/useProvidersAvailable", () => ({
+  useProvidersAvailable: () => ({ codexAvailable: true, codexInstalled: true }),
 }));
 
 let mockEpicCreateLoading = false;
@@ -107,10 +107,6 @@ vi.mock("@/components/chat/MessageInput", () => ({
 
 vi.mock("@/components/chat/QuestionCards", () => ({
   QuestionCards: () => null,
-}));
-
-vi.mock("@/components/shared/ProviderSelect", () => ({
-  ProviderSelect: ({ value }: { value: string }) => <div data-testid="provider-select">{value}</div>,
 }));
 
 import { UnifiedChatPanel } from "@/components/chat/UnifiedChatPanel";

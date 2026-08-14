@@ -6,14 +6,11 @@ import {
   buildImportPrompt,
   buildEpicRefinementPrompt,
   buildEpicFinalizationPrompt,
-  buildEpicCreationPrompt,
   buildTitleGenerationPrompt,
   buildTeamBuildPrompt,
   buildBuildPrompt,
   buildTicketBuildPrompt,
   buildReviewPrompt,
-  buildCustomReviewPrompt,
-  buildCustomEpicReviewPrompt,
   buildMergeResolutionPrompt,
   buildEpicReviewPrompt,
   type PromptProject,
@@ -104,10 +101,6 @@ describe("Prompt builder snapshot regression", () => {
     expect(buildEpicFinalizationPrompt(project, docs, messages, systemPrompt, existingEpics)).toMatchSnapshot();
   });
 
-  it("buildEpicCreationPrompt", () => {
-    expect(buildEpicCreationPrompt(project, docs, messages, systemPrompt)).toMatchSnapshot();
-  });
-
   it("buildTitleGenerationPrompt", () => {
     expect(buildTitleGenerationPrompt("Hello", "Hi there, how can I help?")).toMatchSnapshot();
   });
@@ -134,14 +127,6 @@ describe("Prompt builder snapshot regression", () => {
 
   it("buildReviewPrompt - custom", () => {
     expect(buildReviewPrompt(project, docs, epic, story, { name: "UI Review", systemPrompt: "Check visual hierarchy" }, systemPrompt)).toMatchSnapshot();
-  });
-
-  it("buildCustomReviewPrompt", () => {
-    expect(buildCustomReviewPrompt(project, docs, epic, story, "Perf Review", "Check for N+1 queries", systemPrompt)).toMatchSnapshot();
-  });
-
-  it("buildCustomEpicReviewPrompt", () => {
-    expect(buildCustomEpicReviewPrompt(project, docs, epic, [story], "Code Review", "Follow team standards", systemPrompt)).toMatchSnapshot();
   });
 
   it("buildMergeResolutionPrompt", () => {

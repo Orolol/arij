@@ -5,7 +5,6 @@ const mockDbState = vi.hoisted(() => ({
   allQueue: [] as unknown[],
 }));
 
-const mockInsertWithGuard = vi.hoisted(() => vi.fn());
 const mockGetRunningForTarget = vi.hoisted(() => vi.fn());
 
 vi.mock("drizzle-orm", () => ({
@@ -183,7 +182,6 @@ vi.mock("@/lib/agents/concurrency", async () => {
   );
   return {
     ...actual,
-    insertRunningSessionWithGuard: mockInsertWithGuard,
     getRunningSessionForTarget: mockGetRunningForTarget,
   };
 });
@@ -230,7 +228,6 @@ describe("Agent launch routes concurrency conflicts", () => {
     vi.resetModules();
     mockDbState.getQueue = [];
     mockDbState.allQueue = [];
-    mockInsertWithGuard.mockReturnValue({ inserted: true });
     mockGetRunningForTarget.mockReturnValue(null);
   });
 

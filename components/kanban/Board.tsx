@@ -10,7 +10,6 @@ import {
   useSensors,
   closestCorners,
   type DragStartEvent,
-  type DragOverEvent,
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
@@ -173,10 +172,6 @@ export function Board({
     setActiveEpic(found.epic);
   }
 
-  function handleDragOver(event: DragOverEvent) {
-    // Handled in handleDragEnd for simplicity
-  }
-
   function handleDragEnd(event: DragEndEvent) {
     setActiveEpic(null);
 
@@ -225,7 +220,6 @@ export function Board({
       sensors={sensors}
       collisionDetection={closestCorners}
       onDragStart={handleDragStart}
-      onDragOver={handleDragOver}
       onDragEnd={handleDragEnd}
     >
       <div className="flex gap-4 h-full p-4 overflow-x-auto">

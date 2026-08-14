@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   isAllowedTransition,
   validateTransition,
-  getAllowedTargets,
   type TransitionContext,
 } from "@/lib/workflow/engine";
 import type { KanbanStatus } from "@/lib/types/kanban";
@@ -334,27 +333,5 @@ describe("validateTransition — actor types", () => {
       ctx("review", "done", { actor: "system", hasCompletedReview: false })
     );
     expect(result.valid).toBe(false);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// getAllowedTargets
-// ---------------------------------------------------------------------------
-
-describe("getAllowedTargets", () => {
-  it("returns valid targets for backlog", () => {
-    expect(getAllowedTargets("backlog")).toEqual(["todo", "in_progress"]);
-  });
-
-  it("returns valid targets for review", () => {
-    expect(getAllowedTargets("review")).toEqual(["in_progress", "done"]);
-  });
-
-  it("returns valid targets for done", () => {
-    expect(getAllowedTargets("done")).toEqual(["review", "in_progress", "released"]);
-  });
-
-  it("returns empty targets for released (terminal state)", () => {
-    expect(getAllowedTargets("released")).toEqual([]);
   });
 });

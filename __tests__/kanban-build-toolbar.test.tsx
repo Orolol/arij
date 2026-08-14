@@ -106,7 +106,7 @@ vi.mock("@/components/monitor/AgentMonitor", () => ({
   AgentMonitor: () => null,
 }));
 
-// Mock NamedAgentSelect (replaces old ProviderSelect)
+// Mock NamedAgentSelect
 vi.mock("@/components/shared/NamedAgentSelect", () => ({
   NamedAgentSelect: ({ value, onChange }: {
     value: string | null;

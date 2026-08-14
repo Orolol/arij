@@ -38,28 +38,28 @@ describe("Agent provider resolver", () => {
     mockDb.allQueue = [];
   });
 
-  it("resolveAgentProvider uses project override first", async () => {
-    const { resolveAgentProvider } = await import("@/lib/agent-config/providers");
+  it("resolveAgent uses project override first", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/providers");
     mockDb.getQueue = [{ provider: "codex" }];
 
-    const provider = await resolveAgentProvider("build", "proj-1");
-    expect(provider).toBe("codex");
+    const resolved = await resolveAgent("build", "proj-1");
+    expect(resolved.provider).toBe("codex");
   });
 
-  it("resolveAgentProvider falls back to global", async () => {
-    const { resolveAgentProvider } = await import("@/lib/agent-config/providers");
+  it("resolveAgent falls back to global", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/providers");
     mockDb.getQueue = [null, { provider: "codex" }];
 
-    const provider = await resolveAgentProvider("chat", "proj-1");
-    expect(provider).toBe("codex");
+    const resolved = await resolveAgent("chat", "proj-1");
+    expect(resolved.provider).toBe("codex");
   });
 
-  it("resolveAgentProvider falls back to claude-code", async () => {
-    const { resolveAgentProvider } = await import("@/lib/agent-config/providers");
+  it("resolveAgent falls back to claude-code", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/providers");
     mockDb.getQueue = [null, null];
 
-    const provider = await resolveAgentProvider("ticket_build", "proj-1");
-    expect(provider).toBe("claude-code");
+    const resolved = await resolveAgent("ticket_build", "proj-1");
+    expect(resolved.provider).toBe("claude-code");
   });
 
   it("listMergedProjectAgentProviders merges project > global > fallback", async () => {

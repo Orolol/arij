@@ -12,12 +12,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { TooltipProvider } from "@/components/ui/tooltip";
 import {
   Hammer,
   Search,
@@ -136,10 +131,6 @@ export function EpicActions({
       setApproving(false);
     }
   }
-
-  const lockedTooltip = isRunning
-    ? "Agent is already running on this epic"
-    : null;
 
   return (
     <TooltipProvider>

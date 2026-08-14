@@ -28,24 +28,6 @@ vi.mock("@/components/documents/MentionTextarea", () => ({
   ),
 }));
 
-vi.mock("@/components/shared/ProviderSelect", () => ({
-  ProviderSelect: ({
-    value,
-    onChange,
-  }: {
-    value: string;
-    onChange: (v: string) => void;
-  }) => (
-    <select
-      data-testid="provider-select"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="claude-code">Claude Code</option>
-    </select>
-  ),
-}));
-
 const noop = vi.fn().mockResolvedValue(undefined);
 
 describe("EpicActions — done status", () => {

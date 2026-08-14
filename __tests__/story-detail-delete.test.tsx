@@ -5,7 +5,7 @@ const mockPush = vi.hoisted(() => vi.fn());
 const mockUseStoryDetail = vi.hoisted(() => vi.fn());
 const mockUseComments = vi.hoisted(() => vi.fn());
 const mockUseTicketAgent = vi.hoisted(() => vi.fn());
-const mockUseCodexAvailable = vi.hoisted(() => vi.fn());
+const mockUseProvidersAvailable = vi.hoisted(() => vi.fn());
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({
@@ -29,8 +29,8 @@ vi.mock("@/hooks/useTicketAgent", () => ({
   useTicketAgent: (...args: unknown[]) => mockUseTicketAgent(...args),
 }));
 
-vi.mock("@/hooks/useCodexAvailable", () => ({
-  useCodexAvailable: (...args: unknown[]) => mockUseCodexAvailable(...args),
+vi.mock("@/hooks/useProvidersAvailable", () => ({
+  useProvidersAvailable: (...args: unknown[]) => mockUseProvidersAvailable(...args),
 }));
 
 vi.mock("@/components/story/StoryDetailPanel", () => ({
@@ -87,7 +87,7 @@ describe("Story detail delete flow", () => {
       sendToReview: vi.fn(),
       approve: vi.fn(),
     });
-    mockUseCodexAvailable.mockReturnValue({
+    mockUseProvidersAvailable.mockReturnValue({
       codexAvailable: true,
       codexInstalled: true,
     });

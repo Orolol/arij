@@ -42,7 +42,6 @@ import {
   isEpicCreationConversationAgentType,
 } from "@/lib/chat/conversation-agent";
 import {
-  applyLegacyConversationFilter,
   isLegacyConversationGenerating,
   resolveLegacyConversationLabel,
   sortConversationsForLegacyParity,
@@ -147,11 +146,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
     );
 
     const tabConversations = useMemo(
-      () =>
-        applyLegacyConversationFilter(
-          sortConversationsForLegacyParity(conversations),
-          "all",
-        ),
+      () => sortConversationsForLegacyParity(conversations),
       [conversations],
     );
 

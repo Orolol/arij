@@ -130,6 +130,7 @@ describe("Publish release endpoint", () => {
 
     expect(res.status).toBe(200);
     expect(json.data).toBeDefined();
+    expect(json.data.githubReleaseUrl).toContain("github.com");
 
     expect(mockPublishRelease).toHaveBeenCalledWith({
       owner: "owner",

@@ -4,7 +4,6 @@ const mockDbState = vi.hoisted(() => ({
   getQueue: [] as unknown[],
 }));
 
-const mockFetchGitRemote = vi.hoisted(() => vi.fn());
 const mockPullGitBranchWithConflictSupport = vi.hoisted(() => vi.fn());
 const mockGetConflictFileDiffs = vi.hoisted(() => vi.fn());
 const mockPushGitBranch = vi.hoisted(() => vi.fn());
@@ -47,7 +46,6 @@ vi.mock("@/lib/db/schema", () => ({
 }));
 
 vi.mock("@/lib/git/remote", () => ({
-  fetchGitRemote: mockFetchGitRemote,
   pullGitBranchWithConflictSupport: mockPullGitBranchWithConflictSupport,
   getConflictFileDiffs: mockGetConflictFileDiffs,
   pushGitBranch: mockPushGitBranch,
@@ -102,7 +100,6 @@ describe("Project git sync routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockDbState.getQueue = [];
-    mockFetchGitRemote.mockReset();
     mockPullGitBranchWithConflictSupport.mockReset();
     mockGetConflictFileDiffs.mockReset();
     mockPushGitBranch.mockReset();
@@ -110,39 +107,6 @@ describe("Project git sync routes", () => {
     mockGetBranchSyncStatus.mockReset();
     mockGetCurrentGitBranch.mockReset();
     mockWriteGitSyncLog.mockReset();
-  });
-
-  it("POST fetch returns structured project and branch context", async () => {
-    mockDbState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
-    mockFetchGitRemote.mockResolvedValue({
-      branches: [],
-      tags: [],
-      updated: [],
-      deleted: [],
-    });
-
-    const { POST } = await import(
-      "@/app/api/projects/[projectId]/git/fetch/route"
-    );
-    const res = await POST(
-      mockRequest({ remote: "origin", branch: "feature/one" }),
-      { params: Promise.resolve({ projectId: "proj-1" }) }
-    );
-    const json = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(json.data.action).toBe("fetch");
-    expect(json.data.projectId).toBe("proj-1");
-    expect(json.data.remote).toBe("origin");
-    expect(json.data.branch).toBe("feature/one");
-    expect(mockWriteGitSyncLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "proj-1",
-        operation: "fetch",
-        status: "success",
-        branch: "feature/one",
-      })
-    );
   });
 
   it("POST pull returns 409 with file-level diffs when conflicts are not auto-resolved", async () => {

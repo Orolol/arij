@@ -3,7 +3,6 @@ import { db } from "@/lib/db";
 import {
   agentSessions,
   chatConversations,
-  chatMessages,
   namedAgents,
 } from "@/lib/db/schema";
 import { eq, desc, and, sql } from "drizzle-orm";

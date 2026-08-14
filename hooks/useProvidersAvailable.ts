@@ -3,19 +3,6 @@
 import { useEffect, useState } from "react";
 import type { AgentProvider } from "@/lib/agent-config/constants";
 
-/**
- * Checks if the Codex CLI is installed, authenticated, and ready to use.
- *
- * Returns:
- * - `codexAvailable`: true if installed AND logged in
- * - `codexInstalled`: true if installed (even if not logged in)
- * - `loading`: true while the check is in progress
- */
-export function useCodexAvailable() {
-  const { codexAvailable, codexInstalled, loading } = useProvidersAvailable();
-  return { codexAvailable, codexInstalled, loading };
-}
-
 export interface ProvidersAvailability {
   codexAvailable: boolean;
   codexInstalled: boolean;

@@ -2,11 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   buildBuildPrompt,
   buildChatPrompt,
-  buildCustomEpicReviewPrompt,
   buildE2eTestPrompt,
   buildEpicReviewPrompt,
   buildReviewPrompt,
-  buildSpecPrompt,
   buildTechCheckPrompt,
   buildTeamBuildPrompt,
   buildTicketBuildPrompt,
@@ -31,7 +29,7 @@ const story: PromptUserStory = {
 };
 
 describe("Prompt builders with resolved system prompts", () => {
-  it("injects custom system prompt for build/chat/spec/team/ticket builders", () => {
+  it("injects custom system prompt for build/chat/team/ticket builders", () => {
     const systemPrompt = "Follow project conventions strictly.";
     const build = buildBuildPrompt(
       project,
@@ -46,7 +44,6 @@ describe("Prompt builders with resolved system prompts", () => {
       [{ role: "user", content: "Help me" }],
       systemPrompt
     );
-    const spec = buildSpecPrompt(project, docs, [], systemPrompt);
     const team = buildTeamBuildPrompt(
       project,
       docs,
@@ -75,7 +72,6 @@ describe("Prompt builders with resolved system prompts", () => {
 
     expect(build).toContain("System Instructions");
     expect(chat).toContain("System Instructions");
-    expect(spec).toContain("System Instructions");
     expect(team).toContain("System Instructions");
     expect(ticket).toContain("System Instructions");
     expect(techCheck).toContain("System Instructions");
@@ -117,16 +113,6 @@ describe("Prompt builders with resolved system prompts", () => {
       description: "Cross-cutting improvements",
     };
 
-    const customEpicReview = buildCustomEpicReviewPrompt(
-      project,
-      docs,
-      epic,
-      [story],
-      "Architecture Review",
-      "Focus on boundaries and coupling.",
-      "Custom global prompt"
-    );
-
     const epicReview = buildEpicReviewPrompt(
       project,
       docs,
@@ -135,11 +121,6 @@ describe("Prompt builders with resolved system prompts", () => {
       "feature_review",
       "Built-in global prompt"
     );
-
-    expect(customEpicReview).toContain("# Project: Arij");
-    expect(customEpicReview).toContain("## Project Specification");
-    expect(customEpicReview).toContain("## Reference Documents");
-    expect(customEpicReview).toContain("- **As a dev I want tests**");
 
     expect(epicReview).toContain("# Project: Arij");
     expect(epicReview).toContain("## Project Specification");

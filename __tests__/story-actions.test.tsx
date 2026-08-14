@@ -21,7 +21,7 @@ vi.mock("@/components/documents/MentionTextarea", () => ({
   ),
 }));
 
-// Mock NamedAgentSelect (replaces old ProviderSelect)
+// Mock NamedAgentSelect
 vi.mock("@/components/shared/NamedAgentSelect", () => ({
   NamedAgentSelect: ({ value, onChange, className }: {
     value: string | null;

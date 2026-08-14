@@ -10,7 +10,7 @@ import {
   type AgentType,
   type AgentProvider,
 } from "@/lib/agent-config/constants";
-import { useProvidersAvailable } from "@/hooks/useCodexAvailable";
+import { useProvidersAvailable } from "@/hooks/useProvidersAvailable";
 import { Badge } from "@/components/ui/badge";
 import {
   Select,

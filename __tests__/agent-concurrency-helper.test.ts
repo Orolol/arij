@@ -109,51 +109,36 @@ describe("agent concurrency helper", () => {
     expect(isAgentAlreadyRunningPayload(payload)).toBe(true);
   });
 
-  it("allows only one running session per target and releases lock on terminal status", async () => {
-    const { insertRunningSessionWithGuard } = await import("@/lib/agents/concurrency");
+  it("returns the most recent running session for a target", async () => {
+    const { getRunningSessionForTarget } = await import("@/lib/agents/concurrency");
 
-    const target = {
-      scope: "epic" as const,
+    mockState.rows = [
+      {
+        id: "session-1",
+        projectId: "proj-1",
+        epicId: "epic-1",
+        userStoryId: null,
+        status: "running",
+        mode: "code",
+        provider: "claude-code",
+        startedAt: "2026-02-12T10:00:00.000Z",
+        createdAt: "2026-02-12T10:00:00.000Z",
+      },
+    ];
+
+    const running = getRunningSessionForTarget({
+      scope: "epic",
       projectId: "proj-1",
       epicId: "epic-1",
-    };
-
-    const first = insertRunningSessionWithGuard(target, {
-      id: "session-1",
-      projectId: "proj-1",
-      epicId: "epic-1",
-      status: "running",
-      mode: "code",
-      createdAt: "2026-02-12T10:00:00.000Z",
     });
-    expect(first.inserted).toBe(true);
-    expect(mockState.rows).toHaveLength(1);
-
-    const second = insertRunningSessionWithGuard(target, {
-      id: "session-2",
-      projectId: "proj-1",
-      epicId: "epic-1",
-      status: "running",
-      mode: "code",
-      createdAt: "2026-02-12T10:00:01.000Z",
-    });
-    expect(second.inserted).toBe(false);
-    if (!second.inserted) {
-      expect(second.conflict.id).toBe("session-1");
-    }
-    expect(mockState.rows).toHaveLength(1);
+    expect(running?.id).toBe("session-1");
 
     mockState.rows[0].status = "completed";
-
-    const third = insertRunningSessionWithGuard(target, {
-      id: "session-3",
+    const afterCompletion = getRunningSessionForTarget({
+      scope: "epic",
       projectId: "proj-1",
       epicId: "epic-1",
-      status: "running",
-      mode: "code",
-      createdAt: "2026-02-12T10:00:02.000Z",
     });
-    expect(third.inserted).toBe(true);
-    expect(mockState.rows).toHaveLength(2);
+    expect(afterCompletion).toBeNull();
   });
 });

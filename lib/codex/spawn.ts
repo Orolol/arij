@@ -27,8 +27,6 @@ export interface CodexOptions {
   onResponseChunk?: (chunk: { text: string; emittedAt: string }) => void;
   /** Optional identifier for NDJSON session logging (same format as Claude Code). */
   logIdentifier?: string;
-  /** Optional legacy thread/session ID (ignored in `codex exec` mode). */
-  sessionId?: string;
   /** Optional CLI session ID for resume support (codex exec resume). */
   cliSessionId?: string;
   /** When true, uses `codex exec resume <cliSessionId>` instead of a fresh exec. */

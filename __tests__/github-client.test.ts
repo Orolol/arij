@@ -45,7 +45,7 @@ describe("parseOwnerRepo", () => {
   });
 });
 
-describe("getGitHubToken", () => {
+describe("getGitHubTokenFromSettings", () => {
   beforeEach(() => {
     vi.resetModules();
   });
@@ -61,8 +61,8 @@ describe("getGitHubToken", () => {
       return { db: chain };
     });
 
-    const { getGitHubToken } = await import("@/lib/github/client");
-    expect(getGitHubToken()).toBeNull();
+    const { getGitHubTokenFromSettings } = await import("@/lib/github/client");
+    expect(getGitHubTokenFromSettings()).toBeNull();
   });
 
   it("returns token when setting exists with valid value", async () => {
@@ -79,8 +79,8 @@ describe("getGitHubToken", () => {
       return { db: chain };
     });
 
-    const { getGitHubToken } = await import("@/lib/github/client");
-    expect(getGitHubToken()).toBe("ghp_abc123");
+    const { getGitHubTokenFromSettings } = await import("@/lib/github/client");
+    expect(getGitHubTokenFromSettings()).toBe("ghp_abc123");
   });
 
   it("returns null for empty string token", async () => {
@@ -97,8 +97,8 @@ describe("getGitHubToken", () => {
       return { db: chain };
     });
 
-    const { getGitHubToken } = await import("@/lib/github/client");
-    expect(getGitHubToken()).toBeNull();
+    const { getGitHubTokenFromSettings } = await import("@/lib/github/client");
+    expect(getGitHubTokenFromSettings()).toBeNull();
   });
 });
 

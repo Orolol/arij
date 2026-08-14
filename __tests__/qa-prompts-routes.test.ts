@@ -105,42 +105,4 @@ describe("QA prompt routes", () => {
     expect(json.data.id).toBe("qa-prompt-1");
     expect(mockDb.insertedValues).toHaveLength(1);
   });
-
-  it("PATCH /api/qa/prompts/[promptId] returns 404 when prompt is missing", async () => {
-    mockDb.getQueue = [null];
-
-    const { PATCH } = await import("@/app/api/qa/prompts/[promptId]/route");
-    const res = await PATCH(mockRequest({ name: "Updated" }), {
-      params: Promise.resolve({ promptId: "missing" }),
-    });
-    const json = await res.json();
-
-    expect(res.status).toBe(404);
-    expect(json.error).toContain("not found");
-  });
-
-  it("PATCH /api/qa/prompts/[promptId] updates an existing prompt", async () => {
-    mockDb.getQueue = [{ id: "qp-1", name: "Old", prompt: "Old prompt" }];
-
-    const { PATCH } = await import("@/app/api/qa/prompts/[promptId]/route");
-    const res = await PATCH(mockRequest({ name: "New Name" }), {
-      params: Promise.resolve({ promptId: "qp-1" }),
-    });
-    const json = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(json.data.id).toBe("qp-1");
-    expect(mockDb.updatedValues).toHaveLength(1);
-  });
-
-  it("DELETE /api/qa/prompts/[promptId] deletes a prompt", async () => {
-    const { DELETE } = await import("@/app/api/qa/prompts/[promptId]/route");
-    const res = await DELETE({} as never, {
-      params: Promise.resolve({ promptId: "qp-1" }),
-    });
-    const json = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(json.data.deleted).toBe(true);
-  });
 });

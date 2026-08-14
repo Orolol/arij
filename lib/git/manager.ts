@@ -71,23 +71,6 @@ export async function createWorktree(
 }
 
 /**
- * Removes a worktree and optionally its branch.
- */
-export async function removeWorktree(
-  repoPath: string,
-  worktreePath: string,
-  removeBranch = false
-): Promise<void> {
-  const git = getGit(repoPath);
-
-  if (fs.existsSync(worktreePath)) {
-    await git.raw(["worktree", "remove", worktreePath, "--force"]);
-  }
-
-  await git.raw(["worktree", "prune"]);
-}
-
-/**
  * Merges an epic branch into the main branch, then removes the worktree.
  * Returns the merge commit hash on success.
  */
@@ -169,15 +152,6 @@ export async function startMergeInWorktree(
 }
 
 /**
- * Lists all local branches in the repo.
- */
-export async function listBranches(repoPath: string): Promise<string[]> {
-  const git = getGit(repoPath);
-  const branches = await git.branchLocal();
-  return branches.all;
-}
-
-/**
  * Checks if a path is a valid git repository.
  */
 export async function isGitRepo(repoPath: string): Promise<boolean> {
@@ -187,35 +161,4 @@ export async function isGitRepo(repoPath: string): Promise<boolean> {
   } catch {
     return false;
   }
-}
-
-/**
- * Gets the current branch of a repo/worktree.
- */
-export async function getCurrentBranch(repoPath: string): Promise<string> {
-  const git = getGit(repoPath);
-  return (await git.branchLocal()).current;
-}
-
-/**
- * Lists active worktrees for the repo.
- */
-export async function listWorktrees(
-  repoPath: string
-): Promise<Array<{ path: string; branch: string }>> {
-  const git = getGit(repoPath);
-  const raw = await git.raw(["worktree", "list", "--porcelain"]);
-  const worktrees: Array<{ path: string; branch: string }> = [];
-
-  let currentPath = "";
-  for (const line of raw.split("\n")) {
-    if (line.startsWith("worktree ")) {
-      currentPath = line.replace("worktree ", "");
-    } else if (line.startsWith("branch ")) {
-      const branch = line.replace("branch refs/heads/", "");
-      worktrees.push({ path: currentPath, branch });
-    }
-  }
-
-  return worktrees;
 }

@@ -9,7 +9,7 @@ const mockUseEpicAgent = vi.hoisted(() => vi.fn());
 const mockUseEpicPr = vi.hoisted(() => vi.fn());
 const mockUseGitHubConfig = vi.hoisted(() => vi.fn());
 const mockUseGitStatus = vi.hoisted(() => vi.fn());
-const mockUseCodexAvailable = vi.hoisted(() => vi.fn());
+const mockUseProvidersAvailable = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/useEpicDetail", () => ({
   useEpicDetail: (...args: unknown[]) => mockUseEpicDetail(...args),
@@ -35,8 +35,8 @@ vi.mock("@/hooks/useGitStatus", () => ({
   useGitStatus: (...args: unknown[]) => mockUseGitStatus(...args),
 }));
 
-vi.mock("@/hooks/useCodexAvailable", () => ({
-  useCodexAvailable: (...args: unknown[]) => mockUseCodexAvailable(...args),
+vi.mock("@/hooks/useProvidersAvailable", () => ({
+  useProvidersAvailable: (...args: unknown[]) => mockUseProvidersAvailable(...args),
 }));
 
 vi.mock("@/components/epic/EpicActions", () => ({
@@ -113,7 +113,7 @@ describe("EpicDetail delete flow", () => {
       push: vi.fn(),
       pushing: false,
     });
-    mockUseCodexAvailable.mockReturnValue({
+    mockUseProvidersAvailable.mockReturnValue({
       codexAvailable: true,
       codexInstalled: true,
     });

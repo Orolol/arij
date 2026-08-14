@@ -147,10 +147,3 @@ export function validateTransition(
 
   return { valid: true };
 }
-
-/**
- * Get the list of statuses an epic can transition to from a given status.
- */
-export function getAllowedTargets(from: KanbanStatus): readonly KanbanStatus[] {
-  return EPIC_TRANSITIONS[from] ?? [];
-}

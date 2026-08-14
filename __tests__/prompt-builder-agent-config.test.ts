@@ -4,7 +4,6 @@ import {
   buildChatPrompt,
   buildEpicRefinementPrompt,
   buildReviewPrompt,
-  buildSpecPrompt,
   buildTicketBuildPrompt,
   buildTeamBuildPrompt,
   type PromptDocument,
@@ -44,15 +43,12 @@ const story: PromptUserStory = {
 };
 
 describe("Prompt builders with agent-config system prompts", () => {
-  it("injects system prompt into build/chat/spec/team/ticket builders", () => {
+  it("injects system prompt into build/chat/team/ticket builders", () => {
     expect(buildBuildPrompt(project, docs, epic, [story], "Use strict TS")).toContain(
       "# System Instructions"
     );
     expect(buildChatPrompt(project, docs, messages, "Chat safely")).toContain(
       "Chat safely"
-    );
-    expect(buildSpecPrompt(project, docs, messages, "Spec as JSON")).toContain(
-      "Spec as JSON"
     );
 
     const teamEpics: TeamEpic[] = [

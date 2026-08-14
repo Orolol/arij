@@ -112,6 +112,47 @@ describe("logSyncOperation", () => {
     );
   });
 
+  it("exposes writeGitSyncLog as an identity alias of logSyncOperation", async () => {
+    const { writeGitSyncLog, logSyncOperation } = await import(
+      "@/lib/github/sync-log"
+    );
+
+    expect(writeGitSyncLog).toBe(logSyncOperation);
+  });
+
+  it("writes machine-readable JSON detail payloads via writeGitSyncLog", async () => {
+    const { writeGitSyncLog } = await import("@/lib/github/sync-log");
+
+    writeGitSyncLog({
+      projectId: "proj-1",
+      operation: "pull",
+      status: "failed",
+      branch: "feature/one",
+      detail: {
+        code: "ff_only_conflict",
+        remote: "origin",
+      },
+    });
+
+    expect(mockDbState.insertCalls).toHaveLength(1);
+    const payload = mockDbState.insertCalls[0].payload as Record<
+      string,
+      unknown
+    >;
+    expect(payload).toEqual(
+      expect.objectContaining({
+        projectId: "proj-1",
+        operation: "pull",
+        status: "failed",
+        branch: "feature/one",
+      })
+    );
+    expect(JSON.parse(String(payload.detail))).toEqual({
+      code: "ff_only_conflict",
+      remote: "origin",
+    });
+  });
+
   it("inserts a release sync log entry with detail object", async () => {
     const { logSyncOperation } = await import("@/lib/github/sync-log");
 

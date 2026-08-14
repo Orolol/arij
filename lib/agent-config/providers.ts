@@ -139,14 +139,6 @@ function mapNamedAgentsById(namedAgentIds: Array<string | null | undefined>): Ma
   return byId;
 }
 
-export function resolveAgentProvider(
-  agentType: AgentType,
-  projectId?: string
-): AgentProvider {
-  const resolved = resolveAgent(agentType, projectId);
-  return resolved.provider;
-}
-
 function mapProviderRowsByType(
   rows: ProviderDefaultRow[]
 ): Map<string, ProviderDefaultRow> {
