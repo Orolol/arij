@@ -22,7 +22,12 @@
   "files": [
     "bin",
     "app",
+    "components",
+    "hooks",
+    "lib",
     "public",
+    "middleware.ts",
+    "components.json",
     "next.config.ts",
     "tsconfig.json",
     "postcss.config.mjs",

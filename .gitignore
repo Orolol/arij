@@ -27,8 +27,10 @@
 .DS_Store
 *.pem
 
-# test screenshots
+# test screenshots and debug dumps
 test*.png
+test-snapshot-*.md
+.playwright-mcp/
 
 # debug
 npm-debug.log*

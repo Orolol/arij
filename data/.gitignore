@@ -4,3 +4,4 @@ arij.db-shm
 sessions/
 logs/
 uploads/
+migrations/
