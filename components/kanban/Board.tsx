@@ -15,7 +15,7 @@ import {
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { Column } from "./Column";
 import { ReleasedColumn } from "./ReleasedColumn";
-import { EpicCard } from "./EpicCard";
+import { EpicCard, type EpicCardView } from "./EpicCard";
 import {
   KANBAN_COLUMNS,
   DRAGGABLE_COLUMNS,
@@ -162,6 +162,68 @@ export function Board({
     [markEpicAiCommentSeen, onEpicClick]
   );
 
+  // Per-epic view models: the Board owns the assembly so Column and EpicCard
+  // stay out of the business of forwarding one prop per card feature.
+  const epicViews = useMemo(() => {
+    const views: Record<string, EpicCardView> = {};
+
+    for (const status of DRAGGABLE_COLUMNS) {
+      for (const epic of board.columns[status]) {
+        const failedSession = failedSessions?.[epic.id];
+
+        views[epic.id] = {
+          selected:
+            selectedEpics?.has(epic.id) || autoIncludedEpics?.has(epic.id),
+          autoIncluded: autoIncludedEpics?.has(epic.id),
+          isRunning: runningEpicIds?.has(epic.id) || false,
+          activity: activeAgentActivities?.[epic.id],
+          unreadAi: unreadAiByEpicId[epic.id] || false,
+          failedSession,
+          onToggleSelect: onToggleSelect
+            ? () => onToggleSelect(epic.id)
+            : undefined,
+          onLinkedAgentHoverChange,
+          onRetryBuild:
+            onRetryBuild && failedSession
+              ? () => onRetryBuild(epic.id)
+              : undefined,
+        };
+      }
+    }
+
+    return views;
+  }, [
+    board,
+    selectedEpics,
+    autoIncludedEpics,
+    runningEpicIds,
+    activeAgentActivities,
+    unreadAiByEpicId,
+    failedSessions,
+    onToggleSelect,
+    onLinkedAgentHoverChange,
+    onRetryBuild,
+  ]);
+
+  // The drag overlay is a preview: it deliberately shows only the live agent
+  // signals, never selection rings or failed-session affordances.
+  const overlayView = useMemo<EpicCardView | undefined>(() => {
+    if (!activeEpic) return undefined;
+
+    return {
+      isRunning: runningEpicIds?.has(activeEpic.id) || false,
+      activity: activeAgentActivities?.[activeEpic.id],
+      unreadAi: unreadAiByEpicId[activeEpic.id],
+      onLinkedAgentHoverChange,
+    };
+  }, [
+    activeEpic,
+    runningEpicIds,
+    activeAgentActivities,
+    unreadAiByEpicId,
+    onLinkedAgentHoverChange,
+  ]);
+
   if (loading) return <BoardSkeleton />;
 
   function handleDragStart(event: DragStartEvent) {
@@ -229,15 +291,7 @@ export function Board({
             status={status}
             epics={board.columns[status]}
             onEpicClick={handleEpicClick}
-            selectedEpics={selectedEpics}
-            autoIncludedEpics={autoIncludedEpics}
-            onToggleSelect={onToggleSelect}
-            runningEpicIds={runningEpicIds}
-            activeAgentActivities={activeAgentActivities}
-            onLinkedAgentHoverChange={onLinkedAgentHoverChange}
-            unreadAiByEpicId={unreadAiByEpicId}
-            failedSessions={failedSessions}
-            onRetryBuild={onRetryBuild}
+            epicViews={epicViews}
           />
         ))}
         <ReleasedColumn
@@ -248,14 +302,7 @@ export function Board({
       <DragOverlay>
         {activeEpic && (
           <div className="w-[272px]">
-            <EpicCard
-              epic={activeEpic}
-              isOverlay
-              isRunning={runningEpicIds?.has(activeEpic.id) || false}
-              activeAgentActivity={activeAgentActivities?.[activeEpic.id]}
-              onLinkedAgentHoverChange={onLinkedAgentHoverChange}
-              hasUnreadAiUpdate={unreadAiByEpicId[activeEpic.id]}
-            />
+            <EpicCard epic={activeEpic} isOverlay view={overlayView} />
           </div>
         )}
       </DragOverlay>

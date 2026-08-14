@@ -52,8 +52,7 @@ describe("EpicCard", () => {
       render(
         <EpicCard
           epic={makeEpic()}
-          onToggleSelect={vi.fn()}
-          selected={false}
+          view={{ onToggleSelect: vi.fn(), selected: false }}
         />
       );
       // No checkbox/square button should exist
@@ -64,8 +63,7 @@ describe("EpicCard", () => {
       const { container } = render(
         <EpicCard
           epic={makeEpic()}
-          onToggleSelect={vi.fn()}
-          selected={true}
+          view={{ onToggleSelect: vi.fn(), selected: true }}
         />
       );
       // The old checkbox icons had specific classes; ensure no button with those
@@ -74,7 +72,7 @@ describe("EpicCard", () => {
 
     it("applies ring-2 ring-primary class when selected", () => {
       const { container } = render(
-        <EpicCard epic={makeEpic()} selected={true} />
+        <EpicCard epic={makeEpic()} view={{ selected: true }} />
       );
       const card = container.firstChild as HTMLElement;
       expect(card.className).toContain("ring-2");
@@ -83,7 +81,7 @@ describe("EpicCard", () => {
 
     it("does not apply ring classes when not selected", () => {
       const { container } = render(
-        <EpicCard epic={makeEpic()} selected={false} />
+        <EpicCard epic={makeEpic()} view={{ selected: false }} />
       );
       const card = container.firstChild as HTMLElement;
       expect(card.className).not.toContain("ring-2");
@@ -106,7 +104,7 @@ describe("EpicCard", () => {
         <EpicCard
           epic={makeEpic()}
           onClick={handleClick}
-          onToggleSelect={handleToggleSelect}
+          view={{ onToggleSelect: handleToggleSelect }}
         />
       );
 
@@ -169,8 +167,10 @@ describe("EpicCard", () => {
       const { container } = render(
         <EpicCard
           epic={makeEpic({ priority: 2, type: "bug" })}
-          hasUnreadAiUpdate
-          failedSession={{ sessionId: "s1", error: "timeout", epicId: "e1" }}
+          view={{
+            unreadAi: true,
+            failedSession: { sessionId: "s1", error: "timeout", epicId: "e1" },
+          }}
         />
       );
       // Find the badges row by its flex-wrap class

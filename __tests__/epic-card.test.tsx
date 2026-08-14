@@ -52,10 +52,12 @@ describe("EpicCard", () => {
     render(
       <EpicCard
         epic={baseEpic}
-        activeAgentActivity={{
-          sessionId: "sess-123",
-          actionType,
-          agentName: "Codex agent abc123",
+        view={{
+          activity: {
+            sessionId: "sess-123",
+            actionType,
+            agentName: "Codex agent abc123",
+          },
         }}
       />
     );
@@ -89,7 +91,7 @@ describe("EpicCard", () => {
   });
 
   it("renders unread AI indicator with accessibility label", () => {
-    render(<EpicCard epic={baseEpic} hasUnreadAiUpdate />);
+    render(<EpicCard epic={baseEpic} view={{ unreadAi: true }} />);
     expect(screen.getByTestId("epic-unread-ai-epic-1")).toBeInTheDocument();
     expect(screen.getByLabelText("Unread AI update")).toBeInTheDocument();
   });
@@ -98,11 +100,13 @@ describe("EpicCard", () => {
     render(
       <EpicCard
         epic={baseEpic}
-        hasUnreadAiUpdate
-        activeAgentActivity={{
-          sessionId: "sess-123",
-          actionType: "review",
-          agentName: "Claude Code agent abc123",
+        view={{
+          unreadAi: true,
+          activity: {
+            sessionId: "sess-123",
+            actionType: "review",
+            agentName: "Claude Code agent abc123",
+          },
         }}
       />
     );

@@ -1,7 +1,5 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -10,32 +8,30 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { TooltipProvider } from "@/components/ui/tooltip";
 import { InlineEdit } from "./InlineEdit";
-import { GitSyncBadge } from "./GitSyncBadge";
 import { useEpicDetail } from "@/hooks/useEpicDetail";
 import { useTicketComments } from "@/hooks/useTicketComments";
 import { useAgentDispatch } from "@/hooks/useAgentDispatch";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import { useGitStatus } from "@/hooks/useGitStatus";
+import { useProjectEpicsList } from "@/hooks/useProjectEpicsList";
+import { useEpicMutations } from "@/hooks/useEpicMutations";
 import { AgentActionsBar } from "@/components/shared/AgentActionsBar";
 import { AgentDispatchDialog } from "@/components/shared/AgentDispatchDialog";
 import { TicketTypeBadge } from "@/components/shared/TicketTypeBadge";
-import { UserStoryQuickActions } from "@/components/epic/UserStoryQuickActions";
 import { CommentThread } from "@/components/story/CommentThread";
-import { Badge } from "@/components/ui/badge";
 import { PRIORITY_LABELS, KANBAN_COLUMNS, COLUMN_LABELS } from "@/lib/types/kanban";
 import { useEpicPr } from "@/hooks/useEpicPr";
-import { PrBadge } from "@/components/github/PrBadge";
-import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, GitPullRequest, Wrench, ArrowUp, ArrowDown, Upload, RefreshCw } from "lucide-react";
-import { useState, useEffect, useRef } from "react";
-import Link from "next/link";
+import { Wrench, FileCode } from "lucide-react";
+import { useState, useEffect } from "react";
 import { isAgentAlreadyRunningError } from "@/lib/agents/client-error";
 import { PermanentDeleteDialog } from "@/components/shared/PermanentDeleteDialog";
 import { DependencyEditor } from "@/components/dependencies/DependencyEditor";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { DiffViewer } from "@/components/review/DiffViewer";
-import { FileCode } from "lucide-react";
+import { EpicGitSection } from "./epic-detail/EpicGitSection";
+import { EpicUserStoriesSection } from "./epic-detail/EpicUserStoriesSection";
+import { EpicDangerZone } from "./epic-detail/EpicDangerZone";
 
 interface EpicDetailProps {
   projectId: string;
@@ -103,58 +99,41 @@ export function EpicDetail({
     pushing,
   } = useGitStatus(projectId, epic?.branchName ?? null, githubConfigured);
 
+  // All epics in the project for the dependency dropdown
+  const { epics: projectEpics } = useProjectEpicsList(projectId, epicId, open);
+
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+
+  const {
+    merging,
+    mergeError,
+    setMergeError,
+    merge,
+    deletingEpic,
+    deleteEpicError,
+    deleteEpic,
+  } = useEpicMutations(projectId, epicId, {
+    onMergeSuccess: () => {
+      onMerged?.();
+      onClose();
+    },
+    onDeleteSuccess: () => {
+      setDeleteDialogOpen(false);
+      onClose();
+      onDeleted?.();
+    },
+  });
+
   // Only poll epic detail when an agent is actively running
   useEffect(() => {
     setPolling(isRunning);
   }, [isRunning, setPolling]);
 
   const [newUSTitle, setNewUSTitle] = useState("");
-  const [projectEpics, setProjectEpics] = useState<
-    Array<{ id: string; title: string; status: string }>
-  >([]);
-
-  // Fetch all epics in the project for the dependency dropdown
-  useEffect(() => {
-    if (!open || !epicId) return;
-    fetch(`/api/projects/${projectId}/epics`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.data) setProjectEpics(d.data);
-      })
-      .catch(() => {});
-  }, [projectId, epicId, open]);
-
-  const [merging, setMerging] = useState(false);
-  const [mergeError, setMergeError] = useState<string | null>(null);
   const [resolvingMerge, setResolvingMerge] = useState(false);
   const [resolveMergeOpen, setResolveMergeOpen] = useState(false);
   const [resolveMergeAgentId, setResolveMergeAgentId] = useState<string | null>(null);
   const [resolveMergeResumeSessionId, setResolveMergeResumeSessionId] = useState<string | undefined>();
-  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
-  const [deletingEpic, setDeletingEpic] = useState(false);
-  const [deleteEpicError, setDeleteEpicError] = useState<string | null>(null);
-  const deleteInFlightRef = useRef(false);
-
-  async function handleMerge() {
-    if (!epicId) return;
-    setMerging(true);
-    setMergeError(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/epics/${epicId}/merge`, {
-        method: "POST",
-      });
-      const data = await res.json();
-      if (data.error) {
-        setMergeError(data.error);
-      } else {
-        onMerged?.();
-        onClose();
-      }
-    } catch {
-      setMergeError("Failed to merge");
-    }
-    setMerging(false);
-  }
 
   async function handleResolveMerge(namedAgentId?: string | null, resumeSessionId?: string) {
     if (!epicId) return;
@@ -203,50 +182,11 @@ export function EpicDetail({
     refresh();
   }
 
-  async function handleDeleteEpic() {
-    if (!epicId || deleteInFlightRef.current) return;
-    deleteInFlightRef.current = true;
-    setDeletingEpic(true);
-    setDeleteEpicError(null);
-
-    try {
-      const res = await fetch(`/api/projects/${projectId}/epics/${epicId}`, {
-        method: "DELETE",
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok || data.error) {
-        setDeleteEpicError(data.error || "Failed to delete epic");
-        return;
-      }
-
-      setDeleteDialogOpen(false);
-      onClose();
-      onDeleted?.();
-    } catch {
-      setDeleteEpicError("Failed to delete epic");
-    } finally {
-      deleteInFlightRef.current = false;
-      setDeletingEpic(false);
-    }
-  }
-
   function handleAddUS() {
     if (!newUSTitle.trim()) return;
     addUserStory(newUSTitle.trim());
     setNewUSTitle("");
   }
-
-  const statusIcon = (status: string) => {
-    switch (status) {
-      case "done":
-        return <Check className="h-3.5 w-3.5 text-green-500" />;
-      case "in_progress":
-        return <Loader2 className="h-3.5 w-3.5 text-yellow-500" />;
-      default:
-        return <Circle className="h-3.5 w-3.5 text-muted-foreground" />;
-    }
-  };
 
   if (!open) return null;
 
@@ -389,238 +329,47 @@ export function EpicDetail({
             )}
 
             {epic.branchName && (
-              <div className="space-y-2">
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-mono">
-                  <GitBranch className="h-3 w-3" />
-                  <span className="flex-1 truncate">{epic.branchName}</span>
-                  {githubConfigured && (
-                    <GitSyncBadge
-                      projectId={projectId}
-                      branchName={epic.branchName}
-                      disabled={isRunning}
-                    />
-                  )}
-                </div>
-
-                {/* Git sync status — only shown when GitHub is configured */}
-                {githubConfigured && (
-                  <div className="flex items-center gap-2 flex-wrap">
-                    {gitStatusLoading ? (
-                      <Badge variant="outline" className="gap-1 text-xs">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Checking...
-                      </Badge>
-                    ) : (
-                      <>
-                        <Badge variant="outline" className="gap-1 text-xs">
-                          <ArrowUp className="h-3 w-3" />
-                          {ahead}
-                        </Badge>
-                        <Badge variant="outline" className="gap-1 text-xs">
-                          <ArrowDown className="h-3 w-3" />
-                          {behind}
-                        </Badge>
-                      </>
-                    )}
-
-                    {gitStatusError && (
-                      <span className="text-xs text-destructive">{gitStatusError}</span>
-                    )}
-
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={refreshGitStatus}
-                      disabled={gitStatusLoading}
-                      className="h-6 w-6 p-0"
-                    >
-                      <RefreshCw className={`h-3 w-3 ${gitStatusLoading ? "animate-spin" : ""}`} />
-                    </Button>
-
-                    {ahead > 0 && (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={pushToRemote}
-                        disabled={pushing || gitStatusLoading}
-                        className="h-7 text-xs"
-                      >
-                        {pushing ? (
-                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                        ) : (
-                          <Upload className="h-3 w-3 mr-1" />
-                        )}
-                        Push
-                      </Button>
-                    )}
-                  </div>
-                )}
-
-                {/* PR Section */}
-                {githubConfigured && (
-                  <div className="space-y-2">
-                    {pr ? (
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <PrBadge
-                          status={pr.status}
-                          number={pr.number}
-                          url={pr.url}
-                        />
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          onClick={syncPr}
-                          disabled={prLoading}
-                          className="h-6 text-xs px-2"
-                        >
-                          {prLoading ? (
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                          ) : (
-                            <RefreshCw className="h-3 w-3" />
-                          )}
-                          <span className="ml-1">Sync</span>
-                        </Button>
-                      </div>
-                    ) : (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => createPr()}
-                        disabled={prLoading}
-                        className="h-7 text-xs"
-                      >
-                        {prLoading ? (
-                          <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                        ) : (
-                          <GitPullRequest className="h-3 w-3 mr-1" />
-                        )}
-                        Create PR
-                      </Button>
-                    )}
-                    {prError && (
-                      <p className="text-xs text-destructive">{prError}</p>
-                    )}
-                  </div>
-                )}
-
-                {(epic.status === "review" || epic.status === "done") && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleMerge}
-                    disabled={merging}
-                    className="h-7 text-xs"
-                  >
-                    {merging ? (
-                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                    ) : (
-                      <GitMerge className="h-3 w-3 mr-1" />
-                    )}
-                    Merge into main
-                  </Button>
-                )}
-                {mergeError && (
-                  <div className="flex items-center gap-2">
-                    <p className="text-xs text-destructive flex-1">{mergeError}</p>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setResolveMergeOpen(true)}
-                      disabled={resolvingMerge || isRunning}
-                      className="h-7 text-xs shrink-0"
-                    >
-                      {resolvingMerge ? (
-                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                      ) : (
-                        <Wrench className="h-3 w-3 mr-1" />
-                      )}
-                      Resolve with Agent
-                    </Button>
-                  </div>
-                )}
-              </div>
+              <EpicGitSection
+                projectId={projectId}
+                branchName={epic.branchName}
+                epicStatus={epic.status}
+                githubConfigured={githubConfigured}
+                isRunning={isRunning}
+                ahead={ahead}
+                behind={behind}
+                gitStatusLoading={gitStatusLoading}
+                gitStatusError={gitStatusError}
+                onRefreshGitStatus={refreshGitStatus}
+                onPush={pushToRemote}
+                pushing={pushing}
+                pr={pr}
+                prLoading={prLoading}
+                prError={prError}
+                onCreatePr={() => createPr()}
+                onSyncPr={syncPr}
+                merging={merging}
+                mergeError={mergeError}
+                onMerge={merge}
+                resolvingMerge={resolvingMerge}
+                onOpenResolveMerge={() => setResolveMergeOpen(true)}
+              />
             )}
 
             <Separator />
 
             {/* User Stories */}
             {epic.type !== "bug" && (
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h4 className="text-sm font-medium">
-                  User Stories ({userStories.length})
-                </h4>
-              </div>
-
-              <TooltipProvider>
-                <div className="space-y-1">
-                  {userStories.map((us) => (
-                    <div
-                      key={us.id}
-                      className="flex items-center gap-2 p-2 rounded hover:bg-accent/50 group"
-                    >
-                      <button
-                        onClick={() => {
-                          const next =
-                            us.status === "done"
-                              ? "todo"
-                              : us.status === "todo"
-                                ? "in_progress"
-                                : "done";
-                          updateUserStory(us.id, { status: next });
-                        }}
-                      >
-                        {statusIcon(us.status)}
-                      </button>
-                      <Link
-                        href={`/projects/${projectId}/stories/${us.id}`}
-                        className={`flex-1 text-sm hover:underline ${
-                          us.status === "done"
-                            ? "line-through text-muted-foreground"
-                            : ""
-                        }`}
-                      >
-                        {us.title}
-                      </Link>
-                      <UserStoryQuickActions
-                        projectId={projectId}
-                        story={us}
-                        onRefresh={refresh}
-                        isLocked={dispatching || isRunning}
-                        lockReason="Another agent is already running for this epic."
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                        onClick={() => deleteUserStory(us.id)}
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </TooltipProvider>
-
-              <div className="flex gap-2 mt-2">
-                <Input
-                  value={newUSTitle}
-                  onChange={(e) => setNewUSTitle(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && handleAddUS()}
-                  placeholder="Add user story..."
-                  className="text-sm h-8"
-                />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={handleAddUS}
-                  disabled={!newUSTitle.trim()}
-                  className="h-8"
-                >
-                  <Plus className="h-3 w-3" />
-                </Button>
-              </div>
-            </div>
+              <EpicUserStoriesSection
+                projectId={projectId}
+                userStories={userStories}
+                newStoryTitle={newUSTitle}
+                onNewStoryTitleChange={setNewUSTitle}
+                onAddStory={handleAddUS}
+                onUpdateStory={(id, updates) => updateUserStory(id, updates)}
+                onDeleteStory={deleteUserStory}
+                onRefresh={refresh}
+                actionsLocked={dispatching || isRunning}
+              />
             )}
 
             <Separator />
@@ -636,25 +385,11 @@ export function EpicDetail({
 
             <Separator />
 
-            <div className="space-y-2">
-              <h4 className="text-sm font-medium text-destructive">Danger Zone</h4>
-              <p className="text-xs text-muted-foreground">
-                Permanently delete this epic, all child stories, and dependent
-                planning records.
-              </p>
-              {deleteEpicError && (
-                <p className="text-xs text-destructive">{deleteEpicError}</p>
-              )}
-              <Button
-                size="sm"
-                variant="destructive"
-                className="h-8 text-xs"
-                onClick={() => setDeleteDialogOpen(true)}
-                disabled={deletingEpic}
-              >
-                Delete Epic
-              </Button>
-            </div>
+            <EpicDangerZone
+              deleteError={deleteEpicError}
+              deleting={deletingEpic}
+              onRequestDelete={() => setDeleteDialogOpen(true)}
+            />
               </TabsContent>
 
               {/* Code Review Tab */}
@@ -745,7 +480,7 @@ export function EpicDetail({
         description="Permanently delete this epic and all related user stories."
         confirmLabel="Confirm Delete"
         deleting={deletingEpic}
-        onConfirm={handleDeleteEpic}
+        onConfirm={deleteEpic}
       />
     </div>
   );

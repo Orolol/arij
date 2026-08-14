@@ -37,23 +37,37 @@ function providerLabel(provider?: string): string {
   return "Claude Code";
 }
 
+/**
+ * Per-epic state and callbacks derived by the Board and handed to a single card.
+ *
+ * Grouping these keeps the Board -> Column -> EpicCard chain from growing a new
+ * prop on three interfaces every time a card feature ships: Column only forwards
+ * the view object, and only this type plus the Board's builder change.
+ */
+export interface EpicCardView {
+  selected?: boolean;
+  autoIncluded?: boolean;
+  isRunning?: boolean;
+  /** Agent action currently running for this epic, if any */
+  activity?: KanbanEpicAgentActivity;
+  /** Whether the latest comment is AI-origin and still unseen */
+  unreadAi?: boolean;
+  /** Info about the most recent failed agent session for this epic */
+  failedSession?: FailedSessionInfo;
+  onToggleSelect?: () => void;
+  onLinkedAgentHoverChange?: (activityId: string | null) => void;
+  /** Called when user clicks the retry button on a failed session indicator */
+  onRetryBuild?: () => void;
+}
+
 interface EpicCardProps {
   epic: KanbanEpic;
   isOverlay?: boolean;
-  isRunning?: boolean;
-  activeAgentActivity?: KanbanEpicAgentActivity;
-  onLinkedAgentHoverChange?: (activityId: string | null) => void;
-  hasUnreadAiUpdate?: boolean;
   onClick?: () => void;
-  selected?: boolean;
-  autoIncluded?: boolean;
-  onToggleSelect?: () => void;
   /** Flash highlight when ticket state changes */
   highlight?: boolean;
-  /** Info about the most recent failed agent session for this epic */
-  failedSession?: FailedSessionInfo;
-  /** Called when user clicks the retry button on a failed session indicator */
-  onRetry?: () => void;
+  /** Per-epic state and callbacks, built by the Board */
+  view?: EpicCardView;
 }
 
 const ACTIVITY_ICON_BY_TYPE: Record<
@@ -65,20 +79,26 @@ const ACTIVITY_ICON_BY_TYPE: Record<
   merge: { Icon: GitMerge, label: "Merge" },
 };
 
+const EMPTY_VIEW: EpicCardView = {};
+
 export function EpicCard({
   epic,
   isOverlay,
-  activeAgentActivity,
-  onLinkedAgentHoverChange,
-  hasUnreadAiUpdate = false,
   onClick,
-  selected,
-  autoIncluded,
-  onToggleSelect,
   highlight = false,
-  failedSession,
-  onRetry,
+  view = EMPTY_VIEW,
 }: EpicCardProps) {
+  const {
+    selected,
+    autoIncluded,
+    activity: activeAgentActivity,
+    unreadAi: hasUnreadAiUpdate = false,
+    failedSession,
+    onToggleSelect,
+    onLinkedAgentHoverChange,
+    onRetryBuild,
+  } = view;
+
   const {
     attributes,
     listeners,
@@ -234,11 +254,11 @@ export function EpicCard({
               </Tooltip>
             </TooltipProvider>
           )}
-          {failedSession && !activeAgentActivity && onRetry && (
+          {failedSession && !activeAgentActivity && onRetryBuild && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onRetry();
+                onRetryBuild();
               }}
               className="inline-flex items-center gap-0.5 rounded-sm bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 px-1.5 py-0.5 text-xs transition-colors"
               aria-label="Retry failed agent session"

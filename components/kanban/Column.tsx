@@ -6,43 +6,26 @@ import {
   SortableContext,
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
-import { EpicCard } from "./EpicCard";
+import { EpicCard, type EpicCardView } from "./EpicCard";
 import {
   COLUMN_LABELS,
   type KanbanStatus,
   type KanbanEpic,
-  type KanbanEpicAgentActivity,
 } from "@/lib/types/kanban";
-import type { FailedSessionInfo } from "@/hooks/useAgentPolling";
 
 interface ColumnProps {
   status: KanbanStatus;
   epics: KanbanEpic[];
   onEpicClick: (epicId: string) => void;
-  selectedEpics?: Set<string>;
-  autoIncludedEpics?: Set<string>;
-  onToggleSelect?: (epicId: string) => void;
-  runningEpicIds?: Set<string>;
-  activeAgentActivities?: Record<string, KanbanEpicAgentActivity>;
-  onLinkedAgentHoverChange?: (activityId: string | null) => void;
-  unreadAiByEpicId?: Record<string, boolean>;
-  failedSessions?: Record<string, FailedSessionInfo>;
-  onRetryBuild?: (epicId: string) => void;
+  /** Per-epic state and callbacks, keyed by epic id and built by the Board */
+  epicViews?: Record<string, EpicCardView>;
 }
 
 export function Column({
   status,
   epics,
   onEpicClick,
-  selectedEpics,
-  autoIncludedEpics,
-  onToggleSelect,
-  runningEpicIds,
-  activeAgentActivities,
-  onLinkedAgentHoverChange,
-  unreadAiByEpicId,
-  failedSessions,
-  onRetryBuild,
+  epicViews,
 }: ColumnProps) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
 
@@ -112,24 +95,8 @@ export function Column({
                 <EpicCard
                   epic={epic}
                   onClick={() => onEpicClick(epic.id)}
-                  selected={selectedEpics?.has(epic.id) || autoIncludedEpics?.has(epic.id)}
-                  autoIncluded={autoIncludedEpics?.has(epic.id)}
-                  isRunning={runningEpicIds?.has(epic.id) || false}
-                  activeAgentActivity={activeAgentActivities?.[epic.id]}
-                  onLinkedAgentHoverChange={onLinkedAgentHoverChange}
-                  hasUnreadAiUpdate={unreadAiByEpicId?.[epic.id] || false}
                   highlight={highlightedEpicIds.has(epic.id)}
-                  onToggleSelect={
-                    onToggleSelect
-                      ? () => onToggleSelect(epic.id)
-                      : undefined
-                  }
-                  failedSession={failedSessions?.[epic.id]}
-                  onRetry={
-                    onRetryBuild && failedSessions?.[epic.id]
-                      ? () => onRetryBuild(epic.id)
-                      : undefined
-                  }
+                  view={epicViews?.[epic.id]}
                 />
               </div>
             ))}

@@ -88,16 +88,16 @@ function HoverLinkHarness({ withLinkedAgent = true }: { withLinkedAgent?: boolea
     <div>
       <EpicCard
         epic={baseEpic}
-        activeAgentActivity={
-          withLinkedAgent
+        view={{
+          activity: withLinkedAgent
             ? {
                 sessionId: "sess-1",
                 actionType: "build",
                 agentName: "Codex agent 123abc",
               }
-            : undefined
-        }
-        onLinkedAgentHoverChange={setHighlightedActivityId}
+            : undefined,
+          onLinkedAgentHoverChange: setHighlightedActivityId,
+        }}
       />
       <button data-testid="outside-focus-target">Outside focus</button>
       <AgentMonitor
