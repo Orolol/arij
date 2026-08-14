@@ -11,7 +11,7 @@ import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { getProvider } from "@/lib/providers";
 
 import { activityRegistry } from "@/lib/activity-registry";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import {
   enrichPromptWithDocumentMentions,
   MentionResolutionError,

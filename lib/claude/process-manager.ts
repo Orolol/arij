@@ -1,10 +1,10 @@
 import { spawnClaude, type ClaudeOptions, type ClaudeResult } from "./spawn";
 import { getProvider, type ProviderType, type ProviderSession } from "@/lib/providers";
 import {
-  type SessionStatus,
-  isValidTransition,
-  isTerminalStatus,
-} from "@/lib/sessions/status-machine";
+  type AgentSessionLifecycleStatus,
+  isValidSessionTransition,
+  isTerminalSessionStatus,
+} from "@/lib/agent-sessions/lifecycle";
 import { appendSessionChunk } from "@/lib/agent-sessions/chunks";
 import { parseClaudeOutput, isNoTextualOutputFallback } from "./json-parser";
 import { db } from "@/lib/db";
@@ -15,7 +15,7 @@ import { eq } from "drizzle-orm";
 // Types
 // ---------------------------------------------------------------------------
 
-export type { SessionStatus } from "@/lib/sessions/status-machine";
+export type SessionStatus = AgentSessionLifecycleStatus;
 
 export interface TrackedSession {
   sessionId: string;
@@ -101,8 +101,7 @@ class ClaudeProcessManager {
         mode: options.mode,
         allowedTools: options.allowedTools,
         model: options.model,
-        cliSessionId: options.cliSessionId ?? options.claudeSessionId,
-        claudeSessionId: options.claudeSessionId,
+        cliSessionId: options.cliSessionId,
         resumeSession: options.resumeSession,
         onChunk: (chunk) => {
           try {
@@ -156,7 +155,7 @@ class ClaudeProcessManager {
       status: "running",
       provider,
       options,
-      cliSessionId: options.cliSessionId ?? options.claudeSessionId,
+      cliSessionId: options.cliSessionId,
       startedAt: new Date(),
       kill,
       providerSession,
@@ -174,8 +173,7 @@ class ClaudeProcessManager {
         const resolvedCliSessionId =
           result.cliSessionId ??
           tracked.cliSessionId ??
-          tracked.options.cliSessionId ??
-          tracked.options.claudeSessionId;
+          tracked.options.cliSessionId;
 
         if (resolvedCliSessionId) {
           tracked.cliSessionId = resolvedCliSessionId;
@@ -188,7 +186,7 @@ class ClaudeProcessManager {
         this.persistResultAsChunk(sessionId, result, tracked.provider);
 
         // Only transition if the move is valid (e.g. not already cancelled)
-        if (isValidTransition(tracked.status, targetStatus)) {
+        if (isValidSessionTransition(tracked.status, targetStatus)) {
           tracked.status = targetStatus;
           tracked.completedAt = new Date();
           tracked.result = result;
@@ -198,7 +196,7 @@ class ClaudeProcessManager {
         const tracked = this.sessions.get(sessionId);
         if (!tracked) return;
 
-        if (isValidTransition(tracked.status, "failed")) {
+        if (isValidSessionTransition(tracked.status, "failed")) {
           tracked.status = "failed";
           tracked.completedAt = new Date();
           tracked.result = {
@@ -222,7 +220,7 @@ class ClaudeProcessManager {
     const session = this.sessions.get(sessionId);
     if (!session) return false;
 
-    if (!isValidTransition(session.status, "cancelled")) {
+    if (!isValidSessionTransition(session.status, "cancelled")) {
       return false;
     }
 
@@ -284,7 +282,7 @@ class ClaudeProcessManager {
     if (!session) return false;
 
     // Only terminal sessions can be removed
-    if (!isTerminalStatus(session.status)) {
+    if (!isTerminalSessionStatus(session.status)) {
       return false;
     }
 

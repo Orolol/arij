@@ -2,7 +2,7 @@ import fs from "fs";
 import { and, desc, eq, isNull } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
-import { extractLastNonEmptyText } from "@/lib/agent-sessions/chunks";
+import { extractLastNonEmptyText } from "@/lib/agent-sessions/last-text";
 
 export interface BackfillRecentSessionsInput {
   projectId?: string;

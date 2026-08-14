@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import { createId } from "@/lib/utils/nanoid";
 import { sqlite } from "@/lib/db";
+import { extractLastNonEmptyText } from "@/lib/agent-sessions/last-text";
 
 export type AgentSessionStreamType = "response" | "raw" | "output";
 
@@ -47,17 +48,6 @@ interface ExistingChunkRow {
 
 interface SequenceRow {
   sequence: number;
-}
-
-export function extractLastNonEmptyText(text: string): string | null {
-  const lines = text.split(/\r?\n/);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const trimmed = lines[index].trim();
-    if (trimmed) {
-      return trimmed;
-    }
-  }
-  return null;
 }
 
 export function createSessionChunkStore(

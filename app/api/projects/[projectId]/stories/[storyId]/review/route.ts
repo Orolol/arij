@@ -20,7 +20,7 @@ import fs from "fs";
 import path from "path";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { REVIEW_TYPE_TO_AGENT_TYPE } from "@/lib/agent-config/constants";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
@@ -272,7 +272,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       logsPath,
       branchName,
       worktreePath,
-      claudeSessionId: cliSessionId,
       cliSessionId,
       namedAgentId: resolvedAgent.namedAgentId ?? null,
       namedAgentName: resolvedAgent.name || null,

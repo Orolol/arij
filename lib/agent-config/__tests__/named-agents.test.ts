@@ -209,14 +209,14 @@ describe("deleteNamedAgent", () => {
 
 describe("resolveAgent", () => {
   it("returns fallback when no defaults configured", async () => {
-    const { resolveAgent } = await import("../providers");
+    const { resolveAgent } = await import("../agent-resolution");
     const result = await resolveAgent("build");
     expect(result.provider).toBe("claude-code");
     expect(result.namedAgentId).toBeNull();
   });
 
   it("resolves named agent when namedAgentId is set", async () => {
-    const { resolveAgent } = await import("../providers");
+    const { resolveAgent } = await import("../agent-resolution");
     const { createNamedAgent } = await import("../named-agents");
 
     const { data: agent } = await createNamedAgent({
@@ -242,7 +242,7 @@ describe("resolveAgent", () => {
   });
 
   it("falls back to raw provider when namedAgentId is null", async () => {
-    const { resolveAgent } = await import("../providers");
+    const { resolveAgent } = await import("../agent-resolution");
 
     testDb.insert(schema.agentProviderDefaults)
       .values({
@@ -260,7 +260,7 @@ describe("resolveAgent", () => {
   });
 
   it("project scope overrides global scope", async () => {
-    const { resolveAgent } = await import("../providers");
+    const { resolveAgent } = await import("../agent-resolution");
     const { createNamedAgent } = await import("../named-agents");
 
     const { data: globalAgent } = await createNamedAgent({
@@ -301,7 +301,7 @@ describe("resolveAgent", () => {
   });
 
   it("falls back to global when no project override", async () => {
-    const { resolveAgent } = await import("../providers");
+    const { resolveAgent } = await import("../agent-resolution");
     const { createNamedAgent } = await import("../named-agents");
 
     const { data: globalAgent } = await createNamedAgent({

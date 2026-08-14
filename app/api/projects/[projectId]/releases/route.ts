@@ -8,6 +8,7 @@ import {
   settings,
   agentSessions,
 } from "@/lib/db/schema";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { eq, desc, inArray, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
@@ -24,7 +25,7 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 import { processManager } from "@/lib/claude/process-manager";
 import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { applyTransition } from "@/lib/workflow/transition-service";
 import { emitReleaseCreated } from "@/lib/events/emit";
 import type { KanbanStatus } from "@/lib/types/kanban";
@@ -212,13 +213,15 @@ ${ticketContext}
             .from(agentSessions)
             .where(eq(agentSessions.id, resumeSessionId))
             .get();
+          // Legacy-row fallback handled inside resolveCliSessionId().
+          const previousCliSessionId = previous ? resolveCliSessionId(previous) : null;
           if (
             previous &&
             previous.projectId === projectId &&
             previous.provider === agentProvider &&
-            (previous.cliSessionId || previous.claudeSessionId)
+            previousCliSessionId
           ) {
-            cliSessionId = previous.cliSessionId ?? previous.claudeSessionId ?? undefined;
+            cliSessionId = previousCliSessionId;
             resumeSession = true;
           }
         }
@@ -235,7 +238,6 @@ ${ticketContext}
         prompt,
         logsPath,
         worktreePath: project.gitRepoPath || null,
-        claudeSessionId: cliSessionId,
         cliSessionId,
         agentType: "release_notes",
         namedAgentName: resolvedAgent.name || null,

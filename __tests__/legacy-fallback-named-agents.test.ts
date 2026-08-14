@@ -61,7 +61,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("build", "proj-1", "named-1");
 
@@ -82,7 +82,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("chat", undefined, "codex-agent");
 
@@ -103,7 +103,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("build", "proj-1", "gem-1");
 
@@ -123,7 +123,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("build", "proj-1", "deleted-id");
 
@@ -149,7 +149,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("build", "proj-1", null);
 
@@ -166,7 +166,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("chat", undefined, undefined);
 
@@ -182,7 +182,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("chat", undefined, "");
 
@@ -206,7 +206,7 @@ describe("resolveAgent fallback chain", () => {
       { provider: "gemini-cli", namedAgentId: null }, // project scope
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("gemini-cli");
@@ -225,7 +225,7 @@ describe("resolveAgent fallback chain", () => {
       },
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("codex");
@@ -239,7 +239,7 @@ describe("resolveAgent fallback chain", () => {
       { provider: "codex", namedAgentId: null }, // global scope
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("codex");
@@ -259,7 +259,7 @@ describe("resolveAgent fallback chain", () => {
       },
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("claude-code");
@@ -282,7 +282,7 @@ describe("resolveAgent fallback chain", () => {
       },
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("claude-code");
@@ -304,7 +304,7 @@ describe("resolveAgent fallback chain", () => {
       },
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("chat");
 
     expect(result.provider).toBe("claude-code");
@@ -316,7 +316,7 @@ describe("resolveAgent fallback chain", () => {
     // project scope: null, global scope: null, seeded agent: null
     mockDb.getQueue = [null, null, null];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result).toEqual({ provider: "claude-code", namedAgentId: null });
@@ -326,7 +326,7 @@ describe("resolveAgent fallback chain", () => {
     // global scope: null, seeded agent: null
     mockDb.getQueue = [null, null];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("chat");
 
     expect(result).toEqual({ provider: "claude-code", namedAgentId: null });
@@ -340,7 +340,7 @@ describe("resolveAgent fallback chain", () => {
       null, // named agent not found
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("codex");
@@ -358,7 +358,7 @@ describe("resolveAgent fallback chain", () => {
       null, // named agent not found
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("gemini-cli");
@@ -379,7 +379,7 @@ describe("seeded global default agent", () => {
 
   it("GLOBAL_DEFAULT_AGENT_NAME is 'Claude Code'", async () => {
     const { GLOBAL_DEFAULT_AGENT_NAME } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     expect(GLOBAL_DEFAULT_AGENT_NAME).toBe("Claude Code");
   });
@@ -397,7 +397,7 @@ describe("seeded global default agent", () => {
       },
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("spec_generation");
 
     expect(result.provider).toBe("claude-code");
@@ -419,7 +419,7 @@ describe("seeded global default agent", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("review_code", undefined, null);
 
@@ -438,7 +438,7 @@ describe("seeded global default agent", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId(
       "team_build",

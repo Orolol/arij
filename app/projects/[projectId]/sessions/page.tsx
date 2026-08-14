@@ -32,7 +32,7 @@ interface AgentSession {
   lastNonEmptyText?: string;
   error?: string;
   agentType?: string;
-  claudeSessionId?: string;
+  cliSessionId?: string | null;
   namedAgentName?: string | null;
   model?: string | null;
   createdAt: string;
@@ -213,7 +213,7 @@ function AgentSessionCard({
                   {session.model}
                 </span>
               )}
-              {session.claudeSessionId && (
+              {session.cliSessionId && (
                 <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-400/30">
                   resumable
                 </Badge>

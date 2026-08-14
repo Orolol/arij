@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listGlobalAgentProviders } from "@/lib/agent-config/providers";
+import { listGlobalAgentProviders } from "@/lib/agent-config/agent-resolution";
 
 export async function GET() {
   try {

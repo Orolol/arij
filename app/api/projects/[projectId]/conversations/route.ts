@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { chatConversations, chatMessages, namedAgents, projects } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
-import { resolveAgent } from "@/lib/agent-config/providers";
+import { resolveAgent } from "@/lib/agent-config/agent-resolution";
 import { isAgentProvider } from "@/lib/agent-config/constants";
 import { normalizeConversationAgentType } from "@/lib/chat/conversation-agent";
 import {
@@ -11,6 +11,7 @@ import {
   sortConversationsForLegacyParity,
 } from "@/lib/chat/parity-contract";
 import { runUnifiedChatCutoverMigrationOnce } from "@/lib/chat/unified-cutover-migration";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 
 function normalizeConversationsForParity<T extends {
   id: string;
@@ -85,7 +86,15 @@ export async function GET(
       .all();
   }
 
-  return NextResponse.json({ data: normalizeConversationsForParity(conversations) });
+  return NextResponse.json({
+    data: normalizeConversationsForParity(
+      conversations.map((conversation) => ({
+        ...conversation,
+        // Legacy-row fallback handled inside resolveCliSessionId().
+        cliSessionId: resolveCliSessionId(conversation),
+      })),
+    ),
+  });
 }
 
 export async function POST(

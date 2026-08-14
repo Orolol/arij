@@ -74,7 +74,7 @@ vi.mock("@/lib/agent-config/prompts", () => ({
   resolveAgentPrompt: mockResolvers.resolveAgentPrompt,
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentByNamedId: mockResolvers.resolveAgentByNamedId,
 }));
 

@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import type { ProviderType } from "@/lib/providers/types";
 
 interface ValidateResumeInput {
@@ -69,8 +70,8 @@ export function validateResumeSession(
   const provider = prevSession.provider ?? "claude-code";
   if (!isResumableProvider(provider)) return null;
 
-  const previousCliSessionId =
-    prevSession.cliSessionId ?? prevSession.claudeSessionId ?? null;
+  // Legacy-row fallback: pre-migration rows may only have claude_session_id.
+  const previousCliSessionId = resolveCliSessionId(prevSession);
 
   if (!previousCliSessionId) return null;
 

@@ -52,7 +52,7 @@ vi.mock("@/lib/db/schema", () => ({
   agentSessions: { id: "id", provider: "provider", model: "model", cliSessionId: "cli_session_id", claudeSessionId: "claude_session_id", namedAgentId: "named_agent_id" },
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentByNamedId: mockResolveAgent,
 }));
 

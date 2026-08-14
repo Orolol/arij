@@ -30,7 +30,7 @@ interface SessionDetail {
   completedAt?: string;
   createdAt: string;
   lastNonEmptyText?: string | null;
-  claudeSessionId?: string | null;
+  cliSessionId?: string | null;
   agentType?: string | null;
   namedAgentName?: string | null;
   model?: string | null;
@@ -178,7 +178,7 @@ export default function SessionDetailPage() {
                 {session.model}
               </span>
             )}
-            {session.claudeSessionId && (
+            {session.cliSessionId && (
               <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-400/30">
                 resumable
               </Badge>
@@ -252,11 +252,11 @@ export default function SessionDetailPage() {
                 : "-"}
           </div>
         </Card>
-        {session.claudeSessionId && (
+        {session.cliSessionId && (
           <Card className="p-3 col-span-2">
             <div className="text-xs text-muted-foreground">CLI Session ID</div>
             <div className="text-sm font-mono text-blue-400 truncate">
-              {session.claudeSessionId}
+              {session.cliSessionId}
             </div>
           </Card>
         )}

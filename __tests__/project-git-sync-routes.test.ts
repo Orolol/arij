@@ -55,7 +55,7 @@ vi.mock("@/lib/git/remote", () => ({
   PushValidationError: MockPushValidationError,
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentByNamedId: vi.fn(() => ({
     provider: "claude-code",
     model: "claude-opus-4-6",

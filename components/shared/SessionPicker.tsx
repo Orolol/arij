@@ -12,7 +12,6 @@ import {
 interface ResumableSession {
   id: string;
   cliSessionId: string | null;
-  claudeSessionId: string | null;
   provider: string | null;
   namedAgentId: string | null;
   agentType: string | null;

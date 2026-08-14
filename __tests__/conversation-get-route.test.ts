@@ -33,7 +33,7 @@ vi.mock("@/lib/db/schema", () => ({
   namedAgents: { id: "id", readableAgentName: "readableAgentName" },
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgent: vi.fn(() => ({ provider: "claude-code" })),
 }));
 

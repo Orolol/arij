@@ -134,7 +134,7 @@ export async function POST(
     fs.mkdirSync(logsDir, { recursive: true });
     const logsPath = path.join(logsDir, "logs.json");
 
-    const claudeSessionId = crypto.randomUUID();
+    const cliSessionId = crypto.randomUUID();
 
     createQueuedSession({
       id: sessionId,
@@ -147,7 +147,7 @@ export async function POST(
       logsPath,
       branchName: epic.branchName,
       worktreePath,
-      claudeSessionId,
+      cliSessionId,
       agentType: "merge",
       namedAgentName: null,
       model: null,
@@ -160,7 +160,7 @@ export async function POST(
       prompt,
       cwd: worktreePath,
       allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-      claudeSessionId,
+      cliSessionId,
     });
 
     // Background: wait for completion, attempt merge again (no retry cap)

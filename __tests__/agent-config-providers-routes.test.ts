@@ -9,7 +9,7 @@ const mockDb = vi.hoisted(() => ({
   getQueue: [] as unknown[],
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   listGlobalAgentProviders: mockProviderHelpers.listGlobalAgentProviders,
   listMergedProjectAgentProviders: mockProviderHelpers.listMergedProjectAgentProviders,
 }));

@@ -12,7 +12,7 @@ import {
   MentionResolutionError,
   validateMentionsExist,
 } from "@/lib/documents/mentions";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { getProvider } from "@/lib/providers";
 
 export async function GET(

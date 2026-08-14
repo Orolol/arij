@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions, epics, projects, qaReports, userStories } from "@/lib/db/schema";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { createId } from "@/lib/utils/nanoid";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { extractJsonFromOutput } from "@/lib/claude/json-parser";
 import { getProvider } from "@/lib/providers";
@@ -216,8 +217,10 @@ ${epicTypeRule}
   // Determine if we can resume the original session
   const provider = (originalSession?.provider ?? resolvedAgent.provider) as ProviderType;
   const model = originalSession?.model ?? resolvedAgent.model;
-  const previousCliSessionId =
-    originalSession?.cliSessionId ?? originalSession?.claudeSessionId ?? null;
+  // Legacy-row fallback handled inside resolveCliSessionId().
+  const previousCliSessionId = originalSession
+    ? resolveCliSessionId(originalSession)
+    : null;
   const canResume =
     previousCliSessionId !== null && isResumableProvider(provider);
 

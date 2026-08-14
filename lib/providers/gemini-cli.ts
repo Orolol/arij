@@ -44,7 +44,6 @@ export class GeminiCliProvider extends BaseCliProvider {
       onChunk,
       logIdentifier,
       cliSessionId,
-      claudeSessionId,
       resumeSession,
     } = options;
 
@@ -54,7 +53,7 @@ export class GeminiCliProvider extends BaseCliProvider {
       cwd,
       model,
       logIdentifier,
-      sessionId: cliSessionId ?? claudeSessionId,
+      sessionId: cliSessionId,
       resumeSession,
       onRawChunk: ({ source, index, text, emittedAt }) =>
         onChunk?.({

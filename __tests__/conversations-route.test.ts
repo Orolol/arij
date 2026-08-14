@@ -46,7 +46,7 @@ vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "conv-created"),
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgent: vi.fn(() => ({
     provider: "claude-code",
     namedAgentId: null,

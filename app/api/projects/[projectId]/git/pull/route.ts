@@ -2,13 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions, projects } from "@/lib/db/schema";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import {
   getCurrentGitBranch,
   getConflictFileDiffs,
   pullGitBranchWithConflictSupport,
 } from "@/lib/git/remote";
 import { writeGitSyncLog } from "@/lib/github/sync-log";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { createId } from "@/lib/utils/nanoid";
 import {
   createQueuedSession,
@@ -121,13 +122,15 @@ export async function POST(request: NextRequest, { params }: Params) {
               .from(agentSessions)
               .where(eq(agentSessions.id, resumeSessionId))
               .get();
+            // Legacy-row fallback handled inside resolveCliSessionId().
+            const previousCliSessionId = previous ? resolveCliSessionId(previous) : null;
             if (
               previous &&
               previous.projectId === projectId &&
               previous.provider === provider &&
-              (previous.cliSessionId || previous.claudeSessionId)
+              previousCliSessionId
             ) {
-              cliSessionId = previous.cliSessionId ?? previous.claudeSessionId ?? undefined;
+              cliSessionId = previousCliSessionId;
               resumeSession = true;
             }
           }
@@ -162,7 +165,6 @@ export async function POST(request: NextRequest, { params }: Params) {
           logsPath,
           branchName: branch,
           worktreePath: project.gitRepoPath,
-          claudeSessionId: cliSessionId,
           cliSessionId,
           namedAgentId: resolved.namedAgentId ?? null,
           agentType: "merge",

@@ -27,11 +27,11 @@ const ALLOWED_TRANSITIONS: Record<
   AgentSessionLifecycleStatus,
   AgentSessionLifecycleStatus[]
 > = {
-  queued: ["running"],
+  queued: ["running", "cancelled", "failed"],
   running: ["completed", "failed", "cancelled"],
-  completed: [],
-  failed: [],
-  cancelled: [],
+  completed: [], // terminal
+  failed: [], // terminal
+  cancelled: [], // terminal
 };
 
 export interface SessionLifecycleSnapshot {
@@ -112,6 +112,35 @@ export function isValidSessionTransition(
   toStatus: AgentSessionLifecycleStatus
 ): boolean {
   return ALLOWED_TRANSITIONS[fromStatus].includes(toStatus);
+}
+
+/**
+ * Asserts a valid transition; throws a SessionLifecycleConflictError if
+ * invalid. Returns the target status for convenience.
+ */
+export function assertValidSessionTransition(
+  sessionId: string,
+  fromStatus: AgentSessionLifecycleStatus,
+  toStatus: AgentSessionLifecycleStatus
+): AgentSessionLifecycleStatus {
+  if (!isValidSessionTransition(fromStatus, toStatus)) {
+    throw new SessionLifecycleConflictError({
+      sessionId,
+      fromStatus,
+      toStatus,
+    });
+  }
+  return toStatus;
+}
+
+/**
+ * Returns true if the given status is terminal (no further transitions
+ * allowed).
+ */
+export function isTerminalSessionStatus(
+  status: AgentSessionLifecycleStatus
+): boolean {
+  return ALLOWED_TRANSITIONS[status].length === 0;
 }
 
 export interface SessionTransitionPatch {

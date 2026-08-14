@@ -13,7 +13,6 @@ export interface Conversation {
   provider: string;
   namedAgentId?: string | null;
   cliSessionId?: string | null;
-  claudeSessionId?: string | null;
   createdAt: string;
 }
 

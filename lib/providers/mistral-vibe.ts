@@ -29,14 +29,13 @@ export class MistralVibeProvider extends BaseCliProvider {
   }
 
   buildArgs(options: ProviderSpawnOptions): string[] {
-    const { prompt, mode, model, cliSessionId, claudeSessionId, resumeSession } = options;
-    const sessionId = cliSessionId ?? claudeSessionId;
+    const { prompt, mode, model, cliSessionId, resumeSession } = options;
 
     const args: string[] = [];
 
     // Resume support
-    if (sessionId && resumeSession) {
-      args.push("--resume", sessionId);
+    if (cliSessionId && resumeSession) {
+      args.push("--resume", cliSessionId);
     }
 
     args.push("--prompt", prompt);

@@ -182,8 +182,7 @@ export abstract class BaseCliProvider implements AgentProvider {
    * the entire lifecycle. Most subclasses should NOT override this.
    */
   spawn(options: ProviderSpawnOptions): ProviderSession {
-    const { sessionId, prompt, cwd, logIdentifier } = options;
-    const cliSessionId = options.cliSessionId ?? options.claudeSessionId;
+    const { sessionId, prompt, cwd, logIdentifier, cliSessionId } = options;
     const effectiveCwd = cwd || process.cwd();
     const args = this.buildArgs(options);
     const callbacks = this.buildChunkCallbacks(options);

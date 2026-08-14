@@ -39,7 +39,7 @@ describe("Agent provider resolver", () => {
   });
 
   it("resolveAgent uses project override first", async () => {
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     mockDb.getQueue = [{ provider: "codex" }];
 
     const resolved = await resolveAgent("build", "proj-1");
@@ -47,7 +47,7 @@ describe("Agent provider resolver", () => {
   });
 
   it("resolveAgent falls back to global", async () => {
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     mockDb.getQueue = [null, { provider: "codex" }];
 
     const resolved = await resolveAgent("chat", "proj-1");
@@ -55,7 +55,7 @@ describe("Agent provider resolver", () => {
   });
 
   it("resolveAgent falls back to claude-code", async () => {
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     mockDb.getQueue = [null, null];
 
     const resolved = await resolveAgent("ticket_build", "proj-1");
@@ -64,7 +64,7 @@ describe("Agent provider resolver", () => {
 
   it("listMergedProjectAgentProviders merges project > global > fallback", async () => {
     const { listMergedProjectAgentProviders } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     mockDb.allQueue = [
       [{ agentType: "chat", provider: "codex", scope: "global" }],
@@ -85,7 +85,7 @@ describe("Agent provider resolver", () => {
   });
 
   it("resolveAgent returns provider + model from named agent assignment", async () => {
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     // resolveAgent first queries agentProviderDefaults for project scope (get),
     // which returns a row with namedAgentId. Then it calls resolveFromRow which
     // does a select().from(namedAgents).where(...).get() to look up the named agent.

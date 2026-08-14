@@ -17,7 +17,7 @@ import {
 import { processManager } from "@/lib/claude/process-manager";
 import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import {
   createAgentAlreadyRunningPayload,
@@ -190,7 +190,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     logsPath,
     branchName,
     worktreePath,
-    claudeSessionId: cliSessionId,
     cliSessionId,
     namedAgentId: resolved.namedAgentId ?? null,
     agentType: "merge",

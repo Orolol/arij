@@ -586,7 +586,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
                 activeConversation?.label,
               )}
             </h3>
-            {(activeConversation?.cliSessionId || activeConversation?.claudeSessionId) && (
+            {activeConversation?.cliSessionId && (
               <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-400/30">
                 session linked
               </Badge>

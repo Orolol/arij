@@ -68,7 +68,7 @@ export const db = drizzle(sqlite, { schema });
 
 // ---------------------------------------------------------------------------
 // Seed global default named agent (idempotent, uses raw sqlite to avoid
-// circular dependency with lib/agent-config/providers.ts)
+// circular dependency with lib/agent-config/agent-resolution.ts)
 // ---------------------------------------------------------------------------
 {
   const existing = sqlite

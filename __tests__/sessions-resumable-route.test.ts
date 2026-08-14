@@ -73,7 +73,7 @@ vi.mock("@/lib/db/schema", () => ({
   },
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgent: mockResolveAgent,
   resolveAgentByNamedId: mockResolveAgentByNamedId,
 }));

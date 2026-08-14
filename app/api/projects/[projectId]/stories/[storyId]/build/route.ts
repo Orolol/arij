@@ -13,7 +13,7 @@ import { processManager } from "@/lib/claude/process-manager";
 import { buildTicketBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
@@ -232,7 +232,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     logsPath,
     branchName,
     worktreePath,
-    claudeSessionId: cliSessionId,
     cliSessionId,
     namedAgentId: resolvedAgent.namedAgentId ?? null,
     agentType: "ticket_build",

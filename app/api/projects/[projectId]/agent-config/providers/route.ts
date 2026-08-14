@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
-import { listMergedProjectAgentProviders } from "@/lib/agent-config/providers";
+import { listMergedProjectAgentProviders } from "@/lib/agent-config/agent-resolution";
 
 type Params = { params: Promise<{ projectId: string }> };
 

@@ -153,7 +153,7 @@ vi.mock("@/lib/agent-sessions/validate-resume", () => ({
   isResumableProvider: vi.fn(() => false),
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentByNamedId: vi.fn(() => ({
     provider: "claude-code",
     name: "Claude Code",

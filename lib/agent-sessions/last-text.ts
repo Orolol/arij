@@ -1,6 +1,23 @@
 import fs from "fs";
 
 /**
+ * Extract the last non-empty line from a block of text.
+ *
+ * Walks the lines backwards and returns the first trimmed non-empty line,
+ * or null if every line is empty.
+ */
+export function extractLastNonEmptyText(text: string): string | null {
+  const lines = text.split(/\r?\n/);
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const trimmed = lines[index].trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return null;
+}
+
+/**
  * Extract the last non-empty text from a session log file.
  *
  * Log files are JSON arrays of message objects. We search from the end
@@ -8,7 +25,7 @@ import fs from "fs";
  *
  * Returns null if the file doesn't exist, is invalid, or has no text content.
  */
-export function extractLastNonEmptyText(
+export function extractLastNonEmptyTextFromFile(
   logsPath: string | null,
 ): string | null {
   if (!logsPath || !fs.existsSync(logsPath)) {

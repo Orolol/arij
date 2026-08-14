@@ -16,8 +16,6 @@ export interface ClaudeOptions {
   model?: string;
   logIdentifier?: string;
   cliSessionId?: string;
-  /** @deprecated Use cliSessionId. */
-  claudeSessionId?: string;
   resumeSession?: boolean;
 }
 
@@ -66,8 +64,7 @@ export interface SpawnedClaudeStream {
  * The returned `kill` function can be called to abort the process early.
  */
 export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
-  const { mode, prompt, cwd, allowedTools, model, resumeSession } = options;
-  const cliSessionId = options.cliSessionId ?? options.claudeSessionId;
+  const { mode, prompt, cwd, allowedTools, model, cliSessionId, resumeSession } = options;
 
   // --permission-mode: "plan" for read-only, "bypassPermissions" for code/analyze
   const permissionMode = mode === "plan" ? "plan" : "bypassPermissions";
@@ -253,8 +250,8 @@ function extractResultText(result: unknown): string {
  * The `assistant` event is always ignored (redundant).
  */
 export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
-  const { mode, prompt, cwd, allowedTools, model, logIdentifier, resumeSession } = options;
-  const cliSessionId = options.cliSessionId ?? options.claudeSessionId;
+  const { mode, prompt, cwd, allowedTools, model, logIdentifier, cliSessionId, resumeSession } =
+    options;
 
   const permissionMode = mode === "plan" ? "plan" : "bypassPermissions";
 

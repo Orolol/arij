@@ -45,7 +45,6 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       allowedTools,
       model,
       cliSessionId,
-      claudeSessionId,
       resumeSession,
     } = options;
 
@@ -55,7 +54,7 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       cwd,
       allowedTools,
       model,
-      cliSessionId: cliSessionId ?? claudeSessionId,
+      cliSessionId,
       resumeSession,
     });
 

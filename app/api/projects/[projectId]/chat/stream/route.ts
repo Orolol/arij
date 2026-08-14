@@ -3,11 +3,12 @@ import { db } from "@/lib/db";
 import { chatMessages, chatAttachments, chatConversations, projects, settings, epics } from "@/lib/db/schema";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { spawnClaudeStream, spawnClaude } from "@/lib/claude/spawn";
 import { buildChatPrompt, buildEpicRefinementPrompt, buildEpicFinalizationPrompt, buildTitleGenerationPrompt } from "@/lib/claude/prompt-builder";
 import { getProvider, type ProviderType } from "@/lib/providers";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { isEpicCreationConversationAgentType } from "@/lib/chat/conversation-agent";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import { activityRegistry } from "@/lib/activity-registry";
@@ -201,8 +202,10 @@ export async function POST(
   const providerSupportsResume = RESUME_CAPABLE_PROVIDERS.has(
     resolvedAgent.provider as ProviderType
   );
-  let cliSessionId =
-    conversation?.cliSessionId ?? conversation?.claudeSessionId ?? undefined;
+  // Legacy-row fallback handled inside resolveCliSessionId().
+  let cliSessionId = conversation
+    ? resolveCliSessionId(conversation) ?? undefined
+    : undefined;
   const resumeSession = Boolean(conversationId && cliSessionId && providerSupportsResume);
   if (!cliSessionId && providerSupportsResume) {
     cliSessionId = crypto.randomUUID();
@@ -212,11 +215,7 @@ export async function POST(
   function persistConversationSessionId(nextCliSessionId?: string) {
     if (!conversationId || !nextCliSessionId) return;
     db.update(chatConversations)
-      .set({
-        cliSessionId: nextCliSessionId,
-        // Keep legacy column populated while callers migrate.
-        claudeSessionId: nextCliSessionId,
-      })
+      .set({ cliSessionId: nextCliSessionId })
       .where(eq(chatConversations.id, conversationId))
       .run();
   }
