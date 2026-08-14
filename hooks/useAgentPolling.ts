@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { usePolling } from "@/hooks/usePolling";
 
 export interface UnifiedActivity {
   id: string;
@@ -70,11 +71,7 @@ export function useAgentPolling(projectId: string, intervalMs = 3000, refreshTri
     }
   }, [projectId]);
 
-  useEffect(() => {
-    poll();
-    const interval = setInterval(poll, intervalMs);
-    return () => clearInterval(interval);
-  }, [poll, intervalMs]);
+  usePolling(poll, intervalMs);
 
   // Immediate re-poll when SSE triggers a refresh
   useEffect(() => {

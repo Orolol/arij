@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { usePolling } from "@/hooks/usePolling";
 import type { TicketEvent, TicketEventType } from "@/lib/events/bus";
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected";
@@ -22,7 +23,6 @@ export function useProjectEvents(
   const esRef = useRef<EventSource | null>(null);
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  const pollTimer = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const connect = useCallback(() => {
     // Close existing
@@ -68,26 +68,18 @@ export function useProjectEvents(
   }, [projectId]);
 
   // Fallback polling when SSE is disconnected
-  useEffect(() => {
-    if (status === "disconnected") {
-      // Start fallback polling
-      pollTimer.current = setInterval(() => {
-        setPollTick((t) => t + 1);
-      }, FALLBACK_POLL_MS);
-    } else {
-      // Stop polling when connected
-      clearInterval(pollTimer.current);
-    }
-
-    return () => clearInterval(pollTimer.current);
-  }, [status]);
+  const bumpPollTick = useCallback(() => {
+    setPollTick((t) => t + 1);
+  }, []);
+  usePolling(bumpPollTick, FALLBACK_POLL_MS, status === "disconnected", {
+    immediate: false,
+  });
 
   useEffect(() => {
     connect();
 
     return () => {
       clearTimeout(reconnectTimer.current);
-      clearInterval(pollTimer.current);
       if (esRef.current) {
         esRef.current.close();
         esRef.current = null;

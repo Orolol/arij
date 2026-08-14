@@ -4,8 +4,8 @@ import type { ComponentProps } from "react";
 import { EpicDetail } from "@/components/kanban/EpicDetail";
 
 const mockUseEpicDetail = vi.hoisted(() => vi.fn());
-const mockUseEpicComments = vi.hoisted(() => vi.fn());
-const mockUseEpicAgent = vi.hoisted(() => vi.fn());
+const mockUseTicketComments = vi.hoisted(() => vi.fn());
+const mockUseAgentDispatch = vi.hoisted(() => vi.fn());
 const mockUseEpicPr = vi.hoisted(() => vi.fn());
 const mockUseGitHubConfig = vi.hoisted(() => vi.fn());
 const mockUseGitStatus = vi.hoisted(() => vi.fn());
@@ -15,12 +15,12 @@ vi.mock("@/hooks/useEpicDetail", () => ({
   useEpicDetail: (...args: unknown[]) => mockUseEpicDetail(...args),
 }));
 
-vi.mock("@/hooks/useEpicComments", () => ({
-  useEpicComments: (...args: unknown[]) => mockUseEpicComments(...args),
+vi.mock("@/hooks/useTicketComments", () => ({
+  useTicketComments: (...args: unknown[]) => mockUseTicketComments(...args),
 }));
 
-vi.mock("@/hooks/useEpicAgent", () => ({
-  useEpicAgent: (...args: unknown[]) => mockUseEpicAgent(...args),
+vi.mock("@/hooks/useAgentDispatch", () => ({
+  useAgentDispatch: (...args: unknown[]) => mockUseAgentDispatch(...args),
 }));
 
 vi.mock("@/hooks/useEpicPr", () => ({
@@ -39,8 +39,8 @@ vi.mock("@/hooks/useProvidersAvailable", () => ({
   useProvidersAvailable: (...args: unknown[]) => mockUseProvidersAvailable(...args),
 }));
 
-vi.mock("@/components/epic/EpicActions", () => ({
-  EpicActions: () => <div data-testid="epic-actions" />,
+vi.mock("@/components/shared/AgentActionsBar", () => ({
+  AgentActionsBar: () => <div data-testid="epic-actions" />,
 }));
 
 vi.mock("@/components/epic/UserStoryQuickActions", () => ({
@@ -82,12 +82,12 @@ describe("EpicDetail delete flow", () => {
       refresh: vi.fn(),
       setPolling: vi.fn(),
     });
-    mockUseEpicComments.mockReturnValue({
+    mockUseTicketComments.mockReturnValue({
       comments: [],
       loading: false,
       addComment: vi.fn(),
     });
-    mockUseEpicAgent.mockReturnValue({
+    mockUseAgentDispatch.mockReturnValue({
       activeSession: null,
       dispatching: false,
       isRunning: false,

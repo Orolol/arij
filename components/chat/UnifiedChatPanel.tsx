@@ -35,6 +35,7 @@ import { MessageList } from "@/components/chat/MessageList";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { QuestionCards } from "@/components/chat/QuestionCards";
 import { useConversations } from "@/hooks/useConversations";
+import { usePolling } from "@/hooks/usePolling";
 import { useChat } from "@/hooks/useChat";
 import { useEpicCreate } from "@/hooks/useEpicCreate";
 import {
@@ -179,13 +180,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       previousSending.current = sending;
     }, [sending, refreshConversations]);
 
-    useEffect(() => {
-      const interval = setInterval(() => {
-        refreshConversations();
-      }, 3000);
-
-      return () => clearInterval(interval);
-    }, [refreshConversations]);
+    usePolling(refreshConversations, 3000, true, { immediate: false });
 
     useEffect(() => {
       if (typeof window === "undefined") {

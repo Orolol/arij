@@ -3,8 +3,9 @@
 import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
+import { PriorityBadge } from "@/components/shared/PriorityBadge";
+import { TicketTypeBadge } from "@/components/shared/TicketTypeBadge";
 import {
   Tooltip,
   TooltipContent,
@@ -12,8 +13,6 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
-  PRIORITY_LABELS,
-  PRIORITY_COLORS,
   type KanbanEpic,
   type KanbanAgentActionType,
   type KanbanEpicAgentActivity,
@@ -24,7 +23,6 @@ import {
   Hammer,
   Search,
   GitMerge,
-  Bug,
   Bot,
   AlertTriangle,
   RotateCcw,
@@ -250,17 +248,8 @@ export function EpicCard({
               Retry
             </button>
           )}
-          <Badge
-            className={`text-xs ${PRIORITY_COLORS[epic.priority] || PRIORITY_COLORS[0]}`}
-          >
-            {PRIORITY_LABELS[epic.priority] || "Low"}
-          </Badge>
-          {epic.type === "bug" && (
-            <Badge className="text-xs bg-red-500/10 text-red-400">
-              <Bug className="h-3 w-3 mr-0.5" />
-              Bug
-            </Badge>
-          )}
+          <PriorityBadge priority={epic.priority} />
+          <TicketTypeBadge type={epic.type} />
         </div>
       </div>
       <div className="flex items-center justify-between mt-1">

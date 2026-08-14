@@ -14,32 +14,24 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { InlineEdit } from "./InlineEdit";
 import { GitSyncBadge } from "./GitSyncBadge";
 import { useEpicDetail } from "@/hooks/useEpicDetail";
-import { useEpicComments } from "@/hooks/useEpicComments";
-import { useEpicAgent } from "@/hooks/useEpicAgent";
+import { useTicketComments } from "@/hooks/useTicketComments";
+import { useAgentDispatch } from "@/hooks/useAgentDispatch";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import { useGitStatus } from "@/hooks/useGitStatus";
-import { EpicActions } from "@/components/epic/EpicActions";
+import { AgentActionsBar } from "@/components/shared/AgentActionsBar";
+import { AgentDispatchDialog } from "@/components/shared/AgentDispatchDialog";
+import { TicketTypeBadge } from "@/components/shared/TicketTypeBadge";
 import { UserStoryQuickActions } from "@/components/epic/UserStoryQuickActions";
 import { CommentThread } from "@/components/story/CommentThread";
 import { Badge } from "@/components/ui/badge";
 import { PRIORITY_LABELS, KANBAN_COLUMNS, COLUMN_LABELS } from "@/lib/types/kanban";
 import { useEpicPr } from "@/hooks/useEpicPr";
 import { PrBadge } from "@/components/github/PrBadge";
-import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, GitPullRequest, Wrench, ArrowUp, ArrowDown, Upload, RefreshCw, Bug } from "lucide-react";
+import { Plus, Trash2, Check, Circle, Loader2, GitBranch, GitMerge, GitPullRequest, Wrench, ArrowUp, ArrowDown, Upload, RefreshCw } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { isAgentAlreadyRunningError } from "@/lib/agents/client-error";
-import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
-import { SessionPicker } from "@/components/shared/SessionPicker";
 import { PermanentDeleteDialog } from "@/components/shared/PermanentDeleteDialog";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-  DialogFooter,
-} from "@/components/ui/dialog";
 import { DependencyEditor } from "@/components/dependencies/DependencyEditor";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { DiffViewer } from "@/components/review/DiffViewer";
@@ -80,7 +72,7 @@ export function EpicDetail({
     comments,
     loading: commentsLoading,
     addComment,
-  } = useEpicComments(projectId, epicId);
+  } = useTicketComments(projectId, { kind: "epic", epicId });
 
   const {
     activeSession,
@@ -90,7 +82,7 @@ export function EpicDetail({
     sendToReview,
     resolveMerge,
     approve,
-  } = useEpicAgent(projectId, epicId);
+  } = useAgentDispatch(projectId, { kind: "epic", epicId });
 
   const {
     pr,
@@ -284,19 +276,18 @@ export function EpicDetail({
                 className="text-lg font-bold"
               />
             </div>
-            {epic.type === "bug" && (
-              <Badge className="bg-red-500/10 text-red-400 text-xs w-fit">
-                <Bug className="h-3 w-3 mr-1" />
-                Bug
-              </Badge>
-            )}
+            <TicketTypeBadge
+              type={epic.type}
+              className="bg-red-500/10 text-red-400 text-xs w-fit"
+              iconClassName="h-3 w-3 mr-1"
+            />
           </div>
 
           <div className="px-4 py-4 space-y-4">
             {/* Epic Actions Bar */}
-            <EpicActions
+            <AgentActionsBar
               projectId={projectId}
-              epic={epic}
+              target={{ kind: "epic", epic }}
               dispatching={dispatching}
               isRunning={isRunning}
               activeSessionId={activeSession?.id || null}
@@ -716,51 +707,36 @@ export function EpicDetail({
         </>
       )}
 
-      <Dialog open={resolveMergeOpen} onOpenChange={(open) => { setResolveMergeOpen(open); if (!open) setResolveMergeResumeSessionId(undefined); }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Resolve Merge Conflicts</DialogTitle>
-            <DialogDescription>
-              Launch an agent to resolve merge conflicts for this epic.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm text-muted-foreground">Agent:</span>
-            <NamedAgentSelect
-              value={resolveMergeAgentId}
-              onChange={setResolveMergeAgentId}
-              className="w-44 h-8 text-xs"
-            />
-          </div>
-          {epicId && (
-            <SessionPicker
-              projectId={projectId}
-              epicId={epicId}
-              agentType="merge"
-              namedAgentId={resolveMergeAgentId}
-              provider="claude-code"
-              selectedSessionId={resolveMergeResumeSessionId}
-              onSelect={setResolveMergeResumeSessionId}
-            />
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setResolveMergeOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              onClick={() => handleResolveMerge(resolveMergeAgentId, resolveMergeResumeSessionId)}
-              disabled={resolvingMerge || isRunning}
-            >
-              {resolvingMerge ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-1" />
-              ) : (
-                <Wrench className="h-4 w-4 mr-1" />
-              )}
-              Dispatch Agent
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <AgentDispatchDialog
+        open={resolveMergeOpen}
+        onOpenChange={(open) => { setResolveMergeOpen(open); if (!open) setResolveMergeResumeSessionId(undefined); }}
+        title="Resolve Merge Conflicts"
+        description="Launch an agent to resolve merge conflicts for this epic."
+        projectId={projectId}
+        agentProps={{
+          value: resolveMergeAgentId,
+          onChange: setResolveMergeAgentId,
+          className: "w-44 h-8 text-xs",
+        }}
+        sessionPicker={
+          epicId
+            ? {
+                epicId,
+                agentType: "merge",
+                namedAgentId: resolveMergeAgentId,
+                provider: "claude-code",
+                selectedSessionId: resolveMergeResumeSessionId,
+                onSelect: setResolveMergeResumeSessionId,
+              }
+            : undefined
+        }
+        confirmLabel="Dispatch Agent"
+        confirmIcon={<Wrench className="h-4 w-4 mr-1" />}
+        busy={resolvingMerge}
+        confirmDisabled={resolvingMerge || isRunning}
+        onConfirm={() => handleResolveMerge(resolveMergeAgentId, resolveMergeResumeSessionId)}
+        onCancel={() => setResolveMergeOpen(false)}
+      />
 
       <PermanentDeleteDialog
         open={deleteDialogOpen}

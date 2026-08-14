@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { usePolling } from "@/hooks/usePolling";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -83,23 +84,17 @@ export default function SessionDetailPage() {
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function loadSession() {
+  const loadSession = useCallback(async () => {
     const res = await fetch(
       `/api/projects/${projectId}/sessions/${sessionId}`
     );
     const data = await res.json();
     setSession(data.data);
     setLoading(false);
-  }
-
-  useEffect(() => {
-    loadSession();
-    // Poll if running
-    const interval = setInterval(() => {
-      loadSession();
-    }, 3000);
-    return () => clearInterval(interval);
   }, [projectId, sessionId]);
+
+  // Initial load + poll if running
+  usePolling(loadSession, 3000);
 
   async function handleCancel() {
     await fetch(`/api/projects/${projectId}/sessions/${sessionId}`, {

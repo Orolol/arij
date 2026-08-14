@@ -3,11 +3,11 @@
 import { useParams, useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { useStoryDetail } from "@/hooks/useStoryDetail";
-import { useComments } from "@/hooks/useComments";
-import { useTicketAgent } from "@/hooks/useTicketAgent";
+import { useTicketComments } from "@/hooks/useTicketComments";
+import { useAgentDispatch } from "@/hooks/useAgentDispatch";
 import { StoryDetailPanel } from "@/components/story/StoryDetailPanel";
 import { CommentThread } from "@/components/story/CommentThread";
-import { StoryActions } from "@/components/story/StoryActions";
+import { AgentActionsBar } from "@/components/shared/AgentActionsBar";
 import { Button } from "@/components/ui/button";
 import { PermanentDeleteDialog } from "@/components/shared/PermanentDeleteDialog";
 import { ArrowLeft, Loader2, XCircle, X } from "lucide-react";
@@ -41,7 +41,7 @@ export default function StoryDetailPage() {
     comments,
     loading: commentsLoading,
     addComment,
-  } = useComments(projectId, storyId);
+  } = useTicketComments(projectId, { kind: "story", storyId });
 
   const {
     activeSession,
@@ -50,7 +50,11 @@ export default function StoryDetailPage() {
     sendToDev,
     sendToReview,
     approve,
-  } = useTicketAgent(projectId, storyId, story?.epicId);
+  } = useAgentDispatch(projectId, {
+    kind: "story",
+    storyId,
+    epicId: story?.epicId,
+  });
 
   function addToast(message: string, href?: string) {
     const id = Date.now().toString();
@@ -136,9 +140,9 @@ export default function StoryDetailPage() {
           </span>
         )}
         <div className="flex-1" />
-        <StoryActions
+        <AgentActionsBar
           projectId={projectId}
-          story={story}
+          target={{ kind: "story", story }}
           dispatching={dispatching}
           isRunning={isRunning}
           onSendToDev={async (comment, namedAgentId, resumeSessionId) => {

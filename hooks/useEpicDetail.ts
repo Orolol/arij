@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { usePolling } from "@/hooks/usePolling";
 
 interface UserStory {
   id: string;
@@ -34,7 +35,6 @@ export function useEpicDetail(projectId: string, epicId: string | null) {
   const [userStories, setUserStories] = useState<UserStory[]>([]);
   const [loading, setLoading] = useState(false);
   const [polling, setPolling] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const fetchData = useCallback(async () => {
     if (!epicId) return;
@@ -69,20 +69,9 @@ export function useEpicDetail(projectId: string, epicId: string | null) {
     loadData();
   }, [loadData]);
 
-  // Silent background poll — only when polling is enabled
-  useEffect(() => {
-    if (!polling || !epicId) {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-      return;
-    }
-    pollRef.current = setInterval(fetchData, 5000);
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [polling, epicId, fetchData]);
+  // Silent background poll — only when polling is enabled. The initial load
+  // above already fetched, so skip the immediate call.
+  usePolling(fetchData, 5000, polling && !!epicId, { immediate: false });
 
   // refresh: silent one-shot fetch (no loading state)
   const refresh = useCallback(async () => {

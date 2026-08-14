@@ -1,13 +1,12 @@
 /**
- * Tests that EpicActions and StoryActions show the correct buttons
- * when an epic/story is in "done" status — specifically that
+ * Tests that AgentActionsBar (merged EpicActions + StoryActions) shows the
+ * correct buttons when an epic/story is in "done" status — specifically that
  * "Agent Review" is available on done items.
  */
 
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { EpicActions } from "@/components/epic/EpicActions";
-import { StoryActions } from "@/components/story/StoryActions";
+import { AgentActionsBar } from "@/components/shared/AgentActionsBar";
 
 vi.mock("@/components/documents/MentionTextarea", () => ({
   MentionTextarea: ({
@@ -30,10 +29,13 @@ vi.mock("@/components/documents/MentionTextarea", () => ({
 
 const noop = vi.fn().mockResolvedValue(undefined);
 
-describe("EpicActions — done status", () => {
+describe("AgentActionsBar (epic target) — done status", () => {
   const baseProps = {
     projectId: "proj-1",
-    epic: { id: "e1", title: "Epic", status: "done" },
+    target: {
+      kind: "epic" as const,
+      epic: { id: "e1", title: "Epic", status: "done" },
+    },
     dispatching: false,
     isRunning: false,
     codexAvailable: false,
@@ -43,25 +45,28 @@ describe("EpicActions — done status", () => {
   };
 
   it("shows Agent Review button when epic is done", () => {
-    render(<EpicActions {...baseProps} />);
+    render(<AgentActionsBar {...baseProps} />);
     expect(screen.getByText("Agent Review")).toBeInTheDocument();
   });
 
   it("does NOT show Send to Dev button when epic is done", () => {
-    render(<EpicActions {...baseProps} />);
+    render(<AgentActionsBar {...baseProps} />);
     expect(screen.queryByText("Send to Dev")).not.toBeInTheDocument();
   });
 
   it("does NOT show Approve button when epic is done", () => {
-    render(<EpicActions {...baseProps} />);
+    render(<AgentActionsBar {...baseProps} />);
     expect(screen.queryByText("Approve")).not.toBeInTheDocument();
   });
 });
 
-describe("StoryActions — done status", () => {
+describe("AgentActionsBar (story target) — done status", () => {
   const baseProps = {
     projectId: "proj-1",
-    story: { id: "s1", title: "Story", status: "done" },
+    target: {
+      kind: "story" as const,
+      story: { id: "s1", title: "Story", status: "done" },
+    },
     dispatching: false,
     isRunning: false,
     codexAvailable: false,
@@ -71,17 +76,17 @@ describe("StoryActions — done status", () => {
   };
 
   it("shows Agent Review button when story is done", () => {
-    render(<StoryActions {...baseProps} />);
+    render(<AgentActionsBar {...baseProps} />);
     expect(screen.getByText("Agent Review")).toBeInTheDocument();
   });
 
   it("does NOT show Send to Dev button when story is done", () => {
-    render(<StoryActions {...baseProps} />);
+    render(<AgentActionsBar {...baseProps} />);
     expect(screen.queryByText("Send to Dev")).not.toBeInTheDocument();
   });
 
   it("does NOT show Approve button when story is done", () => {
-    render(<StoryActions {...baseProps} />);
+    render(<AgentActionsBar {...baseProps} />);
     expect(screen.queryByText("Approve")).not.toBeInTheDocument();
   });
 });

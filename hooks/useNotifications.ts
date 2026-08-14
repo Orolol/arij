@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { usePolling } from "@/hooks/usePolling";
 
 export interface NotificationItem {
   id: string;
@@ -29,8 +30,6 @@ export function useNotifications() {
     unreadCount: 0,
     loading: true,
   });
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
   const fetchNotifications = useCallback(async () => {
     try {
       const res = await fetch("/api/notifications?limit=50");
@@ -56,13 +55,7 @@ export function useNotifications() {
   }, []);
 
   // Poll on interval
-  useEffect(() => {
-    fetchNotifications();
-    intervalRef.current = setInterval(fetchNotifications, POLL_INTERVAL_MS);
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [fetchNotifications]);
+  usePolling(fetchNotifications, POLL_INTERVAL_MS);
 
   // Update document.title reactively
   useEffect(() => {

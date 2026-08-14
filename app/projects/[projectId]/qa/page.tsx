@@ -9,15 +9,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { useQaReports } from "@/hooks/useQaReports";
+import { formatDateTime } from "@/lib/utils/format-date";
 
 type FilterCheckType = "tech_check" | "e2e_test" | null;
-
-function formatDate(value: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
-}
 
 function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
   if (status === "completed") return "default";
@@ -182,7 +176,7 @@ export default function QAPage() {
                   </Badge>
                 </div>
                 <p className="text-[11px] text-muted-foreground">
-                  {formatDate(report.createdAt)}
+                  {formatDateTime(report.createdAt)}
                 </p>
                 {report.summary && (
                   <p className="mt-1 text-xs line-clamp-3 text-muted-foreground">

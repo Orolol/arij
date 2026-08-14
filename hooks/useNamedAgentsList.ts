@@ -1,32 +1,19 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useNamedAgents, type NamedAgent } from "@/hooks/useAgentConfig";
 
-export interface NamedAgentOption {
-  id: string;
-  name: string;
-  provider: string;
-  model: string;
-}
+/**
+ * Shape of a named-agent option as consumed by pickers (NamedAgentSelect,
+ * git-sync, releases). Alias of the canonical NamedAgent type so the
+ * endpoint payload shape is defined once in hooks/useAgentConfig.ts.
+ */
+export type NamedAgentOption = NamedAgent;
 
+/**
+ * Read-only list of named agents. Delegates to useNamedAgents (the full
+ * CRUD hook) so the fetch endpoint and shape live in one place.
+ */
 export function useNamedAgentsList() {
-  const [agents, setAgents] = useState<NamedAgentOption[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/agent-config/named-agents");
-      const json = await res.json();
-      setAgents(json.data || []);
-    } catch {
-      // ignore
-    }
-    setLoading(false);
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  return { agents, loading, refresh: load };
+  const { data: agents, loading, refresh } = useNamedAgents();
+  return { agents, loading, refresh };
 }
