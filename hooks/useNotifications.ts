@@ -37,8 +37,8 @@ export function useNotifications() {
       if (!res.ok) return;
       const body = await res.json();
       setState({
-        notifications: body.data || [],
-        unreadCount: body.unreadCount ?? 0,
+        notifications: body.data?.notifications || [],
+        unreadCount: body.data?.unreadCount ?? 0,
         loading: false,
       });
     } catch {

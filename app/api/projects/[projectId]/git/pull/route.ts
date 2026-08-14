@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentSessions, projects } from "@/lib/db/schema";
+import { agentSessions } from "@/lib/db/schema";
+import {
+  getProjectOr404,
+  isErrorResponse,
+  errorResponse,
+} from "@/lib/api/route-helpers";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import {
   getCurrentGitBranch,
@@ -26,25 +31,21 @@ type Params = { params: Promise<{ projectId: string }> };
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId } = await params;
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
 
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  const found = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(found)) {
+    if (found.status === 400) {
+      writeGitSyncLog({
+        projectId,
+        operation: "pull",
+        status: "failed",
+        branch: null,
+        detail: { reason: "missing_git_repo_path" },
+      });
+    }
+    return found;
   }
-  if (!project.gitRepoPath) {
-    writeGitSyncLog({
-      projectId,
-      operation: "pull",
-      status: "failed",
-      branch: null,
-      detail: { reason: "missing_git_repo_path" },
-    });
-
-    return NextResponse.json(
-      { error: "Project has no git repository path configured." },
-      { status: 400 }
-    );
-  }
+  const { project } = found;
 
   const body = await request.json().catch(() => ({}));
   const remote = typeof body?.remote === "string" ? body.remote : "origin";
@@ -85,16 +86,10 @@ export async function POST(request: NextRequest, { params }: Params) {
         return NextResponse.json(
           {
             error: "Pull resulted in merge conflicts.",
-            data: {
-              action: "pull",
-              projectId,
-              remote,
-              branch,
-              conflicted: true,
-              conflictedFiles: result.conflictedFiles,
-              conflictDiffs,
-              autoResolve: false,
-            },
+            code: "merge_conflicts",
+            conflicted: true,
+            conflictedFiles: result.conflictedFiles,
+            conflictDiffs,
           },
           { status: 409 }
         );
@@ -257,16 +252,10 @@ export async function POST(request: NextRequest, { params }: Params) {
                 ? autoResolveError.message
                 : "unknown error"
             }`,
-            data: {
-              action: "pull",
-              projectId,
-              remote,
-              branch,
-              conflicted: true,
-              conflictedFiles: result.conflictedFiles,
-              conflictDiffs,
-              autoResolve: false,
-            },
+            code: "merge_conflicts",
+            conflicted: true,
+            conflictedFiles: result.conflictedFiles,
+            conflictDiffs,
           },
           { status: 409 }
         );
@@ -308,12 +297,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       },
     });
 
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Failed to pull branch.",
-        data: { action: "pull", projectId, remote, branch, ffOnly: false },
-      },
-      { status: 500 }
-    );
+    return errorResponse(error, "Failed to pull branch.");
   }
 }

@@ -12,6 +12,10 @@ vi.mock("@/lib/github/issues", () => ({
   importGitHubIssuesAsTickets: mockImport,
 }));
 
+// The routes import shared helpers from @/lib/api/route-helpers, which pulls
+// in @/lib/db at module load. These routes never touch the db themselves.
+vi.mock("@/lib/db", () => ({ db: {} }));
+
 describe("GitHub issues routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();

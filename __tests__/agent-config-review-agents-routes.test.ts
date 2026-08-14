@@ -74,7 +74,8 @@ describe("Agent config custom review agent routes", () => {
     const json = await res.json();
 
     expect(res.status).toBe(400);
-    expect(json.error).toContain("name is required");
+    expect(json.error).toBe("Validation failed");
+    expect(json.details.name[0]).toContain("name is required");
   });
 
   it("POST /api/agent-config/review-agents enforces uniqueness within scope", async () => {
@@ -131,7 +132,7 @@ describe("Agent config custom review agent routes", () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json.data.deleted).toBe(true);
+    expect(json.data.ok).toBe(true);
   });
 
   it("GET /api/projects/[projectId]/agent-config/review-agents returns global + project agents", async () => {

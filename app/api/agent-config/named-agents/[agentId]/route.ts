@@ -4,7 +4,8 @@ import {
   updateNamedAgent,
   deleteNamedAgent,
 } from "@/lib/agent-config/named-agents";
-import { isAgentProvider } from "@/lib/agent-config/constants";
+import { updateNamedAgentSchema } from "@/lib/validation/schemas";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
 
 type Params = { params: Promise<{ agentId: string }> };
 
@@ -20,35 +21,13 @@ export async function GET(_request: NextRequest, { params }: Params) {
 export async function PUT(request: NextRequest, { params }: Params) {
   const { agentId } = await params;
 
+  const validated = await validateBody(updateNamedAgentSchema, request);
+  if (isValidationError(validated)) return validated;
+
+  const updates = validated.data;
+
   try {
-    const body = await request.json().catch(() => ({}));
-    const updates: Record<string, unknown> = {};
-
-    if (body.name !== undefined) {
-      if (typeof body.name !== "string" || !body.name.trim()) {
-        return NextResponse.json({ error: "name must be a non-empty string" }, { status: 400 });
-      }
-      updates.name = body.name;
-    }
-
-    if (body.provider !== undefined) {
-      if (!isAgentProvider(body.provider)) {
-        return NextResponse.json(
-          { error: "invalid provider" },
-          { status: 400 },
-        );
-      }
-      updates.provider = body.provider;
-    }
-
-    if (body.model !== undefined) {
-      if (typeof body.model !== "string" || !body.model.trim()) {
-        return NextResponse.json({ error: "model must be a non-empty string" }, { status: 400 });
-      }
-      updates.model = body.model;
-    }
-
-    const result = await updateNamedAgent(agentId, updates as Parameters<typeof updateNamedAgent>[1]);
+    const result = await updateNamedAgent(agentId, updates);
     if (result.error) {
       const status = result.error.includes("not found") ? 404 : result.error.includes("already exists") ? 409 : 400;
       return NextResponse.json({ error: result.error }, { status });
@@ -72,5 +51,5 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
   if (!deleted) {
     return NextResponse.json({ error: "Named agent not found" }, { status: 404 });
   }
-  return NextResponse.json({ data: { success: true } });
+  return NextResponse.json({ data: { ok: true } });
 }

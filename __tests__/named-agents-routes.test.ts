@@ -97,7 +97,8 @@ describe("Named Agents API Routes", () => {
       const json = await res.json();
 
       expect(res.status).toBe(400);
-      expect(json.error).toContain("name");
+      expect(json.error).toBe("Validation failed");
+      expect(json.details.name[0]).toContain("name");
     });
 
     it("validates provider is valid", async () => {
@@ -110,7 +111,8 @@ describe("Named Agents API Routes", () => {
       const json = await res.json();
 
       expect(res.status).toBe(400);
-      expect(json.error).toContain("provider");
+      expect(json.error).toBe("Validation failed");
+      expect(json.details.provider[0]).toContain("provider");
     });
 
     it("validates model is required", async () => {
@@ -122,7 +124,8 @@ describe("Named Agents API Routes", () => {
       const json = await res.json();
 
       expect(res.status).toBe(400);
-      expect(json.error).toContain("model");
+      expect(json.error).toBe("Validation failed");
+      expect(json.details.model[0]).toContain("model");
     });
 
     it("returns 409 for duplicate name", async () => {
@@ -240,7 +243,9 @@ describe("Named Agents API Routes", () => {
       });
 
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toContain("provider");
+      const json = await res.json();
+      expect(json.error).toBe("Validation failed");
+      expect(json.details.provider[0]).toContain("provider");
     });
   });
 
@@ -255,7 +260,7 @@ describe("Named Agents API Routes", () => {
       const json = await res.json();
 
       expect(res.status).toBe(200);
-      expect(json.data.success).toBe(true);
+      expect(json.data.ok).toBe(true);
     });
 
     it("returns 404 when agent not found", async () => {

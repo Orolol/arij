@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { ticketComments, userStories } from "@/lib/db/schema";
+import { ticketComments } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
+import { getStoryOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import {
   MentionResolutionError,
   validateMentionsExist,
@@ -11,17 +12,10 @@ import {
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
 export async function GET(_request: NextRequest, { params }: Params) {
-  const { storyId } = await params;
+  const { projectId, storyId } = await params;
 
-  const story = db
-    .select()
-    .from(userStories)
-    .where(eq(userStories.id, storyId))
-    .get();
-
-  if (!story) {
-    return NextResponse.json({ error: "Story not found" }, { status: 404 });
-  }
+  const found = getStoryOr404(projectId, storyId);
+  if (isErrorResponse(found)) return found;
 
   const comments = db
     .select()
@@ -35,7 +29,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
 
   if (!body.content || !body.author) {
     return NextResponse.json(
@@ -56,15 +50,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     throw error;
   }
 
-  const story = db
-    .select()
-    .from(userStories)
-    .where(eq(userStories.id, storyId))
-    .get();
-
-  if (!story) {
-    return NextResponse.json({ error: "Story not found" }, { status: 404 });
-  }
+  const found = getStoryOr404(projectId, storyId);
+  if (isErrorResponse(found)) return found;
 
   const id = createId();
   const now = new Date().toISOString();

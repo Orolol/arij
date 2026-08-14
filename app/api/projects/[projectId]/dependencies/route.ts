@@ -7,6 +7,7 @@ import {
   CycleError,
   CrossProjectError,
 } from "@/lib/dependencies/validation";
+import { errorResponse } from "@/lib/api/route-helpers";
 
 /**
  * GET /api/projects/[projectId]/dependencies
@@ -31,7 +32,7 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
 
   const { edges } = body as {
     edges?: Array<{ ticketId: string; dependsOnTicketId: string }>;
@@ -83,12 +84,6 @@ export async function POST(
         { status: 422 }
       );
     }
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Failed to create dependencies",
-      },
-      { status: 500 }
-    );
+    return errorResponse(error, "Failed to create dependencies");
   }
 }

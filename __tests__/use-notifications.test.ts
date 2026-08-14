@@ -15,9 +15,9 @@ describe("useNotifications", () => {
     document.title = "Arij";
   });
 
-  function mockFetchResponse(data: unknown[], unreadCount: number) {
+  function mockFetchResponse(notifications: unknown[], unreadCount: number) {
     fetchSpy.mockResolvedValue(
-      new Response(JSON.stringify({ data, unreadCount }), {
+      new Response(JSON.stringify({ data: { notifications, unreadCount } }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       })
@@ -77,7 +77,7 @@ describe("useNotifications", () => {
 
     // Now mock the POST response
     fetchSpy.mockResolvedValueOnce(
-      new Response(JSON.stringify({ ok: true }), { status: 200 })
+      new Response(JSON.stringify({ data: { ok: true } }), { status: 200 })
     );
 
     await act(async () => {

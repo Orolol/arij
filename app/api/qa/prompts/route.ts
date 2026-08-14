@@ -3,6 +3,8 @@ import { desc } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { qaPrompts } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
+import { createQaPromptSchema } from "@/lib/validation/schemas";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
 
 export async function GET() {
   const prompts = db
@@ -15,16 +17,11 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => ({}));
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  const prompt = typeof body.prompt === "string" ? body.prompt.trim() : "";
+  const validated = await validateBody(createQaPromptSchema, request);
+  if (isValidationError(validated)) return validated;
 
-  if (!name || !prompt) {
-    return NextResponse.json(
-      { error: "Name and prompt are required" },
-      { status: 400 },
-    );
-  }
+  const name = validated.data.name.trim();
+  const prompt = validated.data.prompt.trim();
 
   const id = createId();
   const now = new Date().toISOString();

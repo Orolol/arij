@@ -342,11 +342,11 @@ describe("Release creation with pushToGitHub", () => {
     expect(res.status).toBe(201);
     expect(json.data).toBeDefined();
 
-    // But errors reported
-    expect(json.githubErrors).toBeDefined();
-    expect(json.githubErrors).toHaveLength(2);
-    expect(json.githubErrors[0]).toContain("Tag push failed");
-    expect(json.githubErrors[1]).toContain("GitHub release creation failed");
+    // But errors reported (inside the data envelope)
+    expect(json.data.githubErrors).toBeDefined();
+    expect(json.data.githubErrors).toHaveLength(2);
+    expect(json.data.githubErrors[0]).toContain("Tag push failed");
+    expect(json.data.githubErrors[1]).toContain("GitHub release creation failed");
 
     // Failures logged
     expect(mockLogSyncOperation).toHaveBeenCalledWith(
@@ -406,7 +406,8 @@ describe("Release creation with pushToGitHub", () => {
 
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("version");
+    expect(json.error).toBe("Validation failed");
+    expect(json.details.version[0]).toContain("version");
   });
 
   it("returns 400 when epicIds is empty", async () => {
@@ -425,6 +426,7 @@ describe("Release creation with pushToGitHub", () => {
 
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("epicIds");
+    expect(json.error).toBe("Validation failed");
+    expect(json.details.epicIds[0]).toContain("epicIds");
   });
 });

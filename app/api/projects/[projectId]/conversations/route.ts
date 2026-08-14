@@ -12,6 +12,9 @@ import {
 } from "@/lib/chat/parity-contract";
 import { runUnifiedChatCutoverMigrationOnce } from "@/lib/chat/unified-cutover-migration";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { createConversationSchema } from "@/lib/validation/chat-schemas";
 
 function normalizeConversationsForParity<T extends {
   id: string;
@@ -102,7 +105,13 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const body = await request.json();
+
+  const validated = await validateBody(createConversationSchema, request);
+  if (isValidationError(validated)) return validated;
+  const body = validated.data;
+
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
 
   const id = createId();
   const now = new Date().toISOString();

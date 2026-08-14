@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorResponse } from "@/lib/api/route-helpers";
 import { syncProjectGitHubIssues } from "@/lib/github/issues";
 
 export async function POST(
@@ -11,9 +12,6 @@ export async function POST(
     const result = await syncProjectGitHubIssues(projectId);
     return NextResponse.json({ data: result });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to sync GitHub issues." },
-      { status: 500 }
-    );
+    return errorResponse(error, "Failed to sync GitHub issues.");
   }
 }

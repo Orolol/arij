@@ -71,8 +71,8 @@ describe("GET /api/notifications", () => {
     const req = makeRequest("http://localhost/api/notifications");
     return GET(req as any).then(async (res) => {
       const body = await res.json();
-      expect(body.data).toEqual([]);
-      expect(body.unreadCount).toBe(0);
+      expect(body.data.notifications).toEqual([]);
+      expect(body.data.unreadCount).toBe(0);
     });
   });
 
@@ -88,8 +88,8 @@ describe("GET /api/notifications", () => {
     const req = makeRequest("http://localhost/api/notifications");
     return GET(req as any).then(async (res) => {
       const body = await res.json();
-      expect(body.data).toHaveLength(2);
-      expect(body.unreadCount).toBe(1);
+      expect(body.data.notifications).toHaveLength(2);
+      expect(body.data.unreadCount).toBe(1);
     });
   });
 
@@ -100,7 +100,7 @@ describe("GET /api/notifications", () => {
     const req = makeRequest("http://localhost/api/notifications?limit=10");
     return GET(req as any).then(async (res) => {
       const body = await res.json();
-      expect(body.data).toEqual([]);
+      expect(body.data.notifications).toEqual([]);
     });
   });
 
@@ -124,7 +124,7 @@ describe("POST /api/notifications/read", () => {
     const res = await POST();
     const body = await res.json();
 
-    expect(body.ok).toBe(true);
+    expect(body.data.ok).toBe(true);
     expect(mockState.sqliteRunCalls).toHaveLength(1);
     expect(mockState.sqliteRunCalls[0].sql).toContain("INSERT OR REPLACE");
     // The timestamp param should be an ISO string

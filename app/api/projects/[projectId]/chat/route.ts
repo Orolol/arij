@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chatMessages, chatAttachments, projects } from "@/lib/db/schema";
+import { chatMessages, chatAttachments } from "@/lib/db/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { spawnClaude } from "@/lib/claude/spawn";
@@ -14,6 +14,9 @@ import {
 } from "@/lib/documents/mentions";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { getProvider } from "@/lib/providers";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { chatMessageSchema } from "@/lib/validation/chat-schemas";
 
 export async function GET(
   request: NextRequest,
@@ -71,7 +74,11 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const body = await request.json();
+
+  const validated = await validateBody(chatMessageSchema, request);
+  if (isValidationError(validated)) return validated;
+  const body = validated.data;
+
   const namedAgentId: string | null = body.namedAgentId || null;
 
   if (!body.content && (!body.attachmentIds || body.attachmentIds.length === 0)) {
@@ -116,10 +123,9 @@ export async function POST(
   }
 
   // Load context
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
 
   const recentMessages = db
     .select()

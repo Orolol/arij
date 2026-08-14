@@ -3,7 +3,8 @@ import fs from "fs";
 import path from "path";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { projects, qaReports } from "@/lib/db/schema";
+import { qaReports } from "@/lib/db/schema";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { createId } from "@/lib/utils/nanoid";
 import { processManager } from "@/lib/claude/process-manager";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
@@ -72,22 +73,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   const checkType = parseCheckType(body.checkType);
   const agentType = CHECK_TYPE_TO_AGENT_TYPE[checkType];
 
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
-
-  if (!project.gitRepoPath) {
-    return NextResponse.json(
-      { error: "Project has no git repository configured" },
-      { status: 400 },
-    );
-  }
+  const found = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
 
   const systemPrompt = await resolveAgentPrompt(agentType, projectId);
   const resolvedAgent = resolveAgentByNamedId(agentType, projectId, namedAgentId);

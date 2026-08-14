@@ -4,6 +4,8 @@ import { db } from "@/lib/db";
 import { agentPrompts } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 import { isAgentType } from "@/lib/agent-config/constants";
+import { updateAgentPromptSchema } from "@/lib/validation/schemas";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
 
 type Params = { params: Promise<{ agentType: string }> };
 
@@ -13,14 +15,9 @@ export async function PUT(request: NextRequest, { params }: Params) {
     return NextResponse.json({ error: `Unknown agent type: ${agentType}` }, { status: 400 });
   }
 
-  const body = await request.json().catch(() => ({}));
-  const systemPrompt = typeof body.systemPrompt === "string" ? body.systemPrompt : null;
-  if (systemPrompt == null) {
-    return NextResponse.json(
-      { error: "systemPrompt string is required" },
-      { status: 400 }
-    );
-  }
+  const validated = await validateBody(updateAgentPromptSchema, request);
+  if (isValidationError(validated)) return validated;
+  const { systemPrompt } = validated.data;
 
   const now = new Date().toISOString();
   const existing = db

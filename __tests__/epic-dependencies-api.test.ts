@@ -27,6 +27,8 @@ vi.mock("@/lib/db", () => {
 
 vi.mock("@/lib/db/schema", () => ({
   epics: { __name: "epics" },
+  projects: { __name: "projects" },
+  userStories: { __name: "userStories" },
   ticketDependencies: { __name: "ticketDependencies" },
 }));
 

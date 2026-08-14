@@ -10,5 +10,5 @@ export async function POST() {
     )
     .run(now);
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ data: { ok: true } });
 }

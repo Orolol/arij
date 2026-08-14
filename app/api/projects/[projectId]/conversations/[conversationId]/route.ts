@@ -5,6 +5,8 @@ import { eq, and } from "drizzle-orm";
 import { resolveAgent } from "@/lib/agent-config/agent-resolution";
 import { isAgentProvider } from "@/lib/agent-config/constants";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { updateConversationSchema } from "@/lib/validation/chat-schemas";
 
 export async function GET(
   _request: NextRequest,
@@ -77,7 +79,10 @@ export async function PATCH(
   { params }: { params: Promise<{ projectId: string; conversationId: string }> }
 ) {
   const { projectId, conversationId } = await params;
-  const body = await request.json();
+
+  const validated = await validateBody(updateConversationSchema, request);
+  if (isValidationError(validated)) return validated;
+  const body = validated.data;
 
   const conversation = db
     .select()

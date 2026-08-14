@@ -3,14 +3,17 @@ import {
   listNamedAgents,
   createNamedAgent,
 } from "@/lib/agent-config/named-agents";
-import { isAgentProvider } from "@/lib/agent-config/constants";
 import { createId } from "@/lib/utils/nanoid";
+import { createNamedAgentSchema } from "@/lib/validation/schemas";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
 
 export async function GET() {
   try {
     const data = await listNamedAgents();
     return NextResponse.json({ data });
   } catch (error) {
+    // Inline (not errorResponse) to avoid importing lib/db via route-helpers:
+    // this route's own data access goes through lib/agent-config/named-agents.
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Failed to list named agents" },
       { status: 500 },
@@ -19,28 +22,12 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const validated = await validateBody(createNamedAgentSchema, request);
+  if (isValidationError(validated)) return validated;
+
+  const { name, provider, model } = validated.data;
+
   try {
-    const body = await request.json().catch(() => ({}));
-
-    const { name, provider, model } = body as {
-      name?: string;
-      provider?: string;
-      model?: string;
-    };
-
-    if (!name || typeof name !== "string") {
-      return NextResponse.json({ error: "name is required" }, { status: 400 });
-    }
-    if (!provider || !isAgentProvider(provider)) {
-      return NextResponse.json(
-        { error: "invalid provider" },
-        { status: 400 },
-      );
-    }
-    if (!model || typeof model !== "string") {
-      return NextResponse.json({ error: "model is required" }, { status: 400 });
-    }
-
     const result = await createNamedAgent({ id: createId(), name, provider, model });
     if (result.error) {
       return NextResponse.json({ error: result.error }, { status: 400 });

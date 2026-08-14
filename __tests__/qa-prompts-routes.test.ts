@@ -91,7 +91,9 @@ describe("QA prompt routes", () => {
     const json = await res.json();
 
     expect(res.status).toBe(400);
-    expect(json.error).toContain("required");
+    expect(json.error).toBe("Validation failed");
+    expect(json.details.name[0]).toContain("required");
+    expect(json.details.prompt[0]).toContain("required");
   });
 
   it("POST /api/qa/prompts creates a prompt", async () => {

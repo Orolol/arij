@@ -8,6 +8,7 @@ const mockValidateMentionsExist = vi.hoisted(() => vi.fn());
 
 vi.mock("drizzle-orm", () => ({
   eq: vi.fn(() => ({})),
+  and: vi.fn(() => ({})),
 }));
 
 vi.mock("@/lib/db", () => {
@@ -16,6 +17,7 @@ vi.mock("@/lib/db", () => {
     from: vi.fn().mockReturnThis(),
     where: vi.fn().mockReturnThis(),
     orderBy: vi.fn().mockReturnThis(),
+    innerJoin: vi.fn().mockReturnThis(),
     get: vi.fn(() => mockDbState.getQueue.shift() ?? null),
     all: vi.fn(() => []),
     insert: vi.fn().mockReturnValue({
@@ -30,6 +32,7 @@ vi.mock("@/lib/db/schema", () => ({
   ticketComments: { id: "id", epicId: "epicId", userStoryId: "userStoryId", createdAt: "createdAt" },
   epics: { id: "id" },
   userStories: { id: "id" },
+  projects: { id: "id" },
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({

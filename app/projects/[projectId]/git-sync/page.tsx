@@ -124,10 +124,10 @@ export default function GitSyncPage() {
         return;
       }
 
-      if (res.status === 409 && json.data?.conflicted) {
+      if (res.status === 409 && json.conflicted) {
         setError(json.error || "Merge conflicts detected");
         showToast("error", "Merge conflicts detected");
-        setConflictDiffs(Array.isArray(json.data.conflictDiffs) ? json.data.conflictDiffs : []);
+        setConflictDiffs(Array.isArray(json.conflictDiffs) ? json.conflictDiffs : []);
         return;
       }
 

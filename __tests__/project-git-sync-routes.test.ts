@@ -133,15 +133,10 @@ describe("Project git sync routes", () => {
 
     expect(res.status).toBe(409);
     expect(json.error).toContain("merge conflicts");
-    expect(json.data.conflicted).toBe(true);
-    expect(json.data.conflictDiffs).toHaveLength(1);
-    expect(json.data).toEqual(
-      expect.objectContaining({
-        action: "pull",
-        projectId: "proj-1",
-        branch: "feature/one",
-      })
-    );
+    expect(json.code).toBe("merge_conflicts");
+    expect(json.conflicted).toBe(true);
+    expect(json.conflictedFiles).toEqual(["src/a.ts"]);
+    expect(json.conflictDiffs).toHaveLength(1);
     expect(mockWriteGitSyncLog).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "proj-1",
@@ -230,7 +225,7 @@ describe("Project git sync routes", () => {
 
     expect(res.status).toBe(409);
     expect(json.error).toContain("uncommitted changes");
-    expect(json.data.code).toBe("working_tree_dirty");
+    expect(json.code).toBe("working_tree_dirty");
   });
 
   it("GET status returns ahead/behind for requested branch", async () => {

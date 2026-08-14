@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
-  projects,
   epics,
   userStories,
   ticketComments,
 } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import {
+  getEpicOr404,
+  getProjectOr404,
+  getStoryOr404,
+  isErrorResponse,
+} from "@/lib/api/route-helpers";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
@@ -52,16 +57,10 @@ export async function POST(request: NextRequest, { params }: Params) {
     throw error;
   }
 
-  // Validate story exists
-  const story = db
-    .select()
-    .from(userStories)
-    .where(eq(userStories.id, storyId))
-    .get();
-
-  if (!story) {
-    return NextResponse.json({ error: "Story not found" }, { status: 404 });
-  }
+  // Validate story exists (project-scoped)
+  const foundStory = getStoryOr404(projectId, storyId);
+  if (isErrorResponse(foundStory)) return foundStory;
+  const { story } = foundStory;
 
   // Validate status
   if (!["todo", "in_progress", "review"].includes(story.status ?? "")) {
@@ -71,34 +70,15 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
-  // Get epic
-  const epic = db
-    .select()
-    .from(epics)
-    .where(eq(epics.id, story.epicId))
-    .get();
-
-  if (!epic) {
-    return NextResponse.json({ error: "Parent epic not found" }, { status: 404 });
-  }
+  // Get epic (project-scoped)
+  const foundEpic = getEpicOr404(projectId, story.epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
+  const { epic } = foundEpic;
 
   // Get project
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
-
-  if (!project.gitRepoPath) {
-    return NextResponse.json(
-      { error: "Project has no git repository configured" },
-      { status: 400 }
-    );
-  }
+  const foundProject = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(foundProject)) return foundProject;
+  const { project } = foundProject;
 
   const gitRepoPath = project.gitRepoPath;
   const isRepo = await isGitRepo(gitRepoPath);

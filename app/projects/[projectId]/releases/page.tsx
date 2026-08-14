@@ -398,6 +398,8 @@ export default function ReleasesPage() {
       }),
     });
 
+    const json = await res.json().catch(() => ({}));
+
     if (res.ok) {
       setVersion("");
       setTitle("");
@@ -406,10 +408,18 @@ export default function ReleasesPage() {
       setResumeSessionId(undefined);
       setNamedAgentId(null);
       setDialogOpen(false);
-      showToast("success", "Release v" + version.trim() + " created");
+      const githubErrors: string[] = json.data?.githubErrors || [];
+      if (githubErrors.length > 0) {
+        showToast(
+          "error",
+          "Release v" + version.trim() + " created, but GitHub sync failed: " + githubErrors[0]
+        );
+      } else {
+        showToast("success", "Release v" + version.trim() + " created");
+      }
       loadData();
     } else {
-      showToast("error", "Failed to create release");
+      showToast("error", json.error || "Failed to create release");
     }
 
     setCreating(false);

@@ -10,10 +10,7 @@ export async function POST(request: NextRequest) {
 
   if (!token.trim()) {
     return NextResponse.json(
-      {
-        data: { valid: false },
-        error: "Enter a GitHub personal access token to validate.",
-      },
+      { error: "Enter a GitHub personal access token to validate." },
       { status: 400 }
     );
   }
@@ -21,10 +18,7 @@ export async function POST(request: NextRequest) {
   const result = await validateGitHubToken(token);
   if (!result.valid) {
     return NextResponse.json(
-      {
-        data: { valid: false },
-        error: result.error ?? "GitHub token validation failed.",
-      },
+      { error: result.error ?? "GitHub token validation failed." },
       { status: 401 }
     );
   }

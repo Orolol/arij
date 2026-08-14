@@ -1,22 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { eq, desc } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { projects, qaReports } from "@/lib/db/schema";
+import { qaReports } from "@/lib/db/schema";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 
 type Params = { params: Promise<{ projectId: string }> };
 
 export async function GET(_request: NextRequest, { params }: Params) {
   const { projectId } = await params;
 
-  const project = db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
 
   const reports = db
     .select()

@@ -55,6 +55,8 @@ vi.mock("@/lib/db", () => {
 vi.mock("@/lib/db/schema", () => ({
   ticketDependencies: mockSchema.ticketDependencies,
   epics: mockSchema.epics,
+  projects: { __name: "projects" },
+  userStories: { __name: "userStories" },
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({

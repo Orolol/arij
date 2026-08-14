@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, epics, agentSessions, ticketComments } from "@/lib/db/schema";
+import { epics, agentSessions, ticketComments } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
+import {
+  getEpicOr404,
+  getProjectOr404,
+  isErrorResponse,
+} from "@/lib/api/route-helpers";
 import { mergeWorktree } from "@/lib/git/manager";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import { createId } from "@/lib/utils/nanoid";
@@ -38,15 +43,13 @@ export async function POST(
     // No body or invalid JSON — defaults to false
   }
 
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
-  if (!project || !project.gitRepoPath) {
-    return NextResponse.json({ error: "Project not found or no git repo" }, { status: 404 });
-  }
+  const foundProject = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(foundProject)) return foundProject;
+  const { project } = foundProject;
 
-  const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
-  if (!epic) {
-    return NextResponse.json({ error: "Epic not found" }, { status: 404 });
-  }
+  const foundEpic = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
+  const { epic } = foundEpic;
 
   if (!epic.branchName) {
     return NextResponse.json({ error: "Epic has no branch to merge" }, { status: 400 });
@@ -110,7 +113,9 @@ export async function POST(
     });
     if (conflict) {
       return NextResponse.json(
-        { error: result.error || "Merge failed", autoAgent: false, reason: "Agent already running" },
+        {
+          error: `${result.error || "Merge failed"} — an agent is already running for this epic, so no merge-fix agent was launched.`,
+        },
         { status: 500 }
       );
     }

@@ -22,6 +22,7 @@ vi.mock("@/lib/db", () => {
     from: ReturnType<typeof vi.fn>;
     where: ReturnType<typeof vi.fn>;
     orderBy: ReturnType<typeof vi.fn>;
+    innerJoin: ReturnType<typeof vi.fn>;
     all: ReturnType<typeof vi.fn>;
     get: ReturnType<typeof vi.fn>;
     insert: ReturnType<typeof vi.fn>;
@@ -31,6 +32,7 @@ vi.mock("@/lib/db", () => {
     from: vi.fn(),
     where: vi.fn(),
     orderBy: vi.fn(),
+    innerJoin: vi.fn(),
     all: vi.fn(),
     get: vi.fn(),
     insert: vi.fn(),
@@ -41,6 +43,7 @@ vi.mock("@/lib/db", () => {
   chain.from.mockReturnValue(chain);
   chain.where.mockReturnValue(chain);
   chain.orderBy.mockReturnValue(chain);
+  chain.innerJoin.mockReturnValue(chain);
   chain.get.mockImplementation(() => mockDbState.getQueue.shift() ?? null);
   chain.all.mockImplementation(() => mockDbState.allQueue.shift() ?? []);
   chain.insert.mockReturnValue({
@@ -156,10 +159,6 @@ vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentByNamedId: vi.fn(() => ({ provider: "claude-code", namedAgentId: null })),
 }));
 
-vi.mock("@/lib/session-lock", () => ({
-  checkSessionLock: vi.fn(() => ({ locked: false })),
-}));
-
 vi.mock("@/lib/agent-config/constants", () => ({
   REVIEW_TYPE_TO_AGENT_TYPE: {
     security: "review_security",
@@ -253,7 +252,8 @@ describe("Agent launch routes concurrency conflicts", () => {
 
   it("returns AGENT_ALREADY_RUNNING for story build launches", async () => {
     mockDbState.getQueue = [
-      { id: "story-1", status: "todo", epicId: "epic-1", title: "Story 1" },
+      // getStoryOr404 selects { story } through an epic join
+      { story: { id: "story-1", status: "todo", epicId: "epic-1", title: "Story 1" } },
       { id: "epic-1", title: "Epic 1" },
       { id: "proj-1", gitRepoPath: "/repo" },
     ];
@@ -297,7 +297,8 @@ describe("Agent launch routes concurrency conflicts", () => {
 
   it("returns AGENT_ALREADY_RUNNING for story review launches", async () => {
     mockDbState.getQueue = [
-      { id: "story-1", status: "review", epicId: "epic-1" },
+      // getStoryOr404 selects { story } through an epic join
+      { story: { id: "story-1", status: "review", epicId: "epic-1" } },
       { id: "epic-1", title: "Epic 1" },
       { id: "proj-1", gitRepoPath: "/repo" },
     ];

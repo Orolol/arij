@@ -1,6 +1,6 @@
-import { NextRequest } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chatMessages, chatAttachments, chatConversations, projects, settings, epics } from "@/lib/db/schema";
+import { chatMessages, chatAttachments, chatConversations, settings, epics } from "@/lib/db/schema";
 import { eq, desc, and, inArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
@@ -17,6 +17,9 @@ import {
   MentionResolutionError,
   validateMentionsExist,
 } from "@/lib/documents/mentions";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { chatMessageSchema } from "@/lib/validation/chat-schemas";
 
 const RESUME_CAPABLE_PROVIDERS = new Set<ProviderType>([
   "claude-code",
@@ -43,13 +46,16 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const body = await request.json();
+
+  const validated = await validateBody(chatMessageSchema, request);
+  if (isValidationError(validated)) return validated;
+  const body = validated.data;
 
   if (!body.content && (!body.attachmentIds || body.attachmentIds.length === 0)) {
-    return new Response(JSON.stringify({ error: "content or attachments required" }), {
-      status: 400,
-      headers: { "Content-Type": "application/json" },
-    });
+    return NextResponse.json(
+      { error: "content or attachments required" },
+      { status: 400 }
+    );
   }
 
   try {
@@ -59,10 +65,7 @@ export async function POST(
     });
   } catch (error) {
     if (error instanceof MentionResolutionError) {
-      return new Response(JSON.stringify({ error: error.message }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
     throw error;
   }
@@ -102,13 +105,9 @@ export async function POST(
   }
 
   // Load context
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
-  if (!project) {
-    return new Response(JSON.stringify({ error: "Project not found" }), {
-      status: 404,
-      headers: { "Content-Type": "application/json" },
-    });
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
 
   const conditions = [eq(chatMessages.projectId, projectId)];
   if (conversationId) {
@@ -191,10 +190,7 @@ export async function POST(
     }).prompt;
   } catch (error) {
     if (error instanceof MentionResolutionError) {
-      return new Response(JSON.stringify({ error: error.message }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+      return NextResponse.json({ error: error.message }, { status: 400 });
     }
     throw error;
   }
@@ -260,7 +256,7 @@ export async function POST(
       if (msgCount === 2) {
         const conv = db.select().from(chatConversations).where(eq(chatConversations.id, conversationId)).get();
         if (conv && (conv.label === "Brainstorm" || conv.label === "New Epic")) {
-          const titlePrompt = buildTitleGenerationPrompt(body.content, fullContent);
+          const titlePrompt = buildTitleGenerationPrompt(userContent, fullContent);
           spawnClaude({ mode: "plan", prompt: titlePrompt, model: "haiku" }).promise
             .then((titleResult) => {
               if (titleResult.success && titleResult.result) {

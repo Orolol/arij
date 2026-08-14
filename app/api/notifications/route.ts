@@ -33,5 +33,5 @@ export async function GET(request: Request) {
     unreadCount = result.cnt;
   }
 
-  return NextResponse.json({ data: rows, unreadCount });
+  return NextResponse.json({ data: { notifications: rows, unreadCount } });
 }

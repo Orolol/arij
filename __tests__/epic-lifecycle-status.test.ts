@@ -65,11 +65,17 @@ vi.mock("@/lib/db", () => {
         return chain;
       }),
       orderBy: vi.fn(() => chain),
+      innerJoin: vi.fn(() => chain),
       get: vi.fn(() => {
         if (currentSelectTable === "projects") return mockProject;
         if (currentSelectTable === "epics") return mockEpic;
-        if (currentSelectTable === "userStories")
-          return mockStories[0] ?? null;
+        if (currentSelectTable === "userStories") {
+          // Hybrid shape: getStoryOr404 reads `.story` (join row), while
+          // direct selects read the story fields off the row itself.
+          return mockStories[0]
+            ? { ...mockStories[0], story: mockStories[0] }
+            : null;
+        }
         return null;
       }),
       all: vi.fn(() => {
@@ -186,10 +192,6 @@ vi.mock("@/lib/agent-config/constants", () => ({
 
 vi.mock("@/lib/claude/json-parser", () => ({
   parseClaudeOutput: vi.fn((text: string) => ({ content: text })),
-}));
-
-vi.mock("@/lib/session-lock", () => ({
-  checkSessionLock: vi.fn().mockReturnValue({ locked: false }),
 }));
 
 vi.mock("@/lib/agents/concurrency", () => ({

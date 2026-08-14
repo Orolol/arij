@@ -177,8 +177,8 @@ describe("POST /api/projects/[projectId]/epics", () => {
 
   it("creates an epic and related user stories in one request", async () => {
     mockDbState.getQueue = [
-      { max: 2 },
       { id: "proj1", name: "Test Project" },
+      { max: 2 },
       {
         id: "id-1",
         projectId: "proj1",
@@ -299,7 +299,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
   });
 
   it("rolls back epic creation when story insert fails inside transaction", async () => {
-    mockDbState.getQueue = [{ max: 0 }, { id: "proj1", name: "Test Project" }];
+    mockDbState.getQueue = [{ id: "proj1", name: "Test Project" }, { max: 0 }];
     mockDbState.failOnStoryInsert = true;
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 

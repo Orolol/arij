@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { epics } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import {
+  getEpicOr404,
+  isErrorResponse,
+  errorResponse,
+} from "@/lib/api/route-helpers";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import {
   deleteEpicPermanently,
@@ -24,10 +29,9 @@ export async function PATCH(
 
   const body = validated.data;
 
-  const existing = db.select().from(epics).where(eq(epics.id, epicId)).get();
-  if (!existing) {
-    return NextResponse.json({ error: "Epic not found" }, { status: 404 });
-  }
+  const found = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(found)) return found;
+  const existing = found.epic;
 
   // Prevent any changes to released epics' status
   if (existing.status === "released" && body.status !== undefined && body.status !== "released") {
@@ -37,42 +41,46 @@ export async function PATCH(
     );
   }
 
-  // Validate workflow rules if status is changing
-  if (body.status !== undefined && body.status !== existing.status) {
-    const result = applyTransition({
-      projectId,
-      epicId,
-      fromStatus: (existing.status ?? "backlog") as KanbanStatus,
-      toStatus: body.status as KanbanStatus,
-      actor: "user",
-      source: "api",
-      reason: "Manual status update",
-      skipDbUpdate: true, // we update below with all fields
-    });
-    if (!result.valid) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
+  try {
+    // Validate workflow rules if status is changing
+    if (body.status !== undefined && body.status !== existing.status) {
+      const result = applyTransition({
+        projectId,
+        epicId,
+        fromStatus: (existing.status ?? "backlog") as KanbanStatus,
+        toStatus: body.status as KanbanStatus,
+        actor: "user",
+        source: "api",
+        reason: "Manual status update",
+        skipDbUpdate: true, // we update below with all fields
+      });
+      if (!result.valid) {
+        return NextResponse.json({ error: result.error }, { status: 400 });
+      }
     }
+
+    const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
+    if (body.title !== undefined) updates.title = body.title;
+    if (body.description !== undefined) updates.description = body.description;
+    if (body.priority !== undefined) updates.priority = body.priority;
+    if (body.status !== undefined) updates.status = body.status;
+    if (body.position !== undefined) updates.position = body.position;
+    if (body.branchName !== undefined) updates.branchName = body.branchName;
+
+    db.update(epics).set(updates).where(eq(epics.id, epicId)).run();
+
+    const updated = db.select().from(epics).where(eq(epics.id, epicId)).get();
+
+    // Emit update event for non-status changes (status changes already emitted by applyTransition)
+    if (!(body.status !== undefined && body.status !== existing.status)) {
+      emitTicketUpdated(projectId, epicId, updates);
+    }
+
+    tryExportArjiJson(projectId);
+    return NextResponse.json({ data: updated });
+  } catch (error) {
+    return errorResponse(error, "Failed to update epic");
   }
-
-  const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
-  if (body.title !== undefined) updates.title = body.title;
-  if (body.description !== undefined) updates.description = body.description;
-  if (body.priority !== undefined) updates.priority = body.priority;
-  if (body.status !== undefined) updates.status = body.status;
-  if (body.position !== undefined) updates.position = body.position;
-  if (body.branchName !== undefined) updates.branchName = body.branchName;
-
-  db.update(epics).set(updates).where(eq(epics.id, epicId)).run();
-
-  const updated = db.select().from(epics).where(eq(epics.id, epicId)).get();
-
-  // Emit update event for non-status changes (status changes already emitted by applyTransition)
-  if (!(body.status !== undefined && body.status !== existing.status)) {
-    emitTicketUpdated(projectId, epicId, updates);
-  }
-
-  tryExportArjiJson(projectId);
-  return NextResponse.json({ data: updated });
 }
 
 export async function DELETE(

@@ -71,7 +71,7 @@ describe("GET /api/projects/[projectId]/github/detect", () => {
     const json = await res.json();
 
     expect(res.status).toBe(400);
-    expect(json.error).toBe("Project has no git repository path configured.");
+    expect(json.error).toBe("Project has no git repository path configured");
     expect(mockWriteGitSyncLog).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "proj-1",

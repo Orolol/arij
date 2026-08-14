@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isAgentProvider } from "@/lib/agent-config/constants";
 
 // --- Project schemas ---
 
@@ -91,4 +92,83 @@ export const updateStoryByIdSchema = z.object({
   acceptanceCriteria: z.string().max(10000).nullish(),
   status: z.enum(["todo", "in_progress", "review", "done"]).optional(),
   position: z.number().int().min(0).optional(),
+});
+
+// --- Agent config schemas ---
+
+export const createNamedAgentSchema = z.object({
+  name: z
+    .string("name is required")
+    .refine((v) => v.trim().length > 0, "name is required"),
+  provider: z
+    .string("invalid provider")
+    .refine((v) => isAgentProvider(v), "invalid provider"),
+  model: z
+    .string("model is required")
+    .refine((v) => v.trim().length > 0, "model is required"),
+});
+
+export const updateNamedAgentSchema = z.object({
+  name: z
+    .string()
+    .refine((v) => v.trim().length > 0, "name must be a non-empty string")
+    .optional(),
+  provider: z
+    .string()
+    .refine((v) => isAgentProvider(v), "invalid provider")
+    .optional(),
+  model: z
+    .string()
+    .refine((v) => v.trim().length > 0, "model must be a non-empty string")
+    .optional(),
+});
+
+export const createReviewAgentSchema = z.object({
+  name: z
+    .string("name is required")
+    .refine((v) => v.trim().length > 0, "name is required"),
+  systemPrompt: z
+    .string("systemPrompt is required")
+    .min(1, "systemPrompt is required"),
+});
+
+export const updateReviewAgentSchema = z.object({
+  name: z.string().optional(),
+  systemPrompt: z.string().optional(),
+  isEnabled: z.boolean().optional(),
+});
+
+export const updateAgentPromptSchema = z.object({
+  systemPrompt: z.string("systemPrompt string is required"),
+});
+
+// --- QA schemas ---
+
+export const createQaPromptSchema = z.object({
+  name: z
+    .string("Name and prompt are required")
+    .refine((v) => v.trim().length > 0, "Name and prompt are required"),
+  prompt: z
+    .string("Name and prompt are required")
+    .refine((v) => v.trim().length > 0, "Name and prompt are required"),
+});
+
+// --- Release schemas ---
+
+export const createReleaseSchema = z.object({
+  version: z.string("version is required").min(1, "version is required"),
+  title: z.string().nullish(),
+  epicIds: z
+    .array(z.string(), "epicIds array is required")
+    .min(1, "epicIds array is required"),
+  generateChangelog: z.boolean().optional(),
+  pushToGitHub: z.boolean().optional(),
+  resumeSessionId: z.string().nullish(),
+  namedAgentId: z.string().nullish(),
+});
+
+// --- Sync schemas ---
+
+export const syncProjectSchema = z.object({
+  action: z.enum(["export", "import"], 'action must be "export" or "import"'),
 });

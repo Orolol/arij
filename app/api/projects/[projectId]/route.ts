@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { tryExportArjiJson } from "@/lib/sync/export";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { updateProjectSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { validatePath } from "@/lib/validation/path";
@@ -12,13 +13,11 @@ export async function GET(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
 
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
 
-  return NextResponse.json({ data: project });
+  return NextResponse.json({ data: found.project });
 }
 
 export async function PATCH(
@@ -30,10 +29,8 @@ export async function PATCH(
   const validated = await validateBody(updateProjectSchema, request);
   if (isValidationError(validated)) return validated;
 
-  const existing = db.select().from(projects).where(eq(projects.id, projectId)).get();
-  if (!existing) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
 
   const body = validated.data;
 
@@ -69,11 +66,9 @@ export async function DELETE(
 ) {
   const { projectId } = await params;
 
-  const existing = db.select().from(projects).where(eq(projects.id, projectId)).get();
-  if (!existing) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
 
   db.delete(projects).where(eq(projects.id, projectId)).run();
-  return NextResponse.json({ data: { deleted: true } });
+  return NextResponse.json({ data: { ok: true } });
 }

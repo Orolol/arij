@@ -57,7 +57,7 @@ export function useEpicPr(projectId: string, epicId: string | null) {
         );
         const data = await res.json();
         if (!res.ok) {
-          setError(data.message || data.error || "Failed to create PR");
+          setError(data.error || "Failed to create PR");
         } else {
           setPr(data.data?.pr ?? null);
         }
@@ -81,7 +81,7 @@ export function useEpicPr(projectId: string, epicId: string | null) {
       );
       const data = await res.json();
       if (!res.ok) {
-        setError(data.message || data.error || "Failed to sync PR");
+        setError(data.error || "Failed to sync PR");
       } else {
         setPr(data.data ?? null);
       }

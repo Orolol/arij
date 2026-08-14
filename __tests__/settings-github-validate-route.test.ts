@@ -20,7 +20,7 @@ describe("POST /api/settings/github/validate", () => {
     const json = await res.json();
 
     expect(res.status).toBe(400);
-    expect(json.data.valid).toBe(false);
+    expect(json.data).toBeUndefined();
     expect(json.error).toBe("Enter a GitHub personal access token to validate.");
   });
 
@@ -54,7 +54,7 @@ describe("POST /api/settings/github/validate", () => {
     const json = await res.json();
 
     expect(res.status).toBe(401);
-    expect(json.data.valid).toBe(false);
+    expect(json.data).toBeUndefined();
     expect(json.error).toBe("GitHub rejected the token. Verify it and try again.");
   });
 });
