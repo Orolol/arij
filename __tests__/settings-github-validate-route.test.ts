@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mockJsonRequest } from "@/__tests__/helpers/db-mock";
 
 const mockValidateGitHubToken = vi.hoisted(() => vi.fn());
 
@@ -15,12 +16,12 @@ describe("POST /api/settings/github/validate", () => {
     const { POST } = await import("@/app/api/settings/github/validate/route");
 
     const res = await POST(
-      { json: () => Promise.resolve({ token: "" }) } as unknown as import("next/server").NextRequest
+      mockJsonRequest({ token: "" })
     );
     const json = await res.json();
 
     expect(res.status).toBe(400);
-    expect(json.data.valid).toBe(false);
+    expect(json.data).toBeUndefined();
     expect(json.error).toBe("Enter a GitHub personal access token to validate.");
   });
 
@@ -32,7 +33,7 @@ describe("POST /api/settings/github/validate", () => {
 
     const { POST } = await import("@/app/api/settings/github/validate/route");
     const res = await POST(
-      { json: () => Promise.resolve({ token: "ghp_good" }) } as unknown as import("next/server").NextRequest
+      mockJsonRequest({ token: "ghp_good" })
     );
     const json = await res.json();
 
@@ -49,12 +50,12 @@ describe("POST /api/settings/github/validate", () => {
 
     const { POST } = await import("@/app/api/settings/github/validate/route");
     const res = await POST(
-      { json: () => Promise.resolve({ token: "ghp_bad" }) } as unknown as import("next/server").NextRequest
+      mockJsonRequest({ token: "ghp_bad" })
     );
     const json = await res.json();
 
     expect(res.status).toBe(401);
-    expect(json.data.valid).toBe(false);
+    expect(json.data).toBeUndefined();
     expect(json.error).toBe("GitHub rejected the token. Verify it and try again.");
   });
 });

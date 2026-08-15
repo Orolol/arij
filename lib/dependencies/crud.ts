@@ -83,32 +83,6 @@ export function createDependencies(
 }
 
 /**
- * Remove a specific dependency edge.
- */
-export function removeDependency(dependencyId: string) {
-  db.delete(ticketDependencies)
-    .where(eq(ticketDependencies.id, dependencyId))
-    .run();
-}
-
-/**
- * Remove a dependency by the edge pair (ticketId, dependsOnTicketId).
- */
-export function removeDependencyEdge(
-  ticketId: string,
-  dependsOnTicketId: string
-) {
-  db.delete(ticketDependencies)
-    .where(
-      and(
-        eq(ticketDependencies.ticketId, ticketId),
-        eq(ticketDependencies.dependsOnTicketId, dependsOnTicketId)
-      )
-    )
-    .run();
-}
-
-/**
  * Replace all dependencies for a ticket with a new set.
  * Validates DAG integrity for the new set.
  */

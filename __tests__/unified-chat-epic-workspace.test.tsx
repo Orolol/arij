@@ -97,8 +97,8 @@ vi.mock("@/hooks/useChat", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useCodexAvailable", () => ({
-  useCodexAvailable: () => ({ codexAvailable: true, codexInstalled: true }),
+vi.mock("@/hooks/useProvidersAvailable", () => ({
+  useProvidersAvailable: () => ({ codexAvailable: true, codexInstalled: true }),
 }));
 
 const mockCreateEpic = vi.fn(async () => "epic-1");
@@ -136,12 +136,6 @@ vi.mock("@/components/chat/MessageInput", () => ({
 
 vi.mock("@/components/chat/QuestionCards", () => ({
   QuestionCards: () => null,
-}));
-
-vi.mock("@/components/shared/ProviderSelect", () => ({
-  ProviderSelect: ({ value }: { value: string }) => (
-    <div data-testid="provider-select">{value}</div>
-  ),
 }));
 
 import {

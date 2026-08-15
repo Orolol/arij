@@ -1,58 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { dbMockState, resetDbMockState } from "@/__tests__/helpers/db-mock";
 
-const { state, mockValidateSameProject, mockValidateDagIntegrity } = vi.hoisted(() => ({
-  state: {
-    allQueue: [] as unknown[],
-    insertCalls: [] as Array<{ table: unknown; payload: unknown }>,
-  },
+const { mockValidateSameProject, mockValidateDagIntegrity } = vi.hoisted(() => ({
   mockValidateSameProject: vi.fn(),
   mockValidateDagIntegrity: vi.fn(),
 }));
 
-const mockSchema = vi.hoisted(() => ({
-  ticketDependencies: {
-    __name: "ticketDependencies",
-    id: "id",
-    ticketId: "ticketId",
-    dependsOnTicketId: "dependsOnTicketId",
-    projectId: "projectId",
-  },
-}));
-
 const mockIdState = vi.hoisted(() => ({ value: 1 }));
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
-  or: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain: Record<string, ReturnType<typeof vi.fn>> = {
-    select: vi.fn(),
-    from: vi.fn(),
-    where: vi.fn(),
-    all: vi.fn(),
-    insert: vi.fn(),
-  };
-
-  chain.select.mockReturnValue(chain);
-  chain.from.mockReturnValue(chain);
-  chain.where.mockReturnValue(chain);
-  chain.all.mockImplementation(() => state.allQueue.shift() ?? []);
-  chain.insert.mockImplementation((table: unknown) => ({
-    values: vi.fn((payload: unknown) => {
-      state.insertCalls.push({ table, payload });
-      return { run: vi.fn() };
-    }),
-  }));
-
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
+// builders, and the chain mock ignores their output. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  ticketDependencies: mockSchema.ticketDependencies,
-}));
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => {
@@ -70,13 +31,12 @@ vi.mock("@/lib/dependencies/validation", () => ({
 describe("dependencies CRUD batching", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    state.allQueue = [];
-    state.insertCalls = [];
+    resetDbMockState();
     mockIdState.value = 1;
   });
 
   it("inserts only missing edges in a single batch insert", async () => {
-    state.allQueue = [
+    dbMockState.allQueue = [
       [{ ticketId: "epic-1", dependsOnTicketId: "epic-2" }],
     ];
 
@@ -95,8 +55,8 @@ describe("dependencies CRUD batching", () => {
         projectId: "proj-1",
       }),
     );
-    expect(state.insertCalls).toHaveLength(1);
-    expect((state.insertCalls[0].payload as Array<Record<string, unknown>>)).toHaveLength(1);
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    expect((dbMockState.insertCalls[0] as Array<Record<string, unknown>>)).toHaveLength(1);
     expect(mockValidateSameProject).toHaveBeenCalledWith("proj-1", [
       { ticketId: "epic-1", dependsOnTicketId: "epic-2" },
       { ticketId: "epic-3", dependsOnTicketId: "epic-4" },
@@ -108,7 +68,7 @@ describe("dependencies CRUD batching", () => {
   });
 
   it("drops self-dependencies and duplicate edges before insert", async () => {
-    state.allQueue = [[]];
+    dbMockState.allQueue = [[]];
 
     const { createDependencies } = await import("@/lib/dependencies/crud");
     const created = createDependencies("proj-1", [
@@ -118,8 +78,8 @@ describe("dependencies CRUD batching", () => {
     ]);
 
     expect(created).toHaveLength(1);
-    expect(state.insertCalls).toHaveLength(1);
-    expect((state.insertCalls[0].payload as Array<Record<string, unknown>>)).toHaveLength(1);
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    expect((dbMockState.insertCalls[0] as Array<Record<string, unknown>>)).toHaveLength(1);
     expect(mockValidateSameProject).toHaveBeenCalledWith("proj-1", [
       { ticketId: "epic-2", dependsOnTicketId: "epic-3" },
       { ticketId: "epic-2", dependsOnTicketId: "epic-3" },
@@ -127,7 +87,7 @@ describe("dependencies CRUD batching", () => {
   });
 
   it("skips insert when all candidate edges already exist", async () => {
-    state.allQueue = [[{ ticketId: "epic-2", dependsOnTicketId: "epic-3" }]];
+    dbMockState.allQueue = [[{ ticketId: "epic-2", dependsOnTicketId: "epic-3" }]];
 
     const { createDependencies } = await import("@/lib/dependencies/crud");
     const created = createDependencies("proj-1", [
@@ -135,6 +95,6 @@ describe("dependencies CRUD batching", () => {
     ]);
 
     expect(created).toEqual([]);
-    expect(state.insertCalls).toHaveLength(0);
+    expect(dbMockState.insertCalls).toHaveLength(0);
   });
 });

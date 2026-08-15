@@ -1,111 +1,134 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+
+// The lifecycle module imports @/lib/db for its DB-backed helpers; the pure
+// state-machine functions under test here do not need a real database.
+vi.mock("@/lib/db", () => ({
+  db: {},
+}));
+
 import {
-  isValidTransition,
-  assertValidTransition,
-  isTerminalStatus,
-  type SessionStatus,
-} from "@/lib/sessions/status-machine";
+  isValidSessionTransition,
+  assertValidSessionTransition,
+  isTerminalSessionStatus,
+  SessionLifecycleConflictError,
+  type AgentSessionLifecycleStatus,
+} from "@/lib/agent-sessions/lifecycle";
 
-describe("Session Status Machine", () => {
-  describe("isValidTransition()", () => {
-    it("allows pending -> running", () => {
-      expect(isValidTransition("pending", "running")).toBe(true);
+describe("Session Status Machine (merged into lifecycle)", () => {
+  describe("isValidSessionTransition()", () => {
+    it("allows queued -> running", () => {
+      expect(isValidSessionTransition("queued", "running")).toBe(true);
     });
 
-    it("allows pending -> cancelled", () => {
-      expect(isValidTransition("pending", "cancelled")).toBe(true);
+    it("allows queued -> cancelled", () => {
+      expect(isValidSessionTransition("queued", "cancelled")).toBe(true);
     });
 
-    it("allows pending -> failed", () => {
-      expect(isValidTransition("pending", "failed")).toBe(true);
+    it("allows queued -> failed", () => {
+      expect(isValidSessionTransition("queued", "failed")).toBe(true);
     });
 
     it("allows running -> completed", () => {
-      expect(isValidTransition("running", "completed")).toBe(true);
+      expect(isValidSessionTransition("running", "completed")).toBe(true);
     });
 
     it("allows running -> failed", () => {
-      expect(isValidTransition("running", "failed")).toBe(true);
+      expect(isValidSessionTransition("running", "failed")).toBe(true);
     });
 
     it("allows running -> cancelled", () => {
-      expect(isValidTransition("running", "cancelled")).toBe(true);
+      expect(isValidSessionTransition("running", "cancelled")).toBe(true);
     });
 
     it("rejects completed -> running (terminal state)", () => {
-      expect(isValidTransition("completed", "running")).toBe(false);
+      expect(isValidSessionTransition("completed", "running")).toBe(false);
     });
 
     it("rejects completed -> failed (terminal state)", () => {
-      expect(isValidTransition("completed", "failed")).toBe(false);
+      expect(isValidSessionTransition("completed", "failed")).toBe(false);
     });
 
     it("rejects failed -> running (terminal state)", () => {
-      expect(isValidTransition("failed", "running")).toBe(false);
+      expect(isValidSessionTransition("failed", "running")).toBe(false);
     });
 
     it("rejects failed -> completed (terminal state)", () => {
-      expect(isValidTransition("failed", "completed")).toBe(false);
+      expect(isValidSessionTransition("failed", "completed")).toBe(false);
     });
 
     it("rejects cancelled -> running (terminal state)", () => {
-      expect(isValidTransition("cancelled", "running")).toBe(false);
+      expect(isValidSessionTransition("cancelled", "running")).toBe(false);
     });
 
     it("rejects cancelled -> completed (terminal state)", () => {
-      expect(isValidTransition("cancelled", "completed")).toBe(false);
+      expect(isValidSessionTransition("cancelled", "completed")).toBe(false);
     });
 
-    it("rejects running -> pending (no backward transition)", () => {
-      expect(isValidTransition("running", "pending")).toBe(false);
+    it("rejects running -> queued (no backward transition)", () => {
+      expect(isValidSessionTransition("running", "queued")).toBe(false);
     });
 
     it("rejects same-state transitions (completed -> completed)", () => {
-      expect(isValidTransition("completed", "completed")).toBe(false);
+      expect(isValidSessionTransition("completed", "completed")).toBe(false);
     });
 
-    it("rejects pending -> completed (must go through running)", () => {
-      expect(isValidTransition("pending", "completed")).toBe(false);
+    it("rejects queued -> completed (must go through running)", () => {
+      expect(isValidSessionTransition("queued", "completed")).toBe(false);
     });
   });
 
-  describe("assertValidTransition()", () => {
+  describe("assertValidSessionTransition()", () => {
     it("returns target status for valid transitions", () => {
-      expect(assertValidTransition("s1", "running", "completed")).toBe("completed");
-    });
-
-    it("throws for invalid transitions with descriptive message", () => {
-      expect(() => assertValidTransition("s2", "completed", "running")).toThrow(
-        "Invalid session status transition for s2: completed -> running"
+      expect(assertValidSessionTransition("s1", "running", "completed")).toBe(
+        "completed"
       );
     });
+
+    it("throws a lifecycle conflict error for invalid transitions", () => {
+      expect(() =>
+        assertValidSessionTransition("s2", "completed", "running")
+      ).toThrow(SessionLifecycleConflictError);
+
+      try {
+        assertValidSessionTransition("s2", "completed", "running");
+        throw new Error("Expected lifecycle conflict");
+      } catch (error) {
+        expect(error).toBeInstanceOf(SessionLifecycleConflictError);
+        const conflict = error as SessionLifecycleConflictError;
+        expect(conflict.details).toMatchObject({
+          sessionId: "s2",
+          fromStatus: "completed",
+          toStatus: "running",
+        });
+      }
+    });
   });
 
-  describe("isTerminalStatus()", () => {
+  describe("isTerminalSessionStatus()", () => {
     it("completed is terminal", () => {
-      expect(isTerminalStatus("completed")).toBe(true);
+      expect(isTerminalSessionStatus("completed")).toBe(true);
     });
 
     it("failed is terminal", () => {
-      expect(isTerminalStatus("failed")).toBe(true);
+      expect(isTerminalSessionStatus("failed")).toBe(true);
     });
 
     it("cancelled is terminal", () => {
-      expect(isTerminalStatus("cancelled")).toBe(true);
+      expect(isTerminalSessionStatus("cancelled")).toBe(true);
     });
 
-    it("pending is not terminal", () => {
-      expect(isTerminalStatus("pending")).toBe(false);
+    it("queued is not terminal", () => {
+      expect(isTerminalSessionStatus("queued")).toBe(false);
     });
 
     it("running is not terminal", () => {
-      expect(isTerminalStatus("running")).toBe(false);
+      expect(isTerminalSessionStatus("running")).toBe(false);
     });
   });
 
   describe("exhaustive transition coverage", () => {
-    const allStatuses: SessionStatus[] = [
-      "pending",
+    const allStatuses: AgentSessionLifecycleStatus[] = [
+      "queued",
       "running",
       "completed",
       "failed",
@@ -113,24 +136,40 @@ describe("Session Status Machine", () => {
     ];
 
     it("terminal states have no valid outgoing transitions", () => {
-      for (const terminal of ["completed", "failed", "cancelled"] as SessionStatus[]) {
+      for (const terminal of [
+        "completed",
+        "failed",
+        "cancelled",
+      ] as AgentSessionLifecycleStatus[]) {
         for (const target of allStatuses) {
-          expect(isValidTransition(terminal, target)).toBe(false);
+          expect(isValidSessionTransition(terminal, target)).toBe(false);
         }
       }
     });
 
-    it("pending can only transition to running, cancelled, or failed", () => {
-      const allowed = new Set<SessionStatus>(["running", "cancelled", "failed"]);
+    it("queued can only transition to running, cancelled, or failed", () => {
+      const allowed = new Set<AgentSessionLifecycleStatus>([
+        "running",
+        "cancelled",
+        "failed",
+      ]);
       for (const target of allStatuses) {
-        expect(isValidTransition("pending", target)).toBe(allowed.has(target));
+        expect(isValidSessionTransition("queued", target)).toBe(
+          allowed.has(target)
+        );
       }
     });
 
     it("running can only transition to completed, failed, or cancelled", () => {
-      const allowed = new Set<SessionStatus>(["completed", "failed", "cancelled"]);
+      const allowed = new Set<AgentSessionLifecycleStatus>([
+        "completed",
+        "failed",
+        "cancelled",
+      ]);
       for (const target of allStatuses) {
-        expect(isValidTransition("running", target)).toBe(allowed.has(target));
+        expect(isValidSessionTransition("running", target)).toBe(
+          allowed.has(target)
+        );
       }
     });
   });

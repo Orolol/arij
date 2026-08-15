@@ -5,6 +5,10 @@
  * posts an approval activity comment, and sets statuses to done.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import {
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockEpic = {
   id: "epic-1",
@@ -171,13 +175,9 @@ describe("Review approval", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/approve/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-    });
+    const req = mockNextRequest({ url: "http://localhost/api/test", method: "POST" });
 
-    const res = await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     expect(res.status).toBe(200);
 
@@ -194,13 +194,9 @@ describe("Review approval", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/approve/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-    });
+    const req = mockNextRequest({ url: "http://localhost/api/test", method: "POST" });
 
-    await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     const ticketInsert = insertCalls.find(
       (c) => c.table === "ticketComments"
@@ -215,13 +211,9 @@ describe("Review approval", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/approve/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-    });
+    const req = mockNextRequest({ url: "http://localhost/api/test", method: "POST" });
 
-    await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     const epicUpdate = updateCalls.find(
       (c) => c.table === "epics" && c.updates.status === "done"
@@ -234,13 +226,9 @@ describe("Review approval", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/approve/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-    });
+    const req = mockNextRequest({ url: "http://localhost/api/test", method: "POST" });
 
-    await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     const usUpdate = updateCalls.find(
       (c) => c.table === "userStories" && c.updates.status === "done"
@@ -253,13 +241,9 @@ describe("Review approval", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/approve/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-    });
+    const req = mockNextRequest({ url: "http://localhost/api/test", method: "POST" });
 
-    const res = await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     const json = await res.json();
     expect(json.data.approved).toBe(true);
@@ -279,13 +263,9 @@ describe("Review approval", () => {
       "@/app/api/projects/[projectId]/epics/[epicId]/approve/route"
     );
 
-    const req = new Request("http://localhost/api/test", {
-      method: "POST",
-    });
+    const req = mockNextRequest({ url: "http://localhost/api/test", method: "POST" });
 
-    const res = await POST(req as never, {
-      params: Promise.resolve({ projectId: "p1", epicId: "epic-1" }),
-    });
+    const res = await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
 
     expect(res.status).toBe(400);
     const json = await res.json();

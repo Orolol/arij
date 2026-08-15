@@ -31,7 +31,7 @@ import {
   markSessionRunning,
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import {
   enrichPromptWithDocumentMentions,
   MentionResolutionError,
@@ -241,7 +241,6 @@ export async function POST(
         provider: resolvedTeamAgent.provider,
         prompt: enrichedTeamPrompt,
         logsPath,
-        claudeSessionId: teamCliSessionId,
         cliSessionId: teamCliSessionId,
         namedAgentId: resolvedTeamAgent.namedAgentId ?? null,
         agentType: "team_build",
@@ -433,7 +432,6 @@ export async function POST(
       logsPath,
       branchName,
       worktreePath,
-      claudeSessionId: soloCliSessionId,
       cliSessionId: soloCliSessionId,
       namedAgentId: resolvedBuildAgent.namedAgentId ?? null,
       agentType: "build",

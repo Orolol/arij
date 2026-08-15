@@ -4,22 +4,17 @@ import { projects, epics, userStories } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import simpleGit from "simple-git";
+import { getStoryOr404, isErrorResponse } from "@/lib/api/route-helpers";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
 
-  // Validate story exists and is in review
-  const story = db
-    .select()
-    .from(userStories)
-    .where(eq(userStories.id, storyId))
-    .get();
-
-  if (!story) {
-    return NextResponse.json({ error: "Story not found" }, { status: 404 });
-  }
+  // Validate story exists (project-scoped) and is in review
+  const found = getStoryOr404(projectId, storyId);
+  if (isErrorResponse(found)) return found;
+  const { story } = found;
 
   if (story.status !== "review") {
     return NextResponse.json(

@@ -1,15 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { epics } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { z } from "zod";
 import {
   getTicketDependencies,
   getTicketDependents,
 } from "@/lib/dependencies/validation";
 import { setTicketDependencies } from "@/lib/dependencies/crud";
 import { CycleError, CrossProjectError } from "@/lib/dependencies/validation";
+import {
+  errorResponse,
+  getEpicOr404,
+  isErrorResponse,
+} from "@/lib/api/route-helpers";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
 
 type RouteParams = { params: Promise<{ projectId: string; epicId: string }> };
+
+const setDependenciesSchema = z.object({
+  dependsOnIds: z.array(z.string()),
+});
 
 /**
  * GET /api/projects/[projectId]/epics/[epicId]/dependencies
@@ -18,10 +26,8 @@ type RouteParams = { params: Promise<{ projectId: string; epicId: string }> };
 export async function GET(_request: NextRequest, { params }: RouteParams) {
   const { projectId, epicId } = await params;
 
-  const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
-  if (!epic) {
-    return NextResponse.json({ error: "Epic not found" }, { status: 404 });
-  }
+  const found = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(found)) return found;
 
   const predecessors = getTicketDependencies(epicId);
   const successors = getTicketDependents(epicId);
@@ -41,22 +47,14 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
  */
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   const { projectId, epicId } = await params;
-  const body = await request.json();
 
-  const { dependsOnIds } = body as { dependsOnIds?: string[] };
+  const validated = await validateBody(setDependenciesSchema, request);
+  if (isValidationError(validated)) return validated;
+  const { dependsOnIds } = validated.data;
 
-  if (!Array.isArray(dependsOnIds)) {
-    return NextResponse.json(
-      { error: "dependsOnIds array is required" },
-      { status: 400 }
-    );
-  }
-
-  // Validate epic exists
-  const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
-  if (!epic) {
-    return NextResponse.json({ error: "Epic not found" }, { status: 404 });
-  }
+  // Validate epic exists (project-scoped)
+  const found = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(found)) return found;
 
   // Validate no self-references
   if (dependsOnIds.includes(epicId)) {
@@ -89,14 +87,6 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
         { status: 422 }
       );
     }
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to update dependencies",
-      },
-      { status: 500 }
-    );
+    return errorResponse(error, "Failed to update dependencies");
   }
 }

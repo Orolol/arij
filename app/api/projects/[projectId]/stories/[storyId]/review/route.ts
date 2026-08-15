@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
-  projects,
   epics,
   userStories,
   ticketComments,
@@ -15,12 +14,17 @@ import {
   type ReviewType,
 } from "@/lib/claude/prompt-builder";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
-import { checkSessionLock } from "@/lib/session-lock";
+import {
+  getEpicOr404,
+  getProjectOr404,
+  getStoryOr404,
+  isErrorResponse,
+} from "@/lib/api/route-helpers";
 import fs from "fs";
 import path from "path";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { REVIEW_TYPE_TO_AGENT_TYPE } from "@/lib/agent-config/constants";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
@@ -55,7 +59,7 @@ const REVIEW_LABELS: Record<ReviewType, string> = {
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
-  const body = await request.json();
+  const body = await request.json().catch(() => ({}));
 
   const { reviewTypes, namedAgentId: namedAgentIdParam, resumeSessionId: resumeSessionIdParam } = body as {
     reviewTypes: ReviewType[];
@@ -85,16 +89,10 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
   }
 
-  // Validate story exists and is in review status
-  const story = db
-    .select()
-    .from(userStories)
-    .where(eq(userStories.id, storyId))
-    .get();
-
-  if (!story) {
-    return NextResponse.json({ error: "Story not found" }, { status: 404 });
-  }
+  // Validate story exists (project-scoped) and is in review status
+  const foundStory = getStoryOr404(projectId, storyId);
+  if (isErrorResponse(foundStory)) return foundStory;
+  const { story } = foundStory;
 
   if (story.status !== "review" && story.status !== "done") {
     return NextResponse.json(
@@ -103,49 +101,33 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
-  // Concurrency guard
-  const lock = checkSessionLock({ userStoryId: storyId });
-  if (lock.locked) {
+  // Get epic (project-scoped)
+  const foundEpic = getEpicOr404(projectId, story.epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
+  const { epic } = foundEpic;
+
+  // Concurrency guard — one active agent per story (or its parent epic)
+  const conflict = getRunningSessionForTarget({
+    scope: "story",
+    projectId,
+    storyId,
+    epicId: epic.id,
+  });
+  if (conflict) {
     return NextResponse.json(
-      { error: "conflict", message: "An agent is already running on this story", sessionId: lock.sessionId },
+      createAgentAlreadyRunningPayload(
+        { scope: "story", projectId, storyId, epicId: epic.id },
+        conflict,
+        "Another agent is already running for this story."
+      ),
       { status: 409 }
     );
   }
 
-  // Get epic
-  const epic = db
-    .select()
-    .from(epics)
-    .where(eq(epics.id, story.epicId))
-    .get();
-
-  if (!epic) {
-    return NextResponse.json(
-      { error: "Parent epic not found" },
-      { status: 404 }
-    );
-  }
-
   // Get project
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-
-  if (!project) {
-    return NextResponse.json(
-      { error: "Project not found" },
-      { status: 404 }
-    );
-  }
-
-  if (!project.gitRepoPath) {
-    return NextResponse.json(
-      { error: "Project has no git repository configured" },
-      { status: 400 }
-    );
-  }
+  const foundProject = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(foundProject)) return foundProject;
+  const { project } = foundProject;
 
   const gitRepoPath = project.gitRepoPath;
   const isRepo = await isGitRepo(gitRepoPath);
@@ -227,26 +209,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     fs.mkdirSync(logsDir, { recursive: true });
     const logsPath = path.join(logsDir, "logs.json");
 
-    // For the first review, check concurrency guard
-    if (idx === 0) {
-      const conflict = getRunningSessionForTarget({
-        scope: "story",
-        projectId,
-        storyId,
-        epicId: epic.id,
-      });
-      if (conflict) {
-        return NextResponse.json(
-          createAgentAlreadyRunningPayload(
-            { scope: "story", projectId, storyId, epicId: epic.id },
-            conflict,
-            "Another agent is already running for this story."
-          ),
-          { status: 409 }
-        );
-      }
-    }
-
     const agentMode = reviewType === "feature_review" ? "code" : "plan";
     const providerSupportsResume =
       resolvedAgent.provider === "claude-code" ||
@@ -272,7 +234,6 @@ export async function POST(request: NextRequest, { params }: Params) {
       logsPath,
       branchName,
       worktreePath,
-      claudeSessionId: cliSessionId,
       cliSessionId,
       namedAgentId: resolvedAgent.namedAgentId ?? null,
       namedAgentName: resolvedAgent.name || null,

@@ -1,0 +1,218 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+
+const DEFAULT_PANEL_RATIO = 0.4;
+const MIN_PANEL_WIDTH = 300;
+const MIN_BOARD_WIDTH = 400;
+const DETAIL_PANEL_MIN_BOARD_WIDTH = 220;
+const DETAIL_PANEL_MIN_WIDTH = 420;
+const DETAIL_PANEL_MAX_WIDTH = 560;
+const DETAIL_PANEL_RATIO = 0.34;
+export const DIVIDER_WIDTH = 6;
+const MOBILE_BREAKPOINT = 768;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+export type UnifiedPanelState = "collapsed" | "expanded" | "hidden";
+
+interface UsePanelLayoutOptions {
+  projectId: string;
+  /**
+   * True while the divider drag should resize the chat panel — i.e. the panel
+   * currently shows chat content (not a shared detail view).
+   */
+  dragTargetsChat: boolean;
+  /** Conversations used to validate the persisted active conversation id. */
+  conversations: ReadonlyArray<{ id: string }>;
+  activeId: string | null;
+  setActiveId: (id: string) => void;
+}
+
+/**
+ * Layout state machine for the unified chat panel: expanded/collapsed/hidden
+ * panel state, divider drag + ratio, mobile detection, and localStorage
+ * persistence of the three per-project keys
+ * (`arij.unified-chat-panel.{ratio,state,active}.<projectId>`).
+ */
+export function usePanelLayout({
+  projectId,
+  dragTargetsChat,
+  conversations,
+  activeId,
+  setActiveId,
+}: UsePanelLayoutOptions) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [panelState, setPanelState] = useState<UnifiedPanelState>("collapsed");
+  const [panelRatio, setPanelRatio] = useState(DEFAULT_PANEL_RATIO);
+  const [isDragging, setIsDragging] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+
+  const storageKey = useMemo(
+    () => `arij.unified-chat-panel.ratio.${projectId}`,
+    [projectId],
+  );
+
+  const stateStorageKey = useMemo(
+    () => `arij.unified-chat-panel.state.${projectId}`,
+    [projectId],
+  );
+
+  const activeStorageKey = useMemo(
+    () => `arij.unified-chat-panel.active.${projectId}`,
+    [projectId],
+  );
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    function updateIsMobile() {
+      setIsMobile(window.innerWidth < MOBILE_BREAKPOINT);
+    }
+
+    updateIsMobile();
+    window.addEventListener("resize", updateIsMobile);
+    return () => window.removeEventListener("resize", updateIsMobile);
+  }, []);
+
+  const getContainerWidth = useCallback(() => {
+    if (typeof window === "undefined") {
+      return 1200;
+    }
+    return containerRef.current?.clientWidth || window.innerWidth || 1200;
+  }, []);
+
+  const computePanelWidth = useCallback(
+    (ratio: number) => {
+      const totalWidth = getContainerWidth();
+      const minRatio = MIN_PANEL_WIDTH / totalWidth;
+      const maxRatio = (totalWidth - MIN_BOARD_WIDTH - DIVIDER_WIDTH) / totalWidth;
+      const safeRatio = clamp(ratio, minRatio, maxRatio);
+      return Math.round(totalWidth * safeRatio);
+    },
+    [getContainerWidth],
+  );
+
+  const panelWidthPx = computePanelWidth(panelRatio);
+  const detailPanelWidthPx = useMemo(() => {
+    const totalWidth = getContainerWidth();
+    const targetWidth = clamp(
+      totalWidth * DETAIL_PANEL_RATIO,
+      DETAIL_PANEL_MIN_WIDTH,
+      DETAIL_PANEL_MAX_WIDTH,
+    );
+    const maxWidth = Math.max(160, totalWidth - DETAIL_PANEL_MIN_BOARD_WIDTH);
+    return Math.round(Math.min(targetWidth, maxWidth));
+  }, [getContainerWidth]);
+
+  // Persist panelRatio — read on mount
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const raw = window.localStorage.getItem(storageKey);
+    if (!raw) {
+      return;
+    }
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed)) {
+      return;
+    }
+    setPanelRatio(parsed);
+  }, [storageKey]);
+
+  // Persist panelRatio — write on change
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(storageKey, panelRatio.toFixed(4));
+  }, [panelRatio, storageKey]);
+
+  // Persist panelState — read on mount
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = window.localStorage.getItem(stateStorageKey);
+    if (raw === "expanded" || raw === "collapsed" || raw === "hidden") {
+      setPanelState(raw);
+    }
+  }, [stateStorageKey]);
+
+  // Persist panelState — write on change
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem(stateStorageKey, panelState);
+  }, [panelState, stateStorageKey]);
+
+  // Persist activeId — read on mount (with guard to avoid overriding user switches)
+  const activeIdRestoredRef = useRef(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (activeIdRestoredRef.current) return;
+    activeIdRestoredRef.current = true;
+    const saved = window.localStorage.getItem(activeStorageKey);
+    if (saved && conversations.some((c) => c.id === saved)) {
+      setActiveId(saved);
+    }
+  }, [activeStorageKey, conversations, setActiveId]);
+
+  // Persist activeId — write on change
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (activeId) {
+      window.localStorage.setItem(activeStorageKey, activeId);
+    }
+  }, [activeId, activeStorageKey]);
+
+  useEffect(() => {
+    if (!isDragging || panelState !== "expanded" || !dragTargetsChat) {
+      return;
+    }
+
+    function onMove(event: MouseEvent) {
+      const totalWidth = getContainerWidth();
+      const nextPanelWidth = clamp(
+        totalWidth - event.clientX,
+        MIN_PANEL_WIDTH,
+        totalWidth - MIN_BOARD_WIDTH - DIVIDER_WIDTH,
+      );
+      setPanelRatio(nextPanelWidth / totalWidth);
+    }
+
+    function onUp() {
+      setIsDragging(false);
+    }
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [isDragging, panelState, dragTargetsChat, getContainerWidth]);
+
+  const startDrag = useCallback(() => {
+    setIsDragging(true);
+  }, []);
+
+  const resetPanelRatio = useCallback(() => {
+    setPanelRatio(DEFAULT_PANEL_RATIO);
+  }, []);
+
+  return {
+    containerRef,
+    panelState,
+    setPanelState,
+    isMobile,
+    isDragging,
+    startDrag,
+    resetPanelRatio,
+    panelWidthPx,
+    detailPanelWidthPx,
+  };
+}

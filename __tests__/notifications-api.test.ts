@@ -1,51 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { createTestDb } from "@/lib/db/test-utils";
+import { mockNextRequest } from "@/__tests__/helpers/db-mock";
+import { notificationReadCursor, notifications } from "@/lib/db/schema";
 
-// ---- Mock state ----
-const mockState = vi.hoisted(() => ({
-  allData: [] as unknown[],
-  sqlitePrepareResults: new Map<string, unknown>(),
-  sqliteRunCalls: [] as Array<{ sql: string; params: unknown[] }>,
-}));
+// The routes are pure Drizzle now, so the test runs them against a real
+// in-memory database with the full schema rather than asserting SQL strings.
+const testDb = vi.hoisted(() => ({ instance: null as ReturnType<
+  typeof import("@/lib/db/test-utils").createTestDb
+> | null }));
 
-vi.mock("drizzle-orm", () => ({
-  desc: vi.fn((v: unknown) => v),
-  eq: vi.fn(() => ({})),
-}));
-
-// ---- DB chain mock ----
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockReturnThis(),
-    limit: vi.fn().mockReturnThis(),
-    all: vi.fn(() => mockState.allData),
-  };
-
-  return {
-    db: chain,
-    sqlite: {
-      prepare: vi.fn((sql: string) => ({
-        get: vi.fn((...params: unknown[]) => {
-          // Return matching prepared result
-          for (const [key, value] of mockState.sqlitePrepareResults) {
-            if (sql.includes(key)) return value;
-          }
-          return undefined;
-        }),
-        run: vi.fn((...params: unknown[]) => {
-          mockState.sqliteRunCalls.push({ sql, params });
-        }),
-      })),
-    },
-  };
-});
-
-vi.mock("@/lib/db/schema", () => ({
-  notifications: {
-    __name: "notifications",
-    createdAt: "created_at",
+vi.mock("@/lib/db", () => ({
+  get db() {
+    if (!testDb.instance) throw new Error("test db not initialised");
+    return testDb.instance.db;
+  },
+  get sqlite() {
+    if (!testDb.instance) throw new Error("test db not initialised");
+    return testDb.instance.sqlite;
   },
 }));
 
@@ -54,80 +25,149 @@ import { GET } from "@/app/api/notifications/route";
 import { POST } from "@/app/api/notifications/read/route";
 
 function makeRequest(url: string): Request {
-  return new Request(url);
+  return mockNextRequest({ url });
 }
 
+function seedNotification(
+  id: string,
+  createdAt: string,
+  title = `notification ${id}`
+): void {
+  const { db } = testDb.instance!;
+  db.insert(notifications)
+    .values({
+      id,
+      projectId: "p1",
+      projectName: "Project One",
+      status: "completed",
+      title,
+      targetUrl: `/projects/p1#${id}`,
+      createdAt,
+    })
+    .run();
+}
+
+beforeEach(() => {
+  testDb.instance = createTestDb();
+  testDb.instance.sqlite
+    .prepare("INSERT INTO projects (id, name) VALUES ('p1', 'Project One')")
+    .run();
+});
+
 describe("GET /api/notifications", () => {
-  beforeEach(() => {
-    mockState.allData = [];
-    mockState.sqlitePrepareResults.clear();
-    mockState.sqliteRunCalls = [];
+  it("returns empty list with unreadCount 0 when no notifications", async () => {
+    const res = await GET(makeRequest("http://localhost/api/notifications"));
+    const body = await res.json();
+
+    expect(body.data.notifications).toEqual([]);
+    expect(body.data.unreadCount).toBe(0);
   });
 
-  it("returns empty list with unreadCount 0 when no notifications", () => {
-    mockState.allData = [];
-    mockState.sqlitePrepareResults.set("COUNT(*)", { cnt: 0 });
+  it("counts everything as unread when no read cursor exists", async () => {
+    seedNotification("n1", "2026-02-18T12:00:00Z");
+    seedNotification("n2", "2026-02-18T11:00:00Z");
 
-    const req = makeRequest("http://localhost/api/notifications");
-    return GET(req as any).then(async (res) => {
-      const body = await res.json();
-      expect(body.data).toEqual([]);
-      expect(body.unreadCount).toBe(0);
-    });
+    const res = await GET(makeRequest("http://localhost/api/notifications"));
+    const body = await res.json();
+
+    expect(body.data.notifications).toHaveLength(2);
+    expect(body.data.unreadCount).toBe(2);
   });
 
-  it("returns notifications with correct unread count when cursor exists", () => {
-    const notifs = [
-      { id: "n1", title: "Build completed", status: "completed", createdAt: "2026-02-18T12:00:00Z" },
-      { id: "n2", title: "Review failed", status: "failed", createdAt: "2026-02-18T11:00:00Z" },
-    ];
-    mockState.allData = notifs;
-    mockState.sqlitePrepareResults.set("read_at", { read_at: "2026-02-18T11:30:00Z" });
-    mockState.sqlitePrepareResults.set("COUNT(*)", { cnt: 1 });
+  it("returns notifications with correct unread count when cursor exists", async () => {
+    seedNotification("n1", "2026-02-18T12:00:00Z");
+    seedNotification("n2", "2026-02-18T11:00:00Z");
+    testDb
+      .instance!.db.insert(notificationReadCursor)
+      .values({ id: 1, readAt: "2026-02-18T11:30:00Z" })
+      .run();
 
-    const req = makeRequest("http://localhost/api/notifications");
-    return GET(req as any).then(async (res) => {
-      const body = await res.json();
-      expect(body.data).toHaveLength(2);
-      expect(body.unreadCount).toBe(1);
-    });
+    const res = await GET(makeRequest("http://localhost/api/notifications"));
+    const body = await res.json();
+
+    expect(body.data.notifications).toHaveLength(2);
+    expect(body.data.unreadCount).toBe(1);
   });
 
-  it("respects limit parameter", () => {
-    mockState.allData = [];
-    mockState.sqlitePrepareResults.set("COUNT(*)", { cnt: 0 });
+  it("returns notifications newest first", async () => {
+    seedNotification("older", "2026-02-18T09:00:00Z");
+    seedNotification("newest", "2026-02-18T15:00:00Z");
+    seedNotification("middle", "2026-02-18T12:00:00Z");
 
-    const req = makeRequest("http://localhost/api/notifications?limit=10");
-    return GET(req as any).then(async (res) => {
-      const body = await res.json();
-      expect(body.data).toEqual([]);
-    });
+    const res = await GET(makeRequest("http://localhost/api/notifications"));
+    const body = await res.json();
+
+    expect(body.data.notifications.map((n: { id: string }) => n.id)).toEqual([
+      "newest",
+      "middle",
+      "older",
+    ]);
   });
 
-  it("clamps limit to 200 max", () => {
-    mockState.allData = [];
-    mockState.sqlitePrepareResults.set("COUNT(*)", { cnt: 0 });
+  it("respects limit parameter", async () => {
+    seedNotification("n1", "2026-02-18T12:00:00Z");
+    seedNotification("n2", "2026-02-18T11:00:00Z");
+    seedNotification("n3", "2026-02-18T10:00:00Z");
 
-    const req = makeRequest("http://localhost/api/notifications?limit=999");
-    return GET(req as any).then(async (res) => {
-      expect(res.status).toBe(200);
-    });
+    const res = await GET(
+      makeRequest("http://localhost/api/notifications?limit=2")
+    );
+    const body = await res.json();
+
+    expect(body.data.notifications).toHaveLength(2);
+    // unreadCount is not limited by the page size
+    expect(body.data.unreadCount).toBe(3);
+  });
+
+  it("clamps limit to 200 max", async () => {
+    const res = await GET(
+      makeRequest("http://localhost/api/notifications?limit=999")
+    );
+
+    expect(res.status).toBe(200);
   });
 });
 
 describe("POST /api/notifications/read", () => {
-  beforeEach(() => {
-    mockState.sqliteRunCalls = [];
-  });
-
-  it("upserts read cursor and returns ok", async () => {
+  it("inserts the read cursor and returns ok", async () => {
+    const before = new Date().toISOString();
     const res = await POST();
     const body = await res.json();
 
-    expect(body.ok).toBe(true);
-    expect(mockState.sqliteRunCalls).toHaveLength(1);
-    expect(mockState.sqliteRunCalls[0].sql).toContain("INSERT OR REPLACE");
-    // The timestamp param should be an ISO string
-    expect(typeof mockState.sqliteRunCalls[0].params[0]).toBe("string");
+    expect(body.data.ok).toBe(true);
+
+    const rows = testDb
+      .instance!.db.select()
+      .from(notificationReadCursor)
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(1);
+    expect(rows[0].readAt >= before).toBe(true);
+  });
+
+  it("moves an existing cursor forward without duplicating the row", async () => {
+    testDb
+      .instance!.db.insert(notificationReadCursor)
+      .values({ id: 1, readAt: "2020-01-01T00:00:00.000Z" })
+      .run();
+
+    await POST();
+
+    const rows = testDb
+      .instance!.db.select()
+      .from(notificationReadCursor)
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0].readAt).not.toBe("2020-01-01T00:00:00.000Z");
+  });
+
+  it("marks everything read so the unread count drops to 0", async () => {
+    seedNotification("n1", "2026-02-18T12:00:00Z");
+    await POST();
+
+    const res = await GET(makeRequest("http://localhost/api/notifications"));
+    const body = await res.json();
+
+    expect(body.data.unreadCount).toBe(0);
   });
 });

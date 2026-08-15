@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatAttachments } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
+import { errorResponse } from "@/lib/api/route-helpers";
 import path from "path";
 import fs from "fs";
 
@@ -42,41 +43,45 @@ export async function POST(
     );
   }
 
-  const uploadsDir = path.join(process.cwd(), "data", "uploads", projectId);
-  fs.mkdirSync(uploadsDir, { recursive: true });
+  try {
+    const uploadsDir = path.join(process.cwd(), "data", "uploads", projectId);
+    fs.mkdirSync(uploadsDir, { recursive: true });
 
-  const id = createId();
-  const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const diskName = `${id}-${safeFileName}`;
-  const filePath = path.join(uploadsDir, diskName);
+    const id = createId();
+    const safeFileName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const diskName = `${id}-${safeFileName}`;
+    const filePath = path.join(uploadsDir, diskName);
 
-  const buffer = Buffer.from(await file.arrayBuffer());
-  fs.writeFileSync(filePath, buffer);
+    const buffer = Buffer.from(await file.arrayBuffer());
+    fs.writeFileSync(filePath, buffer);
 
-  const relativePath = `data/uploads/${projectId}/${diskName}`;
+    const relativePath = `data/uploads/${projectId}/${diskName}`;
 
-  db.insert(chatAttachments)
-    .values({
-      id,
-      chatMessageId: null,
-      fileName: file.name,
-      filePath: relativePath,
-      mimeType: file.type,
-      sizeBytes: file.size,
-      createdAt: new Date().toISOString(),
-    })
-    .run();
-
-  return NextResponse.json(
-    {
-      data: {
+    db.insert(chatAttachments)
+      .values({
         id,
+        chatMessageId: null,
         fileName: file.name,
         filePath: relativePath,
         mimeType: file.type,
         sizeBytes: file.size,
+        createdAt: new Date().toISOString(),
+      })
+      .run();
+
+    return NextResponse.json(
+      {
+        data: {
+          id,
+          fileName: file.name,
+          filePath: relativePath,
+          mimeType: file.type,
+          sizeBytes: file.size,
+        },
       },
-    },
-    { status: 201 }
-  );
+      { status: 201 }
+    );
+  } catch (error) {
+    return errorResponse(error, "Failed to save attachment.");
+  }
 }

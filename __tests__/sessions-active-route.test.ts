@@ -1,61 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
-const { dbChain, state, mockListByProject, mockStatusForApi } = vi.hoisted(
-  () => {
-    const chain = {
-      select: vi.fn(),
-      from: vi.fn(),
-      leftJoin: vi.fn(),
-      where: vi.fn(),
-      all: vi.fn(),
-    };
-
-    const sharedState = {
-      rows: [] as Array<Record<string, unknown>>,
-      registry: [] as Array<Record<string, unknown>>,
-    };
-
-    return {
-      dbChain: chain,
-      state: sharedState,
-      mockListByProject: vi.fn(() => sharedState.registry),
-      mockStatusForApi: vi.fn((status: string | null | undefined) => status ?? "queued"),
-    };
-  }
-);
-
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
+const { mockListByProject, mockStatusForApi } = vi.hoisted(() => ({
+  mockListByProject: vi.fn(),
+  mockStatusForApi: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
-  db: dbChain,
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: {
-    id: "id",
-    epicId: "epicId",
-    userStoryId: "userStoryId",
-    status: "status",
-    mode: "mode",
-    orchestrationMode: "orchestrationMode",
-    provider: "provider",
-    agentType: "agentType",
-    prompt: "prompt",
-    startedAt: "startedAt",
-    projectId: "projectId",
-  },
-  epics: {
-    id: "epics.id",
-    title: "epics.title",
-  },
-  userStories: {
-    id: "user_stories.id",
-    title: "user_stories.title",
-  },
-}));
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
+// column identity, so no fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
+});
 
 vi.mock("@/lib/activity-registry", () => ({
   activityRegistry: {
@@ -67,21 +28,21 @@ vi.mock("@/lib/agent-sessions/lifecycle", () => ({
   getSessionStatusForApi: mockStatusForApi,
 }));
 
+let registryRows: Array<Record<string, unknown>> = [];
+
 describe("sessions/active route activity typing", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    state.rows = [];
-    state.registry = [];
-
-    dbChain.select.mockReturnValue(dbChain);
-    dbChain.from.mockReturnValue(dbChain);
-    dbChain.leftJoin.mockReturnValue(dbChain);
-    dbChain.where.mockReturnValue(dbChain);
-    dbChain.all.mockImplementation(() => state.rows);
+    resetDbMockState();
+    registryRows = [];
+    mockListByProject.mockImplementation(() => registryRows);
+    mockStatusForApi.mockImplementation(
+      (status: string | null | undefined) => status ?? "queued",
+    );
   });
 
   it("returns db sessions and registry chat activities with canonical status/mode fields", async () => {
-    state.rows = [
+    dbMockState.allRows = [
       {
         id: "sess-1",
         epicId: "epic-1",
@@ -97,7 +58,7 @@ describe("sessions/active route activity typing", () => {
         storyTitle: null,
       },
     ];
-    state.registry = [
+    registryRows = [
       {
         id: "chat-123",
         projectId: "proj-1",
@@ -111,9 +72,7 @@ describe("sessions/active route activity typing", () => {
     const { GET } = await import(
       "@/app/api/projects/[projectId]/sessions/active/route"
     );
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
     const json = await response.json();
 
     expect(response.status).toBe(200);
@@ -149,7 +108,7 @@ describe("sessions/active route activity typing", () => {
   });
 
   it("classifies merge-resolution sessions as merge", async () => {
-    state.rows = [
+    dbMockState.allRows = [
       {
         id: "sess-merge-1",
         epicId: "epic-1",
@@ -170,9 +129,7 @@ describe("sessions/active route activity typing", () => {
       "@/app/api/projects/[projectId]/sessions/active/route"
     );
 
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
 
     const json = await response.json();
     expect(response.status).toBe(200);
@@ -188,7 +145,7 @@ describe("sessions/active route activity typing", () => {
   });
 
   it("classifies review sessions as review even when mode is code", async () => {
-    state.rows = [
+    dbMockState.allRows = [
       {
         id: "sess-review-1",
         epicId: "epic-2",
@@ -210,9 +167,7 @@ describe("sessions/active route activity typing", () => {
       "@/app/api/projects/[projectId]/sessions/active/route"
     );
 
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
 
     const json = await response.json();
     expect(response.status).toBe(200);
@@ -228,7 +183,7 @@ describe("sessions/active route activity typing", () => {
   });
 
   it("keeps team sessions as build with Team Build label", async () => {
-    state.rows = [
+    dbMockState.allRows = [
       {
         id: "sess-team-1",
         epicId: null,
@@ -249,9 +204,7 @@ describe("sessions/active route activity typing", () => {
       "@/app/api/projects/[projectId]/sessions/active/route"
     );
 
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
 
     const json = await response.json();
     expect(response.status).toBe(200);
@@ -267,7 +220,7 @@ describe("sessions/active route activity typing", () => {
   });
 
   it("classifies release note sessions as release", async () => {
-    state.rows = [
+    dbMockState.allRows = [
       {
         id: "sess-release-1",
         epicId: null,
@@ -288,9 +241,7 @@ describe("sessions/active route activity typing", () => {
       "@/app/api/projects/[projectId]/sessions/active/route"
     );
 
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
     const json = await response.json();
 
     expect(response.status).toBe(200);

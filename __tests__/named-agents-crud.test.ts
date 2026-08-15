@@ -1,234 +1,357 @@
 /**
- * Tests for named agents CRUD operations (lib/agent-config/named-agents.ts).
+ * Tests for named agents CRUD operations (lib/agent-config/named-agents.ts)
+ * and agent resolution (lib/agent-config/agent-resolution.ts), against a real
+ * in-memory sqlite database.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
 
-const mockDb = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-  allQueue: [] as unknown[],
-  runQueue: [] as Array<{ changes: number }>,
-  runCalls: [] as Array<Record<string, unknown>>,
-  insertValues: [] as unknown[],
-}));
+// Create test database before mock setup
+const testSqlite = new Database(":memory:");
+testSqlite.pragma("foreign_keys = ON");
+
+testSqlite.exec(`
+  CREATE TABLE named_agents (
+    id TEXT PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    readable_agent_name TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE UNIQUE INDEX named_agents_name_unique ON named_agents (name);
+  CREATE UNIQUE INDEX named_agents_readable_agent_name_unique ON named_agents (readable_agent_name);
+
+  CREATE TABLE agent_provider_defaults (
+    id TEXT PRIMARY KEY NOT NULL,
+    agent_type TEXT NOT NULL,
+    provider TEXT NOT NULL,
+    named_agent_id TEXT REFERENCES named_agents(id) ON DELETE SET NULL,
+    scope TEXT NOT NULL,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE UNIQUE INDEX agent_provider_defaults_agent_type_scope_unique
+    ON agent_provider_defaults (agent_type, scope);
+`);
 
 vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDb.getQueue.shift() ?? undefined),
-    all: vi.fn(() => mockDb.allQueue.shift() ?? []),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn((vals: unknown) => {
-        mockDb.insertValues.push(vals);
-        return { run: vi.fn(() => mockDb.runQueue.shift() ?? { changes: 1 }) };
-      }),
-    }),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnValue({ run: vi.fn(() => mockDb.runQueue.shift() ?? { changes: 1 }) }),
-    }),
-    delete: vi.fn().mockReturnValue({
-      where: vi.fn().mockReturnValue({ run: vi.fn(() => mockDb.runQueue.shift() ?? { changes: 1 }) }),
-    }),
+  return {
+    db: testDb,
+    sqlite: testSqlite,
   };
-  return { db: chain };
 });
 
-vi.mock("@/lib/db/schema", () => ({
-  namedAgents: {
-    id: "id",
-    name: "name",
-    provider: "provider",
-    model: "model",
-    createdAt: "createdAt",
-  },
-  agentProviderDefaults: {
-    namedAgentId: "namedAgentId",
-  },
-}));
+// Must create drizzle instance before mock
+import * as schema from "@/lib/db/schema";
+const testDb = drizzle(testSqlite, { schema });
 
+let counter = 0;
 vi.mock("@/lib/utils/nanoid", () => ({
-  createId: vi.fn(() => "test-id-123"),
+  createId: () => `test-id-${++counter}`,
 }));
 
-describe("Named Agents CRUD", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockDb.getQueue = [];
-    mockDb.allQueue = [];
-    mockDb.runQueue = [];
-    mockDb.runCalls = [];
-    mockDb.insertValues = [];
+beforeEach(() => {
+  testSqlite.exec("DELETE FROM agent_provider_defaults");
+  testSqlite.exec("DELETE FROM named_agents");
+  counter = 0;
+});
+
+describe("listNamedAgents", () => {
+  it("returns empty array when no agents exist", async () => {
+    const { listNamedAgents } = await import("@/lib/agent-config/named-agents");
+    const agents = await listNamedAgents();
+    expect(agents).toEqual([]);
   });
 
-  describe("listNamedAgents", () => {
-    it("returns all named agents ordered by name", async () => {
-      const agents = [
-        { id: "a1", name: "Agent A", provider: "claude-code", model: "m1", createdAt: "2026-01-01" },
-        { id: "a2", name: "Agent B", provider: "codex", model: "m2", createdAt: "2026-01-02" },
-      ];
-      mockDb.allQueue = [agents];
+  it("returns agents ordered by name", async () => {
+    const { listNamedAgents, createNamedAgent } = await import("@/lib/agent-config/named-agents");
+    await createNamedAgent({ name: "Zebra Agent", provider: "codex", model: "gpt-5" });
+    await createNamedAgent({ name: "Alpha Agent", provider: "claude-code", model: "opus" });
 
-      const { listNamedAgents } = await import("@/lib/agent-config/named-agents");
-      const result = await listNamedAgents();
-      expect(result).toEqual(agents);
-    });
-
-    it("returns empty array when no agents exist", async () => {
-      mockDb.allQueue = [[]];
-
-      const { listNamedAgents } = await import("@/lib/agent-config/named-agents");
-      const result = await listNamedAgents();
-      expect(result).toEqual([]);
-    });
+    const agents = await listNamedAgents();
+    expect(agents).toHaveLength(2);
+    expect(agents[0].name).toBe("Alpha Agent");
+    expect(agents[1].name).toBe("Zebra Agent");
   });
+});
 
-  describe("getNamedAgent", () => {
-    it("returns agent when found", async () => {
-      const agent = { id: "a1", name: "Test", provider: "claude-code", model: "m1", createdAt: "2026-01-01" };
-      mockDb.getQueue = [agent];
-
-      const { getNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await getNamedAgent("a1");
-      expect(result).toEqual(agent);
+describe("getNamedAgent", () => {
+  it("returns the agent when found", async () => {
+    const { createNamedAgent, getNamedAgent } = await import("@/lib/agent-config/named-agents");
+    const { data: created } = await createNamedAgent({
+      name: "Lookup Agent",
+      provider: "claude-code",
+      model: "opus",
     });
 
-    it("returns undefined when not found", async () => {
-      mockDb.getQueue = [undefined];
-
-      const { getNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await getNamedAgent("nonexistent");
-      expect(result).toBeNull();
+    const found = await getNamedAgent(created!.id);
+    expect(found).toMatchObject({
+      id: created!.id,
+      name: "Lookup Agent",
+      provider: "claude-code",
+      model: "opus",
     });
   });
 
-  describe("createNamedAgent", () => {
-    it("creates a named agent with valid input", async () => {
-      const created = {
-        id: "test-id-123",
-        name: "CC Opus",
+  it("returns null when not found", async () => {
+    const { getNamedAgent } = await import("@/lib/agent-config/named-agents");
+    expect(await getNamedAgent("nonexistent")).toBeNull();
+  });
+});
+
+describe("createNamedAgent", () => {
+  it("creates a named agent with valid input", async () => {
+    const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
+    const { data, error } = await createNamedAgent({
+      name: "CC Opus",
+      provider: "claude-code",
+      model: "claude-opus-4-6",
+    });
+
+    expect(error).toBeUndefined();
+    expect(data).toBeDefined();
+    expect(data!.name).toBe("CC Opus");
+    expect(data!.provider).toBe("claude-code");
+    expect(data!.model).toBe("claude-opus-4-6");
+  });
+
+  it("validates name uniqueness", async () => {
+    const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
+    await createNamedAgent({ name: "Agent1", provider: "claude-code", model: "sonnet" });
+    const { data, error } = await createNamedAgent({ name: "Agent1", provider: "codex", model: "gpt-5" });
+
+    expect(data).toBeNull();
+    expect(error).toContain("already exists");
+  });
+
+  it("validates empty name", async () => {
+    const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
+    const { data, error } = await createNamedAgent({ name: "  ", provider: "claude-code", model: "sonnet" });
+    expect(data).toBeNull();
+    expect(error).toContain("Name must not be empty");
+  });
+
+  it("validates invalid provider", async () => {
+    const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
+    const { data, error } = await createNamedAgent({ name: "Test", provider: "invalid", model: "x" });
+    expect(data).toBeNull();
+    expect(error).toContain("Invalid provider");
+  });
+
+  it("validates empty model", async () => {
+    const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
+    const { data, error } = await createNamedAgent({ name: "Test", provider: "claude-code", model: "  " });
+    expect(data).toBeNull();
+    expect(error).toContain("Model must not be empty");
+  });
+
+  it("accepts gemini-cli as provider", async () => {
+    const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
+    const { data, error } = await createNamedAgent({
+      name: "Gemini Flash",
+      provider: "gemini-cli",
+      model: "gemini-2.0-flash",
+    });
+    expect(error).toBeUndefined();
+    expect(data!.provider).toBe("gemini-cli");
+    expect(data!.model).toBe("gemini-2.0-flash");
+  });
+});
+
+describe("updateNamedAgent", () => {
+  it("updates specified fields only", async () => {
+    const { createNamedAgent, updateNamedAgent } = await import("@/lib/agent-config/named-agents");
+    const { data: created } = await createNamedAgent({ name: "Agent", provider: "claude-code", model: "opus" });
+
+    const { data: updated } = await updateNamedAgent(created!.id, { model: "sonnet" });
+    expect(updated!.model).toBe("sonnet");
+    expect(updated!.name).toBe("Agent");
+    expect(updated!.provider).toBe("claude-code");
+  });
+
+  it("returns error for non-existent agent", async () => {
+    const { updateNamedAgent } = await import("@/lib/agent-config/named-agents");
+    const { data, error } = await updateNamedAgent("nonexistent", { name: "X" });
+    expect(data).toBeNull();
+    expect(error).toContain("not found");
+  });
+
+  it("validates duplicate name on update", async () => {
+    const { createNamedAgent, updateNamedAgent } = await import("@/lib/agent-config/named-agents");
+    await createNamedAgent({ name: "Agent1", provider: "claude-code", model: "opus" });
+    const { data: agent2 } = await createNamedAgent({ name: "Agent2", provider: "codex", model: "gpt-5" });
+
+    const { data, error } = await updateNamedAgent(agent2!.id, { name: "Agent1" });
+    expect(data).toBeNull();
+    expect(error).toContain("already exists");
+  });
+});
+
+describe("deleteNamedAgent", () => {
+  it("deletes an existing agent", async () => {
+    const { createNamedAgent, deleteNamedAgent, listNamedAgents } = await import("@/lib/agent-config/named-agents");
+    const { data: created } = await createNamedAgent({ name: "Agent", provider: "claude-code", model: "opus" });
+
+    const deleted = await deleteNamedAgent(created!.id);
+    expect(deleted).toBe(true);
+
+    const agents = await listNamedAgents();
+    expect(agents).toHaveLength(0);
+  });
+
+  it("returns false for non-existent agent", async () => {
+    const { deleteNamedAgent } = await import("@/lib/agent-config/named-agents");
+    const deleted = await deleteNamedAgent("nonexistent");
+    expect(deleted).toBe(false);
+  });
+
+  it("nullifies referencing agentProviderDefaults rows", async () => {
+    const { createNamedAgent, deleteNamedAgent } = await import("@/lib/agent-config/named-agents");
+    const { eq } = await import("drizzle-orm");
+
+    const { data: agent } = await createNamedAgent({ name: "Agent", provider: "claude-code", model: "opus" });
+
+    // Create a provider default referencing this agent
+    testDb.insert(schema.agentProviderDefaults)
+      .values({
+        id: "default-1",
+        agentType: "build",
         provider: "claude-code",
-        model: "claude-opus-4-6",
-        createdAt: expect.any(String),
-      };
-      // First get: uniqueness check → not found
-      // Second get: re-fetch after insert
-      mockDb.getQueue = [undefined, created];
+        namedAgentId: agent!.id,
+        scope: "global",
+      })
+      .run();
 
-      const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await createNamedAgent({
-        id: "test-id-123",
-        name: "CC Opus",
+    await deleteNamedAgent(agent!.id);
+
+    const row = testDb
+      .select()
+      .from(schema.agentProviderDefaults)
+      .where(eq(schema.agentProviderDefaults.id, "default-1"))
+      .get();
+
+    expect(row?.namedAgentId).toBeNull();
+  });
+});
+
+describe("resolveAgent", () => {
+  it("returns fallback when no defaults configured", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
+    const result = await resolveAgent("build");
+    expect(result.provider).toBe("claude-code");
+    expect(result.namedAgentId).toBeNull();
+  });
+
+  it("resolves named agent when namedAgentId is set", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
+    const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
+
+    const { data: agent } = await createNamedAgent({
+      name: "CC Opus",
+      provider: "claude-code",
+      model: "claude-opus-4-6",
+    });
+
+    testDb.insert(schema.agentProviderDefaults)
+      .values({
+        id: "default-1",
+        agentType: "build",
         provider: "claude-code",
-        model: "claude-opus-4-6",
-      });
-      expect(result.data).toEqual(created);
-    });
+        namedAgentId: agent!.id,
+        scope: "global",
+      })
+      .run();
 
-    it("returns error on empty name", async () => {
-      const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await createNamedAgent({ id: "id", name: "  ", provider: "claude-code", model: "m1" });
-      expect(result.error).toContain("Name must not be empty");
-    });
-
-    it("returns error on empty model", async () => {
-      const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await createNamedAgent({ id: "id", name: "Test", provider: "claude-code", model: "  " });
-      expect(result.error).toContain("Model must not be empty");
-    });
-
-    it("returns error on invalid provider", async () => {
-      const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await createNamedAgent({
-        id: "id",
-        name: "Test",
-        provider: "invalid" as "claude-code",
-        model: "m1",
-      });
-      expect(result.error).toContain("provider");
-    });
-
-    it("returns error on duplicate name", async () => {
-      // Uniqueness check: found existing
-      mockDb.getQueue = [{ id: "existing-id" }];
-
-      const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await createNamedAgent({ id: "id", name: "Existing", provider: "claude-code", model: "m1" });
-      expect(result.error).toContain('already exists');
-    });
-
-    it("creates agents with gemini-cli provider", async () => {
-      const created = {
-        id: "test-id-123",
-        name: "Gemini Flash",
-        provider: "gemini-cli",
-        model: "gemini-2.0-flash",
-        createdAt: expect.any(String),
-      };
-      mockDb.getQueue = [undefined, created];
-
-      const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await createNamedAgent({
-        id: "test-id-123",
-        name: "Gemini Flash",
-        provider: "gemini-cli",
-        model: "gemini-2.0-flash",
-      });
-      expect(result.data?.provider).toBe("gemini-cli");
-      expect(result.data?.model).toBe("gemini-2.0-flash");
-    });
+    const result = await resolveAgent("build");
+    expect(result.provider).toBe("claude-code");
+    expect(result.model).toBe("claude-opus-4-6");
+    expect(result.name).toBe("CC Opus");
   });
 
-  describe("updateNamedAgent", () => {
-    it("updates specified fields only", async () => {
-      const existing = { id: "a1", name: "Old", provider: "claude-code", model: "old", createdAt: "2026-01-01" };
-      const updated = { ...existing, name: "New" };
-      // First get: check existence
-      // Second get: uniqueness check for name
-      // Third get: return updated
-      mockDb.getQueue = [existing, undefined, updated];
+  it("falls back to raw provider when namedAgentId is null", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
 
-      const { updateNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await updateNamedAgent("a1", { name: "New" });
-      expect(result.data?.name).toBe("New");
-    });
+    testDb.insert(schema.agentProviderDefaults)
+      .values({
+        id: "default-1",
+        agentType: "build",
+        provider: "codex",
+        scope: "global",
+      })
+      .run();
 
-    it("returns error when agent not found", async () => {
-      mockDb.getQueue = [undefined];
-
-      const { updateNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await updateNamedAgent("nonexistent", { name: "Test" });
-      expect(result.error).toContain("not found");
-    });
-
-    it("returns error on duplicate name with different id", async () => {
-      const existing = { id: "a1", name: "Original", provider: "claude-code", model: "m1", createdAt: "2026-01-01" };
-      // existence check, then name uniqueness check returns different id
-      mockDb.getQueue = [existing, { id: "a2" }];
-
-      const { updateNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await updateNamedAgent("a1", { name: "Taken" });
-      expect(result.error).toContain("already exists");
-    });
+    const result = await resolveAgent("build");
+    expect(result.provider).toBe("codex");
+    expect(result.model).toBeUndefined();
+    expect(result.name).toBeUndefined();
   });
 
-  describe("deleteNamedAgent", () => {
-    it("deletes an existing agent and returns true", async () => {
-      mockDb.getQueue = [{ id: "a1", name: "Test", provider: "claude-code", model: "m1" }];
+  it("project scope overrides global scope", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
+    const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
 
-      const { deleteNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await deleteNamedAgent("a1");
-      expect(result).toBe(true);
+    const { data: globalAgent } = await createNamedAgent({
+      name: "Global Agent",
+      provider: "claude-code",
+      model: "sonnet",
+    });
+    const { data: projectAgent } = await createNamedAgent({
+      name: "Project Agent",
+      provider: "gemini-cli",
+      model: "gemini-2.0-flash",
     });
 
-    it("returns false when agent not found", async () => {
-      mockDb.runQueue = [{ changes: 0 }];
+    testDb.insert(schema.agentProviderDefaults)
+      .values({
+        id: "default-global",
+        agentType: "build",
+        provider: "claude-code",
+        namedAgentId: globalAgent!.id,
+        scope: "global",
+      })
+      .run();
 
-      const { deleteNamedAgent } = await import("@/lib/agent-config/named-agents");
-      const result = await deleteNamedAgent("nonexistent");
-      expect(result).toBe(false);
+    testDb.insert(schema.agentProviderDefaults)
+      .values({
+        id: "default-project",
+        agentType: "build",
+        provider: "gemini-cli",
+        namedAgentId: projectAgent!.id,
+        scope: "project-123",
+      })
+      .run();
+
+    const result = await resolveAgent("build", "project-123");
+    expect(result.provider).toBe("gemini-cli");
+    expect(result.model).toBe("gemini-2.0-flash");
+    expect(result.name).toBe("Project Agent");
+  });
+
+  it("falls back to global when no project override", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
+    const { createNamedAgent } = await import("@/lib/agent-config/named-agents");
+
+    const { data: globalAgent } = await createNamedAgent({
+      name: "Global Agent",
+      provider: "codex",
+      model: "gpt-5",
     });
+
+    testDb.insert(schema.agentProviderDefaults)
+      .values({
+        id: "default-global",
+        agentType: "build",
+        provider: "codex",
+        namedAgentId: globalAgent!.id,
+        scope: "global",
+      })
+      .run();
+
+    const result = await resolveAgent("build", "project-123");
+    expect(result.provider).toBe("codex");
+    expect(result.model).toBe("gpt-5");
+    expect(result.name).toBe("Global Agent");
   });
 });

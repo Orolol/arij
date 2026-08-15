@@ -1,29 +1,35 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/lib/db";
 import { epics } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import Database from "better-sqlite3";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import type { KanbanStatus } from "@/lib/types/kanban";
 import { KANBAN_COLUMNS } from "@/lib/types/kanban";
 import { applyTransition } from "@/lib/workflow/transition-service";
+import { errorResponse } from "@/lib/api/route-helpers";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
 
-interface ReorderItem {
-  id: string;
-  status: string;
-  position: number;
-}
+const reorderSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string().min(1),
+      status: z.string().min(1),
+      position: z.number(),
+    })
+  ),
+});
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const body: { items: ReorderItem[] } = await request.json();
 
-  if (!body.items || !Array.isArray(body.items)) {
-    return NextResponse.json({ error: "items array is required" }, { status: 400 });
-  }
+  const validated = await validateBody(reorderSchema, request);
+  if (isValidationError(validated)) return validated;
+  const body = validated.data;
 
   const now = new Date().toISOString();
 
@@ -37,11 +43,18 @@ export async function POST(
     }
   }
 
-  // Validate workflow rules for any status changes and track moves
+  // Validate workflow rules for any status changes and track moves.
+  // Lookups are project-scoped: epic ids from other projects are skipped.
   const statusChanges: { epicId: string; from: KanbanStatus; to: KanbanStatus }[] = [];
+  const validItems: typeof body.items = [];
   for (const item of body.items) {
-    const epic = db.select().from(epics).where(eq(epics.id, item.id)).get();
+    const epic = db
+      .select()
+      .from(epics)
+      .where(and(eq(epics.id, item.id), eq(epics.projectId, projectId)))
+      .get();
     if (!epic) continue;
+    validItems.push(item);
 
     const fromStatus = (epic.status ?? "backlog") as KanbanStatus;
     const toStatus = item.status as KanbanStatus;
@@ -82,37 +95,41 @@ export async function POST(
     }
   }
 
-  // Use a transaction for atomic reorder
-  const sqlite = (db as unknown as { $client: Database.Database }).$client;
-  const transaction = sqlite.transaction(() => {
-    for (const item of body.items) {
-      db.update(epics)
-        .set({
-          status: item.status,
-          position: item.position,
-          updatedAt: now,
-        })
-        .where(eq(epics.id, item.id))
-        .run();
-    }
-  });
-
-  transaction();
-
-  // Emit events and log transitions for status changes (DB already updated in transaction)
-  for (const change of statusChanges) {
-    applyTransition({
-      projectId,
-      epicId: change.epicId,
-      fromStatus: change.from,
-      toStatus: change.to,
-      actor: "user",
-      source: "drag",
-      reason: "Kanban drag-and-drop",
-      skipDbUpdate: true,
+  try {
+    // Use a transaction for atomic reorder
+    const sqlite = (db as unknown as { $client: Database.Database }).$client;
+    const transaction = sqlite.transaction(() => {
+      for (const item of validItems) {
+        db.update(epics)
+          .set({
+            status: item.status,
+            position: item.position,
+            updatedAt: now,
+          })
+          .where(eq(epics.id, item.id))
+          .run();
+      }
     });
-  }
 
-  tryExportArjiJson(projectId);
-  return NextResponse.json({ data: { updated: body.items.length } });
+    transaction();
+
+    // Emit events and log transitions for status changes (DB already updated in transaction)
+    for (const change of statusChanges) {
+      applyTransition({
+        projectId,
+        epicId: change.epicId,
+        fromStatus: change.from,
+        toStatus: change.to,
+        actor: "user",
+        source: "drag",
+        reason: "Kanban drag-and-drop",
+        skipDbUpdate: true,
+      });
+    }
+
+    tryExportArjiJson(projectId);
+    return NextResponse.json({ data: { updated: validItems.length } });
+  } catch (error) {
+    return errorResponse(error, "Failed to reorder epics");
+  }
 }

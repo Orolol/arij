@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { and, eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { agentSessions, epics, projects, qaReports, userStories } from "@/lib/db/schema";
+import { agentSessions, epics, qaReports, userStories } from "@/lib/db/schema";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { createId } from "@/lib/utils/nanoid";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { extractJsonFromOutput } from "@/lib/claude/json-parser";
 import { getProvider } from "@/lib/providers";
@@ -124,14 +126,9 @@ function toGeneratedEpics(value: unknown, epicType: "feature" | "bug" = "feature
 export async function POST(_request: NextRequest, { params }: Params) {
   const { projectId, reportId } = await params;
 
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
 
   const report = db
     .select()
@@ -216,8 +213,10 @@ ${epicTypeRule}
   // Determine if we can resume the original session
   const provider = (originalSession?.provider ?? resolvedAgent.provider) as ProviderType;
   const model = originalSession?.model ?? resolvedAgent.model;
-  const previousCliSessionId =
-    originalSession?.cliSessionId ?? originalSession?.claudeSessionId ?? null;
+  // Legacy-row fallback handled inside resolveCliSessionId().
+  const previousCliSessionId = originalSession
+    ? resolveCliSessionId(originalSession)
+    : null;
   const canResume =
     previousCliSessionId !== null && isResumableProvider(provider);
 

@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   releases,
-  projects,
   epics,
   userStories,
   settings,
   agentSessions,
 } from "@/lib/db/schema";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
+import { createReleaseSchema } from "@/lib/validation/schemas";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { eq, desc, inArray, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
@@ -24,7 +27,7 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 import { processManager } from "@/lib/claude/process-manager";
 import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { applyTransition } from "@/lib/workflow/transition-service";
 import { emitReleaseCreated } from "@/lib/events/emit";
 import type { KanbanStatus } from "@/lib/types/kanban";
@@ -52,47 +55,23 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const body = await request.json();
+
+  const validated = await validateBody(createReleaseSchema, request);
+  if (isValidationError(validated)) return validated;
+
   const {
     version,
-    title,
     epicIds,
     generateChangelog = true,
     pushToGitHub = false,
-    resumeSessionId,
-    namedAgentId,
-  } = body as {
-    version: string;
-    title?: string;
-    epicIds: string[];
-    generateChangelog?: boolean;
-    pushToGitHub?: boolean;
-    resumeSessionId?: string;
-    namedAgentId?: string;
-  };
+  } = validated.data;
+  const title = validated.data.title ?? undefined;
+  const resumeSessionId = validated.data.resumeSessionId ?? undefined;
+  const namedAgentId = validated.data.namedAgentId ?? undefined;
 
-  if (!version) {
-    return NextResponse.json(
-      { error: "version is required" },
-      { status: 400 }
-    );
-  }
-
-  if (!epicIds || epicIds.length === 0) {
-    return NextResponse.json(
-      { error: "epicIds array is required" },
-      { status: 400 }
-    );
-  }
-
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
 
   // Load selected epics
   const selectedEpics = db
@@ -212,13 +191,15 @@ ${ticketContext}
             .from(agentSessions)
             .where(eq(agentSessions.id, resumeSessionId))
             .get();
+          // Legacy-row fallback handled inside resolveCliSessionId().
+          const previousCliSessionId = previous ? resolveCliSessionId(previous) : null;
           if (
             previous &&
             previous.projectId === projectId &&
             previous.provider === agentProvider &&
-            (previous.cliSessionId || previous.claudeSessionId)
+            previousCliSessionId
           ) {
-            cliSessionId = previous.cliSessionId ?? previous.claudeSessionId ?? undefined;
+            cliSessionId = previousCliSessionId;
             resumeSession = true;
           }
         }
@@ -235,7 +216,6 @@ ${ticketContext}
         prompt,
         logsPath,
         worktreePath: project.gitRepoPath || null,
-        claudeSessionId: cliSessionId,
         cliSessionId,
         agentType: "release_notes",
         namedAgentName: resolvedAgent.name || null,
@@ -484,10 +464,10 @@ ${ticketContext}
 
   const release = db.select().from(releases).where(eq(releases.id, id)).get();
 
-  const responseData: Record<string, unknown> = { data: release };
+  const payload: Record<string, unknown> = { release };
   if (githubErrors.length > 0) {
-    responseData.githubErrors = githubErrors;
+    payload.githubErrors = githubErrors;
   }
 
-  return NextResponse.json(responseData, { status: 201 });
+  return NextResponse.json({ data: payload }, { status: 201 });
 }

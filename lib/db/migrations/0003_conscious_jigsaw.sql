@@ -44,7 +44,7 @@ CREATE TABLE `__new_ticket_comments` (
 	FOREIGN KEY (`agent_session_id`) REFERENCES `agent_sessions`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
-INSERT INTO `__new_ticket_comments`("id", "user_story_id", "epic_id", "author", "content", "agent_session_id", "created_at") SELECT "id", "user_story_id", "epic_id", "author", "content", "agent_session_id", "created_at" FROM `ticket_comments`;--> statement-breakpoint
+INSERT INTO `__new_ticket_comments`("id", "user_story_id", "epic_id", "author", "content", "agent_session_id", "created_at") SELECT "id", "user_story_id", NULL, "author", "content", "agent_session_id", "created_at" FROM `ticket_comments`;--> statement-breakpoint
 DROP TABLE `ticket_comments`;--> statement-breakpoint
 ALTER TABLE `__new_ticket_comments` RENAME TO `ticket_comments`;--> statement-breakpoint
 PRAGMA foreign_keys=ON;--> statement-breakpoint

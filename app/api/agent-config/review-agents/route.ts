@@ -4,34 +4,25 @@ import {
   createCustomReviewAgent,
   listGlobalCustomReviewAgents,
 } from "@/lib/agent-config/review-agents";
+import { errorResponse } from "@/lib/api/route-helpers";
+import { createReviewAgentSchema } from "@/lib/validation/schemas";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
 
 export async function GET() {
   try {
     const data = await listGlobalCustomReviewAgents();
     return NextResponse.json({ data });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to load review agents" },
-      { status: 500 }
-    );
+    return errorResponse(error, "Failed to load review agents");
   }
 }
 
 export async function POST(request: NextRequest) {
-  const body = await request.json().catch(() => ({}));
-  const name = typeof body.name === "string" ? body.name.trim() : "";
-  const systemPrompt =
-    typeof body.systemPrompt === "string" ? body.systemPrompt : "";
+  const validated = await validateBody(createReviewAgentSchema, request);
+  if (isValidationError(validated)) return validated;
 
-  if (!name) {
-    return NextResponse.json({ error: "name is required" }, { status: 400 });
-  }
-  if (!systemPrompt) {
-    return NextResponse.json(
-      { error: "systemPrompt is required" },
-      { status: 400 }
-    );
-  }
+  const name = validated.data.name.trim();
+  const { systemPrompt } = validated.data;
 
   const created = await createCustomReviewAgent({
     id: createId(),

@@ -4,21 +4,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Check, Trash2, User, Bot } from "lucide-react";
 import type { ReviewComment } from "@/hooks/useReviewComments";
+import { formatTime } from "@/lib/utils/format-date";
 
 interface InlineCommentThreadProps {
   comments: ReviewComment[];
   onUpdate: (id: string, updates: { body?: string; status?: string }) => Promise<unknown>;
   onDelete: (id: string) => Promise<unknown>;
-}
-
-function formatTime(dateStr: string) {
-  const d = new Date(dateStr);
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 export function InlineCommentThread({

@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { usePolling } from "@/hooks/usePolling";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,7 +31,7 @@ interface SessionDetail {
   completedAt?: string;
   createdAt: string;
   lastNonEmptyText?: string | null;
-  claudeSessionId?: string | null;
+  cliSessionId?: string | null;
   agentType?: string | null;
   namedAgentName?: string | null;
   model?: string | null;
@@ -83,23 +84,17 @@ export default function SessionDetailPage() {
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
-  async function loadSession() {
+  const loadSession = useCallback(async () => {
     const res = await fetch(
       `/api/projects/${projectId}/sessions/${sessionId}`
     );
     const data = await res.json();
     setSession(data.data);
     setLoading(false);
-  }
-
-  useEffect(() => {
-    loadSession();
-    // Poll if running
-    const interval = setInterval(() => {
-      loadSession();
-    }, 3000);
-    return () => clearInterval(interval);
   }, [projectId, sessionId]);
+
+  // Initial load + poll if running
+  usePolling(loadSession, 3000);
 
   async function handleCancel() {
     await fetch(`/api/projects/${projectId}/sessions/${sessionId}`, {
@@ -178,7 +173,7 @@ export default function SessionDetailPage() {
                 {session.model}
               </span>
             )}
-            {session.claudeSessionId && (
+            {session.cliSessionId && (
               <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-400/30">
                 resumable
               </Badge>
@@ -252,11 +247,11 @@ export default function SessionDetailPage() {
                 : "-"}
           </div>
         </Card>
-        {session.claudeSessionId && (
+        {session.cliSessionId && (
           <Card className="p-3 col-span-2">
             <div className="text-xs text-muted-foreground">CLI Session ID</div>
             <div className="text-sm font-mono text-blue-400 truncate">
-              {session.claudeSessionId}
+              {session.cliSessionId}
             </div>
           </Card>
         )}

@@ -3,11 +3,11 @@ import { db } from "@/lib/db";
 import {
   agentSessions,
   chatConversations,
-  chatMessages,
   namedAgents,
 } from "@/lib/db/schema";
 import { eq, desc, and, sql } from "drizzle-orm";
 import { getSessionStatusForApi } from "@/lib/agent-sessions/lifecycle";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { runBackfillRecentSessionLastNonEmptyTextOnce } from "@/lib/agent-sessions/backfill";
 
 export async function GET(
@@ -28,6 +28,8 @@ export async function GET(
     ...session,
     kind: "agent_session" as const,
     status: getSessionStatusForApi(session.status),
+    // Legacy-row fallback handled inside resolveCliSessionId().
+    cliSessionId: resolveCliSessionId(session),
   }));
 
   // Fetch chat conversations with message count, last message preview, and named agent name

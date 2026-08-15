@@ -6,7 +6,8 @@ import { MentionTextarea } from "@/components/documents/MentionTextarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MarkdownContent } from "@/components/chat/MarkdownContent";
 import { Send, User, Bot, Loader2, Hammer } from "lucide-react";
-import type { TicketComment } from "@/hooks/useComments";
+import type { TicketComment } from "@/hooks/useTicketComments";
+import { formatTime } from "@/lib/utils/format-date";
 
 interface CommentThreadProps {
   projectId: string;
@@ -19,16 +20,6 @@ interface CommentThreadProps {
   sendToDevDisabled?: boolean;
   /** Whether the send-to-dev action is currently dispatching */
   sendToDevLoading?: boolean;
-}
-
-function formatTime(dateStr: string) {
-  const d = new Date(dateStr);
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
 }
 
 export function CommentThread({

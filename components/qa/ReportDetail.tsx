@@ -6,6 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { MarkdownContent } from "@/components/chat/MarkdownContent";
+import { usePolling } from "@/hooks/usePolling";
+import { formatDateTime } from "@/lib/utils/format-date";
 
 interface QaReport {
   id: string;
@@ -23,13 +25,6 @@ interface ReportDetailProps {
   reportId: string | null;
   onCreateEpics?: (epics: Array<{ id: string; title: string }>) => void;
   onReportUpdated?: () => void;
-}
-
-function formatDateTime(value: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`;
 }
 
 function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
@@ -85,15 +80,14 @@ export function ReportDetail({
     void loadReport();
   }, [loadReport]);
 
-  useEffect(() => {
-    if (!reportId || !report || report.status !== "running") return;
-
-    const timer = setInterval(() => {
-      void loadReport();
-    }, 3000);
-
-    return () => clearInterval(timer);
-  }, [reportId, report?.status, loadReport]);
+  // Poll while the report is running; the effect above already did the
+  // initial fetch, so skip the immediate call.
+  usePolling(
+    loadReport,
+    3000,
+    Boolean(reportId && report && report.status === "running"),
+    { immediate: false },
+  );
 
   async function handleCreateEpics() {
     if (!reportId) return;

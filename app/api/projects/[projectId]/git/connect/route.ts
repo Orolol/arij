@@ -1,44 +1,39 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import {
+  getProjectOr404,
+  isErrorResponse,
+} from "@/lib/api/route-helpers";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+
+const connectBodySchema = z.object({
+  ownerRepo: z.string(),
+});
 
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const body = await request.json();
-  const { ownerRepo } = body as { ownerRepo?: string };
 
-  if (!ownerRepo || typeof ownerRepo !== "string") {
-    return NextResponse.json(
-      { error: "missing_owner_repo", message: "An ownerRepo value (e.g. 'owner/repo') is required." },
-      { status: 400 }
-    );
-  }
+  const validated = await validateBody(connectBodySchema, request);
+  if (isValidationError(validated)) return validated;
+  const { ownerRepo } = validated.data;
 
   // Validate format
   const parts = ownerRepo.split("/");
   if (parts.length !== 2 || !parts[0] || !parts[1]) {
     return NextResponse.json(
-      { error: "invalid_format", message: "ownerRepo must be in 'owner/repo' format." },
+      { error: "ownerRepo must be in 'owner/repo' format." },
       { status: 400 }
     );
   }
 
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-
-  if (!project) {
-    return NextResponse.json(
-      { error: "not_found", message: "Project not found." },
-      { status: 404 }
-    );
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
 
   db.update(projects)
     .set({

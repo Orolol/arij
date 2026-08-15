@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockState = vi.hoisted(() => ({
   getQueue: [] as unknown[],
@@ -73,14 +77,10 @@ vi.mock("@/lib/db/schema", () => ({
   },
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgent: mockResolveAgent,
   resolveAgentByNamedId: mockResolveAgentByNamedId,
 }));
-
-function mockRequest(url: string) {
-  return { url } as unknown as import("next/server").NextRequest;
-}
 
 describe("sessions/resumable route", () => {
   beforeEach(() => {
@@ -101,10 +101,10 @@ describe("sessions/resumable route", () => {
       "@/app/api/projects/[projectId]/sessions/resumable/route"
     );
     const res = await GET(
-      mockRequest(
-        "http://localhost/api/projects/proj-1/sessions/resumable?agentType=build",
-      ),
-      { params: Promise.resolve({ projectId: "proj-1" }) },
+      mockNextRequest({
+          url: "http://localhost/api/projects/proj-1/sessions/resumable?agentType=build",
+      }),
+      mockRouteContext({ projectId: "proj-1" }),
     );
 
     const json = await res.json();
@@ -136,10 +136,10 @@ describe("sessions/resumable route", () => {
       "@/app/api/projects/[projectId]/sessions/resumable/route"
     );
     const res = await GET(
-      mockRequest(
-        "http://localhost/api/projects/proj-1/sessions/resumable?epicId=epic-1&userStoryId=story-1&agentType=ticket_build&namedAgentId=agent-gem&provider=claude-code",
-      ),
-      { params: Promise.resolve({ projectId: "proj-1" }) },
+      mockNextRequest({
+          url: "http://localhost/api/projects/proj-1/sessions/resumable?epicId=epic-1&userStoryId=story-1&agentType=ticket_build&namedAgentId=agent-gem&provider=claude-code",
+      }),
+      mockRouteContext({ projectId: "proj-1" }),
     );
 
     const json = await res.json();
@@ -163,10 +163,10 @@ describe("sessions/resumable route", () => {
       "@/app/api/projects/[projectId]/sessions/resumable/route"
     );
     const res = await GET(
-      mockRequest(
-        "http://localhost/api/projects/proj-1/sessions/resumable?namedAgentId=agent-gem&provider=claude-code",
-      ),
-      { params: Promise.resolve({ projectId: "proj-1" }) },
+      mockNextRequest({
+          url: "http://localhost/api/projects/proj-1/sessions/resumable?namedAgentId=agent-gem&provider=claude-code",
+      }),
+      mockRouteContext({ projectId: "proj-1" }),
     );
 
     const json = await res.json();
@@ -184,10 +184,10 @@ describe("sessions/resumable route", () => {
       "@/app/api/projects/[projectId]/sessions/resumable/route"
     );
     const res = await GET(
-      mockRequest(
-        "http://localhost/api/projects/proj-1/sessions/resumable?namedAgentId=missing-agent",
-      ),
-      { params: Promise.resolve({ projectId: "proj-1" }) },
+      mockNextRequest({
+          url: "http://localhost/api/projects/proj-1/sessions/resumable?namedAgentId=missing-agent",
+      }),
+      mockRouteContext({ projectId: "proj-1" }),
     );
 
     const json = await res.json();

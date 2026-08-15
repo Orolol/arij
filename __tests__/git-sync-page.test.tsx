@@ -81,12 +81,11 @@ describe("GitSyncPage", () => {
         status: 409,
         json: async () => ({
           error: "Pull resulted in merge conflicts.",
-          data: {
-            conflicted: true,
-            conflictDiffs: [
-              { filePath: "src/a.ts", diff: "@@ -1 +1 @@" },
-            ],
-          },
+          code: "merge_conflicts",
+          conflicted: true,
+          conflictDiffs: [
+            { filePath: "src/a.ts", diff: "@@ -1 +1 @@" },
+          ],
         }),
       } as Response);
 

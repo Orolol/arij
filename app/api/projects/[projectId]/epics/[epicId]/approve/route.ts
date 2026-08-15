@@ -6,17 +6,17 @@ import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import simpleGit from "simple-git";
 import { applyTransition } from "@/lib/workflow/transition-service";
+import { getEpicOr404, isErrorResponse } from "@/lib/api/route-helpers";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
 export async function POST(_request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
 
-  // Validate epic exists and is in review
-  const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
-  if (!epic) {
-    return NextResponse.json({ error: "Epic not found" }, { status: 404 });
-  }
+  // Validate epic exists (project-scoped) and is in review
+  const found = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(found)) return found;
+  const { epic } = found;
   if (epic.status !== "review") {
     return NextResponse.json(
       { error: "Epic must be in review status to approve" },

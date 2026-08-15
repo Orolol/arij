@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { userStories } from "@/lib/db/schema";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import {
@@ -10,6 +10,11 @@ import {
 } from "@/lib/planning/permanent-delete";
 import { createStorySchema, updateStoryByIdSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
+import {
+  getEpicOr404,
+  getStoryOr404,
+  isErrorResponse,
+} from "@/lib/api/route-helpers";
 
 export async function GET(
   request: NextRequest,
@@ -21,6 +26,9 @@ export async function GET(
   if (!epicId) {
     return NextResponse.json({ error: "epicId query param is required" }, { status: 400 });
   }
+
+  const foundEpic = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
 
   const result = db
     .select()
@@ -42,6 +50,10 @@ export async function POST(
   if (isValidationError(validated)) return validated;
 
   const body = validated.data;
+
+  // Validate the parent epic exists and belongs to this project
+  const foundEpic = getEpicOr404(projectId, body.epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
 
   const maxPos = db
     .select({ max: sql<number>`COALESCE(MAX(position), -1)` })
@@ -80,10 +92,8 @@ export async function PATCH(
 
   const body = validated.data;
 
-  const existing = db.select().from(userStories).where(eq(userStories.id, body.id)).get();
-  if (!existing) {
-    return NextResponse.json({ error: "User story not found" }, { status: 404 });
-  }
+  const existing = getStoryOr404(projectId, body.id);
+  if (isErrorResponse(existing)) return existing;
 
   const updates: Record<string, unknown> = {};
   if (body.title !== undefined) updates.title = body.title;

@@ -60,10 +60,12 @@ describe("EpicCard", () => {
     render(
       <EpicCard
         epic={baseEpic}
-        activeAgentActivity={{
-          sessionId: "sess-1",
-          actionType: "build",
-          agentName: "Claude Code agent 123abc",
+        view={{
+          activity: {
+            sessionId: "sess-1",
+            actionType: "build",
+            agentName: "Claude Code agent 123abc",
+          },
         }}
       />
     );
@@ -88,10 +90,12 @@ describe("EpicCard", () => {
     render(
       <EpicCard
         epic={baseEpic}
-        failedSession={{
-          sessionId: "sess-fail-1",
-          error: "Process exited with code 1",
-          agentType: "build",
+        view={{
+          failedSession: {
+            sessionId: "sess-fail-1",
+            error: "Process exited with code 1",
+            agentType: "build",
+          },
         }}
       />
     );
@@ -105,15 +109,17 @@ describe("EpicCard", () => {
     render(
       <EpicCard
         epic={baseEpic}
-        failedSession={{
-          sessionId: "sess-fail-1",
-          error: "Process exited with code 1",
-          agentType: "build",
-        }}
-        activeAgentActivity={{
-          sessionId: "sess-active-1",
-          actionType: "build",
-          agentName: "Claude Code agent abc123",
+        view={{
+          failedSession: {
+            sessionId: "sess-fail-1",
+            error: "Process exited with code 1",
+            agentType: "build",
+          },
+          activity: {
+            sessionId: "sess-active-1",
+            actionType: "build",
+            agentName: "Claude Code agent abc123",
+          },
         }}
       />
     );
@@ -122,18 +128,20 @@ describe("EpicCard", () => {
     expect(screen.queryByTestId("epic-retry-epic-1")).not.toBeInTheDocument();
   });
 
-  it("renders retry button and calls onRetry when clicked", () => {
+  it("renders retry button and calls onRetryBuild when clicked", () => {
     const onRetry = vi.fn();
 
     render(
       <EpicCard
         epic={baseEpic}
-        failedSession={{
-          sessionId: "sess-fail-1",
-          error: "Process exited with code 1",
-          agentType: "build",
+        view={{
+          failedSession: {
+            sessionId: "sess-fail-1",
+            error: "Process exited with code 1",
+            agentType: "build",
+          },
+          onRetryBuild: onRetry,
         }}
-        onRetry={onRetry}
       />
     );
 
@@ -145,14 +153,16 @@ describe("EpicCard", () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  it("does not render retry button when onRetry is not provided", () => {
+  it("does not render retry button when onRetryBuild is not provided", () => {
     render(
       <EpicCard
         epic={baseEpic}
-        failedSession={{
-          sessionId: "sess-fail-1",
-          error: "Process exited with code 1",
-          agentType: "build",
+        view={{
+          failedSession: {
+            sessionId: "sess-fail-1",
+            error: "Process exited with code 1",
+            agentType: "build",
+          },
         }}
       />
     );

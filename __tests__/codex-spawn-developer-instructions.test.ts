@@ -7,8 +7,9 @@ const { mockSpawn } = vi.hoisted(() => ({
 
 vi.mock("child_process", () => ({
   spawn: mockSpawn,
+  execSync: vi.fn(),
   // Re-export default to satisfy `import { spawn } from "child_process"`
-  default: { spawn: mockSpawn },
+  default: { spawn: mockSpawn, execSync: vi.fn() },
 }));
 
 // Mock fs to avoid file system side effects
@@ -31,11 +32,40 @@ vi.mock("@/lib/claude/logger", () => ({
 // Mock the json-parser to avoid side effects
 vi.mock("@/lib/claude/json-parser", () => ({
   hasAskUserQuestion: vi.fn(() => false),
+  extractCliSessionIdFromOutput: vi.fn(() => null),
 }));
 
-import { spawnCodex } from "@/lib/codex/spawn";
+import { CodexProvider } from "@/lib/providers/codex";
+import type { ProviderSpawnOptions } from "@/lib/providers/types";
 
-describe("spawnCodex developer instructions", () => {
+/**
+ * Test subclass that overrides the developer-instructions extension point,
+ * mirroring the old spawnCodex({ developerInstructions }) option.
+ */
+class TestCodexProvider extends CodexProvider {
+  constructor(private readonly instructions?: string) {
+    super();
+  }
+
+  protected get developerInstructions(): string | undefined {
+    return this.instructions;
+  }
+}
+
+function spawnWith(
+  provider: CodexProvider,
+  overrides: Partial<ProviderSpawnOptions> = {},
+) {
+  return provider.spawn({
+    sessionId: "test-session",
+    cwd: "/tmp/test",
+    mode: "code",
+    prompt: "implement feature X",
+    ...overrides,
+  });
+}
+
+describe("CodexProvider developer instructions args", () => {
   let mockProcess: {
     stdout: { on: ReturnType<typeof vi.fn> };
     stderr: { on: ReturnType<typeof vi.fn> };
@@ -45,6 +75,7 @@ describe("spawnCodex developer instructions", () => {
   };
 
   beforeEach(() => {
+    mockSpawn.mockClear();
     mockProcess = {
       stdout: { on: vi.fn() },
       stderr: { on: vi.fn() },
@@ -53,6 +84,7 @@ describe("spawnCodex developer instructions", () => {
       kill: vi.fn(),
     };
     mockSpawn.mockReturnValue(mockProcess);
+    vi.spyOn(console, "log").mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -60,11 +92,7 @@ describe("spawnCodex developer instructions", () => {
   });
 
   it("passes -c developer_instructions when provided", () => {
-    spawnCodex({
-      mode: "code",
-      prompt: "implement feature X",
-      developerInstructions: "Always prefer sub-agents for complex tasks.",
-    });
+    spawnWith(new TestCodexProvider("Always prefer sub-agents for complex tasks."));
 
     expect(mockSpawn).toHaveBeenCalledOnce();
     const args = mockSpawn.mock.calls[0][1] as string[];
@@ -75,10 +103,7 @@ describe("spawnCodex developer instructions", () => {
   });
 
   it("does not include -c developer_instructions when not provided", () => {
-    spawnCodex({
-      mode: "code",
-      prompt: "implement feature X",
-    });
+    spawnWith(new TestCodexProvider(undefined));
 
     expect(mockSpawn).toHaveBeenCalledOnce();
     const args = mockSpawn.mock.calls[0][1] as string[];
@@ -89,11 +114,7 @@ describe("spawnCodex developer instructions", () => {
   });
 
   it("does not include -c developer_instructions when empty string", () => {
-    spawnCodex({
-      mode: "code",
-      prompt: "implement feature X",
-      developerInstructions: "",
-    });
+    spawnWith(new TestCodexProvider(""));
 
     expect(mockSpawn).toHaveBeenCalledOnce();
     const args = mockSpawn.mock.calls[0][1] as string[];
@@ -104,11 +125,7 @@ describe("spawnCodex developer instructions", () => {
   });
 
   it("properly formats developer instructions as TOML string via JSON.stringify", () => {
-    spawnCodex({
-      mode: "code",
-      prompt: "implement feature X",
-      developerInstructions: 'Use "Task" tool for delegation.',
-    });
+    spawnWith(new TestCodexProvider('Use "Task" tool for delegation.'));
 
     expect(mockSpawn).toHaveBeenCalledOnce();
     const args = mockSpawn.mock.calls[0][1] as string[];
@@ -121,12 +138,10 @@ describe("spawnCodex developer instructions", () => {
   });
 
   it("includes developer instructions in resume mode too", () => {
-    spawnCodex({
-      mode: "code",
+    spawnWith(new TestCodexProvider("Prefer sub-agents."), {
       prompt: "continue",
       cliSessionId: "abc-123",
       resumeSession: true,
-      developerInstructions: "Prefer sub-agents.",
     });
 
     expect(mockSpawn).toHaveBeenCalledOnce();

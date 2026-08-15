@@ -1,36 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mockDbState = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-}));
+import {
+  dbMockState,
+  resetDbMockState,
+  mockJsonRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockValidateMentionsExist = vi.hoisted(() => vi.fn());
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDbState.getQueue.shift() ?? null),
-    all: vi.fn(() => []),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockReturnValue({ run: vi.fn() }),
-    }),
-  };
-
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
+// builders, and the chain mock ignores their output. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  ticketComments: { id: "id", epicId: "epicId", userStoryId: "userStoryId", createdAt: "createdAt" },
-  epics: { id: "id" },
-  userStories: { id: "id" },
-}));
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "comment-1"),
@@ -46,22 +29,16 @@ vi.mock("@/lib/documents/mentions", async () => {
   };
 });
 
-function mockRequest(body: Record<string, unknown>) {
-  return {
-    json: () => Promise.resolve(body),
-  } as unknown as import("next/server").NextRequest;
-}
-
 describe("Comment mention validation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.getQueue = [];
+    resetDbMockState();
     mockValidateMentionsExist.mockImplementation(() => ({ mentions: [] }));
   });
 
   it("blocks epic comment submit when mention validation fails", async () => {
     const { MentionResolutionError } = await import("@/lib/documents/mentions");
-    mockDbState.getQueue = [{ id: "epic-1" }];
+    dbMockState.getQueue = [{ id: "epic-1" }];
     mockValidateMentionsExist.mockImplementation(() => {
       throw new MentionResolutionError(["missing.md"]);
     });
@@ -71,8 +48,8 @@ describe("Comment mention validation", () => {
     );
 
     const res = await POST(
-      mockRequest({ author: "user", content: "use @missing.md" }),
-      { params: Promise.resolve({ projectId: "proj-1", epicId: "epic-1" }) }
+      mockJsonRequest({ author: "user", content: "use @missing.md" }),
+      mockRouteContext({ projectId: "proj-1", epicId: "epic-1" })
     );
     const json = await res.json();
 
@@ -82,7 +59,7 @@ describe("Comment mention validation", () => {
 
   it("blocks story comment submit when mention validation fails", async () => {
     const { MentionResolutionError } = await import("@/lib/documents/mentions");
-    mockDbState.getQueue = [{ id: "story-1" }];
+    dbMockState.getQueue = [{ id: "story-1" }];
     mockValidateMentionsExist.mockImplementation(() => {
       throw new MentionResolutionError(["missing.png"]);
     });
@@ -92,8 +69,8 @@ describe("Comment mention validation", () => {
     );
 
     const res = await POST(
-      mockRequest({ author: "user", content: "see @missing.png" }),
-      { params: Promise.resolve({ projectId: "proj-1", storyId: "story-1" }) }
+      mockJsonRequest({ author: "user", content: "see @missing.png" }),
+      mockRouteContext({ projectId: "proj-1", storyId: "story-1" })
     );
     const json = await res.json();
 

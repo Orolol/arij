@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { StoryActions } from "@/components/story/StoryActions";
+import { AgentActionsBar } from "@/components/shared/AgentActionsBar";
 
 vi.mock("@/components/documents/MentionTextarea", () => ({
   MentionTextarea: ({
@@ -21,7 +21,7 @@ vi.mock("@/components/documents/MentionTextarea", () => ({
   ),
 }));
 
-// Mock NamedAgentSelect (replaces old ProviderSelect)
+// Mock NamedAgentSelect
 vi.mock("@/components/shared/NamedAgentSelect", () => ({
   NamedAgentSelect: ({ value, onChange, className }: {
     value: string | null;
@@ -40,9 +40,11 @@ vi.mock("@/components/shared/NamedAgentSelect", () => ({
   ),
 }));
 
+const baseStory = { id: "s1", title: "Test Story", status: "todo" };
+
 const baseProps = {
   projectId: "proj-1",
-  story: { id: "s1", title: "Test Story", status: "todo" },
+  target: { kind: "story" as const, story: baseStory },
   dispatching: false,
   isRunning: false,
   onSendToDev: vi.fn().mockResolvedValue(undefined),
@@ -50,30 +52,34 @@ const baseProps = {
   onApprove: vi.fn().mockResolvedValue(undefined),
 };
 
-describe("StoryActions", () => {
+function storyTarget(overrides?: Partial<typeof baseStory>) {
+  return { kind: "story" as const, story: { ...baseStory, ...overrides } };
+}
+
+describe("AgentActionsBar (story target)", () => {
   it("shows Send to Dev button for todo status", () => {
-    render(<StoryActions {...baseProps} />);
+    render(<AgentActionsBar {...baseProps} />);
     expect(screen.getByText("Send to Dev")).toBeInTheDocument();
   });
 
   it("shows Agent Review and Approve buttons for review status", () => {
     render(
-      <StoryActions {...baseProps} story={{ ...baseProps.story, status: "review" }} />
+      <AgentActionsBar {...baseProps} target={storyTarget({ status: "review" })} />
     );
     expect(screen.getByText("Agent Review")).toBeInTheDocument();
     expect(screen.getByText("Approve")).toBeInTheDocument();
   });
 
   it("shows running indicator when isRunning", () => {
-    render(<StoryActions {...baseProps} isRunning={true} />);
+    render(<AgentActionsBar {...baseProps} isRunning={true} />);
     expect(screen.getByText("Agent running")).toBeInTheDocument();
   });
 
   it("shows lock helper text with active session id when running", () => {
     render(
-      <StoryActions
+      <AgentActionsBar
         {...baseProps}
-        story={{ ...baseProps.story, status: "review" }}
+        target={storyTarget({ status: "review" })}
         isRunning={true}
         activeSessionId="abc123xyz"
       />
@@ -85,9 +91,9 @@ describe("StoryActions", () => {
 
   it("disables action buttons when running lock is active", () => {
     render(
-      <StoryActions
+      <AgentActionsBar
         {...baseProps}
-        story={{ ...baseProps.story, status: "review" }}
+        target={storyTarget({ status: "review" })}
         isRunning={true}
       />
     );
@@ -97,12 +103,12 @@ describe("StoryActions", () => {
   });
 
   it("disables Send to Dev when dispatching", () => {
-    render(<StoryActions {...baseProps} dispatching={true} />);
+    render(<AgentActionsBar {...baseProps} dispatching={true} />);
     expect(screen.getByText("Send to Dev").closest("button")).toBeDisabled();
   });
 
   it("opens Send to Dev dialog with agent select on click", () => {
-    render(<StoryActions {...baseProps} />);
+    render(<AgentActionsBar {...baseProps} />);
     fireEvent.click(screen.getByText("Send to Dev"));
     expect(screen.getByText("Dispatch Agent")).toBeInTheDocument();
     expect(screen.getByText("Agent:")).toBeInTheDocument();
@@ -112,7 +118,7 @@ describe("StoryActions", () => {
 
   it("opens Agent Review dialog with agent select on click", () => {
     render(
-      <StoryActions {...baseProps} story={{ ...baseProps.story, status: "review" }} />
+      <AgentActionsBar {...baseProps} target={storyTarget({ status: "review" })} />
     );
     fireEvent.click(screen.getByText("Agent Review"));
     expect(screen.getByText("Security")).toBeInTheDocument();
@@ -124,7 +130,7 @@ describe("StoryActions", () => {
 
   it("calls onSendToDev with null namedAgentId when no agent selected", async () => {
     const onSendToDev = vi.fn().mockResolvedValue(undefined);
-    render(<StoryActions {...baseProps} onSendToDev={onSendToDev} />);
+    render(<AgentActionsBar {...baseProps} onSendToDev={onSendToDev} />);
 
     fireEvent.click(screen.getByText("Send to Dev"));
     fireEvent.click(screen.getByText("Dispatch Agent"));
@@ -135,7 +141,7 @@ describe("StoryActions", () => {
 
   it("calls onSendToDev with selected namedAgentId", async () => {
     const onSendToDev = vi.fn().mockResolvedValue(undefined);
-    render(<StoryActions {...baseProps} onSendToDev={onSendToDev} />);
+    render(<AgentActionsBar {...baseProps} onSendToDev={onSendToDev} />);
 
     fireEvent.click(screen.getByText("Send to Dev"));
     const select = screen.getAllByTestId("agent-select")[0];
@@ -148,9 +154,9 @@ describe("StoryActions", () => {
   it("calls onSendToReview with selected types and namedAgentId", async () => {
     const onSendToReview = vi.fn().mockResolvedValue(undefined);
     render(
-      <StoryActions
+      <AgentActionsBar
         {...baseProps}
-        story={{ ...baseProps.story, status: "review" }}
+        target={storyTarget({ status: "review" })}
         onSendToReview={onSendToReview}
       />
     );
@@ -172,7 +178,7 @@ describe("StoryActions", () => {
 
   it("requires mandatory comment when sending to dev from review status", () => {
     render(
-      <StoryActions {...baseProps} story={{ ...baseProps.story, status: "review" }} />
+      <AgentActionsBar {...baseProps} target={storyTarget({ status: "review" })} />
     );
 
     fireEvent.click(screen.getByText("Send to Dev"));

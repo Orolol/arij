@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { agentSessions, namedAgents } from "@/lib/db/schema";
 import { eq, and, desc, isNotNull, isNull } from "drizzle-orm";
-import { resolveAgent, resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgent, resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import type { AgentType } from "@/lib/agent-config/constants";
 import type { ProviderType } from "@/lib/providers";
 
@@ -82,7 +82,6 @@ export async function GET(request: NextRequest, { params }: Params) {
     .select({
       id: agentSessions.id,
       cliSessionId: agentSessions.cliSessionId,
-      claudeSessionId: agentSessions.claudeSessionId,
       provider: agentSessions.provider,
       namedAgentId: agentSessions.namedAgentId,
       agentType: agentSessions.agentType,

@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { processManager } from "@/lib/claude/process-manager";
 import { activityRegistry } from "@/lib/activity-registry";
 import fs from "fs";
-import { extractLastNonEmptyText } from "@/lib/utils/extract-last-text";
+import { extractLastNonEmptyTextFromFile } from "@/lib/agent-sessions/last-text";
 import { listSessionChunks } from "@/lib/agent-sessions/chunks";
 import {
   getSessionStatusForApi,
@@ -14,6 +14,7 @@ import {
   markSessionCancelled,
 } from "@/lib/agent-sessions/lifecycle";
 import { runBackfillRecentSessionLastNonEmptyTextOnce } from "@/lib/agent-sessions/backfill";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 
 export async function GET(
   _request: NextRequest,
@@ -57,13 +58,15 @@ export async function GET(
     chunkStreams = null;
   }
 
-  const extractedLastNonEmptyText = extractLastNonEmptyText(session.logsPath);
+  const extractedLastNonEmptyText = extractLastNonEmptyTextFromFile(session.logsPath);
   const lastNonEmptyText = extractedLastNonEmptyText || session.lastNonEmptyText || null;
 
   return NextResponse.json({
     data: {
       ...session,
       status: getSessionStatusForApi(session.status),
+      // Legacy-row fallback handled inside resolveCliSessionId().
+      cliSessionId: resolveCliSessionId(session),
       logs,
       chunkStreams,
       lastNonEmptyText,

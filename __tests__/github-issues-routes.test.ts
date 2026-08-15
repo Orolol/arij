@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockSync = vi.hoisted(() => vi.fn());
 const mockIsDue = vi.hoisted(() => vi.fn());
@@ -11,6 +15,13 @@ vi.mock("@/lib/github/issues", () => ({
   listTriagedIssues: mockList,
   importGitHubIssuesAsTickets: mockImport,
 }));
+
+// The routes import shared helpers from @/lib/api/route-helpers, which pulls
+// in @/lib/db at module load. These routes never touch the db themselves.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
+});
 
 describe("GitHub issues routes", () => {
   beforeEach(() => {
@@ -26,11 +37,11 @@ describe("GitHub issues routes", () => {
       "@/app/api/projects/[projectId]/github/issues/triage/route"
     );
 
-    const req = {
-      nextUrl: new URL("http://localhost/api/projects/proj-1/github/issues/triage?label=bug"),
-    } as unknown as import("next/server").NextRequest;
+    const req = mockNextRequest({
+      url: "http://localhost/api/projects/proj-1/github/issues/triage?label=bug",
+    });
 
-    const res = await GET(req, { params: Promise.resolve({ projectId: "proj-1" }) });
+    const res = await GET(req, mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -52,15 +63,12 @@ describe("GitHub issues routes", () => {
       "@/app/api/projects/[projectId]/github/issues/import/route"
     );
 
-    const request = new Request("http://localhost", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ issueNumbers: [1, 2] }),
-    }) as unknown as import("next/server").NextRequest;
-
-    const res = await POST(request, {
-      params: Promise.resolve({ projectId: "proj-1" }),
+    const request = mockNextRequest({
+      url: "http://localhost/",
+      body: { issueNumbers: [1, 2] },
     });
+
+    const res = await POST(request, mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(201);

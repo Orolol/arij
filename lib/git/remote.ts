@@ -26,13 +26,6 @@ export interface PullWithConflictResult {
   conflictedFiles: string[];
 }
 
-export class FastForwardOnlyPullError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "FastForwardOnlyPullError";
-  }
-}
-
 export class PushValidationError extends Error {
   readonly code: "working_tree_dirty" | "branch_behind_remote";
 
@@ -125,33 +118,6 @@ export async function fetchGitRemote(
 ) {
   const git = getGit(repoPath);
   return git.fetch(defaultRemote(remote));
-}
-
-export async function pullGitBranchFfOnly(
-  repoPath: string,
-  branch: string,
-  remote = "origin"
-) {
-  const cleanBranch = branch.trim();
-  if (!cleanBranch) {
-    throw new Error("Branch is required for pull.");
-  }
-
-  const git = getGit(repoPath);
-  try {
-    return await git.pull(defaultRemote(remote), cleanBranch, ["--ff-only"]);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (
-      /not possible to fast-forward/i.test(message) ||
-      /ff-only/i.test(message)
-    ) {
-      throw new FastForwardOnlyPullError(
-        "Fast-forward pull is not possible. Rebase or merge your branch before pulling."
-      );
-    }
-    throw error;
-  }
 }
 
 export async function pullGitBranchWithConflictSupport(

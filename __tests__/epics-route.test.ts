@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/lib/db";
+import {
+  mockJsonRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockSql = vi.hoisted(() =>
   vi.fn(() => ({
@@ -159,11 +163,7 @@ vi.mock("@/lib/db/readable-id", () => ({
   generateReadableId: vi.fn(() => "E-test-001"),
 }));
 
-function mockRequest(body: Record<string, unknown>) {
-  return {
-    json: () => Promise.resolve(body),
-  } as unknown as import("next/server").NextRequest;
-}
+const mockRequest = mockJsonRequest;
 
 describe("POST /api/projects/[projectId]/epics", () => {
   beforeEach(() => {
@@ -177,8 +177,8 @@ describe("POST /api/projects/[projectId]/epics", () => {
 
   it("creates an epic and related user stories in one request", async () => {
     mockDbState.getQueue = [
-      { max: 2 },
       { id: "proj1", name: "Test Project" },
+      { max: 2 },
       {
         id: "id-1",
         projectId: "proj1",
@@ -204,7 +204,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
           },
         ],
       }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     const json = await response.json();
@@ -254,9 +254,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
     ];
 
     const { GET } = await import("@/app/api/projects/[projectId]/epics/route");
-    const response = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj1" }),
-    });
+    const response = await GET({} as never, mockRouteContext({ projectId: "proj1" }));
 
     const json = await response.json();
     expect(response.status).toBe(200);
@@ -290,7 +288,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
       mockRequest({
         description: "Missing title",
       }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     const json = await response.json();
@@ -299,7 +297,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
   });
 
   it("rolls back epic creation when story insert fails inside transaction", async () => {
-    mockDbState.getQueue = [{ max: 0 }, { id: "proj1", name: "Test Project" }];
+    mockDbState.getQueue = [{ id: "proj1", name: "Test Project" }, { max: 0 }];
     mockDbState.failOnStoryInsert = true;
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -309,7 +307,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
         title: "Transactional Epic",
         userStories: [{ title: "As a user, I want safety so that failures rollback" }],
       }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     const json = await response.json();

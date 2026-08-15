@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, epics, userStories, pullRequests, settings } from "@/lib/db/schema";
+import { epics, userStories, pullRequests } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
+import {
+  getProjectOr404,
+  getEpicOr404,
+  isErrorResponse,
+  errorResponse,
+} from "@/lib/api/route-helpers";
+import { getGitHubTokenFromSettings } from "@/lib/github/client";
 import { pushGitBranch } from "@/lib/git/remote";
 import { generatePrBody, createPullRequest } from "@/lib/github/pull-requests";
 import { writeGitSyncLog } from "@/lib/github/sync-log";
@@ -48,64 +55,34 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   }
 
   // Validate project exists and has GitHub config
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-
-  if (!project) {
-    return NextResponse.json(
-      { error: "not_found", message: "Project not found." },
-      { status: 404 }
-    );
-  }
+  const foundProject = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(foundProject)) return foundProject;
+  const { project } = foundProject;
 
   if (!project.githubOwnerRepo) {
     return NextResponse.json(
-      { error: "not_configured", message: "GitHub owner/repo not configured for this project." },
+      { error: "GitHub owner/repo not configured for this project." },
       { status: 400 }
     );
   }
 
-  if (!project.gitRepoPath) {
+  // Validate GitHub PAT exists (empty/blank tokens count as not configured)
+  const token = getGitHubTokenFromSettings();
+  if (!token) {
     return NextResponse.json(
-      { error: "not_configured", message: "No git repository path configured for this project." },
+      { error: "GitHub PAT not configured. Set it in Settings." },
       { status: 400 }
     );
   }
 
-  // Validate GitHub PAT exists
-  const pat = db
-    .select()
-    .from(settings)
-    .where(eq(settings.key, "github_pat"))
-    .get();
-
-  if (!pat) {
-    return NextResponse.json(
-      { error: "not_configured", message: "GitHub PAT not configured. Set it in Settings." },
-      { status: 400 }
-    );
-  }
-
-  // Get the epic
-  const epic = db
-    .select()
-    .from(epics)
-    .where(eq(epics.id, epicId))
-    .get();
-
-  if (!epic) {
-    return NextResponse.json(
-      { error: "not_found", message: "Epic not found." },
-      { status: 404 }
-    );
-  }
+  // Get the epic (scoped to the project)
+  const foundEpic = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
+  const { epic } = foundEpic;
 
   if (!epic.branchName) {
     return NextResponse.json(
-      { error: "no_branch", message: "Epic has no branch associated." },
+      { error: "Epic has no branch associated." },
       { status: 400 }
     );
   }
@@ -119,7 +96,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
   if (existingPr) {
     return NextResponse.json(
-      { error: "pr_exists", message: `PR #${existingPr.number} already exists for this epic.` },
+      { error: `PR #${existingPr.number} already exists for this epic.` },
       { status: 409 }
     );
   }
@@ -155,10 +132,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       detail: { error: detail },
     });
 
-    return NextResponse.json(
-      { error: "push_failed", message: detail },
-      { status: 500 }
-    );
+    return errorResponse(e, "Failed to push branch for pull request.");
   }
 
   // Create PR on GitHub
@@ -235,9 +209,6 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       detail: { error: detail },
     });
 
-    return NextResponse.json(
-      { error: "pr_creation_failed", message: detail },
-      { status: 500 }
-    );
+    return errorResponse(e, "Failed to create the pull request on GitHub.");
   }
 }

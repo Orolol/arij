@@ -2,8 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatConversations, namedAgents } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { resolveAgent } from "@/lib/agent-config/providers";
+import { resolveAgent } from "@/lib/agent-config/agent-resolution";
 import { isAgentProvider } from "@/lib/agent-config/constants";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { updateConversationSchema } from "@/lib/validation/chat-schemas";
 
 export async function GET(
   _request: NextRequest,
@@ -76,7 +79,10 @@ export async function PATCH(
   { params }: { params: Promise<{ projectId: string; conversationId: string }> }
 ) {
   const { projectId, conversationId } = await params;
-  const body = await request.json();
+
+  const validated = await validateBody(updateConversationSchema, request);
+  if (isValidationError(validated)) return validated;
+  const body = validated.data;
 
   const conversation = db
     .select()
@@ -116,6 +122,8 @@ export async function PATCH(
       updates.namedAgentId = namedAgent.id;
       updates.provider = namedAgent.provider;
       updates.cliSessionId = null;
+      // Also clear the legacy column so stale legacy-row fallbacks cannot
+      // resurrect a session from the previous agent.
       updates.claudeSessionId = null;
     } else {
       // Clearing a conversation-specific named agent falls back to configured chat default.
@@ -153,5 +161,13 @@ export async function PATCH(
     .where(eq(chatConversations.id, conversationId))
     .get();
 
-  return NextResponse.json({ data: updated });
+  return NextResponse.json({
+    data: updated
+      ? {
+          ...updated,
+          // Legacy-row fallback handled inside resolveCliSessionId().
+          cliSessionId: resolveCliSessionId(updated),
+        }
+      : updated,
+  });
 }

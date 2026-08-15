@@ -1,55 +1,31 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
-const mockDb = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-  allQueue: [] as unknown[],
-}));
-
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
-  desc: vi.fn((value: unknown) => value),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDb.getQueue.shift() ?? null),
-    all: vi.fn(() => mockDb.allQueue.shift() ?? []),
-  };
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
+// column identity, so no fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  projects: {
-    id: "id",
-  },
-  qaReports: {
-    id: "id",
-    projectId: "projectId",
-    createdAt: "createdAt",
-  },
-}));
 
 describe("QA report list/detail routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.getQueue = [];
-    mockDb.allQueue = [];
+    resetDbMockState();
   });
 
   it("GET /api/projects/[projectId]/qa/reports returns 404 for unknown project", async () => {
-    mockDb.getQueue = [null];
+    dbMockState.getQueue = [null];
 
     const { GET } = await import(
       "@/app/api/projects/[projectId]/qa/reports/route"
     );
-    const res = await GET({} as never, {
-      params: Promise.resolve({ projectId: "missing" }),
-    });
+    const res = await GET(mockNextRequest(), mockRouteContext({ projectId: "missing" }));
     const json = await res.json();
 
     expect(res.status).toBe(404);
@@ -57,15 +33,13 @@ describe("QA report list/detail routes", () => {
   });
 
   it("GET /api/projects/[projectId]/qa/reports returns report history", async () => {
-    mockDb.getQueue = [{ id: "proj-1" }];
-    mockDb.allQueue = [[{ id: "qr-1", status: "completed" }]];
+    dbMockState.getQueue = [{ id: "proj-1" }];
+    dbMockState.allQueue = [[{ id: "qr-1", status: "completed" }]];
 
     const { GET } = await import(
       "@/app/api/projects/[projectId]/qa/reports/route"
     );
-    const res = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -74,14 +48,12 @@ describe("QA report list/detail routes", () => {
   });
 
   it("GET /api/projects/[projectId]/qa/reports/[reportId] returns 404 when missing", async () => {
-    mockDb.getQueue = [{ id: "proj-1" }, null];
+    dbMockState.getQueue = [{ id: "proj-1" }, null];
 
     const { GET } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/route"
     );
-    const res = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "missing" }),
-    });
+    const res = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "missing" }));
     const json = await res.json();
 
     expect(res.status).toBe(404);
@@ -89,14 +61,12 @@ describe("QA report list/detail routes", () => {
   });
 
   it("GET /api/projects/[projectId]/qa/reports/[reportId] returns report detail", async () => {
-    mockDb.getQueue = [{ id: "proj-1" }, { id: "qr-1", status: "completed" }];
+    dbMockState.getQueue = [{ id: "proj-1" }, { id: "qr-1", status: "completed" }];
 
     const { GET } = await import(
       "@/app/api/projects/[projectId]/qa/reports/[reportId]/route"
     );
-    const res = await GET({} as never, {
-      params: Promise.resolve({ projectId: "proj-1", reportId: "qr-1" }),
-    });
+    const res = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1", reportId: "qr-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);

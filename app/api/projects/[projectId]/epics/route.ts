@@ -1,11 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { epics, projects, ticketComments, userStories } from "@/lib/db/schema";
+import { epics, ticketComments, userStories } from "@/lib/db/schema";
 import { count, eq, sql, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import { createDependencies } from "@/lib/dependencies/crud";
-import { CycleError, CrossProjectError } from "@/lib/dependencies/validation";
+import {
+  CycleError,
+  CrossProjectError,
+  validateDagIntegrity,
+} from "@/lib/dependencies/validation";
+import {
+  getProjectOr404,
+  isErrorResponse,
+} from "@/lib/api/route-helpers";
 import { createEpicSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { generateReadableId } from "@/lib/db/readable-id";
@@ -111,6 +119,11 @@ export async function POST(
   if (isValidationError(validated)) return validated;
 
   const body = validated.data;
+
+  const foundProject = getProjectOr404(projectId);
+  if (isErrorResponse(foundProject)) return foundProject;
+  const { project } = foundProject;
+
   const now = new Date().toISOString();
 
   const normalizedUserStories = Array.isArray(body.userStories)
@@ -141,11 +154,11 @@ export async function POST(
 
   const id = createId();
 
-  // Resolve project for readable ID generation
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
-  const readableId = project
-    ? generateReadableId(projectId, project.name, (body.type as "feature" | "bug") || "feature")
-    : undefined;
+  const readableId = generateReadableId(
+    projectId,
+    project.name,
+    (body.type as "feature" | "bug") || "feature"
+  );
 
   const storiesToInsert = normalizedUserStories.map((story, index) => ({
     id: createId(),
@@ -157,6 +170,73 @@ export async function POST(
     position: index,
     createdAt: now,
   }));
+
+  // Normalize dependency edges provided by the generation agent, replacing
+  // placeholder "$self" references with the newly created epic ID.
+  let dependencyEdges = (Array.isArray(body.dependencies) ? body.dependencies : [])
+    .filter(
+      (dep) =>
+        typeof dep?.ticketId === "string" &&
+        typeof dep?.dependsOnTicketId === "string"
+    )
+    .map((dep) => ({
+      ticketId: dep.ticketId === "$self" ? id : dep.ticketId,
+      dependsOnTicketId:
+        dep.dependsOnTicketId === "$self" ? id : dep.dependsOnTicketId,
+    }));
+
+  // Validate dependency edges BEFORE inserting the epic so semantic
+  // dependency errors (cycle / cross-project) reject the request without
+  // leaving a half-created epic behind.
+  if (dependencyEdges.length > 0) {
+    try {
+      const referencedIds = new Set<string>();
+      for (const edge of dependencyEdges) {
+        referencedIds.add(edge.ticketId);
+        referencedIds.add(edge.dependsOnTicketId);
+      }
+      // The new epic isn't inserted yet — skip its own id.
+      referencedIds.delete(id);
+      for (const referencedId of referencedIds) {
+        const referenced = db
+          .select({ id: epics.id, projectId: epics.projectId })
+          .from(epics)
+          .where(eq(epics.id, referencedId))
+          .get();
+        if (!referenced) {
+          throw new Error(`Ticket "${referencedId}" not found`);
+        }
+        if (referenced.projectId !== projectId) {
+          const edge = dependencyEdges.find(
+            (e) =>
+              e.ticketId === referencedId || e.dependsOnTicketId === referencedId
+          );
+          throw new CrossProjectError(
+            edge?.ticketId ?? referencedId,
+            edge?.dependsOnTicketId ?? referencedId
+          );
+        }
+      }
+      validateDagIntegrity(projectId, dependencyEdges);
+    } catch (error) {
+      if (error instanceof CycleError) {
+        return NextResponse.json(
+          { error: error.message, code: "CYCLE_DETECTED", cycle: error.cycle },
+          { status: 422 }
+        );
+      }
+      if (error instanceof CrossProjectError) {
+        return NextResponse.json(
+          { error: error.message, code: "CROSS_PROJECT_DEPENDENCY" },
+          { status: 422 }
+        );
+      }
+      // Non-critical (e.g. a referenced ticket doesn't exist): log and skip
+      // dependency creation, but still create the epic.
+      console.error("[epics/POST] Skipping invalid dependencies:", error);
+      dependencyEdges = [];
+    }
+  }
 
   try {
     db.transaction((tx) => {
@@ -189,40 +269,15 @@ export async function POST(
     return NextResponse.json({ error: "Failed to create epic" }, { status: 500 });
   }
 
-  // Persist dependency edges if provided by the generation agent
+  // Persist dependency edges (already validated above, before the insert)
   let dependenciesCreated = 0;
-  const dependencyEdges = Array.isArray(body.dependencies) ? body.dependencies : [];
   if (dependencyEdges.length > 0) {
-    const edges = dependencyEdges
-      .filter(
-        (dep) =>
-          typeof dep?.ticketId === "string" &&
-          typeof dep?.dependsOnTicketId === "string"
-      )
-      .map((dep) => ({
-        // Replace placeholder "self" references with the newly created epic ID
-        ticketId: dep.ticketId === "$self" ? id : dep.ticketId,
-        dependsOnTicketId:
-          dep.dependsOnTicketId === "$self" ? id : dep.dependsOnTicketId,
-      }));
-
     try {
-      const created = createDependencies(projectId, edges);
+      const created = createDependencies(projectId, dependencyEdges);
       dependenciesCreated = created.length;
     } catch (error) {
-      if (error instanceof CycleError) {
-        return NextResponse.json(
-          { error: error.message, code: "CYCLE_DETECTED", cycle: error.cycle },
-          { status: 422 }
-        );
-      }
-      if (error instanceof CrossProjectError) {
-        return NextResponse.json(
-          { error: error.message, code: "CROSS_PROJECT_DEPENDENCY" },
-          { status: 422 }
-        );
-      }
-      // Non-critical: log but don't fail the epic creation
+      // Non-critical: validation ran before the insert, so anything thrown
+      // here is unexpected — log but don't fail the epic creation.
       console.error("[epics/POST] Failed to create dependencies:", error);
     }
   }

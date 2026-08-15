@@ -1,34 +1,25 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { projects, epics } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 import { getWorktreeDiff } from "@/lib/git/diff";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
+import {
+  errorResponse,
+  getEpicOr404,
+  getProjectOr404,
+  isErrorResponse,
+} from "@/lib/api/route-helpers";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
 export async function GET(_request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
 
-  const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
-  if (!epic) {
-    return NextResponse.json({ error: "Epic not found" }, { status: 404 });
-  }
+  const foundEpic = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
+  const { epic } = foundEpic;
 
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
-  if (!project.gitRepoPath) {
-    return NextResponse.json(
-      { error: "Project has no git repository configured" },
-      { status: 400 }
-    );
-  }
+  const foundProject = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(foundProject)) return foundProject;
+  const { project } = foundProject;
 
   if (!epic.branchName) {
     return NextResponse.json(
@@ -55,8 +46,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   try {
     const result = await getWorktreeDiff(worktreePath);
     return NextResponse.json({ data: result });
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to generate diff";
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    return errorResponse(error, "Failed to generate diff");
   }
 }

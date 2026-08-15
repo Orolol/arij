@@ -41,9 +41,6 @@ export function getGitHubTokenFromSettings(): string | null {
   }
 }
 
-/** Alias for backward compat with feature-branch callers */
-export const getGitHubToken = getGitHubTokenFromSettings;
-
 export function createGitHubClient(token: string): Octokit {
   return new Octokit({ auth: token.trim() });
 }

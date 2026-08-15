@@ -2,7 +2,7 @@
  * Activity logging for ticket state transitions.
  */
 
-import { db } from "@/lib/db";
+import { db as defaultDb, type ArijDatabase } from "@/lib/db";
 import { ticketActivityLog } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 
@@ -14,7 +14,13 @@ export function logTransition(opts: {
   actor: "user" | "agent" | "system";
   reason?: string;
   sessionId?: string;
+  /**
+   * Optional database handle. Defaults to the shared application database;
+   * tests inject an isolated in-memory database via `createTestDb()`.
+   */
+  database?: ArijDatabase;
 }) {
+  const db = opts.database ?? defaultDb;
   try {
     db.insert(ticketActivityLog)
       .values({

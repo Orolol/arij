@@ -1,6 +1,15 @@
 import type Database from "better-sqlite3";
+import { and, asc, eq, sql } from "drizzle-orm";
+import { drizzle } from "drizzle-orm/better-sqlite3";
 import { createId } from "@/lib/utils/nanoid";
 import { sqlite } from "@/lib/db";
+import * as schema from "@/lib/db/schema";
+import {
+  agentSessionChunks,
+  agentSessionSequences,
+  agentSessions,
+} from "@/lib/db/schema";
+import { extractLastNonEmptyText } from "@/lib/agent-sessions/last-text";
 
 export type AgentSessionStreamType = "response" | "raw" | "output";
 
@@ -35,172 +44,183 @@ export interface SessionChunkStore {
   ) => SessionChunk[];
 }
 
-interface ExistingChunkRow {
+type ChunkRow = {
   id: string;
   sessionId: string;
-  streamType: AgentSessionStreamType;
+  streamType: string;
   sequence: number;
   chunkKey: string | null;
   content: string;
   createdAt: string | null;
-}
+};
 
-interface SequenceRow {
-  sequence: number;
-}
-
-export function extractLastNonEmptyText(text: string): string | null {
-  const lines = text.split(/\r?\n/);
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const trimmed = lines[index].trim();
-    if (trimmed) {
-      return trimmed;
-    }
-  }
-  return null;
+/**
+ * `stream_type` is a plain text column in the schema; the store is the layer
+ * that narrows it back to the union the rest of the app works with.
+ */
+function toSessionChunk(row: ChunkRow): SessionChunk {
+  return {
+    ...row,
+    streamType: row.streamType as AgentSessionStreamType,
+  };
 }
 
 export function createSessionChunkStore(
   database: Database.Database
 ): SessionChunkStore {
-  const selectExistingByKeyStmt = database.prepare<
-    [string, AgentSessionStreamType, string],
-    ExistingChunkRow
-  >(
-    `SELECT
-      id,
-      session_id AS sessionId,
-      stream_type AS streamType,
-      sequence,
-      chunk_key AS chunkKey,
-      content,
-      created_at AS createdAt
-    FROM agent_session_chunks
-    WHERE session_id = ? AND stream_type = ? AND chunk_key = ?
-    LIMIT 1`
-  );
+  const db = drizzle(database, { schema });
 
-  const reserveSequenceStmt = database.prepare<
-    [string, string],
-    SequenceRow
-  >(
-    `INSERT INTO agent_session_sequences (session_id, next_sequence, updated_at)
-     VALUES (?, 2, ?)
-     ON CONFLICT(session_id) DO UPDATE
-       SET next_sequence = next_sequence + 1,
-           updated_at = excluded.updated_at
-     RETURNING next_sequence - 1 AS sequence`
-  );
+  // Built here rather than at module scope so that importing this module
+  // stays free of any schema/driver evaluation.
+  const chunkColumns = {
+    id: agentSessionChunks.id,
+    sessionId: agentSessionChunks.sessionId,
+    streamType: agentSessionChunks.streamType,
+    sequence: agentSessionChunks.sequence,
+    chunkKey: agentSessionChunks.chunkKey,
+    content: agentSessionChunks.content,
+    createdAt: agentSessionChunks.createdAt,
+  };
 
-  const insertChunkStmt = database.prepare<
-    [string, string, AgentSessionStreamType, number, string | null, string, string]
-  >(
-    `INSERT INTO agent_session_chunks (
-      id,
-      session_id,
-      stream_type,
-      sequence,
-      chunk_key,
-      content,
-      created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?)`
-  );
+  const selectExistingByKeyStmt = db
+    .select(chunkColumns)
+    .from(agentSessionChunks)
+    .where(
+      and(
+        eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")),
+        eq(agentSessionChunks.streamType, sql.placeholder("streamType")),
+        eq(agentSessionChunks.chunkKey, sql.placeholder("chunkKey"))
+      )
+    )
+    .limit(1)
+    .prepare();
 
-  const listChunksStmt = database.prepare<
-    [string, AgentSessionStreamType],
-    SessionChunk
-  >(
-    `SELECT
-      id,
-      session_id AS sessionId,
-      stream_type AS streamType,
-      sequence,
-      chunk_key AS chunkKey,
-      content,
-      created_at AS createdAt
-    FROM agent_session_chunks
-    WHERE session_id = ? AND stream_type = ?
-    ORDER BY sequence ASC`
-  );
+  const reserveSequenceStmt = db
+    .insert(agentSessionSequences)
+    .values({
+      sessionId: sql.placeholder("sessionId"),
+      nextSequence: 2,
+      updatedAt: sql.placeholder("updatedAt"),
+    })
+    .onConflictDoUpdate({
+      target: agentSessionSequences.sessionId,
+      set: {
+        nextSequence: sql`${agentSessionSequences.nextSequence} + 1`,
+        updatedAt: sql`excluded.updated_at`,
+      },
+    })
+    .returning({
+      sequence: sql`next_sequence - 1`.mapWith(Number),
+    })
+    .prepare();
 
-  const updateLastNonEmptyTextStmt = database.prepare<[string, string]>(
-    `UPDATE agent_sessions
-     SET last_non_empty_text = ?
-     WHERE id = ?`
-  );
+  const insertChunkStmt = db
+    .insert(agentSessionChunks)
+    .values({
+      id: sql.placeholder("id"),
+      sessionId: sql.placeholder("sessionId"),
+      streamType: sql.placeholder("streamType"),
+      sequence: sql.placeholder("sequence"),
+      chunkKey: sql.placeholder("chunkKey"),
+      content: sql.placeholder("content"),
+      createdAt: sql.placeholder("createdAt"),
+    })
+    .prepare();
 
-  const appendChunkTx = database.transaction(
-    (input: AppendSessionChunkInput): AppendSessionChunkResult => {
-      const createdAt = input.createdAt ?? new Date().toISOString();
-      const chunkKey = input.chunkKey ?? null;
+  const listChunksStmt = db
+    .select(chunkColumns)
+    .from(agentSessionChunks)
+    .where(
+      and(
+        eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")),
+        eq(agentSessionChunks.streamType, sql.placeholder("streamType"))
+      )
+    )
+    .orderBy(asc(agentSessionChunks.sequence))
+    .prepare();
 
-      if (chunkKey) {
-        const existing = selectExistingByKeyStmt.get(
-          input.sessionId,
-          input.streamType,
-          chunkKey
-        );
-        if (existing) {
-          return {
-            inserted: false,
-            chunk: existing,
-          };
-        }
-      }
+  const updateLastNonEmptyTextStmt = db
+    .update(agentSessions)
+    // Wrapped in `sql` because `.set()` only accepts SQL / literal values.
+    .set({ lastNonEmptyText: sql`${sql.placeholder("lastNonEmptyText")}` })
+    .where(eq(agentSessions.id, sql.placeholder("sessionId")))
+    .prepare();
 
-      const sequenceRow = reserveSequenceStmt.get(input.sessionId, createdAt);
-      if (!sequenceRow) {
-        throw new Error(
-          `Failed to reserve sequence for session ${input.sessionId}`
-        );
-      }
+  function appendChunk(
+    input: AppendSessionChunkInput
+  ): AppendSessionChunkResult {
+    const createdAt = input.createdAt ?? new Date().toISOString();
+    const chunkKey = input.chunkKey ?? null;
 
-      const chunk: SessionChunk = {
-        id: createId(),
+    if (chunkKey) {
+      const existing = selectExistingByKeyStmt.get({
         sessionId: input.sessionId,
         streamType: input.streamType,
-        sequence: sequenceRow.sequence,
         chunkKey,
-        content: input.content,
-        createdAt,
-      };
-
-      insertChunkStmt.run(
-        chunk.id,
-        chunk.sessionId,
-        chunk.streamType,
-        chunk.sequence,
-        chunk.chunkKey,
-        chunk.content,
-        chunk.createdAt ?? createdAt
-      );
-
-      if (
-        input.streamType === "output" ||
-        input.streamType === "response"
-      ) {
-        const lastNonEmptyText = extractLastNonEmptyText(input.content);
-        if (lastNonEmptyText) {
-          updateLastNonEmptyTextStmt.run(lastNonEmptyText, input.sessionId);
-        }
+      });
+      if (existing) {
+        return {
+          inserted: false,
+          chunk: toSessionChunk(existing),
+        };
       }
-
-      return {
-        inserted: true,
-        chunk,
-      };
     }
-  );
+
+    const sequenceRow = reserveSequenceStmt.get({
+      sessionId: input.sessionId,
+      updatedAt: createdAt,
+    });
+    if (!sequenceRow) {
+      throw new Error(
+        `Failed to reserve sequence for session ${input.sessionId}`
+      );
+    }
+
+    const chunk: SessionChunk = {
+      id: createId(),
+      sessionId: input.sessionId,
+      streamType: input.streamType,
+      sequence: sequenceRow.sequence,
+      chunkKey,
+      content: input.content,
+      createdAt,
+    };
+
+    insertChunkStmt.run({
+      id: chunk.id,
+      sessionId: chunk.sessionId,
+      streamType: chunk.streamType,
+      sequence: chunk.sequence,
+      chunkKey: chunk.chunkKey,
+      content: chunk.content,
+      createdAt: chunk.createdAt ?? createdAt,
+    });
+
+    if (input.streamType === "output" || input.streamType === "response") {
+      const lastNonEmptyText = extractLastNonEmptyText(input.content);
+      if (lastNonEmptyText) {
+        updateLastNonEmptyTextStmt.run({
+          lastNonEmptyText,
+          sessionId: input.sessionId,
+        });
+      }
+    }
+
+    return {
+      inserted: true,
+      chunk,
+    };
+  }
 
   return {
     appendChunk(input: AppendSessionChunkInput): AppendSessionChunkResult {
-      return appendChunkTx(input);
+      return db.transaction(() => appendChunk(input));
     },
     listChunks(
       sessionId: string,
       streamType: AgentSessionStreamType
     ): SessionChunk[] {
-      return listChunksStmt.all(sessionId, streamType);
+      return listChunksStmt.all({ sessionId, streamType }).map(toSessionChunk);
     },
   };
 }

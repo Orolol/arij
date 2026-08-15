@@ -1,52 +1,23 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+} from "@/__tests__/helpers/db-mock";
 
-const { dbChain, runCutoverMigrationOnce } = vi.hoisted(() => ({
-  dbChain: {
-    select: vi.fn(),
-    from: vi.fn(),
-    where: vi.fn(),
-    orderBy: vi.fn(),
-    all: vi.fn(),
-    insert: vi.fn(),
-    values: vi.fn(),
-    run: vi.fn(),
-    update: vi.fn(),
-    set: vi.fn(),
-  },
+const { runCutoverMigrationOnce } = vi.hoisted(() => ({
   runCutoverMigrationOnce: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
-  db: dbChain,
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  chatConversations: {
-    id: "id",
-    projectId: "projectId",
-    createdAt: "createdAt",
-  },
-  chatMessages: {
-    projectId: "projectId",
-    conversationId: "conversationId",
-  },
-  namedAgents: {
-    id: "id",
-    provider: "provider",
-  },
-}));
-
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn((a, b) => ({ eq: [a, b] })),
-  and: vi.fn((...items) => ({ and: items })),
-  isNull: vi.fn((value) => ({ isNull: value })),
-}));
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
+});
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "conv-created"),
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgent: vi.fn(() => ({
     provider: "claude-code",
     namedAgentId: null,
@@ -60,18 +31,14 @@ vi.mock("@/lib/chat/unified-cutover-migration", () => ({
 describe("conversations route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbChain.select.mockReturnValue(dbChain);
-    dbChain.from.mockReturnValue(dbChain);
-    dbChain.where.mockReturnValue(dbChain);
-    dbChain.orderBy.mockReturnValue(dbChain);
-    dbChain.insert.mockReturnValue(dbChain);
-    dbChain.values.mockReturnValue(dbChain);
-    dbChain.update.mockReturnValue(dbChain);
-    dbChain.set.mockReturnValue(dbChain);
+    resetDbMockState();
   });
 
   it("runs cutover migration and normalizes legacy type/status order", async () => {
-    dbChain.all.mockReturnValue([
+    // GET first checks the project exists via .get()
+    dbMockState.getQueue.push({ id: "proj-1" });
+    // …then loads the project's conversations via .all()
+    dbMockState.allQueue.push([
       {
         id: "conv-newer",
         projectId: "proj-1",

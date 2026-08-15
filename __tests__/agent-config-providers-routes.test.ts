@@ -1,65 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockJsonRequest,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockProviderHelpers = vi.hoisted(() => ({
   listGlobalAgentProviders: vi.fn(),
   listMergedProjectAgentProviders: vi.fn(),
 }));
 
-const mockDb = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-}));
-
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   listGlobalAgentProviders: mockProviderHelpers.listGlobalAgentProviders,
   listMergedProjectAgentProviders: mockProviderHelpers.listMergedProjectAgentProviders,
 }));
 
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDb.getQueue.shift() ?? null),
-    insert: vi.fn().mockReturnValue({
-      values: vi.fn().mockReturnValue({
-        run: vi.fn(),
-      }),
-    }),
-    update: vi.fn().mockReturnValue({
-      set: vi.fn().mockReturnValue({
-        where: vi.fn().mockReturnValue({
-          run: vi.fn(),
-        }),
-      }),
-    }),
-  };
-  return { db: chain };
+// Real @/lib/db/schema: side-effect-free pure builders that the chain mock
+// ignores. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  projects: { id: "id" },
-  agentProviderDefaults: {
-    id: "id",
-    agentType: "agentType",
-    provider: "provider",
-    scope: "scope",
-  },
-}));
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "apd-1"),
 }));
 
-function mockRequest(body: Record<string, unknown>) {
-  return {
-    json: () => Promise.resolve(body),
-  } as unknown as import("next/server").NextRequest;
-}
-
 describe("Agent provider default routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.getQueue = [];
+    resetDbMockState();
     mockProviderHelpers.listGlobalAgentProviders.mockResolvedValue([]);
     mockProviderHelpers.listMergedProjectAgentProviders.mockResolvedValue([]);
   });
@@ -87,9 +59,7 @@ describe("Agent provider default routes", () => {
       "@/app/api/agent-config/providers/[agentType]/route"
     );
 
-    const res = await PUT(mockRequest({ provider: "invalid" }), {
-      params: Promise.resolve({ agentType: "build" }),
-    });
+    const res = await PUT(mockJsonRequest({ provider: "invalid" }), mockRouteContext({ agentType: "build" }));
     const json = await res.json();
 
     expect(res.status).toBe(400);
@@ -100,7 +70,7 @@ describe("Agent provider default routes", () => {
     const { PUT } = await import(
       "@/app/api/agent-config/providers/[agentType]/route"
     );
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null,
       {
         id: "apd-1",
@@ -110,9 +80,7 @@ describe("Agent provider default routes", () => {
       },
     ];
 
-    const res = await PUT(mockRequest({ provider: "codex" }), {
-      params: Promise.resolve({ agentType: "build" }),
-    });
+    const res = await PUT(mockJsonRequest({ provider: "codex" }), mockRouteContext({ agentType: "build" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -120,7 +88,7 @@ describe("Agent provider default routes", () => {
   });
 
   it("GET /api/projects/[projectId]/agent-config/providers returns merged defaults", async () => {
-    mockDb.getQueue = [{ id: "proj-1" }];
+    dbMockState.getQueue = [{ id: "proj-1" }];
     mockProviderHelpers.listMergedProjectAgentProviders.mockResolvedValue([
       {
         agentType: "build",
@@ -139,9 +107,7 @@ describe("Agent provider default routes", () => {
     const { GET } = await import(
       "@/app/api/projects/[projectId]/agent-config/providers/route"
     );
-    const res = await GET(new Request("http://localhost"), {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -153,7 +119,7 @@ describe("Agent provider default routes", () => {
     const { PUT } = await import(
       "@/app/api/projects/[projectId]/agent-config/providers/[agentType]/route"
     );
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj-1" },
       null,
       {
@@ -164,9 +130,7 @@ describe("Agent provider default routes", () => {
       },
     ];
 
-    const res = await PUT(mockRequest({ provider: "codex" }), {
-      params: Promise.resolve({ projectId: "proj-1", agentType: "chat" }),
-    });
+    const res = await PUT(mockJsonRequest({ provider: "codex" }), mockRouteContext({ projectId: "proj-1", agentType: "chat" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);

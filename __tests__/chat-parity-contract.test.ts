@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  LEGACY_CHAT_TAB_TAXONOMY,
-  LEGACY_CONVERSATION_FILTERS,
-  LEGACY_CONVERSATION_SORTS,
   LEGACY_CONVERSATION_STATUSES,
-  applyLegacyConversationFilter,
   isLegacyConversationGenerating,
   normalizeLegacyConversationStatus,
   resolveLegacyConversationLabel,
@@ -12,20 +8,7 @@ import {
 } from "@/lib/chat/parity-contract";
 
 describe("chat parity contract", () => {
-  it("keeps legacy tab taxonomy labels stable", () => {
-    expect(LEGACY_CHAT_TAB_TAXONOMY).toEqual([
-      { type: "brainstorm", defaultLabel: "Brainstorm" },
-      { type: "epic_creation", defaultLabel: "New Epic" },
-    ]);
-  });
-
-  it("declares legacy filter and sort contracts", () => {
-    expect(LEGACY_CONVERSATION_FILTERS).toEqual([
-      { id: "all", label: "All conversations" },
-    ]);
-    expect(LEGACY_CONVERSATION_SORTS).toEqual([
-      { id: "created_at_asc", label: "Oldest first" },
-    ]);
+  it("declares legacy status contract", () => {
     expect(LEGACY_CONVERSATION_STATUSES).toEqual([
       "active",
       "generating",
@@ -71,13 +54,5 @@ describe("chat parity contract", () => {
       "c2",
       "c3",
     ]);
-  });
-
-  it("all filter preserves all conversations", () => {
-    const conversations = [
-      { id: "c1" },
-      { id: "c2" },
-    ];
-    expect(applyLegacyConversationFilter(conversations, "all")).toEqual(conversations);
   });
 });

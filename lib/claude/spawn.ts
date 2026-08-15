@@ -16,8 +16,6 @@ export interface ClaudeOptions {
   model?: string;
   logIdentifier?: string;
   cliSessionId?: string;
-  /** @deprecated Use cliSessionId. */
-  claudeSessionId?: string;
   resumeSession?: boolean;
 }
 
@@ -60,14 +58,15 @@ export interface SpawnedClaudeStream {
 }
 
 /**
- * Spawns the `claude` CLI as a child process and returns a promise that
- * resolves with the parsed JSON result once the process exits.
- *
- * The returned `kill` function can be called to abort the process early.
+ * Builds the `claude` CLI argument list shared by spawnClaude() and
+ * spawnClaudeStream(). The two only differ in output format: "json"
+ * for the one-shot spawn, "stream-json" (plus --verbose) for streaming.
  */
-export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
-  const { mode, prompt, cwd, allowedTools, model, resumeSession } = options;
-  const cliSessionId = options.cliSessionId ?? options.claudeSessionId;
+export function buildClaudeArgs(
+  options: ClaudeOptions,
+  outputFormat: "json" | "stream-json",
+): string[] {
+  const { mode, prompt, allowedTools, model, cliSessionId, resumeSession } = options;
 
   // --permission-mode: "plan" for read-only, "bypassPermissions" for code/analyze
   const permissionMode = mode === "plan" ? "plan" : "bypassPermissions";
@@ -82,8 +81,12 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
     "--permission-mode",
     permissionMode,
     "--output-format",
-    "json",
+    outputFormat,
   ];
+
+  if (outputFormat === "stream-json") {
+    args.push("--verbose");
+  }
 
   if (cliSessionId && resumeSession) {
     args.push("--resume", cliSessionId);
@@ -100,6 +103,20 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
   if (effectiveAllowedTools && effectiveAllowedTools.length > 0) {
     args.push("--allowedTools", ...effectiveAllowedTools);
   }
+
+  return args;
+}
+
+/**
+ * Spawns the `claude` CLI as a child process and returns a promise that
+ * resolves with the parsed JSON result once the process exits.
+ *
+ * The returned `kill` function can be called to abort the process early.
+ */
+export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
+  const { prompt, cwd, cliSessionId } = options;
+
+  const args = buildClaudeArgs(options, "json");
 
   const effectiveCwd = cwd || process.cwd();
 
@@ -253,39 +270,9 @@ function extractResultText(result: unknown): string {
  * The `assistant` event is always ignored (redundant).
  */
 export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
-  const { mode, prompt, cwd, allowedTools, model, logIdentifier, resumeSession } = options;
-  const cliSessionId = options.cliSessionId ?? options.claudeSessionId;
+  const { prompt, cwd, logIdentifier } = options;
 
-  const permissionMode = mode === "plan" ? "plan" : "bypassPermissions";
-
-  const effectiveAllowedTools =
-    mode === "analyze" && (!allowedTools || allowedTools.length === 0)
-      ? ["Read", "Glob", "Grep", "Write"]
-      : allowedTools;
-
-  const args: string[] = [
-    "--permission-mode",
-    permissionMode,
-    "--output-format",
-    "stream-json",
-    "--verbose",
-  ];
-
-  if (cliSessionId && resumeSession) {
-    args.push("--resume", cliSessionId);
-  } else if (cliSessionId) {
-    args.push("--session-id", cliSessionId);
-  }
-
-  args.push("--print", "-p", prompt);
-
-  if (model) {
-    args.push("--model", model);
-  }
-
-  if (effectiveAllowedTools && effectiveAllowedTools.length > 0) {
-    args.push("--allowedTools", ...effectiveAllowedTools);
-  }
+  const args = buildClaudeArgs(options, "stream-json");
 
   const effectiveCwd = cwd || process.cwd();
 

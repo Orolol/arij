@@ -1,0 +1,285 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { ComponentProps } from "react";
+import { EpicDetail } from "@/components/kanban/EpicDetail";
+
+const mockUseEpicDetail = vi.hoisted(() => vi.fn());
+const mockUseTicketComments = vi.hoisted(() => vi.fn());
+const mockUseAgentDispatch = vi.hoisted(() => vi.fn());
+const mockUseEpicPr = vi.hoisted(() => vi.fn());
+const mockUseGitHubConfig = vi.hoisted(() => vi.fn());
+const mockUseGitStatus = vi.hoisted(() => vi.fn());
+const mockUseProvidersAvailable = vi.hoisted(() => vi.fn());
+
+vi.mock("@/hooks/useEpicDetail", () => ({
+  useEpicDetail: (...args: unknown[]) => mockUseEpicDetail(...args),
+}));
+
+vi.mock("@/hooks/useTicketComments", () => ({
+  useTicketComments: (...args: unknown[]) => mockUseTicketComments(...args),
+}));
+
+vi.mock("@/hooks/useAgentDispatch", () => ({
+  useAgentDispatch: (...args: unknown[]) => mockUseAgentDispatch(...args),
+}));
+
+vi.mock("@/hooks/useEpicPr", () => ({
+  useEpicPr: (...args: unknown[]) => mockUseEpicPr(...args),
+}));
+
+vi.mock("@/hooks/useGitHubConfig", () => ({
+  useGitHubConfig: (...args: unknown[]) => mockUseGitHubConfig(...args),
+}));
+
+vi.mock("@/hooks/useGitStatus", () => ({
+  useGitStatus: (...args: unknown[]) => mockUseGitStatus(...args),
+}));
+
+vi.mock("@/hooks/useProvidersAvailable", () => ({
+  useProvidersAvailable: (...args: unknown[]) => mockUseProvidersAvailable(...args),
+}));
+
+vi.mock("@/components/shared/AgentActionsBar", () => ({
+  AgentActionsBar: () => <div data-testid="epic-actions" />,
+}));
+
+vi.mock("@/components/epic/UserStoryQuickActions", () => ({
+  UserStoryQuickActions: () => <div data-testid="story-quick-actions" />,
+}));
+
+vi.mock("@/components/story/CommentThread", () => ({
+  CommentThread: () => <div data-testid="comment-thread" />,
+}));
+
+vi.mock("@/components/dependencies/DependencyEditor", () => ({
+  DependencyEditor: () => <div data-testid="dependency-editor" />,
+}));
+
+vi.mock("@/components/review/DiffViewer", () => ({
+  DiffViewer: () => <div data-testid="diff-viewer" />,
+}));
+
+const baseEpic = {
+  id: "epic-1",
+  title: "Payments",
+  description: "Epic details",
+  priority: 1,
+  status: "review",
+  branchName: "feature/payments",
+  prNumber: null,
+  prUrl: null,
+  prStatus: null,
+  type: "feature",
+  linkedEpicId: null,
+  images: null,
+  readableId: null,
+};
+
+const mockAddUserStory = vi.fn();
+
+function setupHooks(epicOverrides?: Partial<typeof baseEpic>) {
+  mockUseEpicDetail.mockReturnValue({
+    epic: { ...baseEpic, ...epicOverrides },
+    userStories: [
+      {
+        id: "us-1",
+        epicId: "epic-1",
+        title: "Checkout flow",
+        description: null,
+        acceptanceCriteria: null,
+        status: "todo",
+        position: 0,
+        createdAt: "2026-01-01",
+      },
+    ],
+    loading: false,
+    updateEpic: vi.fn(),
+    addUserStory: mockAddUserStory,
+    updateUserStory: vi.fn(),
+    deleteUserStory: vi.fn(),
+    refresh: vi.fn(),
+    setPolling: vi.fn(),
+  });
+  mockUseTicketComments.mockReturnValue({
+    comments: [],
+    loading: false,
+    addComment: vi.fn(),
+  });
+  mockUseAgentDispatch.mockReturnValue({
+    activeSession: null,
+    dispatching: false,
+    isRunning: false,
+    sendToDev: vi.fn(),
+    sendToReview: vi.fn(),
+    resolveMerge: vi.fn(),
+    approve: vi.fn(),
+  });
+  mockUseEpicPr.mockReturnValue({
+    pr: null,
+    loading: false,
+    error: null,
+    createPr: vi.fn(),
+    syncPr: vi.fn(),
+  });
+  mockUseGitHubConfig.mockReturnValue({ isConfigured: false });
+  mockUseGitStatus.mockReturnValue({
+    ahead: 0,
+    behind: 0,
+    loading: false,
+    error: null,
+    refresh: vi.fn(),
+    push: vi.fn(),
+    pushing: false,
+  });
+  mockUseProvidersAvailable.mockReturnValue({
+    codexAvailable: true,
+    codexInstalled: true,
+  });
+}
+
+function renderSubject(overrides?: Partial<ComponentProps<typeof EpicDetail>>) {
+  const onClose = vi.fn();
+  const onMerged = vi.fn();
+
+  render(
+    <EpicDetail
+      projectId="proj-1"
+      epicId="epic-1"
+      open={true}
+      onClose={onClose}
+      onMerged={onMerged}
+      {...overrides}
+    />,
+  );
+
+  return { onClose, onMerged };
+}
+
+describe("EpicDetail git section", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    mockAddUserStory.mockReset();
+    setupHooks();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    }) as unknown as typeof fetch;
+  });
+
+  it("shows the branch name and merge button for a review epic", () => {
+    renderSubject();
+    expect(screen.getByText("feature/payments")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Merge into main" }),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the git section when the epic has no branch", () => {
+    setupHooks({ branchName: null as unknown as string });
+    renderSubject();
+    expect(
+      screen.queryByRole("button", { name: "Merge into main" }),
+    ).toBeNull();
+  });
+
+  it("hides the merge button outside review/done status", () => {
+    setupHooks({ status: "in_progress" });
+    renderSubject();
+    expect(screen.getByText("feature/payments")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Merge into main" }),
+    ).toBeNull();
+  });
+
+  it("posts to the merge endpoint and closes on success", async () => {
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/merge") && init?.method === "POST") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ data: { merged: true } }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ data: [] }),
+      });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const { onClose, onMerged } = renderSubject();
+    fireEvent.click(screen.getByRole("button", { name: "Merge into main" }));
+
+    await waitFor(() => {
+      expect(onMerged).toHaveBeenCalledTimes(1);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    const mergeCalls = fetchMock.mock.calls.filter(([input]) =>
+      String(input).includes("/api/projects/proj-1/epics/epic-1/merge"),
+    );
+    expect(mergeCalls).toHaveLength(1);
+  });
+
+  it("shows the merge error and resolve-with-agent button on failure", async () => {
+    global.fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).endsWith("/merge") && init?.method === "POST") {
+        return Promise.resolve({
+          ok: false,
+          json: async () => ({ error: "Merge conflict in main" }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ data: [] }),
+      });
+    }) as unknown as typeof fetch;
+
+    const { onClose, onMerged } = renderSubject();
+    fireEvent.click(screen.getByRole("button", { name: "Merge into main" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Merge conflict in main")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("button", { name: "Resolve with Agent" }),
+    ).toBeInTheDocument();
+    expect(onMerged).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("EpicDetail user stories section", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    mockAddUserStory.mockReset();
+    setupHooks();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    }) as unknown as typeof fetch;
+  });
+
+  it("lists user stories with a link to the story page", () => {
+    renderSubject();
+    expect(screen.getByText("User Stories (1)")).toBeInTheDocument();
+    const link = screen.getByRole("link", { name: "Checkout flow" });
+    expect(link).toHaveAttribute("href", "/projects/proj-1/stories/us-1");
+  });
+
+  it("adds a trimmed user story on Enter and clears the input", () => {
+    renderSubject();
+    const input = screen.getByPlaceholderText("Add user story...");
+    fireEvent.change(input, { target: { value: "  New story  " } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(mockAddUserStory).toHaveBeenCalledWith("New story");
+    expect(input).toHaveValue("");
+  });
+
+  it("hides the user stories section for bug epics", () => {
+    setupHooks({ type: "bug" });
+    renderSubject();
+    expect(screen.queryByText(/User Stories/)).toBeNull();
+    expect(screen.queryByPlaceholderText("Add user story...")).toBeNull();
+  });
+});

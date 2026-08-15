@@ -74,6 +74,8 @@ vi.mock("@/lib/agents/concurrency", () => ({
 vi.mock("@/lib/db/schema", () => ({
   projects: {},
   epics: {},
+  userStories: {},
+  ticketComments: {},
   agentSessions: {},
   reviewComments: {
     epicId: "epicId",

@@ -77,8 +77,8 @@ vi.mock("@/hooks/useChat", () => ({
   }),
 }));
 
-vi.mock("@/hooks/useCodexAvailable", () => ({
-  useCodexAvailable: () => ({ codexAvailable: true, codexInstalled: true }),
+vi.mock("@/hooks/useProvidersAvailable", () => ({
+  useProvidersAvailable: () => ({ codexAvailable: true, codexInstalled: true }),
 }));
 
 let mockEpicCreateLoading = false;
@@ -107,10 +107,6 @@ vi.mock("@/components/chat/MessageInput", () => ({
 
 vi.mock("@/components/chat/QuestionCards", () => ({
   QuestionCards: () => null,
-}));
-
-vi.mock("@/components/shared/ProviderSelect", () => ({
-  ProviderSelect: ({ value }: { value: string }) => <div data-testid="provider-select">{value}</div>,
 }));
 
 import { UnifiedChatPanel } from "@/components/chat/UnifiedChatPanel";
@@ -373,6 +369,40 @@ describe("UnifiedChatPanel shell + tabs", () => {
     await vi.advanceTimersByTimeAsync(9000);
 
     expect(mockRefreshConversations).toHaveBeenCalledTimes(3);
+  });
+
+  it("does not poll conversation status while the panel is hidden", async () => {
+    window.localStorage.setItem("arij.unified-chat-panel.state.proj1", "hidden");
+    vi.useFakeTimers();
+
+    render(
+      <UnifiedChatPanel projectId="proj1">
+        <div>board</div>
+      </UnifiedChatPanel>,
+    );
+
+    await vi.advanceTimersByTimeAsync(9000);
+
+    expect(mockRefreshConversations).not.toHaveBeenCalled();
+  });
+
+  it("resumes polling when the hidden panel is revealed", async () => {
+    window.localStorage.setItem("arij.unified-chat-panel.state.proj1", "hidden");
+    vi.useFakeTimers();
+
+    render(
+      <UnifiedChatPanel projectId="proj1">
+        <div>board</div>
+      </UnifiedChatPanel>,
+    );
+
+    await vi.advanceTimersByTimeAsync(9000);
+    expect(mockRefreshConversations).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByLabelText("Show chat strip"));
+
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(mockRefreshConversations).toHaveBeenCalledTimes(1);
   });
 
   it("marks tabs with conversation type metadata", () => {

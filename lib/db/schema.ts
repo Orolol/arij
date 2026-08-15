@@ -100,6 +100,7 @@ export const chatConversations = sqliteTable("chat_conversations", {
   status: text("status").default("active"), // active | generating | generated | error
   epicId: text("epic_id").references(() => epics.id),
   provider: text("provider").default("claude-code"), // see PROVIDER_OPTIONS in lib/agent-config/constants.ts
+  // Legacy column, scheduled for removal — read only via resolveCliSessionId().
   claudeSessionId: text("claude_session_id"),
   cliSessionId: text("cli_session_id"),
   namedAgentId: text("named_agent_id"),
@@ -148,6 +149,7 @@ export const agentSessions = sqliteTable("agent_sessions", {
   completedAt: text("completed_at"),
   lastNonEmptyText: text("last_non_empty_text"),
   error: text("error"),
+  // Legacy column, scheduled for removal — read only via resolveCliSessionId().
   claudeSessionId: text("claude_session_id"),
   cliSessionId: text("cli_session_id"),
   namedAgentId: text("named_agent_id"),

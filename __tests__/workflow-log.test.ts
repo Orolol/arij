@@ -1,10 +1,14 @@
 /**
  * Tests for workflow activity logging.
  * Verifies that logTransition correctly writes to ticketActivityLog.
+ *
+ * Runs against an isolated in-memory database built from the real migration
+ * chain (`createTestDb`), so the developer's `data/arij.db` is never touched.
  */
 
 import { describe, it, expect, beforeEach } from "vitest";
-import { db } from "@/lib/db";
+import { createTestDb } from "@/lib/db/test-utils";
+import type { ArijDatabase } from "@/lib/db";
 import { ticketActivityLog, projects, epics } from "@/lib/db/schema";
 import { logTransition } from "@/lib/workflow/log";
 import { eq } from "drizzle-orm";
@@ -14,10 +18,13 @@ import { createId } from "@/lib/utils/nanoid";
 // Setup: create a project and epic for the tests
 // ---------------------------------------------------------------------------
 
+let db: ArijDatabase;
 let projectId: string;
 let epicId: string;
 
 beforeEach(() => {
+  db = createTestDb().db;
+
   projectId = createId();
   epicId = createId();
 
@@ -46,6 +53,7 @@ beforeEach(() => {
 describe("logTransition", () => {
   it("inserts a record into ticketActivityLog", () => {
     logTransition({
+      database: db,
       projectId,
       epicId,
       fromStatus: "backlog",
@@ -70,6 +78,7 @@ describe("logTransition", () => {
   it("stores reason and sessionId when provided", () => {
     const sessionId = createId();
     logTransition({
+      database: db,
       projectId,
       epicId,
       fromStatus: "in_progress",
@@ -93,6 +102,7 @@ describe("logTransition", () => {
 
   it("records multiple transitions in order", () => {
     logTransition({
+      database: db,
       projectId,
       epicId,
       fromStatus: "backlog",
@@ -102,6 +112,7 @@ describe("logTransition", () => {
     });
 
     logTransition({
+      database: db,
       projectId,
       epicId,
       fromStatus: "todo",
@@ -111,6 +122,7 @@ describe("logTransition", () => {
     });
 
     logTransition({
+      database: db,
       projectId,
       epicId,
       fromStatus: "in_progress",
@@ -139,6 +151,7 @@ describe("logTransition", () => {
     const before = new Date().toISOString();
 
     logTransition({
+      database: db,
       projectId,
       epicId,
       fromStatus: "review",
@@ -161,6 +174,7 @@ describe("logTransition", () => {
 
   it("distinguishes user, agent, and system actors", () => {
     logTransition({
+      database: db,
       projectId,
       epicId,
       fromStatus: "backlog",
@@ -169,6 +183,7 @@ describe("logTransition", () => {
     });
 
     logTransition({
+      database: db,
       projectId,
       epicId,
       fromStatus: "todo",
@@ -177,6 +192,7 @@ describe("logTransition", () => {
     });
 
     logTransition({
+      database: db,
       projectId,
       epicId,
       fromStatus: "in_progress",

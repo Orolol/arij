@@ -1,72 +1,48 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { dbMockState, resetDbMockState } from "@/__tests__/helpers/db-mock";
 
-const mockDb = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-  allQueue: [] as unknown[],
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDb.getQueue.shift() ?? null),
-    all: vi.fn(() => mockDb.allQueue.shift() ?? []),
-  };
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
+// builders, and the chain mock ignores their output. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  agentProviderDefaults: {
-    agentType: "agentType",
-    provider: "provider",
-    scope: "scope",
-    namedAgentId: "namedAgentId",
-  },
-  namedAgents: {
-    id: "id",
-    name: "name",
-    provider: "provider",
-    model: "model",
-  },
-}));
 
 describe("Agent provider resolver", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.getQueue = [];
-    mockDb.allQueue = [];
+    resetDbMockState();
   });
 
-  it("resolveAgentProvider uses project override first", async () => {
-    const { resolveAgentProvider } = await import("@/lib/agent-config/providers");
-    mockDb.getQueue = [{ provider: "codex" }];
+  it("resolveAgent uses project override first", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
+    dbMockState.getQueue = [{ provider: "codex" }];
 
-    const provider = await resolveAgentProvider("build", "proj-1");
-    expect(provider).toBe("codex");
+    const resolved = await resolveAgent("build", "proj-1");
+    expect(resolved.provider).toBe("codex");
   });
 
-  it("resolveAgentProvider falls back to global", async () => {
-    const { resolveAgentProvider } = await import("@/lib/agent-config/providers");
-    mockDb.getQueue = [null, { provider: "codex" }];
+  it("resolveAgent falls back to global", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
+    dbMockState.getQueue = [null, { provider: "codex" }];
 
-    const provider = await resolveAgentProvider("chat", "proj-1");
-    expect(provider).toBe("codex");
+    const resolved = await resolveAgent("chat", "proj-1");
+    expect(resolved.provider).toBe("codex");
   });
 
-  it("resolveAgentProvider falls back to claude-code", async () => {
-    const { resolveAgentProvider } = await import("@/lib/agent-config/providers");
-    mockDb.getQueue = [null, null];
+  it("resolveAgent falls back to claude-code", async () => {
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
+    dbMockState.getQueue = [null, null];
 
-    const provider = await resolveAgentProvider("ticket_build", "proj-1");
-    expect(provider).toBe("claude-code");
+    const resolved = await resolveAgent("ticket_build", "proj-1");
+    expect(resolved.provider).toBe("claude-code");
   });
 
   it("listMergedProjectAgentProviders merges project > global > fallback", async () => {
     const { listMergedProjectAgentProviders } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
-    mockDb.allQueue = [
+    dbMockState.allQueue = [
       [{ agentType: "chat", provider: "codex", scope: "global" }],
       [{ agentType: "build", provider: "codex", scope: "proj-1" }],
     ];
@@ -85,11 +61,11 @@ describe("Agent provider resolver", () => {
   });
 
   it("resolveAgent returns provider + model from named agent assignment", async () => {
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     // resolveAgent first queries agentProviderDefaults for project scope (get),
     // which returns a row with namedAgentId. Then it calls resolveFromRow which
     // does a select().from(namedAgents).where(...).get() to look up the named agent.
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       {
         // First get: project-scoped agentProviderDefaults row
         provider: "claude-code",

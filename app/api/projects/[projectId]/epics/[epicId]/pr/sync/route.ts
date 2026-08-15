@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, epics, pullRequests } from "@/lib/db/schema";
+import { epics, pullRequests } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import {
+  getProjectOr404,
+  isErrorResponse,
+  errorResponse,
+} from "@/lib/api/route-helpers";
 import { fetchPrStatus } from "@/lib/github/pull-requests";
 import { logSyncOperation } from "@/lib/github/sync-log";
 
@@ -15,22 +20,13 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
   const { projectId, epicId } = await params;
 
   // Get project
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-
-  if (!project) {
-    return NextResponse.json(
-      { error: "not_found", message: "Project not found." },
-      { status: 404 }
-    );
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
 
   if (!project.githubOwnerRepo) {
     return NextResponse.json(
-      { error: "not_configured", message: "GitHub owner/repo not configured." },
+      { error: "GitHub owner/repo not configured." },
       { status: 400 }
     );
   }
@@ -44,7 +40,7 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
 
   if (!pr) {
     return NextResponse.json(
-      { error: "no_pr", message: "No pull request found for this epic." },
+      { error: "No pull request found for this epic." },
       { status: 404 }
     );
   }
@@ -100,9 +96,6 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       detail,
     });
 
-    return NextResponse.json(
-      { error: "sync_failed", message: detail },
-      { status: 500 }
-    );
+    return errorResponse(e, "Failed to sync pull request status from GitHub.");
   }
 }

@@ -29,10 +29,6 @@ export function normalizeConversationAgentType(type: string | null | undefined):
   return type;
 }
 
-export function isUnselectedConversationAgentType(type: string | null | undefined): boolean {
-  return normalizeConversationAgentType(type) === UNSELECTED_AGENT_TYPE;
-}
-
 export function isBrainstormConversationAgentType(type: string | null | undefined): boolean {
   return normalizeConversationAgentType(type) === BRAINSTORM_AGENT_TYPE;
 }
@@ -41,20 +37,3 @@ export function isEpicCreationConversationAgentType(type: string | null | undefi
   return normalizeConversationAgentType(type) === EPIC_CREATION_AGENT_TYPE;
 }
 
-export function isBuiltinConversationAgentType(type: string | null | undefined): boolean {
-  const normalized = normalizeConversationAgentType(type);
-  return BUILTIN_CONVERSATION_AGENT_TYPES.some((agentType) => agentType.value === normalized);
-}
-
-export function createCustomReviewConversationAgentType(agentId: string): string {
-  return `${CUSTOM_REVIEW_AGENT_PREFIX}${agentId}`;
-}
-
-export function parseCustomReviewConversationAgentId(
-  type: string | null | undefined,
-): string | null {
-  if (!type || !type.startsWith(CUSTOM_REVIEW_AGENT_PREFIX)) {
-    return null;
-  }
-  return type.slice(CUSTOM_REVIEW_AGENT_PREFIX.length) || null;
-}

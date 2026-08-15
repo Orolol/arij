@@ -57,7 +57,7 @@ describe("useGitStatus", () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: false,
       json: () =>
-        Promise.resolve({ message: "Git repo not found" }),
+        Promise.resolve({ error: "Git repo not found" }),
     });
 
     const { result } = renderHook(() =>
@@ -150,7 +150,7 @@ describe("useGitStatus", () => {
       await result.current.push();
     });
 
-    expect(result.current.error).toBe("Push failed");
+    expect(result.current.error).toBe("Permission denied");
   });
 
   it("does not fetch when githubConfigured is false", async () => {

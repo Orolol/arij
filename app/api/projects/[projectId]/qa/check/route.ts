@@ -3,13 +3,14 @@ import fs from "fs";
 import path from "path";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { projects, qaReports } from "@/lib/db/schema";
+import { qaReports } from "@/lib/db/schema";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { createId } from "@/lib/utils/nanoid";
 import { processManager } from "@/lib/claude/process-manager";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import { buildTechCheckPrompt, buildE2eTestPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import type { AgentType } from "@/lib/agent-config/constants";
 import {
   createQueuedSession,
@@ -72,22 +73,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   const checkType = parseCheckType(body.checkType);
   const agentType = CHECK_TYPE_TO_AGENT_TYPE[checkType];
 
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
-
-  if (!project.gitRepoPath) {
-    return NextResponse.json(
-      { error: "Project has no git repository configured" },
-      { status: 400 },
-    );
-  }
+  const found = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
 
   const systemPrompt = await resolveAgentPrompt(agentType, projectId);
   const resolvedAgent = resolveAgentByNamedId(agentType, projectId, namedAgentId);
@@ -103,7 +91,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
   fs.mkdirSync(logsDir, { recursive: true });
   const logsPath = path.join(logsDir, "logs.json");
-  const claudeSessionId = crypto.randomUUID();
+  const cliSessionId = crypto.randomUUID();
 
   createQueuedSession({
     id: sessionId,
@@ -112,7 +100,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     provider: resolvedAgent.provider,
     prompt,
     logsPath,
-    claudeSessionId,
+    cliSessionId,
     agentType,
     createdAt: now,
   });
@@ -140,7 +128,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       prompt,
       cwd: project.gitRepoPath,
       model: resolvedAgent.model,
-      claudeSessionId,
+      cliSessionId,
     },
     resolvedAgent.provider,
   );

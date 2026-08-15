@@ -7,36 +7,14 @@
  * - Seeded global default agent ("Claude Code") as the final named-agent fallback
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { dbMockState, resetDbMockState } from "@/__tests__/helpers/db-mock";
 
-const mockDb = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDb.getQueue.shift() ?? null),
-    all: vi.fn(() => []),
-  };
-  return { db: chain };
+// Real @/lib/db/schema (side-effect-free pure builders); the chain mock
+// ignores column identity, so no fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  agentProviderDefaults: {
-    agentType: "agentType",
-    provider: "provider",
-    namedAgentId: "namedAgentId",
-    scope: "scope",
-  },
-  namedAgents: {
-    id: "id",
-    name: "name",
-    provider: "provider",
-    model: "model",
-  },
-}));
 
 // ---------------------------------------------------------------------------
 // resolveAgentByNamedId
@@ -45,12 +23,12 @@ vi.mock("@/lib/db/schema", () => ({
 describe("resolveAgentByNamedId", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.getQueue = [];
+    resetDbMockState();
   });
 
   it("returns the named agent's provider, model, and name when namedAgentId is valid", async () => {
     // Named agent lookup returns a valid row
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       {
         id: "named-1",
         name: "CC Opus",
@@ -61,7 +39,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("build", "proj-1", "named-1");
 
@@ -71,7 +49,7 @@ describe("resolveAgentByNamedId", () => {
   });
 
   it("returns codex named agent correctly", async () => {
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       {
         id: "codex-agent",
         name: "Codex Fast",
@@ -82,7 +60,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("chat", undefined, "codex-agent");
 
@@ -92,7 +70,7 @@ describe("resolveAgentByNamedId", () => {
   });
 
   it("returns gemini-cli named agent correctly", async () => {
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       {
         id: "gem-1",
         name: "Gemini Pro",
@@ -103,7 +81,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("build", "proj-1", "gem-1");
 
@@ -116,14 +94,14 @@ describe("resolveAgentByNamedId", () => {
     // Named agent lookup: null (not found)
     // resolveAgent project scope: null
     // resolveAgent global scope: has a default
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null, // named agent not found for "deleted-id"
       null, // project scope default not found
       { provider: "codex", namedAgentId: null }, // global scope default
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("build", "proj-1", "deleted-id");
 
@@ -136,7 +114,7 @@ describe("resolveAgentByNamedId", () => {
     // No named agent lookup at all — goes straight to resolveAgent
     // resolveAgent project scope: null
     // resolveAgent global scope: has a default with namedAgentId
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null, // project scope default not found
       { provider: "claude-code", namedAgentId: "global-agent" }, // global scope default
       {
@@ -149,7 +127,7 @@ describe("resolveAgentByNamedId", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("build", "proj-1", null);
 
@@ -161,12 +139,12 @@ describe("resolveAgentByNamedId", () => {
   it("falls through to resolveAgent when namedAgentId is undefined", async () => {
     // No named agent lookup — goes straight to resolveAgent
     // resolveAgent global scope: has a default (no projectId provided)
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { provider: "gemini-cli", namedAgentId: null }, // global scope default
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("chat", undefined, undefined);
 
@@ -177,12 +155,12 @@ describe("resolveAgentByNamedId", () => {
   it("falls through to resolveAgent when namedAgentId is empty string", async () => {
     // Empty string is falsy, so no named agent lookup
     // resolveAgent: no project scope, global scope has default
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { provider: "codex", namedAgentId: null }, // global scope default
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("chat", undefined, "");
 
@@ -198,15 +176,15 @@ describe("resolveAgentByNamedId", () => {
 describe("resolveAgent fallback chain", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.getQueue = [];
+    resetDbMockState();
   });
 
   it("uses project default when available", async () => {
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { provider: "gemini-cli", namedAgentId: null }, // project scope
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("gemini-cli");
@@ -214,7 +192,7 @@ describe("resolveAgent fallback chain", () => {
   });
 
   it("uses project default with named agent", async () => {
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { provider: "claude-code", namedAgentId: "proj-agent" }, // project scope
       {
         id: "proj-agent",
@@ -225,7 +203,7 @@ describe("resolveAgent fallback chain", () => {
       },
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("codex");
@@ -234,12 +212,12 @@ describe("resolveAgent fallback chain", () => {
   });
 
   it("falls to global default when project default is missing", async () => {
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null, // project scope: not found
       { provider: "codex", namedAgentId: null }, // global scope
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("codex");
@@ -247,7 +225,7 @@ describe("resolveAgent fallback chain", () => {
   });
 
   it("falls to global default with named agent when project default is missing", async () => {
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null, // project scope: not found
       { provider: "claude-code", namedAgentId: "global-agent" }, // global scope
       {
@@ -259,7 +237,7 @@ describe("resolveAgent fallback chain", () => {
       },
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("claude-code");
@@ -270,7 +248,7 @@ describe("resolveAgent fallback chain", () => {
   it("falls to seeded 'Claude Code' named agent when no defaults exist", async () => {
     // project scope: null, global scope: null
     // seeded default agent lookup: returns the "Claude Code" agent
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null, // project scope
       null, // global scope
       {
@@ -282,7 +260,7 @@ describe("resolveAgent fallback chain", () => {
       },
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("claude-code");
@@ -293,7 +271,7 @@ describe("resolveAgent fallback chain", () => {
   it("falls to seeded 'Claude Code' agent without projectId", async () => {
     // global scope: null
     // seeded default agent lookup: returns the "Claude Code" agent
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null, // global scope
       {
         id: "seeded-cc",
@@ -304,7 +282,7 @@ describe("resolveAgent fallback chain", () => {
       },
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("chat");
 
     expect(result.provider).toBe("claude-code");
@@ -314,9 +292,9 @@ describe("resolveAgent fallback chain", () => {
 
   it("returns FALLBACK_PROVIDER when no defaults and no seeded agent exist", async () => {
     // project scope: null, global scope: null, seeded agent: null
-    mockDb.getQueue = [null, null, null];
+    dbMockState.getQueue = [null, null, null];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result).toEqual({ provider: "claude-code", namedAgentId: null });
@@ -324,9 +302,9 @@ describe("resolveAgent fallback chain", () => {
 
   it("returns FALLBACK_PROVIDER without projectId when nothing exists", async () => {
     // global scope: null, seeded agent: null
-    mockDb.getQueue = [null, null];
+    dbMockState.getQueue = [null, null];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("chat");
 
     expect(result).toEqual({ provider: "claude-code", namedAgentId: null });
@@ -335,12 +313,12 @@ describe("resolveAgent fallback chain", () => {
   it("falls back to raw provider when project default has deleted named agent", async () => {
     // project scope: has default referencing a deleted named agent
     // named agent lookup: null (deleted)
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       { provider: "codex", namedAgentId: "deleted-agent" },
       null, // named agent not found
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("codex");
@@ -352,13 +330,13 @@ describe("resolveAgent fallback chain", () => {
     // project scope: null
     // global scope: has default referencing a deleted named agent
     // named agent lookup: null (deleted)
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null, // project scope
       { provider: "gemini-cli", namedAgentId: "deleted-agent" },
       null, // named agent not found
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("build", "proj-1");
 
     expect(result.provider).toBe("gemini-cli");
@@ -374,19 +352,19 @@ describe("resolveAgent fallback chain", () => {
 describe("seeded global default agent", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.getQueue = [];
+    resetDbMockState();
   });
 
   it("GLOBAL_DEFAULT_AGENT_NAME is 'Claude Code'", async () => {
     const { GLOBAL_DEFAULT_AGENT_NAME } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     expect(GLOBAL_DEFAULT_AGENT_NAME).toBe("Claude Code");
   });
 
   it("seeded agent is used as last-resort before bare FALLBACK_PROVIDER", async () => {
     // No project, no global default — only the seeded "Claude Code" agent exists
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null, // global scope default
       {
         id: "seed-1",
@@ -397,7 +375,7 @@ describe("seeded global default agent", () => {
       },
     ];
 
-    const { resolveAgent } = await import("@/lib/agent-config/providers");
+    const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     const result = resolveAgent("spec_generation");
 
     expect(result.provider).toBe("claude-code");
@@ -407,7 +385,7 @@ describe("seeded global default agent", () => {
 
   it("resolveAgentByNamedId reaches seeded agent when namedAgentId is null and no defaults", async () => {
     // Falls through to resolveAgent -> seeded agent
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null, // global scope default
       {
         id: "seed-1",
@@ -419,7 +397,7 @@ describe("seeded global default agent", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId("review_code", undefined, null);
 
@@ -430,7 +408,7 @@ describe("seeded global default agent", () => {
 
   it("resolveAgentByNamedId reaches FALLBACK_PROVIDER when seeded agent also missing", async () => {
     // Falls through resolveAgent -> seeded agent not found -> bare FALLBACK_PROVIDER
-    mockDb.getQueue = [
+    dbMockState.getQueue = [
       null, // named agent lookup (invalid id)
       null, // project scope default
       null, // global scope default
@@ -438,7 +416,7 @@ describe("seeded global default agent", () => {
     ];
 
     const { resolveAgentByNamedId } = await import(
-      "@/lib/agent-config/providers"
+      "@/lib/agent-config/agent-resolution"
     );
     const result = resolveAgentByNamedId(
       "team_build",

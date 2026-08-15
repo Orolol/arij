@@ -1,12 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
-  projects,
   epics,
   ticketComments,
   settings,
 } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import {
+  errorResponse,
+  getEpicOr404,
+  getProjectOr404,
+  isErrorResponse,
+} from "@/lib/api/route-helpers";
 import { createId } from "@/lib/utils/nanoid";
 import {
   createWorktree,
@@ -17,7 +22,7 @@ import {
 import { processManager } from "@/lib/claude/process-manager";
 import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import {
   createAgentAlreadyRunningPayload,
@@ -44,17 +49,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   const model = resolved.model;
 
   // Validate project
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-  if (!project || !project.gitRepoPath) {
-    return NextResponse.json(
-      { error: "Project not found or no git repo" },
-      { status: 404 }
-    );
-  }
+  const foundProject = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(foundProject)) return foundProject;
+  const { project } = foundProject;
 
   const gitRepoPath = project.gitRepoPath;
   const isRepo = await isGitRepo(gitRepoPath);
@@ -65,11 +62,10 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
-  // Validate epic
-  const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
-  if (!epic) {
-    return NextResponse.json({ error: "Epic not found" }, { status: 404 });
-  }
+  // Validate epic (project-scoped)
+  const foundEpic = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
+  const { epic } = foundEpic;
   if (!epic.branchName) {
     return NextResponse.json(
       { error: "Epic has no branch" },
@@ -88,9 +84,8 @@ export async function POST(request: NextRequest, { params }: Params) {
   let mergeResult: { conflicted: boolean; output: string };
   try {
     mergeResult = await startMergeInWorktree(worktreePath, "main");
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : "Failed to start merge";
-    return NextResponse.json({ error: msg }, { status: 500 });
+  } catch (error) {
+    return errorResponse(error, "Failed to start merge");
   }
 
   // If merge was clean, just do the final merge into main directly
@@ -190,7 +185,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     logsPath,
     branchName,
     worktreePath,
-    claudeSessionId: cliSessionId,
     cliSessionId,
     namedAgentId: resolved.namedAgentId ?? null,
     agentType: "merge",

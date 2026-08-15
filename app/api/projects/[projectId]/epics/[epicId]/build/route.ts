@@ -1,20 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
-  projects,
   epics,
   userStories,
   ticketComments,
   reviewComments,
 } from "@/lib/db/schema";
 import { eq, and, notInArray } from "drizzle-orm";
+import {
+  getEpicOr404,
+  getProjectOr404,
+  isErrorResponse,
+} from "@/lib/api/route-helpers";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import { buildBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
-import { resolveAgentByNamedId } from "@/lib/agent-config/providers";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
@@ -60,11 +64,10 @@ export async function POST(request: NextRequest, { params }: Params) {
     throw error;
   }
 
-  // Validate epic exists
-  const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
-  if (!epic) {
-    return NextResponse.json({ error: "Epic not found" }, { status: 404 });
-  }
+  // Validate epic exists (project-scoped)
+  const foundEpic = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
+  const { epic } = foundEpic;
 
   // Validate status
   if (!["backlog", "todo", "in_progress", "review"].includes(epic.status ?? "")) {
@@ -75,20 +78,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   // Get project
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
-  if (!project.gitRepoPath) {
-    return NextResponse.json(
-      { error: "Project has no git repository configured" },
-      { status: 400 }
-    );
-  }
+  const foundProject = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(foundProject)) return foundProject;
+  const { project } = foundProject;
 
   const gitRepoPath = project.gitRepoPath;
   const isRepo = await isGitRepo(gitRepoPath);
@@ -254,7 +246,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     logsPath,
     branchName,
     worktreePath,
-    claudeSessionId: cliSessionId,
     cliSessionId,
     namedAgentId: resolvedAgent.namedAgentId ?? null,
     agentType: "build",

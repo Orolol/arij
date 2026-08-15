@@ -44,8 +44,6 @@ export interface ProviderSpawnOptions {
   logIdentifier?: string;
   /** CLI session UUID for resume support (Claude/Gemini only). */
   cliSessionId?: string;
-  /** @deprecated Use cliSessionId. Kept for compatibility while routes migrate. */
-  claudeSessionId?: string;
   /** When true, use --resume instead of --session-id. */
   resumeSession?: boolean;
 }

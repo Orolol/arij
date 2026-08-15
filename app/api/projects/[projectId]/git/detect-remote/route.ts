@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import {
+  getProjectOr404,
+  isErrorResponse,
+  errorResponse,
+} from "@/lib/api/route-helpers";
 import { detectGitHubRemote as detectRemote } from "@/lib/git/remote";
 
 export async function POST(
@@ -10,34 +12,22 @@ export async function POST(
 ) {
   const { projectId } = await params;
 
-  const project = db
-    .select()
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
+  const found = getProjectOr404(projectId, { requireGitRepo: true });
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
 
-  if (!project) {
-    return NextResponse.json(
-      { error: "not_found", message: "Project not found." },
-      { status: 404 }
-    );
+  try {
+    const result = await detectRemote(project.gitRepoPath);
+
+    if (!result) {
+      return NextResponse.json(
+        { error: "No origin remote found or URL could not be parsed." },
+        { status: 400 }
+      );
+    }
+
+    return NextResponse.json({ data: result });
+  } catch (error) {
+    return errorResponse(error, "Failed to inspect git remotes for this project.");
   }
-
-  if (!project.gitRepoPath) {
-    return NextResponse.json(
-      { error: "not_configured", message: "No git repository path configured for this project." },
-      { status: 400 }
-    );
-  }
-
-  const result = await detectRemote(project.gitRepoPath);
-
-  if (!result) {
-    return NextResponse.json(
-      { error: "no_remote", message: "No origin remote found or URL could not be parsed." },
-      { status: 400 }
-    );
-  }
-
-  return NextResponse.json({ data: result });
 }

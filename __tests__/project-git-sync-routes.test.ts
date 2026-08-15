@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockJsonRequest,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
-const mockDbState = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-}));
-
-const mockFetchGitRemote = vi.hoisted(() => vi.fn());
 const mockPullGitBranchWithConflictSupport = vi.hoisted(() => vi.fn());
 const mockGetConflictFileDiffs = vi.hoisted(() => vi.fn());
 const mockPushGitBranch = vi.hoisted(() => vi.fn());
@@ -24,30 +26,14 @@ const MockPushValidationError = vi.hoisted(
     }
 );
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDbState.getQueue.shift() ?? null),
-  };
-
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
+// column identity, so no fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
 
-vi.mock("@/lib/db/schema", () => ({
-  projects: {
-    id: "id",
-    gitRepoPath: "gitRepoPath",
-  },
-}));
-
 vi.mock("@/lib/git/remote", () => ({
-  fetchGitRemote: mockFetchGitRemote,
   pullGitBranchWithConflictSupport: mockPullGitBranchWithConflictSupport,
   getConflictFileDiffs: mockGetConflictFileDiffs,
   pushGitBranch: mockPushGitBranch,
@@ -57,7 +43,7 @@ vi.mock("@/lib/git/remote", () => ({
   PushValidationError: MockPushValidationError,
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentByNamedId: vi.fn(() => ({
     provider: "claude-code",
     model: "claude-opus-4-6",
@@ -92,17 +78,10 @@ vi.mock("@/lib/github/sync-log", () => ({
   writeGitSyncLog: mockWriteGitSyncLog,
 }));
 
-function mockRequest(body: Record<string, unknown>) {
-  return {
-    json: () => Promise.resolve(body),
-  } as unknown as import("next/server").NextRequest;
-}
-
 describe("Project git sync routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.getQueue = [];
-    mockFetchGitRemote.mockReset();
+    resetDbMockState();
     mockPullGitBranchWithConflictSupport.mockReset();
     mockGetConflictFileDiffs.mockReset();
     mockPushGitBranch.mockReset();
@@ -112,41 +91,8 @@ describe("Project git sync routes", () => {
     mockWriteGitSyncLog.mockReset();
   });
 
-  it("POST fetch returns structured project and branch context", async () => {
-    mockDbState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
-    mockFetchGitRemote.mockResolvedValue({
-      branches: [],
-      tags: [],
-      updated: [],
-      deleted: [],
-    });
-
-    const { POST } = await import(
-      "@/app/api/projects/[projectId]/git/fetch/route"
-    );
-    const res = await POST(
-      mockRequest({ remote: "origin", branch: "feature/one" }),
-      { params: Promise.resolve({ projectId: "proj-1" }) }
-    );
-    const json = await res.json();
-
-    expect(res.status).toBe(200);
-    expect(json.data.action).toBe("fetch");
-    expect(json.data.projectId).toBe("proj-1");
-    expect(json.data.remote).toBe("origin");
-    expect(json.data.branch).toBe("feature/one");
-    expect(mockWriteGitSyncLog).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "proj-1",
-        operation: "fetch",
-        status: "success",
-        branch: "feature/one",
-      })
-    );
-  });
-
   it("POST pull returns 409 with file-level diffs when conflicts are not auto-resolved", async () => {
-    mockDbState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
+    dbMockState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
     mockPullGitBranchWithConflictSupport.mockResolvedValue({
       conflicted: true,
       summary: "merge failed",
@@ -160,24 +106,17 @@ describe("Project git sync routes", () => {
       "@/app/api/projects/[projectId]/git/pull/route"
     );
     const res = await POST(
-      mockRequest({ branch: "feature/one", autoResolveConflicts: false }),
-      {
-      params: Promise.resolve({ projectId: "proj-1" }),
-      }
+      mockJsonRequest({ branch: "feature/one", autoResolveConflicts: false }),
+      mockRouteContext({ projectId: "proj-1" })
     );
     const json = await res.json();
 
     expect(res.status).toBe(409);
     expect(json.error).toContain("merge conflicts");
-    expect(json.data.conflicted).toBe(true);
-    expect(json.data.conflictDiffs).toHaveLength(1);
-    expect(json.data).toEqual(
-      expect.objectContaining({
-        action: "pull",
-        projectId: "proj-1",
-        branch: "feature/one",
-      })
-    );
+    expect(json.code).toBe("merge_conflicts");
+    expect(json.conflicted).toBe(true);
+    expect(json.conflictedFiles).toEqual(["src/a.ts"]);
+    expect(json.conflictDiffs).toHaveLength(1);
     expect(mockWriteGitSyncLog).toHaveBeenCalledWith(
       expect.objectContaining({
         projectId: "proj-1",
@@ -189,7 +128,7 @@ describe("Project git sync routes", () => {
   });
 
   it("POST pull starts conflict resolution agent when auto resolve is enabled", async () => {
-    mockDbState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
+    dbMockState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
     mockPullGitBranchWithConflictSupport.mockResolvedValue({
       conflicted: true,
       summary: "merge failed",
@@ -199,9 +138,7 @@ describe("Project git sync routes", () => {
     const { POST } = await import(
       "@/app/api/projects/[projectId]/git/pull/route"
     );
-    const res = await POST(mockRequest({ branch: "feature/one" }), {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await POST(mockJsonRequest({ branch: "feature/one" }), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(202);
@@ -211,7 +148,7 @@ describe("Project git sync routes", () => {
   });
 
   it("POST push returns structured project and branch context", async () => {
-    mockDbState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
+    dbMockState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
     mockValidatePushPreconditions.mockResolvedValue(undefined);
     mockPushGitBranch.mockResolvedValue({
       pushed: [{ to: "origin/feature/one" }],
@@ -223,9 +160,7 @@ describe("Project git sync routes", () => {
     const { POST } = await import(
       "@/app/api/projects/[projectId]/git/push/route"
     );
-    const res = await POST(mockRequest({ branch: "feature/one" }), {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await POST(mockJsonRequest({ branch: "feature/one" }), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -248,7 +183,7 @@ describe("Project git sync routes", () => {
   });
 
   it("POST push returns 409 when validation fails", async () => {
-    mockDbState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
+    dbMockState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
     mockValidatePushPreconditions.mockRejectedValue(
       new MockPushValidationError(
         "working_tree_dirty",
@@ -259,18 +194,16 @@ describe("Project git sync routes", () => {
     const { POST } = await import(
       "@/app/api/projects/[projectId]/git/push/route"
     );
-    const res = await POST(mockRequest({ branch: "feature/one" }), {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await POST(mockJsonRequest({ branch: "feature/one" }), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(409);
     expect(json.error).toContain("uncommitted changes");
-    expect(json.data.code).toBe("working_tree_dirty");
+    expect(json.code).toBe("working_tree_dirty");
   });
 
   it("GET status returns ahead/behind for requested branch", async () => {
-    mockDbState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
+    dbMockState.getQueue = [{ id: "proj-1", gitRepoPath: "/repo" }];
     mockGetBranchSyncStatus.mockResolvedValue({
       branch: "feature/one",
       remote: "origin",
@@ -283,13 +216,11 @@ describe("Project git sync routes", () => {
     const { GET } = await import(
       "@/app/api/projects/[projectId]/git/status/route"
     );
-    const request = {
-      nextUrl: new URL("http://localhost/api/projects/proj-1/git/status?branch=feature/one"),
-    } as unknown as import("next/server").NextRequest;
-
-    const res = await GET(request, {
-      params: Promise.resolve({ projectId: "proj-1" }),
+    const request = mockNextRequest({
+      url: "http://localhost/api/projects/proj-1/git/status?branch=feature/one",
     });
+
+    const res = await GET(request, mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);

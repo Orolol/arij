@@ -1,27 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
-const { dbChain, cancelRegistryActivity, cancelProcess, markSessionCancelled } =
+const { cancelRegistryActivity, cancelProcess, markSessionCancelled } =
   vi.hoisted(() => ({
-    dbChain: {
-      select: vi.fn(),
-      from: vi.fn(),
-      where: vi.fn(),
-      get: vi.fn(),
-    },
     cancelRegistryActivity: vi.fn(),
     cancelProcess: vi.fn(),
     markSessionCancelled: vi.fn(),
   }));
 
-vi.mock("@/lib/db", () => ({
-  db: dbChain,
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: {
-    id: "id",
-  },
-}));
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
+// column identity, so no fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
+});
 
 vi.mock("@/lib/claude/process-manager", () => ({
   processManager: {
@@ -49,24 +46,17 @@ vi.mock("@/lib/agent-sessions/backfill", () => ({
 describe("sessions/[sessionId] delete registry fallback", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbChain.select.mockReturnValue(dbChain);
-    dbChain.from.mockReturnValue(dbChain);
-    dbChain.where.mockReturnValue(dbChain);
+    resetDbMockState();
   });
 
   it("cancels registry-backed chat activity when no db session exists", async () => {
-    dbChain.get.mockReturnValue(undefined);
+    dbMockState.getQueue = [undefined];
     cancelRegistryActivity.mockReturnValue(true);
 
     const { DELETE } = await import(
       "@/app/api/projects/[projectId]/sessions/[sessionId]/route"
     );
-    const response = await DELETE({} as never, {
-      params: Promise.resolve({
-        projectId: "proj-1",
-        sessionId: "chat-activity-1",
-      }),
-    });
+    const response = await DELETE(mockNextRequest(), mockRouteContext({ projectId: "proj-1", sessionId: "chat-activity-1" }));
     const json = await response.json();
 
     expect(response.status).toBe(200);

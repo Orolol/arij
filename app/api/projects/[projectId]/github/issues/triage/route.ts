@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { errorResponse } from "@/lib/api/route-helpers";
 import {
   isGitHubIssueSyncDue,
   listTriagedIssues,
@@ -22,9 +23,6 @@ export async function GET(
 
     return NextResponse.json({ data });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to load triage issues." },
-      { status: 500 }
-    );
+    return errorResponse(error, "Failed to load triage issues.");
   }
 }

@@ -1,72 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-
-const mockDbState = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-  allQueue: [] as unknown[],
-}));
+import {
+  dbMockState,
+  resetDbMockState,
+  mockNextRequest,
+} from "@/__tests__/helpers/db-mock";
 
 const mockResolveAgent = vi.hoisted(() => vi.fn());
 const mockResolveAgentByNamedId = vi.hoisted(() => vi.fn());
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
-  desc: vi.fn((v: unknown) => v),
-  isNotNull: vi.fn(() => ({})),
-  isNull: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    orderBy: vi.fn().mockReturnThis(),
-    limit: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDbState.getQueue.shift() ?? null),
-    all: vi.fn(() => mockDbState.allQueue.shift() ?? []),
-  };
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
+// builders, and the chain mock ignores their output. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
 
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: {
-    id: "id",
-    projectId: "projectId",
-    epicId: "epicId",
-    userStoryId: "userStoryId",
-    status: "status",
-    provider: "provider",
-    namedAgentId: "namedAgentId",
-    agentType: "agentType",
-    cliSessionId: "cliSessionId",
-    claudeSessionId: "claudeSessionId",
-    lastNonEmptyText: "lastNonEmptyText",
-    completedAt: "completedAt",
-  },
-  namedAgents: { id: "id", provider: "provider" },
-}));
-
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgent: mockResolveAgent,
   resolveAgentByNamedId: mockResolveAgentByNamedId,
 }));
 
-function mockRequest(url: string) {
-  return new Request(url) as unknown as import("next/server").NextRequest;
-}
-
 describe("GET /api/projects/[projectId]/sessions/resumable", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.getQueue = [];
-    mockDbState.allQueue = [];
+    resetDbMockState();
     mockResolveAgent.mockReturnValue({ provider: "codex", namedAgentId: null });
     mockResolveAgentByNamedId.mockReturnValue({ provider: "codex", namedAgentId: null });
   });
 
   it("returns resumable sessions for codex provider", async () => {
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       [
         {
           id: "session-1",
@@ -86,7 +49,7 @@ describe("GET /api/projects/[projectId]/sessions/resumable", () => {
     );
 
     const res = await GET(
-      mockRequest("http://localhost/api/projects/proj1/sessions/resumable?agentType=build&provider=codex"),
+      mockNextRequest({ url: "http://localhost/api/projects/proj1/sessions/resumable?agentType=build&provider=codex" }),
       { params: Promise.resolve({ projectId: "proj1" }) },
     );
 
@@ -98,7 +61,7 @@ describe("GET /api/projects/[projectId]/sessions/resumable", () => {
   it("returns resumable sessions for claude-code provider", async () => {
     mockResolveAgent.mockReturnValue({ provider: "claude-code", namedAgentId: null });
 
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       [
         {
           id: "session-2",
@@ -118,7 +81,7 @@ describe("GET /api/projects/[projectId]/sessions/resumable", () => {
     );
 
     const res = await GET(
-      mockRequest("http://localhost/api/projects/proj1/sessions/resumable?agentType=build&provider=claude-code"),
+      mockNextRequest({ url: "http://localhost/api/projects/proj1/sessions/resumable?agentType=build&provider=claude-code" }),
       { params: Promise.resolve({ projectId: "proj1" }) },
     );
 

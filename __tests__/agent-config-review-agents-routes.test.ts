@@ -1,4 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockJsonRequest,
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockHelpers = vi.hoisted(() => ({
   listGlobalCustomReviewAgents: vi.fn(),
@@ -6,10 +13,6 @@ const mockHelpers = vi.hoisted(() => ({
   createCustomReviewAgent: vi.fn(),
   updateCustomReviewAgent: vi.fn(),
   deleteCustomReviewAgent: vi.fn(),
-}));
-
-const mockDb = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
 }));
 
 vi.mock("@/lib/agent-config/review-agents", () => ({
@@ -20,34 +23,21 @@ vi.mock("@/lib/agent-config/review-agents", () => ({
   deleteCustomReviewAgent: mockHelpers.deleteCustomReviewAgent,
 }));
 
-vi.mock("@/lib/db", () => {
-  const chain = {
-    select: vi.fn().mockReturnThis(),
-    from: vi.fn().mockReturnThis(),
-    where: vi.fn().mockReturnThis(),
-    get: vi.fn(() => mockDb.getQueue.shift() ?? null),
-  };
-  return { db: chain };
+// Real @/lib/db/schema: side-effect-free pure builders that the chain mock
+// ignores. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  projects: { id: "id" },
-}));
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "cra-1"),
 }));
 
-function mockRequest(body: Record<string, unknown>) {
-  return {
-    json: () => Promise.resolve(body),
-  } as unknown as import("next/server").NextRequest;
-}
-
 describe("Agent config custom review agent routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDb.getQueue = [];
+    resetDbMockState();
     mockHelpers.listGlobalCustomReviewAgents.mockResolvedValue([]);
     mockHelpers.listMergedCustomReviewAgents.mockResolvedValue([]);
     mockHelpers.createCustomReviewAgent.mockResolvedValue(null);
@@ -70,11 +60,12 @@ describe("Agent config custom review agent routes", () => {
 
   it("POST /api/agent-config/review-agents validates required fields", async () => {
     const { POST } = await import("@/app/api/agent-config/review-agents/route");
-    const res = await POST(mockRequest({ name: "" }));
+    const res = await POST(mockJsonRequest({ name: "" }));
     const json = await res.json();
 
     expect(res.status).toBe(400);
-    expect(json.error).toContain("name is required");
+    expect(json.error).toBe("Validation failed");
+    expect(json.details.name[0]).toContain("name is required");
   });
 
   it("POST /api/agent-config/review-agents enforces uniqueness within scope", async () => {
@@ -82,7 +73,7 @@ describe("Agent config custom review agent routes", () => {
     mockHelpers.createCustomReviewAgent.mockResolvedValue(null);
 
     const res = await POST(
-      mockRequest({ name: "UI Review", systemPrompt: "Review UI consistency" })
+      mockJsonRequest({ name: "UI Review", systemPrompt: "Review UI consistency" })
     );
     const json = await res.json();
 
@@ -106,12 +97,12 @@ describe("Agent config custom review agent routes", () => {
     });
 
     const res = await PATCH(
-      mockRequest({
+      mockJsonRequest({
         name: "UI Review",
         systemPrompt: "Updated prompt",
         isEnabled: false,
       }),
-      { params: Promise.resolve({ agentId: "a1" }) }
+      mockRouteContext({ agentId: "a1" })
     );
     const json = await res.json();
 
@@ -125,17 +116,15 @@ describe("Agent config custom review agent routes", () => {
     );
     mockHelpers.deleteCustomReviewAgent.mockResolvedValue(true);
 
-    const res = await DELETE(new Request("http://localhost"), {
-      params: Promise.resolve({ agentId: "a1" }),
-    });
+    const res = await DELETE(mockNextRequest(), mockRouteContext({ agentId: "a1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
-    expect(json.data.deleted).toBe(true);
+    expect(json.data.ok).toBe(true);
   });
 
   it("GET /api/projects/[projectId]/agent-config/review-agents returns global + project agents", async () => {
-    mockDb.getQueue = [{ id: "proj-1" }];
+    dbMockState.getQueue = [{ id: "proj-1" }];
     mockHelpers.listMergedCustomReviewAgents.mockResolvedValue([
       { id: "g1", name: "Global Agent", scope: "global", source: "global" },
       { id: "p1", name: "Project Agent", scope: "proj-1", source: "project" },
@@ -145,9 +134,7 @@ describe("Agent config custom review agent routes", () => {
       "@/app/api/projects/[projectId]/agent-config/review-agents/route"
     );
 
-    const res = await GET(mockRequest({}), {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
+    const res = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -156,7 +143,7 @@ describe("Agent config custom review agent routes", () => {
   });
 
   it("POST /api/projects/[projectId]/agent-config/review-agents creates project-scoped agent", async () => {
-    mockDb.getQueue = [{ id: "proj-1" }];
+    dbMockState.getQueue = [{ id: "proj-1" }];
     mockHelpers.createCustomReviewAgent.mockResolvedValue({
       id: "p1",
       name: "Project Agent",
@@ -168,11 +155,11 @@ describe("Agent config custom review agent routes", () => {
       "@/app/api/projects/[projectId]/agent-config/review-agents/route"
     );
     const res = await POST(
-      mockRequest({
+      mockJsonRequest({
         name: "Project Agent",
         systemPrompt: "Project review prompt",
       }),
-      { params: Promise.resolve({ projectId: "proj-1" }) }
+      mockRouteContext({ projectId: "proj-1" })
     );
     const json = await res.json();
 

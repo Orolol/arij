@@ -4,8 +4,6 @@ import { namedAgents } from "@/lib/db/schema";
 import { isAgentProvider, type AgentProvider } from "@/lib/agent-config/constants";
 import { createId } from "@/lib/utils/nanoid";
 
-export { resolveAgent } from "./providers";
-
 export interface NamedAgentRecord {
   id: string;
   name: string;

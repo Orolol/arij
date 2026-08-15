@@ -65,11 +65,17 @@ vi.mock("@/lib/db", () => {
         return chain;
       }),
       orderBy: vi.fn(() => chain),
+      innerJoin: vi.fn(() => chain),
       get: vi.fn(() => {
         if (currentSelectTable === "projects") return mockProject;
         if (currentSelectTable === "epics") return mockEpic;
-        if (currentSelectTable === "userStories")
-          return mockStories[0] ?? null;
+        if (currentSelectTable === "userStories") {
+          // Hybrid shape: getStoryOr404 reads `.story` (join row), while
+          // direct selects read the story fields off the row itself.
+          return mockStories[0]
+            ? { ...mockStories[0], story: mockStories[0] }
+            : null;
+        }
         return null;
       }),
       all: vi.fn(() => {
@@ -170,7 +176,7 @@ vi.mock("@/lib/agent-config/prompts", () => ({
   resolveAgentPrompt: vi.fn().mockResolvedValue("system prompt"),
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgent: vi.fn(() => ({ provider: "claude-code", namedAgentId: null })),
   resolveAgentByNamedId: vi.fn(() => ({ provider: "claude-code", namedAgentId: null })),
 }));
@@ -184,13 +190,18 @@ vi.mock("@/lib/agent-config/constants", () => ({
   },
 }));
 
-vi.mock("@/lib/claude/json-parser", () => ({
-  parseClaudeOutput: vi.fn((text: string) => ({ content: text })),
-}));
-
-vi.mock("@/lib/session-lock", () => ({
-  checkSessionLock: vi.fn().mockReturnValue({ locked: false }),
-}));
+vi.mock("@/lib/claude/json-parser", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/lib/claude/json-parser")>();
+  return {
+    // Mirror the real module surface (isNoTextualOutputFallback,
+    // extractCliSessionIdFromOutput, …) so consumers like
+    // lib/claude/resolve-session-output keep working; only override
+    // parseClaudeOutput to echo the raw text back as content.
+    ...actual,
+    parseClaudeOutput: vi.fn((text: string) => ({ content: text })),
+  };
+});
 
 vi.mock("@/lib/agents/concurrency", () => ({
   getRunningSessionForTarget: vi.fn().mockReturnValue(null),

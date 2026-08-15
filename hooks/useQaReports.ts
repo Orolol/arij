@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { usePolling } from "@/hooks/usePolling";
 
 export interface QaReportListItem {
   id: string;
@@ -48,17 +49,10 @@ export function useQaReports(projectId: string, intervalMs = 3000) {
     void refresh();
   }, [refresh]);
 
-  useEffect(() => {
-    if (!reports.some((report) => report.status === "running")) {
-      return;
-    }
-
-    const timer = setInterval(() => {
-      void refresh();
-    }, intervalMs);
-
-    return () => clearInterval(timer);
-  }, [reports, refresh, intervalMs]);
+  // Poll only while a report is running; the initial load above already
+  // fetched, so skip the immediate call.
+  const hasRunningReport = reports.some((report) => report.status === "running");
+  usePolling(refresh, intervalMs, hasRunningReport, { immediate: false });
 
   return {
     reports,

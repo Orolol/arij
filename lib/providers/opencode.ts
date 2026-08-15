@@ -19,16 +19,15 @@ export class OpenCodeProvider extends BaseCliProvider {
   }
 
   buildArgs(options: ProviderSpawnOptions): string[] {
-    const { prompt, model, cliSessionId, claudeSessionId, resumeSession } = options;
-    const sessionId = cliSessionId ?? claudeSessionId;
+    const { prompt, model, cliSessionId, resumeSession } = options;
 
     const args: string[] = ["run", prompt];
 
     args.push("--format", "json");
 
     // Resume support
-    if (sessionId && resumeSession) {
-      args.push("--session", sessionId);
+    if (cliSessionId && resumeSession) {
+      args.push("--session", cliSessionId);
     }
 
     if (model) {

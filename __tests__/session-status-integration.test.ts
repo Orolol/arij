@@ -1,26 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: {
-    id: "id",
-  },
-}));
-
-vi.mock("@/lib/db", () => ({
-  db: {
-    update: vi.fn(() => ({
-      set: vi.fn(() => ({
-        where: vi.fn(() => ({
-          run: vi.fn(),
-        })),
-      })),
-    })),
-  },
-}));
+// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
+// column identity, so no fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
+});
 
 vi.mock("@/lib/agent-sessions/chunks", () => ({
   appendSessionChunk: vi.fn(),

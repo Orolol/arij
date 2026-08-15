@@ -1,11 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const mockDbState = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-  allQueue: [] as unknown[],
-  insertedValues: [] as unknown[],
-  updatedValues: [] as unknown[],
-}));
+import {
+  dbMockState,
+  resetDbMockState,
+  mockJsonRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockPromptBuilder = vi.hoisted(() => ({
   buildChatPrompt: vi.fn(() => "CHAT_PROMPT"),
@@ -22,98 +21,12 @@ const mockResolveAgentPrompt = vi.hoisted(() => vi.fn());
 const mockDynamicProviderSpawn = vi.hoisted(() => vi.fn());
 const mockResolveAgentByNamedId = vi.hoisted(() => vi.fn());
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  desc: vi.fn((value: unknown) => value),
-  and: vi.fn(() => ({})),
-  inArray: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain: {
-    select: ReturnType<typeof vi.fn>;
-    from: ReturnType<typeof vi.fn>;
-    where: ReturnType<typeof vi.fn>;
-    orderBy: ReturnType<typeof vi.fn>;
-    limit: ReturnType<typeof vi.fn>;
-    get: ReturnType<typeof vi.fn>;
-    all: ReturnType<typeof vi.fn>;
-    insert: ReturnType<typeof vi.fn>;
-    update: ReturnType<typeof vi.fn>;
-  } = {
-    select: vi.fn(),
-    from: vi.fn(),
-    where: vi.fn(),
-    orderBy: vi.fn(),
-    limit: vi.fn(),
-    get: vi.fn(),
-    all: vi.fn(),
-    insert: vi.fn(),
-    update: vi.fn(),
-  };
-
-  chain.select.mockReturnValue(chain);
-  chain.from.mockReturnValue(chain);
-  chain.where.mockReturnValue(chain);
-  chain.orderBy.mockReturnValue(chain);
-  chain.limit.mockReturnValue(chain);
-  chain.get.mockImplementation(() => mockDbState.getQueue.shift() ?? null);
-  chain.all.mockImplementation(() => mockDbState.allQueue.shift() ?? []);
-  chain.insert.mockReturnValue({
-    values: vi.fn((payload: unknown) => {
-      mockDbState.insertedValues.push(payload);
-      return { run: vi.fn() };
-    }),
-  });
-  chain.update.mockReturnValue({
-    set: vi.fn((payload: unknown) => {
-      mockDbState.updatedValues.push(payload);
-      return {
-        where: vi.fn(() => ({ run: vi.fn() })),
-      };
-    }),
-  });
-
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
+// builders, and the chain mock ignores their output. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  chatMessages: {
-    id: "id",
-    projectId: "projectId",
-    conversationId: "conversationId",
-    createdAt: "createdAt",
-  },
-  chatAttachments: {
-    id: "id",
-    chatMessageId: "chatMessageId",
-  },
-  chatConversations: {
-    id: "id",
-    type: "type",
-    provider: "provider",
-    namedAgentId: "namedAgentId",
-    cliSessionId: "cliSessionId",
-    claudeSessionId: "claudeSessionId",
-    status: "status",
-    label: "label",
-  },
-  projects: {
-    id: "id",
-  },
-  documents: {
-    projectId: "projectId",
-  },
-  settings: {
-    key: "key",
-  },
-  epics: {
-    projectId: "projectId",
-    title: "title",
-    description: "description",
-    position: "position",
-  },
-}));
 
 vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "id-123"),
@@ -143,15 +56,9 @@ vi.mock("@/lib/agent-config/prompts", () => ({
   resolveAgentPrompt: mockResolveAgentPrompt,
 }));
 
-vi.mock("@/lib/agent-config/providers", () => ({
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentByNamedId: mockResolveAgentByNamedId,
 }));
-
-function mockRequest(body: Record<string, unknown>) {
-  return {
-    json: () => Promise.resolve(body),
-  } as unknown as import("next/server").NextRequest;
-}
 
 async function readSseEvents(response: Response): Promise<Array<Record<string, unknown>>> {
   const body = response.body;
@@ -188,10 +95,7 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       promise: Promise.resolve({ success: true, result: "Codex response" }),
       kill: vi.fn(),
     });
-    mockDbState.getQueue = [];
-    mockDbState.allQueue = [];
-    mockDbState.insertedValues = [];
-    mockDbState.updatedValues = [];
+    resetDbMockState();
 
     mockPromptBuilder.buildChatPrompt.mockReturnValue("CHAT_PROMPT");
     mockPromptBuilder.buildEpicRefinementPrompt.mockReturnValue("EPIC_PROMPT");
@@ -238,13 +142,13 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       },
     ];
 
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       { id: "conv1", type: "brainstorm", provider: "claude-code", label: "Brainstorm" },
       { id: "conv1", type: "brainstorm", provider: "claude-code", label: "Brainstorm" },
     ];
 
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       // 1. validateMentionsExist → listProjectDocuments
       docsList,
       // 2. recentMessages
@@ -255,11 +159,11 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
 
     const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
     const response = await POST(
-      mockRequest({
+      mockJsonRequest({
         content: "Please use @spec.md and @diagram.png",
         conversationId: "conv1",
       }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     expect(response.status).toBe(200);
@@ -292,13 +196,13 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       },
     ];
 
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       { id: "conv2", type: "brainstorm", provider: "gemini-cli", label: "Brainstorm" },
       { id: "conv2", type: "brainstorm", provider: "gemini-cli", label: "Brainstorm" },
     ];
 
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       // 1. validateMentionsExist → listProjectDocuments
       docsList,
       // 2. recentMessages
@@ -309,11 +213,11 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
 
     const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
     const response = await POST(
-      mockRequest({
+      mockJsonRequest({
         content: "Please use @spec.md and @diagram.png",
         conversationId: "conv2",
       }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     expect(response.status).toBe(200);
@@ -327,13 +231,13 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
   });
 
   it("uses epic refinement prompt with existing epic titles for epic_creation conversations", async () => {
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       { id: "conv1", type: "epic_creation", provider: "claude-code", label: "New Epic" },
       { key: "global_prompt", value: JSON.stringify("Global prompt") },
     ];
 
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       // 1. recentMessages
       [
         { role: "user", content: "Need auth flow", createdAt: "2026-01-01T10:00:00.000Z" },
@@ -347,8 +251,8 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
 
     const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
     const response = await POST(
-      mockRequest({ content: "Let's define the epic", conversationId: "conv1" }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockJsonRequest({ content: "Let's define the epic", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     expect(response.status).toBe(200);
@@ -371,20 +275,20 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
   });
 
   it("uses brainstorm chat prompt for non-epic conversations", async () => {
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       { id: "conv1", type: "brainstorm", provider: "claude-code", label: "Brainstorm" },
     ];
 
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       // 1. recentMessages
       [{ role: "user", content: "How should architecture look?", createdAt: "2026-01-01T10:00:00.000Z" }],
     ];
 
     const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
     const response = await POST(
-      mockRequest({ content: "Any ideas?", conversationId: "conv1" }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockJsonRequest({ content: "Any ideas?", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     expect(response.status).toBe(200);
@@ -424,7 +328,7 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       .mockReturnValueOnce(firstSession)
       .mockReturnValueOnce(secondSession);
 
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       {
         id: "conv2",
@@ -435,15 +339,15 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
         label: "Brainstorm",
       },
     ];
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       // 1. recentMessages
       [{ role: "user", content: "Previous", createdAt: "2026-01-01T10:00:00.000Z" }],
     ];
 
     const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
     const response = await POST(
-      mockRequest({ content: "New message", conversationId: "conv2" }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockJsonRequest({ content: "New message", conversationId: "conv2" }),
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     expect(response.status).toBe(200);
@@ -483,18 +387,18 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       kill: vi.fn(),
     });
 
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       { id: "conv1", type: "brainstorm", provider: "codex", label: "Chat" },
     ];
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       [{ role: "user", content: "Hello", createdAt: "2026-01-01T10:00:00.000Z" }],
     ];
 
     const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
     const response = await POST(
-      mockRequest({ content: "Create epic", conversationId: "conv1" }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockJsonRequest({ content: "Create epic", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     expect(response.status).toBe(200);
@@ -507,9 +411,9 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     expect(combined).toContain("Here is the epic:");
 
     // Verify the DB-persisted assistant message is also normalized
-    const assistantInsert = mockDbState.insertedValues.find(
-      (v: Record<string, unknown>) => v.role === "assistant",
-    );
+    const assistantInsert = dbMockState.insertCalls.find(
+      (v) => (v as Record<string, unknown>).role === "assistant",
+    ) as Record<string, unknown>;
     expect(assistantInsert).toBeDefined();
     expect(assistantInsert.content).toContain("Here is the epic:");
     expect(assistantInsert.content).not.toContain('"type":"result"');
@@ -538,7 +442,7 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       kill: vi.fn(),
     });
 
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       {
         id: "conv1",
@@ -549,14 +453,14 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
         label: "Chat",
       },
     ];
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       [{ role: "user", content: "Hello", createdAt: "2026-01-01T10:00:00.000Z" }],
     ];
 
     const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
     const response = await POST(
-      mockRequest({ content: "Continue", conversationId: "conv1" }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockJsonRequest({ content: "Continue", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     expect(response.status).toBe(200);
@@ -568,9 +472,9 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     expect(combined).toContain("Resumed session output with epic details");
 
     // Verify the DB-persisted assistant message is also normalized
-    const assistantInsert = mockDbState.insertedValues.find(
-      (v: Record<string, unknown>) => v.role === "assistant",
-    );
+    const assistantInsert = dbMockState.insertCalls.find(
+      (v) => (v as Record<string, unknown>).role === "assistant",
+    ) as Record<string, unknown>;
     expect(assistantInsert).toBeDefined();
     expect(assistantInsert.content).toContain("Resumed session output with epic details");
     expect(assistantInsert.content).not.toContain('"type":"result"');
@@ -604,7 +508,7 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       .mockReturnValueOnce(firstSession)
       .mockReturnValueOnce(secondSession);
 
-    mockDbState.getQueue = [
+    dbMockState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       {
         id: "conv-codex",
@@ -615,14 +519,14 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
         label: "Chat",
       },
     ];
-    mockDbState.allQueue = [
+    dbMockState.allQueue = [
       [{ role: "user", content: "Previous", createdAt: "2026-01-01T10:00:00.000Z" }],
     ];
 
     const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
     const response = await POST(
-      mockRequest({ content: "Continue", conversationId: "conv-codex" }),
-      { params: Promise.resolve({ projectId: "proj1" }) },
+      mockJsonRequest({ content: "Continue", conversationId: "conv-codex" }),
+      mockRouteContext({ projectId: "proj1" }),
     );
 
     expect(response.status).toBe(200);

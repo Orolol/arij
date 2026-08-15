@@ -3,9 +3,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 const mockPush = vi.hoisted(() => vi.fn());
 const mockUseStoryDetail = vi.hoisted(() => vi.fn());
-const mockUseComments = vi.hoisted(() => vi.fn());
-const mockUseTicketAgent = vi.hoisted(() => vi.fn());
-const mockUseCodexAvailable = vi.hoisted(() => vi.fn());
+const mockUseTicketComments = vi.hoisted(() => vi.fn());
+const mockUseAgentDispatch = vi.hoisted(() => vi.fn());
+const mockUseProvidersAvailable = vi.hoisted(() => vi.fn());
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({
@@ -21,16 +21,16 @@ vi.mock("@/hooks/useStoryDetail", () => ({
   useStoryDetail: (...args: unknown[]) => mockUseStoryDetail(...args),
 }));
 
-vi.mock("@/hooks/useComments", () => ({
-  useComments: (...args: unknown[]) => mockUseComments(...args),
+vi.mock("@/hooks/useTicketComments", () => ({
+  useTicketComments: (...args: unknown[]) => mockUseTicketComments(...args),
 }));
 
-vi.mock("@/hooks/useTicketAgent", () => ({
-  useTicketAgent: (...args: unknown[]) => mockUseTicketAgent(...args),
+vi.mock("@/hooks/useAgentDispatch", () => ({
+  useAgentDispatch: (...args: unknown[]) => mockUseAgentDispatch(...args),
 }));
 
-vi.mock("@/hooks/useCodexAvailable", () => ({
-  useCodexAvailable: (...args: unknown[]) => mockUseCodexAvailable(...args),
+vi.mock("@/hooks/useProvidersAvailable", () => ({
+  useProvidersAvailable: (...args: unknown[]) => mockUseProvidersAvailable(...args),
 }));
 
 vi.mock("@/components/story/StoryDetailPanel", () => ({
@@ -41,8 +41,8 @@ vi.mock("@/components/story/CommentThread", () => ({
   CommentThread: () => <div data-testid="comment-thread" />,
 }));
 
-vi.mock("@/components/story/StoryActions", () => ({
-  StoryActions: () => <div data-testid="story-actions" />,
+vi.mock("@/components/shared/AgentActionsBar", () => ({
+  AgentActionsBar: () => <div data-testid="story-actions" />,
 }));
 
 import StoryDetailPage from "@/app/projects/[projectId]/stories/[storyId]/page";
@@ -74,12 +74,12 @@ describe("Story detail delete flow", () => {
       updateStory: vi.fn(),
       refresh: vi.fn(),
     });
-    mockUseComments.mockReturnValue({
+    mockUseTicketComments.mockReturnValue({
       comments: [],
       loading: false,
       addComment: vi.fn(),
     });
-    mockUseTicketAgent.mockReturnValue({
+    mockUseAgentDispatch.mockReturnValue({
       activeSession: null,
       dispatching: false,
       isRunning: false,
@@ -87,7 +87,7 @@ describe("Story detail delete flow", () => {
       sendToReview: vi.fn(),
       approve: vi.fn(),
     });
-    mockUseCodexAvailable.mockReturnValue({
+    mockUseProvidersAvailable.mockReturnValue({
       codexAvailable: true,
       codexInstalled: true,
     });

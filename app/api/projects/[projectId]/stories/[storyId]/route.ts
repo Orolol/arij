@@ -9,21 +9,16 @@ import {
 } from "@/lib/planning/permanent-delete";
 import { updateStorySchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { getStoryOr404, isErrorResponse } from "@/lib/api/route-helpers";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
 export async function GET(request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
 
-  const story = db
-    .select()
-    .from(userStories)
-    .where(eq(userStories.id, storyId))
-    .get();
-
-  if (!story) {
-    return NextResponse.json({ error: "Story not found" }, { status: 404 });
-  }
+  const found = getStoryOr404(projectId, storyId);
+  if (isErrorResponse(found)) return found;
+  const { story } = found;
 
   const epic = db
     .select()
@@ -56,15 +51,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
   const body = validated.data;
 
-  const existing = db
-    .select()
-    .from(userStories)
-    .where(eq(userStories.id, storyId))
-    .get();
-
-  if (!existing) {
-    return NextResponse.json({ error: "Story not found" }, { status: 404 });
-  }
+  const existing = getStoryOr404(projectId, storyId);
+  if (isErrorResponse(existing)) return existing;
 
   const updates: Record<string, unknown> = {};
   if (body.title !== undefined) updates.title = body.title;

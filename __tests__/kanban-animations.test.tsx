@@ -112,12 +112,14 @@ describe("EpicCard — agent activity indicator", () => {
     const { container } = render(
       <EpicCard
         epic={makeEpic()}
-        activeAgentActivity={{
-          sessionId: "session-1",
-          actionType: "build",
-          agentName: "Test Agent",
-          provider: "claude-code",
-          startedAt: new Date().toISOString(),
+        view={{
+          activity: {
+            sessionId: "session-1",
+            actionType: "build",
+            agentName: "Test Agent",
+            provider: "claude-code",
+            startedAt: new Date().toISOString(),
+          },
         }}
       />
     );
@@ -133,12 +135,14 @@ describe("EpicCard — agent activity indicator", () => {
     const { getByTestId } = render(
       <EpicCard
         epic={makeEpic()}
-        activeAgentActivity={{
-          sessionId: "session-1",
-          actionType: "review",
-          agentName: "Review Bot",
-          provider: "gemini-cli",
-          startedAt: new Date().toISOString(),
+        view={{
+          activity: {
+            sessionId: "session-1",
+            actionType: "review",
+            agentName: "Review Bot",
+            provider: "gemini-cli",
+            startedAt: new Date().toISOString(),
+          },
         }}
       />
     );

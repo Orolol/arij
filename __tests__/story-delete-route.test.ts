@@ -1,4 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  mockNextRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
 const mockDeleteUserStoryPermanently = vi.hoisted(() => vi.fn());
 const mockTryExportArjiJson = vi.hoisted(() => vi.fn());
@@ -32,9 +36,10 @@ describe("DELETE /api/projects/[projectId]/stories/[storyId]", () => {
     mockDeleteUserStoryPermanently.mockReturnValue({ epicId: "epic-1" });
     const { DELETE } = await import("@/app/api/projects/[projectId]/stories/[storyId]/route");
 
-    const response = await DELETE(new Request("http://localhost"), {
-      params: Promise.resolve({ projectId: "proj-1", storyId: "story-1" }),
-    });
+    const response = await DELETE(
+      mockNextRequest({ method: "DELETE" }),
+      mockRouteContext({ projectId: "proj-1", storyId: "story-1" }),
+    );
 
     const json = await response.json();
     expect(response.status).toBe(200);
@@ -50,9 +55,10 @@ describe("DELETE /api/projects/[projectId]/stories/[storyId]", () => {
 
     const { DELETE } = await import("@/app/api/projects/[projectId]/stories/[storyId]/route");
 
-    const response = await DELETE(new Request("http://localhost"), {
-      params: Promise.resolve({ projectId: "proj-1", storyId: "story-1" }),
-    });
+    const response = await DELETE(
+      mockNextRequest({ method: "DELETE" }),
+      mockRouteContext({ projectId: "proj-1", storyId: "story-1" }),
+    );
 
     const json = await response.json();
     expect(response.status).toBe(404);
@@ -67,9 +73,10 @@ describe("DELETE /api/projects/[projectId]/stories/[storyId]", () => {
 
     const { DELETE } = await import("@/app/api/projects/[projectId]/stories/[storyId]/route");
 
-    const response = await DELETE(new Request("http://localhost"), {
-      params: Promise.resolve({ projectId: "proj-1", storyId: "story-1" }),
-    });
+    const response = await DELETE(
+      mockNextRequest({ method: "DELETE" }),
+      mockRouteContext({ projectId: "proj-1", storyId: "story-1" }),
+    );
 
     const json = await response.json();
     expect(response.status).toBe(409);

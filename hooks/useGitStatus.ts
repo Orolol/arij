@@ -41,7 +41,7 @@ export function useGitStatus(
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.message || "Failed to fetch status");
+        setError(data.error || "Failed to fetch status");
         return;
       }
 
@@ -70,7 +70,7 @@ export function useGitStatus(
       const data = await res.json();
 
       if (!res.ok) {
-        setError(data.message || "Push failed");
+        setError(data.error || "Push failed");
         return;
       }
 

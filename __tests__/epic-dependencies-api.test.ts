@@ -1,34 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  dbMockState,
+  resetDbMockState,
+  mockJsonRequest,
+  mockRouteContext,
+} from "@/__tests__/helpers/db-mock";
 
-const mockDbState = vi.hoisted(() => ({
-  getQueue: [] as unknown[],
-}));
-
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db", () => {
-  const chain: Record<string, ReturnType<typeof vi.fn>> = {
-    select: vi.fn(),
-    from: vi.fn(),
-    where: vi.fn(),
-    get: vi.fn(),
-    all: vi.fn(),
-  };
-  chain.select.mockReturnValue(chain);
-  chain.from.mockReturnValue(chain);
-  chain.where.mockReturnValue(chain);
-  chain.get.mockImplementation(() => mockDbState.getQueue.shift() ?? null);
-  chain.all.mockReturnValue([]);
-  return { db: chain };
+// Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
+// builders, and the chain mock ignores their output. No fake column maps.
+vi.mock("@/lib/db", async () => {
+  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
+  return dbModuleMock();
 });
-
-vi.mock("@/lib/db/schema", () => ({
-  epics: { __name: "epics" },
-  ticketDependencies: { __name: "ticketDependencies" },
-}));
 
 const mockGetTicketDependencies = vi.hoisted(() => vi.fn(() => []));
 const mockGetTicketDependents = vi.hoisted(() => vi.fn(() => []));
@@ -57,24 +40,21 @@ vi.mock("@/lib/dependencies/crud", () => ({
   setTicketDependencies: mockSetTicketDependencies,
 }));
 
-function mockRequest(body: Record<string, unknown>) {
-  return {
-    json: () => Promise.resolve(body),
-  } as unknown as import("next/server").NextRequest;
-}
+const mockRequest = mockJsonRequest;
 
-const routeParams = {
-  params: Promise.resolve({ projectId: "proj1", epicId: "epic-1" }),
-};
+const routeParams = mockRouteContext({
+  projectId: "proj1",
+  epicId: "epic-1",
+});
 
 describe("GET /api/projects/[projectId]/epics/[epicId]/dependencies", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.getQueue = [];
+    resetDbMockState();
   });
 
   it("returns 404 when epic not found", async () => {
-    mockDbState.getQueue = []; // no epic found
+    dbMockState.getQueue = []; // no epic found
 
     const { GET } = await import(
       "@/app/api/projects/[projectId]/epics/[epicId]/dependencies/route"
@@ -84,7 +64,7 @@ describe("GET /api/projects/[projectId]/epics/[epicId]/dependencies", () => {
   });
 
   it("returns predecessors and successors", async () => {
-    mockDbState.getQueue = [{ id: "epic-1", projectId: "proj1" }];
+    dbMockState.getQueue = [{ id: "epic-1", projectId: "proj1" }];
     mockGetTicketDependencies.mockReturnValue([
       { id: "d1", ticketId: "epic-1", dependsOnTicketId: "epic-2" },
     ]);
@@ -107,7 +87,7 @@ describe("GET /api/projects/[projectId]/epics/[epicId]/dependencies", () => {
 describe("PUT /api/projects/[projectId]/epics/[epicId]/dependencies", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockDbState.getQueue = [];
+    resetDbMockState();
   });
 
   it("returns 400 when dependsOnIds is not an array", async () => {
@@ -119,7 +99,7 @@ describe("PUT /api/projects/[projectId]/epics/[epicId]/dependencies", () => {
   });
 
   it("returns 404 when epic not found", async () => {
-    mockDbState.getQueue = []; // no epic
+    dbMockState.getQueue = []; // no epic
 
     const { PUT } = await import(
       "@/app/api/projects/[projectId]/epics/[epicId]/dependencies/route"
@@ -132,7 +112,7 @@ describe("PUT /api/projects/[projectId]/epics/[epicId]/dependencies", () => {
   });
 
   it("returns 400 for self-dependency", async () => {
-    mockDbState.getQueue = [{ id: "epic-1", projectId: "proj1" }];
+    dbMockState.getQueue = [{ id: "epic-1", projectId: "proj1" }];
 
     const { PUT } = await import(
       "@/app/api/projects/[projectId]/epics/[epicId]/dependencies/route"
@@ -147,7 +127,7 @@ describe("PUT /api/projects/[projectId]/epics/[epicId]/dependencies", () => {
   });
 
   it("saves dependencies successfully", async () => {
-    mockDbState.getQueue = [{ id: "epic-1", projectId: "proj1" }];
+    dbMockState.getQueue = [{ id: "epic-1", projectId: "proj1" }];
     mockSetTicketDependencies.mockReturnValue([
       { id: "dep-1", ticketId: "epic-1", dependsOnTicketId: "epic-2" },
     ]);
@@ -169,7 +149,7 @@ describe("PUT /api/projects/[projectId]/epics/[epicId]/dependencies", () => {
   });
 
   it("returns 422 on cycle detection", async () => {
-    mockDbState.getQueue = [{ id: "epic-1", projectId: "proj1" }];
+    dbMockState.getQueue = [{ id: "epic-1", projectId: "proj1" }];
     const { CycleError } = await import("@/lib/dependencies/validation");
     mockSetTicketDependencies.mockImplementation(() => {
       throw new CycleError(["epic-1", "epic-2", "epic-1"]);

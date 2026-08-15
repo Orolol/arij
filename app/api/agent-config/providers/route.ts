@@ -1,14 +1,12 @@
 import { NextResponse } from "next/server";
-import { listGlobalAgentProviders } from "@/lib/agent-config/providers";
+import { listGlobalAgentProviders } from "@/lib/agent-config/agent-resolution";
+import { errorResponse } from "@/lib/api/route-helpers";
 
 export async function GET() {
   try {
     const data = await listGlobalAgentProviders();
     return NextResponse.json({ data });
   } catch (error) {
-    return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Failed to load provider defaults" },
-      { status: 500 }
-    );
+    return errorResponse(error, "Failed to load provider defaults");
   }
 }

@@ -1,4 +1,3 @@
-import Database from "better-sqlite3";
 import { and, desc, eq, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
@@ -115,47 +114,4 @@ export function createAgentAlreadyRunningPayload(
       target: targetData,
     },
   };
-}
-
-export function insertRunningSessionWithGuard(
-  target: AgentTaskTarget,
-  session: typeof agentSessions.$inferInsert
-):
-  | { inserted: true }
-  | {
-      inserted: false;
-      conflict: ActiveAgentSessionSummary;
-    } {
-  const sqlite = (db as unknown as { $client?: Database.Database }).$client;
-
-  if (!sqlite) {
-    const conflict = findRunningSessionForTarget(target);
-    if (conflict) {
-      return {
-        inserted: false as const,
-        conflict,
-      };
-    }
-    db.insert(agentSessions).values(session).run();
-    return {
-      inserted: true as const,
-    };
-  }
-
-  const transaction = sqlite.transaction(() => {
-    const conflict = findRunningSessionForTarget(target);
-    if (conflict) {
-      return {
-        inserted: false as const,
-        conflict,
-      };
-    }
-
-    db.insert(agentSessions).values(session).run();
-    return {
-      inserted: true as const,
-    };
-  });
-
-  return transaction();
 }
