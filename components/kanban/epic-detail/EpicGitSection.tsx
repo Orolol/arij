@@ -5,6 +5,12 @@ import { Badge } from "@/components/ui/badge";
 import { GitSyncBadge } from "@/components/kanban/GitSyncBadge";
 import { PrBadge } from "@/components/github/PrBadge";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { timeAgo } from "@/lib/utils/format-date";
+import {
   Loader2,
   GitBranch,
   GitMerge,
@@ -26,6 +32,10 @@ interface EpicGitSectionProps {
   behind: number;
   gitStatusLoading: boolean;
   gitStatusError: string | null;
+  /** Epoch ms of the server's last successful `git fetch` for this repo. */
+  lastFetchedAt?: number | null;
+  /** Message from the last failed implicit fetch (offline, no remote, auth). */
+  lastFetchError?: string | null;
   onRefreshGitStatus: () => void;
   onPush: () => void;
   pushing: boolean;
@@ -59,6 +69,8 @@ export function EpicGitSection({
   behind,
   gitStatusLoading,
   gitStatusError,
+  lastFetchedAt = null,
+  lastFetchError = null,
   onRefreshGitStatus,
   onPush,
   pushing,
@@ -105,6 +117,28 @@ export function EpicGitSection({
                 <ArrowDown className="h-3 w-3" />
                 {behind}
               </Badge>
+              {(lastFetchedAt !== null || lastFetchError) && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      className={`text-xs ${
+                        lastFetchError
+                          ? "text-amber-500"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      {lastFetchedAt !== null
+                        ? `Synced ${timeAgo(new Date(lastFetchedAt).toISOString())}`
+                        : "Never synced"}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {lastFetchError
+                      ? `Could not fetch from remote: ${lastFetchError}`
+                      : "Last successful fetch from the remote"}
+                  </TooltipContent>
+                </Tooltip>
+              )}
             </>
           )}
 

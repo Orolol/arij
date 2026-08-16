@@ -4,9 +4,79 @@ import {
   isErrorResponse,
   errorResponse,
 } from "@/lib/api/route-helpers";
-import { getBranchSyncStatus, getCurrentGitBranch } from "@/lib/git/remote";
+import {
+  fetchGitRemote,
+  getBranchSyncStatus,
+  getCurrentGitBranch,
+} from "@/lib/git/remote";
 
 type Params = { params: Promise<{ projectId: string }> };
+
+/**
+ * How long a successful `git fetch` keeps the remote refs "fresh enough".
+ * Without it, ahead/behind counters silently lie: nothing ever updates
+ * `origin/*`, so "behind 0" really means "behind 0 as of the last manual
+ * fetch, whenever that was".
+ */
+const FETCH_TTL_MS = 5 * 60 * 1000;
+
+/**
+ * Last SUCCESSFUL fetch timestamp (epoch ms) per `repoPath::remote`.
+ *
+ * Deliberately in-memory and module-level: no migration, no settings row, and
+ * a dev hot-reload (or a server restart) simply resets it — worst case is one
+ * extra fetch, which is cheap on a local repo.
+ */
+const lastFetchByRepo = new Map<string, number>();
+
+interface FetchFreshness {
+  /** Epoch ms of the last successful fetch, or null if we never got one. */
+  lastFetchedAt: number | null;
+  /** Set only on THIS response when the TTL fetch just failed. Not persisted. */
+  lastFetchError: string | null;
+}
+
+/**
+ * Fetches the remote when the cached refs are older than the TTL.
+ *
+ * Runs synchronously (a local `git fetch` is fast) but is strictly
+ * best-effort: offline, no remote configured, or auth failure must never turn
+ * a status read into a 500 — we keep serving the (possibly stale) counters and
+ * surface `lastFetchError` instead.
+ */
+async function refreshRemoteIfStale(
+  repoPath: string,
+  remote: string
+): Promise<FetchFreshness> {
+  const key = `${repoPath}::${remote}`;
+  const previous = lastFetchByRepo.get(key) ?? null;
+
+  if (previous !== null && Date.now() - previous < FETCH_TTL_MS) {
+    return { lastFetchedAt: previous, lastFetchError: null };
+  }
+
+  try {
+    // Best-effort with a hard time bound: a black-holed network or hanging
+    // SSH auth must not stall the status endpoint past the TTL refresh.
+    await Promise.race([
+      fetchGitRemote(repoPath, remote),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("Fetch timed out.")), 4000)
+      ),
+    ]);
+    const fetchedAt = Date.now();
+    lastFetchByRepo.set(key, fetchedAt);
+    return { lastFetchedAt: fetchedAt, lastFetchError: null };
+  } catch (error) {
+    return {
+      lastFetchedAt: previous,
+      lastFetchError:
+        error instanceof Error
+          ? error.message
+          : "Failed to fetch from remote.",
+    };
+  }
+}
 
 export async function GET(request: NextRequest, { params }: Params) {
   const { projectId } = await params;
@@ -16,6 +86,9 @@ export async function GET(request: NextRequest, { params }: Params) {
   const { project } = found;
 
   const remote = request.nextUrl.searchParams.get("remote") || "origin";
+
+  const freshness = await refreshRemoteIfStale(project.gitRepoPath, remote);
+
   const requestedBranch = request.nextUrl.searchParams.get("branch")?.trim() || "";
   const branch = requestedBranch || (await getCurrentGitBranch(project.gitRepoPath));
 
@@ -31,6 +104,8 @@ export async function GET(request: NextRequest, { params }: Params) {
         ahead: status.ahead,
         behind: status.behind,
         hasRemoteBranch: status.hasRemoteBranch,
+        lastFetchedAt: freshness.lastFetchedAt,
+        lastFetchError: freshness.lastFetchError,
       },
     });
   } catch (error) {

@@ -5,6 +5,10 @@ import { useState, useCallback, useEffect } from "react";
 interface GitStatus {
   ahead: number;
   behind: number;
+  /** Epoch ms of the server's last successful `git fetch`, null if never. */
+  lastFetchedAt: number | null;
+  /** Why the server's implicit fetch failed on the last status read, if it did. */
+  lastFetchError: string | null;
   loading: boolean;
   error: string | null;
   refresh: () => void;
@@ -23,6 +27,8 @@ export function useGitStatus(
 ): GitStatus {
   const [ahead, setAhead] = useState(0);
   const [behind, setBehind] = useState(0);
+  const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
+  const [lastFetchError, setLastFetchError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +53,8 @@ export function useGitStatus(
 
       setAhead(data.data?.ahead ?? 0);
       setBehind(data.data?.behind ?? 0);
+      setLastFetchedAt(data.data?.lastFetchedAt ?? null);
+      setLastFetchError(data.data?.lastFetchError ?? null);
     } catch {
       setError("Failed to fetch git status");
     } finally {
@@ -90,5 +98,15 @@ export function useGitStatus(
     }
   }, [branchName, githubConfigured, refresh]);
 
-  return { ahead, behind, loading, error, refresh, push, pushing };
+  return {
+    ahead,
+    behind,
+    lastFetchedAt,
+    lastFetchError,
+    loading,
+    error,
+    refresh,
+    push,
+    pushing,
+  };
 }
