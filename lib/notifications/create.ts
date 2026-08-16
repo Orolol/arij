@@ -317,6 +317,99 @@ export function createStalledSessionNotification(
   pruneNotifications();
 }
 
+export interface DagWaveOutcomeInput {
+  projectId: string;
+  /** 1-based wave that just settled with blocked tickets. */
+  wave: number;
+  totalWaves: number;
+  /** Tickets whose session failed or ended by asking a question. */
+  blocked: Array<{ epicId: string; kind: "failed" | "asked_question" }>;
+  /** How many tickets were skipped as a consequence (dependents + stop policy). */
+  skippedCount: number;
+  /** True when the "stop" failure policy abandoned the remaining waves. */
+  stopped: boolean;
+}
+
+/**
+ * Title for a DAG wave that ended with blocked tickets.
+ *
+ * Examples:
+ *   "Wave 2/4: E-proj-003 failed — 2 dependents skipped"
+ *   "Wave 1/3: E-proj-001 asked a question — 1 dependent skipped"
+ *   "Wave 1/3: 2 epics blocked — batch stopped, 4 tickets skipped"
+ */
+export function buildDagWaveOutcomeTitle(
+  input: DagWaveOutcomeInput,
+  epicLabel: (epicId: string) => string
+): string {
+  const head = `Wave ${input.wave}/${input.totalWaves}: `;
+  const mid =
+    input.blocked.length === 1
+      ? `${epicLabel(input.blocked[0].epicId)} ${
+          input.blocked[0].kind === "failed" ? "failed" : "asked a question"
+        }`
+      : `${input.blocked.length} epics blocked`;
+  const tail = input.stopped
+    ? ` — batch stopped, ${input.skippedCount} ticket${
+        input.skippedCount === 1 ? "" : "s"
+      } skipped`
+    : input.skippedCount > 0
+      ? ` — ${input.skippedCount} dependent${
+          input.skippedCount === 1 ? "" : "s"
+        } skipped`
+      : "";
+  return head + mid + tail;
+}
+
+/**
+ * Notification summarizing a DAG build wave that blocked (failed sessions or
+ * unanswered agent questions), skipping the blocked tickets' dependents.
+ *
+ * Not session-scoped: one wave can block on several sessions, and the
+ * actionable place is the board where the skipped tickets sit — so the deep
+ * link targets the project board rather than a single session.
+ */
+export function createDagWaveOutcomeNotification(
+  input: DagWaveOutcomeInput
+): void {
+  const project = db
+    .select({ name: projects.name })
+    .from(projects)
+    .where(eq(projects.id, input.projectId))
+    .get();
+  if (!project) return;
+
+  const epicLabel = (epicId: string): string => {
+    const epic = db
+      .select({ readableId: epics.readableId, title: epics.title })
+      .from(epics)
+      .where(eq(epics.id, epicId))
+      .get();
+    return epic?.readableId || epic?.title || epicId;
+  };
+
+  // Alarm styling only when something actually failed; a wave blocked purely
+  // by questions matches the asked-question notifications' "completed" state.
+  const status = input.blocked.some((b) => b.kind === "failed")
+    ? "failed"
+    : "completed";
+
+  db.insert(notifications)
+    .values({
+      id: createId(),
+      projectId: input.projectId,
+      projectName: project.name,
+      sessionId: null,
+      agentType: "build",
+      status,
+      title: buildDagWaveOutcomeTitle(input, epicLabel),
+      targetUrl: `/projects/${input.projectId}`,
+    })
+    .run();
+
+  pruneNotifications();
+}
+
 function pruneNotifications(): void {
   const count = sqlite
     .prepare("SELECT COUNT(*) AS cnt FROM notifications")

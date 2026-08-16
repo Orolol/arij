@@ -14,6 +14,7 @@ import { processManager } from "@/lib/claude/process-manager";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import {
   classifySessionOutcome,
+  extractSessionUsage,
   resolveSessionOutput,
 } from "@/lib/claude/resolve-session-output";
 import {
@@ -194,6 +195,7 @@ export async function POST(
             success: !!agentResult?.success,
             error: agentResult?.error || null,
             outcome: classifySessionOutcome(agentResult, sessionId),
+            usage: extractSessionUsage(agentResult),
           },
           completedAt
         );

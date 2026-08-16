@@ -34,6 +34,7 @@ import {
 } from "@/lib/types/kanban";
 import { useKanban } from "@/hooks/useKanban";
 import { isAwaitingReply } from "@/lib/kanban/awaiting-reply";
+import { hasUnreadAiComment, isAiCommentAuthor } from "@/lib/kanban/unread-ai";
 import { BoardSkeleton } from "./BoardSkeleton";
 import type { FailedSessionInfo } from "@/hooks/useAgentPolling";
 
@@ -50,11 +51,6 @@ interface BoardProps {
   onMoveError?: (error: string) => void;
   failedSessions?: Record<string, FailedSessionInfo>;
   onRetryBuild?: (epicId: string) => void;
-}
-
-function isAiCommentAuthor(author: string | null | undefined) {
-  if (!author) return false;
-  return author.toLowerCase() !== "user";
 }
 
 /** Focus-mode placeholder: a column reduced to its header and card count. */
@@ -97,13 +93,13 @@ export function Board({
   onRetryBuild,
 }: BoardProps) {
   const { board, loading, moveEpic, refresh } = useKanban(projectId, { onMoveError });
-  const [seenAiCommentIdsByEpic, setSeenAiCommentIdsByEpic] = useState<
+  // Optimistic overlay on the server-side read cursors: opening a ticket
+  // clears its unread dot immediately, before the /api/inbox/read POST from
+  // EpicDetail lands and the next board refresh returns the moved cursor.
+  // Keyed by comment id so a NEWER agent comment re-raises the dot.
+  const [locallySeenCommentIdByEpic, setLocallySeenCommentIdByEpic] = useState<
     Record<string, string>
   >({});
-  const seenStorageKey = useMemo(
-    () => `arij:kanban:seen-ai-comments:${projectId}`,
-    [projectId]
-  );
 
   // Client-side filters + focus mode, persisted per project in localStorage
   // (house pattern: the arij.unified-chat-panel.* keys).
@@ -151,24 +147,6 @@ export function Board({
   }, [refreshTrigger, refresh]);
   const [activeEpic, setActiveEpic] = useState<KanbanEpic | null>(null);
 
-  useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem(seenStorageKey);
-      if (!raw) {
-        setSeenAiCommentIdsByEpic({});
-        return;
-      }
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === "object") {
-        setSeenAiCommentIdsByEpic(parsed as Record<string, string>);
-      } else {
-        setSeenAiCommentIdsByEpic({});
-      }
-    } catch {
-      setSeenAiCommentIdsByEpic({});
-    }
-  }, [seenStorageKey]);
-
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
     useSensor(KeyboardSensor, {
@@ -187,25 +165,22 @@ export function Board({
     [board]
   );
 
+  // Server-driven unread signal (latest agent comment vs. the epic's read
+  // cursor from ticket_read_cursors), overlaid with the local click state so
+  // the dot clears without waiting for a board refresh.
   const unreadAiByEpicId = useMemo(() => {
     const unread: Record<string, boolean> = {};
 
     for (const status of KANBAN_COLUMNS) {
       for (const epic of board.columns[status]) {
-        const latestCommentId = epic.latestCommentId;
-        const latestCommentAuthor = epic.latestCommentAuthor;
-
-        if (!latestCommentId || !isAiCommentAuthor(latestCommentAuthor)) {
-          unread[epic.id] = false;
-          continue;
-        }
-
-        unread[epic.id] = seenAiCommentIdsByEpic[epic.id] !== latestCommentId;
+        unread[epic.id] =
+          hasUnreadAiComment(epic) &&
+          locallySeenCommentIdByEpic[epic.id] !== epic.latestCommentId;
       }
     }
 
     return unread;
-  }, [board, seenAiCommentIdsByEpic]);
+  }, [board, locallySeenCommentIdByEpic]);
 
   const markEpicAiCommentSeen = useCallback(
     (epicId: string) => {
@@ -216,18 +191,15 @@ export function Board({
       const latestCommentAuthor = found.epic.latestCommentAuthor;
       if (!latestCommentId || !isAiCommentAuthor(latestCommentAuthor)) return;
 
-      setSeenAiCommentIdsByEpic((prev) => {
+      // Local overlay only. The durable cursor move (POST /api/inbox/read)
+      // is owned by EpicDetail on mount, so any path that opens a ticket —
+      // board click, inbox deep link, direct URL — marks it read.
+      setLocallySeenCommentIdByEpic((prev) => {
         if (prev[epicId] === latestCommentId) return prev;
-        const next = { ...prev, [epicId]: latestCommentId };
-        try {
-          sessionStorage.setItem(seenStorageKey, JSON.stringify(next));
-        } catch {
-          // ignore storage write failures
-        }
-        return next;
+        return { ...prev, [epicId]: latestCommentId };
       });
     },
-    [findEpicById, seenStorageKey]
+    [findEpicById]
   );
 
   const handleEpicClick = useCallback(

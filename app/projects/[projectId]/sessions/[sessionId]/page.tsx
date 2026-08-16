@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 import { SessionOutcomeBadge } from "@/components/shared/SessionOutcomeBadge";
+import { formatCostUsd, formatTokens } from "@/lib/utils/format-usage";
 
 interface SessionDetail {
   id: string;
@@ -38,6 +39,9 @@ interface SessionDetail {
   namedAgentName?: string | null;
   model?: string | null;
   cliCommand?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalCostUsd?: number | null;
   logs?: {
     success?: boolean;
     result?: string;
@@ -252,6 +256,29 @@ export default function SessionDetailPage() {
                 : "-"}
           </div>
         </Card>
+        {(session.inputTokens != null ||
+          session.outputTokens != null ||
+          session.totalCostUsd != null) && (
+          <Card className="p-3">
+            <div className="text-xs text-muted-foreground">Usage</div>
+            <div className="text-sm">
+              {session.inputTokens != null || session.outputTokens != null ? (
+                <span>
+                  {formatTokens(session.inputTokens) ?? "—"} in /{" "}
+                  {formatTokens(session.outputTokens) ?? "—"} out
+                </span>
+              ) : null}
+              {session.totalCostUsd != null && (
+                <span className="text-muted-foreground">
+                  {session.inputTokens != null || session.outputTokens != null
+                    ? " · "
+                    : ""}
+                  {formatCostUsd(session.totalCostUsd)}
+                </span>
+              )}
+            </div>
+          </Card>
+        )}
         {session.cliSessionId && (
           <Card className="p-3 col-span-2">
             <div className="text-xs text-muted-foreground">CLI Session ID</div>

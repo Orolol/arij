@@ -167,6 +167,12 @@ export const createReleaseSchema = z.object({
   namedAgentId: z.string().nullish(),
 });
 
+// --- Inbox schemas ---
+
+export const markInboxReadSchema = z.object({
+  epicId: z.string().min(1, "epicId is required"),
+});
+
 // --- Sync schemas ---
 
 export const syncProjectSchema = z.object({

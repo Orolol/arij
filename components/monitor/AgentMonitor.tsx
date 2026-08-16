@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   Hammer,
   Search,
@@ -12,11 +12,20 @@ import {
   ChevronUp,
   ChevronDown,
   Clock,
+  Layers,
   Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatElapsed } from "@/lib/utils/format-elapsed";
+import { usePolling } from "@/hooks/usePolling";
 import type { UnifiedActivity } from "@/hooks/useAgentPolling";
+
+/** Subset of DagBatchSnapshot the wave indicator renders. */
+interface WaveBatchIndicator {
+  batchId: string;
+  currentWave: number;
+  totalWaves: number;
+}
 
 interface AgentMonitorProps {
   projectId: string;
@@ -56,6 +65,20 @@ export function AgentMonitor({
 }: AgentMonitorProps) {
   const [expanded, setExpanded] = useState(true);
   const [elapsed, setElapsed] = useState<Record<string, string>>({});
+  const [waveBatches, setWaveBatches] = useState<WaveBatchIndicator[]>([]);
+
+  // Active DAG batch builds ("Build by waves") — the registry only lists
+  // running batches, so an empty array simply hides the indicator.
+  const pollWaves = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/build/waves`);
+      const json = await res.json();
+      setWaveBatches(Array.isArray(json.data) ? json.data : []);
+    } catch {
+      // ignore — indicator is best-effort
+    }
+  }, [projectId]);
+  usePolling(pollWaves, 3000, activities.length > 0);
 
   useEffect(() => {
     if (activities.length === 0) return;
@@ -105,6 +128,17 @@ export function AgentMonitor({
           {runningActivities.length !== 1 ? "s" : ""}
           {queuedActivities.length > 0 && ` · ${queuedActivities.length} queued`}
         </span>
+        {waveBatches.map((batch) => (
+          <span
+            key={batch.batchId}
+            data-testid={`agent-monitor-wave-${batch.batchId}`}
+            className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-sky-500 shrink-0"
+            title="DAG batch build: dependency waves run in order"
+          >
+            <Layers className="h-3 w-3" />
+            Wave {Math.max(batch.currentWave, 1)}/{batch.totalWaves}
+          </span>
+        ))}
         {expanded ? (
           <ChevronDown className="h-3 w-3 ml-auto" />
         ) : (

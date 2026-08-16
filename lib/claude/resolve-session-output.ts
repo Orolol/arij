@@ -1,6 +1,13 @@
-import { parseClaudeOutput, isNoTextualOutputFallback } from "./json-parser";
+import {
+  parseClaudeOutput,
+  isNoTextualOutputFallback,
+  extractUsageFromOutput,
+} from "./json-parser";
 import type { ClaudeResult } from "./spawn";
-import type { SessionOutcome } from "@/lib/agent-sessions/lifecycle";
+import type {
+  SessionOutcome,
+  SessionUsage,
+} from "@/lib/agent-sessions/lifecycle";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -82,6 +89,26 @@ export function classifySessionOutcome(
   }
 
   return "silent";
+}
+
+/**
+ * Extracts the token/cost usage a finished run reported, for persistence via
+ * `markSessionTerminal`'s optional `usage` field (same choke points as the
+ * delivery verdict above).
+ *
+ * Only the Claude Code provider retains its raw result envelope (with
+ * `usage` and `total_cost_usd`) in `result.result` — the other providers
+ * extract plain text, so this returns `undefined` for them and their usage
+ * columns stay NULL. Works for failed runs too: the spawn keeps the raw
+ * stdout in `result.result` on non-zero exits, so the cost of failed runs
+ * is still accounted for when the envelope made it out.
+ */
+export function extractSessionUsage(
+  result: ClaudeResult | undefined | null,
+): SessionUsage | undefined {
+  if (!result?.result) return undefined;
+  const usage = extractUsageFromOutput(result.result);
+  return usage ?? undefined;
 }
 
 function getLastNonEmptyText(sessionId: string): string | null {

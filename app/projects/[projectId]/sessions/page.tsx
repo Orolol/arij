@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 import { SessionOutcomeBadge } from "@/components/shared/SessionOutcomeBadge";
+import { formatCostUsd } from "@/lib/utils/format-usage";
 
 // --- Discriminated union types ---
 
@@ -37,6 +38,9 @@ interface AgentSession {
   cliSessionId?: string | null;
   namedAgentName?: string | null;
   model?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalCostUsd?: number | null;
   createdAt: string;
 }
 
@@ -241,6 +245,10 @@ function AgentSessionCard({
           <div className="text-right shrink-0">
             <div className="text-xs text-muted-foreground">
               {getDuration(session)}
+              <span className="mx-1 text-muted-foreground/40">·</span>
+              <span title="Session cost (when reported by the provider)">
+                {formatCostUsd(session.totalCostUsd) ?? "—"}
+              </span>
             </div>
             {session.status === "running" &&
               session.lastNonEmptyText && (

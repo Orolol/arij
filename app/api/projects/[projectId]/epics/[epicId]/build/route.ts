@@ -19,6 +19,7 @@ import { buildBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import {
   classifySessionOutcome,
+  extractSessionUsage,
   resolveSessionOutput,
 } from "@/lib/claude/resolve-session-output";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
@@ -323,6 +324,7 @@ export async function POST(request: NextRequest, { params }: Params) {
           success: !!result?.success,
           error: result?.error || null,
           outcome,
+          usage: extractSessionUsage(result),
         },
         completedAt
       );

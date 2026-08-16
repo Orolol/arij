@@ -24,7 +24,10 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 import { processManager } from "@/lib/claude/process-manager";
 import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import { classifySessionOutcome } from "@/lib/claude/resolve-session-output";
+import {
+  classifySessionOutcome,
+  extractSessionUsage,
+} from "@/lib/claude/resolve-session-output";
 import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
 import fs from "fs";
 import path from "path";
@@ -201,6 +204,7 @@ export async function POST(request: NextRequest, { params }: Params) {
                 success: !!agentResult?.success,
                 error: agentResult?.error || null,
                 outcome: classifySessionOutcome(agentResult, sessionId),
+                usage: extractSessionUsage(agentResult),
               },
               completedAt
             );

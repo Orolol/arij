@@ -10,6 +10,7 @@ import { processManager } from "@/lib/claude/process-manager";
 import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import {
   classifySessionOutcome,
+  extractSessionUsage,
   resolveSessionOutput,
 } from "@/lib/claude/resolve-session-output";
 import { buildTechCheckPrompt, buildE2eTestPrompt } from "@/lib/claude/prompt-builder";
@@ -159,6 +160,7 @@ export async function POST(request: NextRequest, { params }: Params) {
           success: !!result?.success,
           error: result?.error ?? null,
           outcome: classifySessionOutcome(result, sessionId),
+          usage: extractSessionUsage(result),
         },
         completedAt,
       );

@@ -75,6 +75,97 @@ export function extractCliSessionIdFromOutput(raw: string): string | null {
 }
 
 /**
+ * Token/cost usage parsed from a CLI result envelope. Fields are present
+ * only when the output actually reported them — never fabricated.
+ */
+export interface ParsedOutputUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalCostUsd?: number;
+}
+
+/**
+ * Extracts token/cost usage from provider output.
+ *
+ * The Claude Code CLI result envelope (both `--output-format json` and the
+ * final `result` event of `stream-json`) carries:
+ *
+ *   {
+ *     "type": "result",
+ *     "total_cost_usd": 0.084,
+ *     "usage": { "input_tokens": 4, "cache_creation_input_tokens": 15188,
+ *                "cache_read_input_tokens": 14063, "output_tokens": 260 }
+ *   }
+ *
+ * `inputTokens` sums direct input + cache creation + cache read tokens: the
+ * raw `input_tokens` alone is misleading for agentic runs (most context
+ * arrives via cache reads), and the observatory wants the real magnitude of
+ * input processed. Only numeric fields actually present contribute.
+ *
+ * Other providers' extracted results are plain text and yield `null` here —
+ * their usage columns stay NULL rather than faking zeros.
+ */
+export function extractUsageFromOutput(raw: string): ParsedOutputUsage | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+
+  // Fast path: the whole output is one JSON document.
+  const parsed = tryParseJson(trimmed);
+  const fromParsed = readUsageRecord(parsed);
+  if (fromParsed) return fromParsed;
+
+  // Fallback: NDJSON / stream-json lines. The final result envelope carries
+  // the cumulative usage, so the LAST line reporting usage wins.
+  let found: ParsedOutputUsage | null = null;
+  for (const line of trimmed.split(/\r?\n/)) {
+    const candidate = line.trim();
+    if (!candidate.startsWith("{")) continue;
+    const usage = readUsageRecord(tryParseJson(candidate));
+    if (usage) found = usage;
+  }
+  return found;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+/**
+ * Reads usage/cost fields from a single top-level parsed record. Only the
+ * envelope's own `usage` object is consulted — per-message usage nested in
+ * assistant events (`message.usage`) is intentionally ignored because it is
+ * per-turn, not cumulative.
+ */
+function readUsageRecord(value: unknown): ParsedOutputUsage | null {
+  if (!isRecord(value)) return null;
+
+  const usage: ParsedOutputUsage = {};
+
+  const totalCostUsd = readNumber(value.total_cost_usd);
+  if (totalCostUsd !== undefined) usage.totalCostUsd = totalCostUsd;
+
+  if (isRecord(value.usage)) {
+    const input = readNumber(value.usage.input_tokens);
+    const cacheCreation = readNumber(value.usage.cache_creation_input_tokens);
+    const cacheRead = readNumber(value.usage.cache_read_input_tokens);
+    if (
+      input !== undefined ||
+      cacheCreation !== undefined ||
+      cacheRead !== undefined
+    ) {
+      usage.inputTokens = (input ?? 0) + (cacheCreation ?? 0) + (cacheRead ?? 0);
+    }
+
+    const output = readNumber(value.usage.output_tokens);
+    if (output !== undefined) usage.outputTokens = output;
+  }
+
+  return Object.keys(usage).length > 0 ? usage : null;
+}
+
+/**
  * Detects whether provider output includes an AskUserQuestion-style tool call.
  *
  * This is used by build routes to keep tickets in `in_progress` when an agent

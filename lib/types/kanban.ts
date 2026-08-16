@@ -69,6 +69,8 @@ export interface KanbanEpic {
   latestSessionEndedAt?: string | null;
   /** Creation time of the epic's latest user-authored comment. */
   latestUserCommentCreatedAt?: string | null;
+  /** The epic's read cursor (ticket_read_cursors.last_read_at), if any. */
+  lastReadAt?: string | null;
 }
 
 export type KanbanAgentActionType = "build" | "review" | "merge";

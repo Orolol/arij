@@ -231,22 +231,58 @@ describe("initDb", () => {
     });
   });
 
-  it("runs column-adding migrations on legacy databases that lack the column", () => {
+  it("runs column-adding migrations on legacy databases that lack the columns", () => {
     const file = tempDbPath();
 
     // Simulate a push-created database from before 0023: full schema minus
-    // bookkeeping, with the outcome column removed again.
+    // bookkeeping, with every post-baseline column removed again. (All of
+    // them must go — leaving a newer column in place would legitimately
+    // raise the stamp ceiling past the older column migrations.)
     withDb(file, (conn) => {
       initDb(conn);
       conn.exec('DROP TABLE "__drizzle_migrations"');
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN outcome");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN input_tokens");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN output_tokens");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN total_cost_usd");
     });
 
     withDb(file, (conn) => {
       expect(() => initDb(conn)).not.toThrow();
 
-      // The column migration was not stamped away — it actually ran.
+      // The column migrations were not stamped away — they actually ran.
       expect(columnNames(conn, "agent_sessions")).toContain("outcome");
+      expect(columnNames(conn, "agent_sessions")).toContain("input_tokens");
+      expect(columnNames(conn, "agent_sessions")).toContain("output_tokens");
+      expect(columnNames(conn, "agent_sessions")).toContain("total_cost_usd");
+      expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
+      expectFullSchema(conn);
+    });
+  });
+
+  it("stamps up to the newest present column and runs the rest (legacy DB at 0023)", () => {
+    const file = tempDbPath();
+
+    // Simulate a bookkeeping-less database whose schema stops at 0023:
+    // outcome exists, the 0024 usage columns and the 0025 table do not.
+    withDb(file, (conn) => {
+      initDb(conn);
+      conn.exec('DROP TABLE "__drizzle_migrations"');
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN input_tokens");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN output_tokens");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN total_cost_usd");
+      conn.exec("DROP TABLE ticket_read_cursors");
+    });
+
+    withDb(file, (conn) => {
+      // 0023's ALTER must be stamped (outcome exists — re-running would
+      // throw) while 0024/0025 actually run.
+      expect(() => initDb(conn)).not.toThrow();
+
+      expect(columnNames(conn, "agent_sessions")).toContain("input_tokens");
+      expect(columnNames(conn, "agent_sessions")).toContain("output_tokens");
+      expect(columnNames(conn, "agent_sessions")).toContain("total_cost_usd");
+      expect(tableNames(conn)).toContain("ticket_read_cursors");
       expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
       expectFullSchema(conn);
     });

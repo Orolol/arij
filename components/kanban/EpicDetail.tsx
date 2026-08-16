@@ -32,6 +32,7 @@ import { DiffViewer } from "@/components/review/DiffViewer";
 import { EpicGitSection } from "./epic-detail/EpicGitSection";
 import { EpicUserStoriesSection } from "./epic-detail/EpicUserStoriesSection";
 import { EpicDangerZone } from "./epic-detail/EpicDangerZone";
+import { formatCostUsd } from "@/lib/utils/format-usage";
 
 interface EpicDetailProps {
   projectId: string;
@@ -131,6 +132,24 @@ export function EpicDetail({
     setPolling(isRunning);
   }, [isRunning, setPolling]);
 
+  // Opening a ticket marks it read: move its ticket_read_cursors row to now
+  // so the kanban unread dot and the cross-project inbox both clear.
+  useEffect(() => {
+    if (!open || !epicId) return;
+    const markRead = async () => {
+      try {
+        await fetch("/api/inbox/read", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ epicId }),
+        });
+      } catch {
+        // Best-effort — the unread dot simply survives until the next open.
+      }
+    };
+    void markRead();
+  }, [open, epicId]);
+
   const [newUSTitle, setNewUSTitle] = useState("");
   const [resolvingMerge, setResolvingMerge] = useState(false);
   const [resolveMergeOpen, setResolveMergeOpen] = useState(false);
@@ -223,6 +242,14 @@ export function EpicDetail({
               className="bg-red-500/10 text-red-400 text-xs w-fit"
               iconClassName="h-3 w-3 mr-1"
             />
+            {formatCostUsd(epic.sessionsCostUsd) && (
+              <p
+                className="text-[11px] text-muted-foreground/70"
+                title="Cumulative cost of this ticket's agent sessions (when reported by the provider)"
+              >
+                Agent cost {formatCostUsd(epic.sessionsCostUsd)}
+              </p>
+            )}
           </div>
 
           <div className="px-4 py-4 space-y-4">

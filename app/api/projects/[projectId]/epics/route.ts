@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { agentSessions, epics, ticketComments, userStories } from "@/lib/db/schema";
+import {
+  agentSessions,
+  epics,
+  ticketComments,
+  ticketReadCursors,
+  userStories,
+} from "@/lib/db/schema";
 import { count, eq, sql, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
@@ -93,6 +99,20 @@ export async function GET(
     .where(eq(rankedEpicSessions.rowNum, 1))
     .as("latest_epic_sessions");
 
+  // Cumulative agent cost per epic — the sum of its sessions' reported
+  // total_cost_usd. NULL (not 0) when no session ever reported a cost.
+  const epicSessionCosts = db
+    .select({
+      epicId: agentSessions.epicId,
+      sessionsCostUsd: sql<number | null>`SUM(${agentSessions.totalCostUsd})`.as(
+        "sessions_cost_usd"
+      ),
+    })
+    .from(agentSessions)
+    .where(sql`${agentSessions.epicId} IS NOT NULL`)
+    .groupBy(agentSessions.epicId)
+    .as("epic_session_costs");
+
   // Latest user-authored comment per epic — a user comment newer than the
   // asked_question session counts as the reply.
   const latestUserComments = db
@@ -142,12 +162,18 @@ export async function GET(
       latestSessionOutcome: latestEpicSessions.latestSessionOutcome,
       latestSessionEndedAt: latestEpicSessions.latestSessionEndedAt,
       latestUserCommentCreatedAt: latestUserComments.latestUserCommentCreatedAt,
+      sessionsCostUsd: epicSessionCosts.sessionsCostUsd,
+      // Per-epic read cursor (ticket_read_cursors) — the client derives the
+      // "unread AI comment" dot from latestComment* vs this timestamp.
+      lastReadAt: ticketReadCursors.lastReadAt,
     })
     .from(epics)
     .leftJoin(storyCounts, eq(epics.id, storyCounts.epicId))
     .leftJoin(latestEpicComments, eq(epics.id, latestEpicComments.epicId))
     .leftJoin(latestEpicSessions, eq(epics.id, latestEpicSessions.epicId))
     .leftJoin(latestUserComments, eq(epics.id, latestUserComments.epicId))
+    .leftJoin(epicSessionCosts, eq(epics.id, epicSessionCosts.epicId))
+    .leftJoin(ticketReadCursors, eq(epics.id, ticketReadCursors.epicId))
     .where(eq(epics.projectId, projectId))
     .orderBy(epics.position)
     .all();

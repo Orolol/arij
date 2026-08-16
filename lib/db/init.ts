@@ -47,6 +47,11 @@ const POST_BASELINE_COLUMN_MIGRATIONS: Array<{
 }> = [
   // 0023_agent_session_outcome
   { folderMillis: 1786712000000, table: "agent_sessions", column: "outcome" },
+  // 0024_agent_session_usage (single transactional migration: the three
+  // columns are always present or absent together on real databases)
+  { folderMillis: 1786712100000, table: "agent_sessions", column: "input_tokens" },
+  { folderMillis: 1786712100000, table: "agent_sessions", column: "output_tokens" },
+  { folderMillis: 1786712100000, table: "agent_sessions", column: "total_cost_usd" },
 ];
 
 /** Default on-disk location of the drizzle migration files. */

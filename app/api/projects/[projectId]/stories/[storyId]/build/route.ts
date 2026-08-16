@@ -20,6 +20,7 @@ import { buildTicketBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import {
   classifySessionOutcome,
+  extractSessionUsage,
   resolveSessionOutput,
 } from "@/lib/claude/resolve-session-output";
 import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
@@ -275,6 +276,7 @@ export async function POST(request: NextRequest, { params }: Params) {
           success: !!result?.success,
           error: result?.error || null,
           outcome,
+          usage: extractSessionUsage(result),
         },
         completedAt
       );

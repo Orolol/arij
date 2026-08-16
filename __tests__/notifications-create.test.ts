@@ -29,10 +29,12 @@ import {
   buildTitle,
   buildTargetUrl,
   buildAskedQuestionTitle,
+  buildDagWaveOutcomeTitle,
   buildEpicTargetUrl,
   buildStalledTitle,
   createNotificationFromSession,
   createAskedQuestionNotificationFromSession,
+  createDagWaveOutcomeNotification,
 } from "@/lib/notifications/create";
 
 // ---- Tests ----
@@ -293,6 +295,144 @@ describe("createAskedQuestionNotificationFromSession()", () => {
     dbMockState.getQueue.push(undefined);
 
     createAskedQuestionNotificationFromSession("missing");
+
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+});
+
+describe("buildDagWaveOutcomeTitle()", () => {
+  const label = (epicId: string) => `E-p-${epicId}`;
+
+  it("names a single failed epic and its skipped dependents", () => {
+    expect(
+      buildDagWaveOutcomeTitle(
+        {
+          projectId: "p1",
+          wave: 2,
+          totalWaves: 4,
+          blocked: [{ epicId: "007", kind: "failed" }],
+          skippedCount: 2,
+          stopped: false,
+        },
+        label
+      )
+    ).toBe("Wave 2/4: E-p-007 failed — 2 dependents skipped");
+  });
+
+  it("uses the question flavor and singular dependent", () => {
+    expect(
+      buildDagWaveOutcomeTitle(
+        {
+          projectId: "p1",
+          wave: 1,
+          totalWaves: 3,
+          blocked: [{ epicId: "001", kind: "asked_question" }],
+          skippedCount: 1,
+          stopped: false,
+        },
+        label
+      )
+    ).toBe("Wave 1/3: E-p-001 asked a question — 1 dependent skipped");
+  });
+
+  it("aggregates multiple blocked epics and reports a stopped batch", () => {
+    expect(
+      buildDagWaveOutcomeTitle(
+        {
+          projectId: "p1",
+          wave: 1,
+          totalWaves: 3,
+          blocked: [
+            { epicId: "001", kind: "failed" },
+            { epicId: "002", kind: "asked_question" },
+          ],
+          skippedCount: 4,
+          stopped: true,
+        },
+        label
+      )
+    ).toBe("Wave 1/3: 2 epics blocked — batch stopped, 4 tickets skipped");
+  });
+
+  it("omits the tail when nothing was skipped", () => {
+    expect(
+      buildDagWaveOutcomeTitle(
+        {
+          projectId: "p1",
+          wave: 3,
+          totalWaves: 3,
+          blocked: [{ epicId: "009", kind: "failed" }],
+          skippedCount: 0,
+          stopped: false,
+        },
+        label
+      )
+    ).toBe("Wave 3/3: E-p-009 failed");
+  });
+});
+
+describe("createDagWaveOutcomeNotification()", () => {
+  beforeEach(() => {
+    resetDbMockState();
+  });
+
+  it("inserts a failed-status notification targeting the board, with the epic's readable id", () => {
+    dbMockState.getQueue.push(
+      { name: "My Project" }, // project lookup
+      { readableId: "E-proj-004", title: "Payments" } // blocked epic lookup
+    );
+
+    createDagWaveOutcomeNotification({
+      projectId: "p1",
+      wave: 1,
+      totalWaves: 2,
+      blocked: [{ epicId: "e4", kind: "failed" }],
+      skippedCount: 1,
+      stopped: false,
+    });
+
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    const payload = dbMockState.insertCalls[0] as Record<string, unknown>;
+    expect(payload.title).toBe(
+      "Wave 1/2: E-proj-004 failed — 1 dependent skipped"
+    );
+    expect(payload.status).toBe("failed");
+    expect(payload.targetUrl).toBe("/projects/p1");
+    expect(payload.sessionId).toBeNull();
+    expect(payload.agentType).toBe("build");
+  });
+
+  it("uses completed status when the wave blocked only on questions", () => {
+    dbMockState.getQueue.push(
+      { name: "My Project" },
+      { readableId: null, title: "Auth epic" } // falls back to the title
+    );
+
+    createDagWaveOutcomeNotification({
+      projectId: "p1",
+      wave: 2,
+      totalWaves: 2,
+      blocked: [{ epicId: "e1", kind: "asked_question" }],
+      skippedCount: 0,
+      stopped: false,
+    });
+
+    const payload = dbMockState.insertCalls[0] as Record<string, unknown>;
+    expect(payload.status).toBe("completed");
+    expect(payload.title).toBe("Wave 2/2: Auth epic asked a question");
+  });
+
+  it("does nothing when the project is gone", () => {
+    dbMockState.getQueue.push(undefined);
+
+    createDagWaveOutcomeNotification({
+      projectId: "gone",
+      wave: 1,
+      totalWaves: 1,
+      blocked: [{ epicId: "e1", kind: "failed" }],
+      skippedCount: 0,
+      stopped: false,
+    });
 
     expect(dbMockState.insertCalls).toHaveLength(0);
   });

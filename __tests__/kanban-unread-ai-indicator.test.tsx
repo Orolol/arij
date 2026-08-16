@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { Board } from "@/components/kanban/Board";
@@ -98,6 +98,7 @@ function makeEpic(overrides?: Partial<KanbanEpic>): KanbanEpic {
     latestCommentId: "comment-1",
     latestCommentAuthor: "agent",
     latestCommentCreatedAt: "2026-02-13T10:00:00.000Z",
+    lastReadAt: null,
     ...overrides,
   };
 }
@@ -116,18 +117,29 @@ function setBoardTodo(epic: KanbanEpic) {
   };
 }
 
-describe("Kanban unread AI indicator", () => {
+describe("Kanban unread AI indicator (ticket_read_cursors source of truth)", () => {
+  let fetchSpy: ReturnType<typeof vi.spyOn>;
+
   beforeEach(() => {
-    sessionStorage.clear();
     mockKanbanState.refresh.mockClear();
     mockKanbanState.moveEpic.mockClear();
+    fetchSpy = vi.spyOn(globalThis, "fetch") as ReturnType<typeof vi.spyOn>;
+    fetchSpy.mockResolvedValue(
+      new Response(JSON.stringify({ data: {} }), { status: 200 }) as never
+    );
   });
 
-  it("shows unread indicator when latest comment is AI-origin and unseen", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("shows unread indicator when the latest AI comment is newer than the read cursor", () => {
     setBoardTodo(
       makeEpic({
         latestCommentId: "comment-ai-1",
         latestCommentAuthor: "agent",
+        latestCommentCreatedAt: "2026-02-13T10:00:00.000Z",
+        lastReadAt: null,
       })
     );
 
@@ -136,11 +148,24 @@ describe("Kanban unread AI indicator", () => {
     expect(screen.getByTestId("epic-unread-ai-epic-1")).toBeInTheDocument();
   });
 
-  it("does not show unread indicator when latest comment is user-originated", () => {
+  it("shows unread indicator when the cursor is older than the AI comment", () => {
     setBoardTodo(
       makeEpic({
-        latestCommentId: "comment-user-1",
-        latestCommentAuthor: "user",
+        latestCommentCreatedAt: "2026-02-13T10:00:00.000Z",
+        lastReadAt: "2026-02-13T09:00:00.000Z",
+      })
+    );
+
+    render(<Board projectId="proj-1" onEpicClick={vi.fn()} />);
+
+    expect(screen.getByTestId("epic-unread-ai-epic-1")).toBeInTheDocument();
+  });
+
+  it("does not show unread indicator when the cursor is newer than the AI comment", () => {
+    setBoardTodo(
+      makeEpic({
+        latestCommentCreatedAt: "2026-02-13T10:00:00.000Z",
+        lastReadAt: "2026-02-13T11:00:00.000Z",
       })
     );
 
@@ -151,6 +176,37 @@ describe("Kanban unread AI indicator", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not show unread indicator when latest comment is user-originated", () => {
+    setBoardTodo(
+      makeEpic({
+        latestCommentId: "comment-user-1",
+        latestCommentAuthor: "user",
+        lastReadAt: null,
+      })
+    );
+
+    render(<Board projectId="proj-1" onEpicClick={vi.fn()} />);
+
+    expect(
+      screen.queryByTestId("epic-unread-ai-epic-1")
+    ).not.toBeInTheDocument();
+  });
+
+  it("orders SQLite-format comment timestamps against ISO cursors", () => {
+    // ticket_comments default CURRENT_TIMESTAMP ("YYYY-MM-DD HH:MM:SS") vs
+    // the ISO cursor written by /api/inbox/read.
+    setBoardTodo(
+      makeEpic({
+        latestCommentCreatedAt: "2026-02-13 10:00:00",
+        lastReadAt: "2026-02-13T09:00:00.000Z",
+      })
+    );
+
+    render(<Board projectId="proj-1" onEpicClick={vi.fn()} />);
+
+    expect(screen.getByTestId("epic-unread-ai-epic-1")).toBeInTheDocument();
+  });
+
   it("clears unread indicator immediately when opening the ticket card", async () => {
     const onEpicClick = vi.fn();
 
@@ -158,6 +214,7 @@ describe("Kanban unread AI indicator", () => {
       makeEpic({
         latestCommentId: "comment-ai-2",
         latestCommentAuthor: "system",
+        lastReadAt: null,
       })
     );
 
@@ -173,25 +230,19 @@ describe("Kanban unread AI indicator", () => {
       ).not.toBeInTheDocument();
     });
     expect(onEpicClick).toHaveBeenCalledWith("epic-1");
-    expect(
-      JSON.parse(
-        sessionStorage.getItem("arij:kanban:seen-ai-comments:proj-1") || "{}"
-      )
-    ).toMatchObject({
-      "epic-1": "comment-ai-2",
-    });
+    // The durable cursor move (POST /api/inbox/read) is owned by EpicDetail
+    // on mount — the Board itself must not fire it.
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("reappears only when a newer AI/system message becomes latest", async () => {
-    sessionStorage.setItem(
-      "arij:kanban:seen-ai-comments:proj-1",
-      JSON.stringify({ "epic-1": "comment-ai-old" })
-    );
-
+    // Server cursor covers the old comment -> starts read.
     setBoardTodo(
       makeEpic({
         latestCommentId: "comment-ai-old",
         latestCommentAuthor: "agent",
+        latestCommentCreatedAt: "2026-02-13T10:00:00.000Z",
+        lastReadAt: "2026-02-13T10:30:00.000Z",
       })
     );
 
@@ -203,10 +254,47 @@ describe("Kanban unread AI indicator", () => {
       ).not.toBeInTheDocument();
     });
 
+    // A newer AI comment lands after the cursor -> unread again.
     setBoardTodo(
       makeEpic({
         latestCommentId: "comment-ai-new",
         latestCommentAuthor: "status",
+        latestCommentCreatedAt: "2026-02-13T11:00:00.000Z",
+        lastReadAt: "2026-02-13T10:30:00.000Z",
+      })
+    );
+    rerender(<Board projectId="proj-1" onEpicClick={vi.fn()} />);
+
+    expect(screen.getByTestId("epic-unread-ai-epic-1")).toBeInTheDocument();
+  });
+
+  it("re-raises the dot for a newer AI comment after a local click-clear", async () => {
+    // Click clears locally (optimistic, keyed by comment id)...
+    setBoardTodo(
+      makeEpic({
+        latestCommentId: "comment-ai-1",
+        latestCommentAuthor: "agent",
+        latestCommentCreatedAt: "2026-02-13T10:00:00.000Z",
+        lastReadAt: null,
+      })
+    );
+
+    const { rerender } = render(<Board projectId="proj-1" onEpicClick={vi.fn()} />);
+    fireEvent.click(screen.getByText("Unread Indicator Epic"));
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("epic-unread-ai-epic-1")
+      ).not.toBeInTheDocument();
+    });
+
+    // ...but a NEWER comment id must override the local overlay even before
+    // any server cursor lands.
+    setBoardTodo(
+      makeEpic({
+        latestCommentId: "comment-ai-2",
+        latestCommentAuthor: "agent",
+        latestCommentCreatedAt: "2026-02-13T12:00:00.000Z",
+        lastReadAt: null,
       })
     );
     rerender(<Board projectId="proj-1" onEpicClick={vi.fn()} />);

@@ -15,6 +15,7 @@ import { eq, desc, inArray, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import {
   classifySessionOutcome,
+  extractSessionUsage,
   resolveSessionOutput,
 } from "@/lib/claude/resolve-session-output";
 import simpleGit from "simple-git";
@@ -258,6 +259,7 @@ ${ticketContext}
             success: !!result?.success,
             error: result?.error || null,
             outcome: classifySessionOutcome(result, sessionId),
+            usage: extractSessionUsage(result),
           },
           new Date().toISOString()
         );

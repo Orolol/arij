@@ -153,6 +153,11 @@ export const agentSessions = sqliteTable("agent_sessions", {
   // answered | asked_question | silent | error. NULL while running/queued,
   // for user-cancelled sessions, and for legacy rows.
   outcome: text("outcome"),
+  // Usage reported by the CLI at session end. NULL for legacy rows,
+  // non-terminal sessions, and providers that do not report usage.
+  inputTokens: integer("input_tokens"),
+  outputTokens: integer("output_tokens"),
+  totalCostUsd: real("total_cost_usd"),
   // Legacy column, scheduled for removal — read only via resolveCliSessionId().
   claudeSessionId: text("claude_session_id"),
   cliSessionId: text("cli_session_id"),
@@ -546,3 +551,21 @@ export const notificationReadCursor = sqliteTable("notification_read_cursor", {
 export type Notification = typeof notifications.$inferSelect;
 export type NewNotification = typeof notifications.$inferInsert;
 export type NotificationReadCursor = typeof notificationReadCursor.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Ticket read cursors
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-epic read cursor. Single-user local app: one row per epic, everything
+ * up to last_read_at counts as read. No FK to epics — cursors are pure
+ * bookkeeping and stale rows are harmless.
+ */
+export const ticketReadCursors = sqliteTable("ticket_read_cursors", {
+  epicId: text("epic_id").primaryKey(),
+  lastReadAt: text("last_read_at").notNull(), // ISO timestamp
+  updatedAt: text("updated_at").notNull(), // ISO timestamp
+});
+
+export type TicketReadCursor = typeof ticketReadCursors.$inferSelect;
+export type NewTicketReadCursor = typeof ticketReadCursors.$inferInsert;

@@ -38,6 +38,18 @@ export function isSessionOutcome(value: unknown): value is SessionOutcome {
   );
 }
 
+/**
+ * Token/cost usage reported by the provider CLI for a finished run (see
+ * `extractSessionUsage` in lib/claude/resolve-session-output.ts). Fields are
+ * present only when the provider actually reported them — the corresponding
+ * columns stay NULL otherwise, never fake zeros.
+ */
+export interface SessionUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalCostUsd?: number;
+}
+
 export const SESSION_LIFECYCLE_CONFLICT_CODE = "INVALID_SESSION_TRANSITION";
 export const SESSION_NOT_FOUND_CODE = "SESSION_NOT_FOUND";
 
@@ -179,6 +191,9 @@ export interface SessionTransitionPatch {
   completedAt?: string;
   error?: string | null;
   outcome?: SessionOutcome;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalCostUsd?: number;
 }
 
 export function buildSessionTransitionPatch(
@@ -186,7 +201,8 @@ export function buildSessionTransitionPatch(
   toStatus: AgentSessionLifecycleStatus,
   at: string,
   error?: string | null,
-  outcome?: SessionOutcome
+  outcome?: SessionOutcome,
+  usage?: SessionUsage
 ): SessionTransitionPatch {
   const fromStatus = normalizeSessionLifecycleStatus(session.status);
   if (!fromStatus || !isValidSessionTransition(fromStatus, toStatus)) {
@@ -220,6 +236,20 @@ export function buildSessionTransitionPatch(
     if (outcome !== undefined) {
       patch.outcome = outcome;
     }
+    if (usage) {
+      // Usage is only known once the run ended; copy the fields the
+      // provider actually reported (finite numbers only). Omitted fields
+      // leave their columns untouched (NULL for fresh sessions).
+      if (Number.isFinite(usage.inputTokens)) {
+        patch.inputTokens = usage.inputTokens;
+      }
+      if (Number.isFinite(usage.outputTokens)) {
+        patch.outputTokens = usage.outputTokens;
+      }
+      if (Number.isFinite(usage.totalCostUsd)) {
+        patch.totalCostUsd = usage.totalCostUsd;
+      }
+    }
   }
 
   return patch;
@@ -231,6 +261,7 @@ export interface TransitionSessionStatusInput {
   at?: string;
   error?: string | null;
   outcome?: SessionOutcome;
+  usage?: SessionUsage;
 }
 
 export function transitionSessionStatus({
@@ -239,6 +270,7 @@ export function transitionSessionStatus({
   at = new Date().toISOString(),
   error,
   outcome,
+  usage,
 }: TransitionSessionStatusInput): SessionTransitionPatch {
   const session = db
     .select({
@@ -256,7 +288,14 @@ export function transitionSessionStatus({
     throw new SessionNotFoundError(sessionId);
   }
 
-  const patch = buildSessionTransitionPatch(session, toStatus, at, error, outcome);
+  const patch = buildSessionTransitionPatch(
+    session,
+    toStatus,
+    at,
+    error,
+    outcome,
+    usage
+  );
 
   db.update(agentSessions)
     .set(patch)
@@ -304,6 +343,12 @@ export function markSessionTerminal(
      * successful sessions stay unclassified (NULL).
      */
     outcome?: SessionOutcome;
+    /**
+     * Token/cost usage reported by the provider CLI (see
+     * `extractSessionUsage`). Omitted for providers whose results carry no
+     * usage — the columns stay NULL.
+     */
+    usage?: SessionUsage;
   },
   at?: string
 ): SessionTransitionPatch {
@@ -313,6 +358,7 @@ export function markSessionTerminal(
     at,
     error: result.error ?? null,
     outcome: result.outcome ?? (result.success ? undefined : "error"),
+    usage: result.usage,
   });
 }
 

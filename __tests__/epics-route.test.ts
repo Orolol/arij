@@ -65,6 +65,12 @@ const mockSchema = vi.hoisted(() => ({
     completedAt: "completedAt",
     createdAt: "createdAt",
   },
+  ticketReadCursors: {
+    __name: "ticketReadCursors",
+    epicId: "epicId",
+    lastReadAt: "lastReadAt",
+    updatedAt: "updatedAt",
+  },
 }));
 
 const mockDbState = vi.hoisted(() => ({
@@ -155,6 +161,7 @@ vi.mock("@/lib/db/schema", () => ({
   userStories: mockSchema.userStories,
   ticketComments: mockSchema.ticketComments,
   agentSessions: mockSchema.agentSessions,
+  ticketReadCursors: mockSchema.ticketReadCursors,
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({
@@ -262,6 +269,7 @@ describe("POST /api/projects/[projectId]/epics", () => {
           latestSessionOutcome: "asked_question",
           latestSessionEndedAt: "2026-02-14T11:20:00.000Z",
           latestUserCommentCreatedAt: "2026-02-14T10:00:00.000Z",
+          lastReadAt: "2026-02-14T11:00:00.000Z",
         },
       ],
     ];
@@ -279,11 +287,13 @@ describe("POST /api/projects/[projectId]/epics", () => {
       latestSessionOutcome: "asked_question",
       latestSessionEndedAt: "2026-02-14T11:20:00.000Z",
       latestUserCommentCreatedAt: "2026-02-14T10:00:00.000Z",
+      lastReadAt: "2026-02-14T11:00:00.000Z",
     });
     // story counts + latest comments + latest sessions + latest user comments
-    expect((db as unknown as { leftJoin: ReturnType<typeof vi.fn> }).leftJoin).toHaveBeenCalledTimes(4);
-    // story counts + latest user comments
-    expect((db as unknown as { groupBy: ReturnType<typeof vi.fn> }).groupBy).toHaveBeenCalledTimes(2);
+    // + session costs + ticket read cursors
+    expect((db as unknown as { leftJoin: ReturnType<typeof vi.fn> }).leftJoin).toHaveBeenCalledTimes(6);
+    // story counts + session costs + latest user comments
+    expect((db as unknown as { groupBy: ReturnType<typeof vi.fn> }).groupBy).toHaveBeenCalledTimes(3);
 
     const sqlFragments = mockSql.mock.calls.map(([template]) =>
       Array.isArray(template) ? template.join(" ") : String(template),

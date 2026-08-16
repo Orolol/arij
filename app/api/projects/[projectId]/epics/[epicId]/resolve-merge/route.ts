@@ -24,6 +24,7 @@ import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completi
 import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
 import {
   classifySessionOutcome,
+  extractSessionUsage,
   resolveSessionOutput,
 } from "@/lib/claude/resolve-session-output";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
@@ -229,6 +230,7 @@ export async function POST(request: NextRequest, { params }: Params) {
           success: !!result?.success,
           error: result?.error || null,
           outcome: classifySessionOutcome(result, sessionId),
+          usage: extractSessionUsage(result),
         },
         completedAt
       );

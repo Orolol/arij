@@ -6,6 +6,7 @@ import { LayoutDashboard, Settings } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AgentConfigButton } from "@/components/agent-config/AgentConfigButton";
 import { NotificationBell } from "./NotificationBell";
+import { InboxNavLink } from "./InboxNavLink";
 
 export function Sidebar() {
   return (
@@ -30,6 +31,7 @@ export function Sidebar() {
         >
           <LayoutDashboard className="h-5 w-5" />
         </Link>
+        <InboxNavLink />
       </div>
       <AgentConfigButton />
       <NotificationBell />

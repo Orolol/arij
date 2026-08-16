@@ -28,6 +28,8 @@ interface EpicDetail {
   linkedEpicId: string | null;
   images: string | null;
   readableId: string | null;
+  /** Sum of this epic's sessions' reported cost; null when never reported. */
+  sessionsCostUsd?: number | null;
 }
 
 export function useEpicDetail(projectId: string, epicId: string | null) {
