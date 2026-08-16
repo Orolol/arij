@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { ticketDependencies, epics } from "@/lib/db/schema";
 import { eq, and, or } from "drizzle-orm";
+import { isBuildableStatus } from "@/lib/types/kanban";
 
 export class CycleError extends Error {
   public readonly cycle: string[];
@@ -220,14 +221,50 @@ export function getTicketDependents(ticketId: string) {
 }
 
 /**
+ * Status lookup (ticketId -> status) for every epic of a project.
+ * One query, so callers can classify a whole closure without N round-trips.
+ */
+function loadEpicStatuses(projectId: string): Map<string, string | null> {
+  const rows = db
+    .select({ id: epics.id, status: epics.status })
+    .from(epics)
+    .where(eq(epics.projectId, projectId))
+    .all();
+
+  return new Map(rows.map((row) => [row.id, row.status ?? null]));
+}
+
+/**
+ * Keeps only the tickets a build agent may still be dispatched for
+ * (BUILDABLE_STATUSES). Done/released tickets — and ids with no epic row —
+ * are dropped: they are satisfied prerequisites, not work to schedule.
+ * Input order is preserved.
+ */
+export function filterBuildableTickets(
+  projectId: string,
+  ticketIds: string[]
+): string[] {
+  if (ticketIds.length === 0) return [];
+  const statuses = loadEpicStatuses(projectId);
+  return ticketIds.filter((id) => isBuildableStatus(statuses.get(id)));
+}
+
+/**
  * Compute all transitive predecessors for a set of ticket IDs.
  * Returns a set of all ticket IDs that must be included.
+ *
+ * Traversal stops at satisfied prerequisites: a done/released dependency is
+ * neither included nor expanded through, so a selection whose prerequisites
+ * are already delivered auto-includes nothing. The seeds themselves are
+ * always kept (an explicit selection stays selected — the batch build route
+ * is what refuses to dispatch a non-buildable ticket).
  */
 export function getTransitiveDependencies(
   projectId: string,
   ticketIds: string[]
 ): Set<string> {
   const graph = loadProjectGraph(projectId);
+  const statuses = loadEpicStatuses(projectId);
   const result = new Set<string>();
   const queue = [...ticketIds];
 
@@ -239,9 +276,11 @@ export function getTransitiveDependencies(
     const deps = graph.get(current);
     if (deps) {
       for (const dep of deps) {
-        if (!result.has(dep)) {
-          queue.push(dep);
-        }
+        if (result.has(dep)) continue;
+        // Satisfied prerequisite: nothing to build here, and nothing behind
+        // it needs building either (its own deps are transitively done).
+        if (!isBuildableStatus(statuses.get(dep))) continue;
+        queue.push(dep);
       }
     }
   }

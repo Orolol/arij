@@ -341,3 +341,39 @@ describe("parseMaxConcurrentSetting", () => {
     expect(parseMaxConcurrentSetting("")).toBeNull();
   });
 });
+
+describe("agentScheduler singleton (hot-reload safety)", () => {
+  it("survives a module reload instead of forking a fresh empty queue", async () => {
+    const first = await import("@/lib/agents/scheduler");
+
+    // Occupy a slot with a launch that never settles, so the state is
+    // observable across the reload.
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    first.agentScheduler.submit("proj-reload", "sess-reload", () => pending);
+    expect(first.agentScheduler.getCounts("proj-reload")).toEqual({
+      running: 1,
+      queued: 0,
+    });
+
+    // Dev hot reload: module scope is re-evaluated from scratch.
+    vi.resetModules();
+    const second = await import("@/lib/agents/scheduler");
+    expect(second.AgentScheduler).not.toBe(first.AgentScheduler);
+
+    // ...but the queue is the same object, so budgets stay honest and old
+    // closures drain into the scheduler new routes submit to.
+    expect(second.agentScheduler).toBe(first.agentScheduler);
+    expect(second.getAgentScheduler()).toBe(first.agentScheduler);
+    expect(second.agentScheduler.getCounts("proj-reload")).toEqual({
+      running: 1,
+      queued: 0,
+    });
+
+    release();
+    await pending;
+    await Promise.resolve();
+  });
+});

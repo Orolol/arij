@@ -14,6 +14,42 @@ import {
 export const ORPHANED_BY_RESTART_REASON = "orphaned by restart";
 
 /**
+ * Once-per-process guard, globalThis-backed like the watchdog's double-start
+ * guard (module scope is re-evaluated on a dev hot reload; globalThis is
+ * not). Next.js can re-run `register()` in the same process — a second sweep
+ * would then see sessions legitimately queued/running by live requests and
+ * cancel them as "orphaned by restart". Only the FIRST sweep of a process
+ * sees a provably orphaned table.
+ */
+const BOOT_CLEANUP_GLOBAL_KEY = Symbol.for("arij.boot-cleanup");
+
+interface BootCleanupState {
+  queuedSwept: boolean;
+  runningSwept: boolean;
+}
+
+type BootCleanupGlobal = { [BOOT_CLEANUP_GLOBAL_KEY]?: BootCleanupState };
+
+function bootCleanupState(): BootCleanupState {
+  const store = globalThis as BootCleanupGlobal;
+  if (!store[BOOT_CLEANUP_GLOBAL_KEY]) {
+    store[BOOT_CLEANUP_GLOBAL_KEY] = {
+      queuedSwept: false,
+      runningSwept: false,
+    };
+  }
+  return store[BOOT_CLEANUP_GLOBAL_KEY];
+}
+
+/** Test seam: forget that this process already swept. */
+export function resetBootCleanupGuard(): void {
+  (globalThis as BootCleanupGlobal)[BOOT_CLEANUP_GLOBAL_KEY] = {
+    queuedSwept: false,
+    runningSwept: false,
+  };
+}
+
+/**
  * Cancels agent sessions left in 'queued' by a dead server process.
  *
  * Queued sessions only exist as launch closures inside the in-process
@@ -25,9 +61,14 @@ export const ORPHANED_BY_RESTART_REASON = "orphaned by restart";
  *
  * Uses the lifecycle transition functions (queued -> cancelled is a legal
  * transition), never raw status updates. Returns the number of sessions
- * cancelled.
+ * cancelled — 0 on every call after the first in a process (see
+ * `resetBootCleanupGuard`).
  */
 export function cancelOrphanedQueuedSessions(): number {
+  const state = bootCleanupState();
+  if (state.queuedSwept) return 0;
+  state.queuedSwept = true;
+
   const orphans = db
     .select({ id: agentSessions.id })
     .from(agentSessions)
@@ -67,8 +108,15 @@ export function cancelOrphanedQueuedSessions(): number {
  * die with it, so at boot any 'running' row is provably a zombie — it can
  * never produce chunks again, and the watchdog would flag it as stalled
  * forever. Mark them failed (outcome 'error') so the UI tells the truth.
+ *
+ * Once per process, like `cancelOrphanedQueuedSessions`: a repeat call would
+ * kill sessions started by live requests.
  */
 export function failOrphanedRunningSessions(): number {
+  const state = bootCleanupState();
+  if (state.runningSwept) return 0;
+  state.runningSwept = true;
+
   const zombies = db
     .select({ id: agentSessions.id })
     .from(agentSessions)

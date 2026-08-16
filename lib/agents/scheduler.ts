@@ -293,7 +293,26 @@ export class AgentScheduler {
 }
 
 /**
+ * globalThis-backed singleton (same pattern as the watchdog): module scope
+ * is re-evaluated on a dev hot reload, and a fresh scheduler there would
+ * start with an empty running-set while the previous instance still holds
+ * live launch closures — the budget would silently double. globalThis
+ * survives the reload, so every module generation shares one queue.
+ */
+const SCHEDULER_GLOBAL_KEY = Symbol.for("arij.agent-scheduler");
+
+type SchedulerGlobal = { [SCHEDULER_GLOBAL_KEY]?: AgentScheduler };
+
+export function getAgentScheduler(): AgentScheduler {
+  const store = globalThis as SchedulerGlobal;
+  if (!store[SCHEDULER_GLOBAL_KEY]) {
+    store[SCHEDULER_GLOBAL_KEY] = new AgentScheduler();
+  }
+  return store[SCHEDULER_GLOBAL_KEY];
+}
+
+/**
  * Singleton scheduler instance. Production code must use this; the class is
  * exported for unit tests that need isolated instances.
  */
-export const agentScheduler = new AgentScheduler();
+export const agentScheduler = getAgentScheduler();

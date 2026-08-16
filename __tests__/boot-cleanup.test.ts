@@ -14,8 +14,12 @@ vi.mock("@/lib/db", async () => {
 
 const { db, ensureDbReady } = await import("@/lib/db");
 const { projects, agentSessions } = await import("@/lib/db/schema");
-const { cancelOrphanedQueuedSessions, ORPHANED_BY_RESTART_REASON } =
-  await import("@/lib/agent-sessions/boot-cleanup");
+const {
+  cancelOrphanedQueuedSessions,
+  failOrphanedRunningSessions,
+  resetBootCleanupGuard,
+  ORPHANED_BY_RESTART_REASON,
+} = await import("@/lib/agent-sessions/boot-cleanup");
 
 let counter = 0;
 
@@ -49,6 +53,8 @@ function getSession(sessionId: string) {
 beforeEach(() => {
   vi.clearAllMocks();
   db.delete(agentSessions).run();
+  // The sweeps run at most once per process; each test is its own "boot".
+  resetBootCleanupGuard();
 });
 
 describe("cancelOrphanedQueuedSessions", () => {
@@ -109,6 +115,47 @@ describe("cancelOrphanedQueuedSessions", () => {
   });
 });
 
+describe("once-per-process guard", () => {
+  it("does not re-sweep queued sessions enqueued after the boot sweep", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    seedSession("queued");
+    expect(cancelOrphanedQueuedSessions()).toBe(1);
+
+    // A live request queues a session after boot — a second sweep would
+    // cancel it as "orphaned by restart".
+    const liveId = seedSession("queued");
+    expect(cancelOrphanedQueuedSessions()).toBe(0);
+    logSpy.mockRestore();
+
+    expect(getSession(liveId)!.status).toBe("queued");
+  });
+
+  it("does not re-fail running sessions started after the boot sweep", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    seedSession("running", { startedAt: new Date().toISOString() });
+    expect(failOrphanedRunningSessions()).toBe(1);
+
+    const liveId = seedSession("running", {
+      startedAt: new Date().toISOString(),
+    });
+    expect(failOrphanedRunningSessions()).toBe(0);
+    logSpy.mockRestore();
+
+    expect(getSession(liveId)!.status).toBe("running");
+  });
+
+  it("guards the two sweeps independently", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    seedSession("queued");
+    seedSession("running", { startedAt: new Date().toISOString() });
+
+    expect(cancelOrphanedQueuedSessions()).toBe(1);
+    // The running sweep has not run yet — its own flag is still unset.
+    expect(failOrphanedRunningSessions()).toBe(1);
+    logSpy.mockRestore();
+  });
+});
+
 describe("instrumentation register()", () => {
   const originalRuntime = process.env.NEXT_RUNTIME;
 
@@ -140,9 +187,18 @@ describe("instrumentation register()", () => {
     const { getSessionWatchdog } = await import("@/lib/agents/watchdog");
     const watchdog = getSessionWatchdog();
     expect(watchdog.isRunning).toBe(true);
+
+    // A second register() in the same process must not sweep again: these
+    // rows belong to live requests, not to a dead predecessor.
+    const liveQueuedId = seedSession("queued");
+    const liveRunningId = seedSession("running", {
+      startedAt: new Date().toISOString(),
+    });
     await register();
     expect(getSessionWatchdog()).toBe(watchdog);
     expect(watchdog.isRunning).toBe(true);
+    expect(getSession(liveQueuedId)!.status).toBe("queued");
+    expect(getSession(liveRunningId)!.status).toBe("running");
     watchdog.stop();
   });
 

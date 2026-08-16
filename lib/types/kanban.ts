@@ -23,6 +23,29 @@ export const DRAGGABLE_COLUMNS = KANBAN_COLUMNS.filter(
   (col) => col !== "released"
 ) as Exclude<KanbanStatus, "released">[];
 
+/**
+ * Statuses a build agent may be dispatched from. `done` and `released` are
+ * terminal delivery states: there is nothing left for a build agent to do,
+ * and as a *dependency* such a ticket is an already-SATISFIED prerequisite —
+ * it must never be rebuilt by a batch, and it must never hold its dependents
+ * back (a ticket whose only prerequisites are done belongs to wave 1).
+ */
+export const BUILDABLE_STATUSES = [
+  "backlog",
+  "todo",
+  "in_progress",
+  "review",
+] as const;
+
+export type BuildableStatus = (typeof BUILDABLE_STATUSES)[number];
+
+const BUILDABLE_STATUS_SET: ReadonlySet<string> = new Set(BUILDABLE_STATUSES);
+
+/** Whether a ticket status still admits a build agent (see BUILDABLE_STATUSES). */
+export function isBuildableStatus(status: string | null | undefined): boolean {
+  return status != null && BUILDABLE_STATUS_SET.has(status);
+}
+
 export const PRIORITY_LABELS: Record<number, string> = {
   0: "Low",
   1: "Medium",

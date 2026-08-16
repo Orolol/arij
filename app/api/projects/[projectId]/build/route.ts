@@ -46,6 +46,7 @@ import {
 } from "@/lib/documents/mentions";
 import { buildExecutionPlan } from "@/lib/dependencies/scheduler";
 import {
+  filterBuildableTickets,
   getTransitiveDependencies,
   loadProjectGraph,
 } from "@/lib/dependencies/validation";
@@ -127,7 +128,8 @@ export async function POST(
 
   // DAG mode plans over the full dependency closure: the client auto-includes
   // prerequisites too, but the server re-expands so the waves are complete
-  // even for direct API callers.
+  // even for direct API callers. The closure already stops at done/released
+  // prerequisites (they are satisfied, not work).
   const targetEpicIds =
     mode === "dag"
       ? Array.from(getTransitiveDependencies(projectId, epicIds))
@@ -665,7 +667,22 @@ export async function POST(
   // -----------------------------------------------------------------------
   if (mode === "dag") {
     try {
-      const plan = buildExecutionPlan(projectId, targetEpicIds);
+      // A done/released epic explicitly named in the selection is dropped
+      // here: it is already delivered, so it gets no wave, no session, and
+      // (being absent from the plan) never blocks a dependent — a dependent
+      // whose only prerequisites are done therefore lands in wave 1.
+      const buildableEpicIds = filterBuildableTickets(projectId, targetEpicIds);
+      if (buildableEpicIds.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "No buildable epics in the selection — every ticket is already done or released",
+          },
+          { status: 400 }
+        );
+      }
+
+      const plan = buildExecutionPlan(projectId, buildableEpicIds);
       const graph = loadProjectGraph(projectId);
       const batchId = createId();
       const totalWaves = plan.layers.length;
@@ -675,7 +692,7 @@ export async function POST(
         projectId,
         failurePolicy,
         totalWaves,
-        totalEpics: targetEpicIds.length,
+        totalEpics: buildableEpicIds.length,
       });
 
       const skipReason = (skip: WaveSkippedTicket): string => {
@@ -751,6 +768,16 @@ export async function POST(
             }
           },
           onWaveBlocked: (wave, blocked, waveSkipped) => {
+            // Dedupe: a wave blocked *solely* by questions that skipped
+            // nothing adds no information — handleAskedQuestionOutcome
+            // already raised the per-session "Agent asked a question"
+            // notification for each blocker. A failure, or any actually
+            // skipped dependent, still deserves the wave summary.
+            const onlyUnblockingQuestions =
+              blocked.every((b: WaveTicketResult) => b.success) &&
+              waveSkipped.length === 0;
+            if (onlyUnblockingQuestions) return;
+
             try {
               createDagWaveOutcomeNotification({
                 projectId,
@@ -799,7 +826,7 @@ export async function POST(
           orchestrationMode: "dag",
           batchId,
           waves: totalWaves,
-          totalEpics: targetEpicIds.length,
+          totalEpics: buildableEpicIds.length,
           failurePolicy,
         },
       });

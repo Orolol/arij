@@ -13,6 +13,7 @@ import {
   isErrorResponse,
 } from "@/lib/api/route-helpers";
 import { createId } from "@/lib/utils/nanoid";
+import { isBuildableStatus } from "@/lib/types/kanban";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import { buildBuildPrompt } from "@/lib/claude/prompt-builder";
@@ -76,8 +77,8 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (isErrorResponse(foundEpic)) return foundEpic;
   const { epic } = foundEpic;
 
-  // Validate status
-  if (!["backlog", "todo", "in_progress", "review"].includes(epic.status ?? "")) {
+  // Validate status — same source of truth as the batch build's guard.
+  if (!isBuildableStatus(epic.status)) {
     return NextResponse.json(
       { error: "Epic must be in backlog, todo, in_progress, or review status to build" },
       { status: 400 }
