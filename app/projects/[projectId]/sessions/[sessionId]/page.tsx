@@ -15,6 +15,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
+import { SessionOutcomeBadge } from "@/components/shared/SessionOutcomeBadge";
 
 interface SessionDetail {
   id: string;
@@ -33,6 +34,7 @@ interface SessionDetail {
   lastNonEmptyText?: string | null;
   cliSessionId?: string | null;
   agentType?: string | null;
+  outcome?: string | null;
   namedAgentName?: string | null;
   model?: string | null;
   cliCommand?: string | null;
@@ -148,12 +150,15 @@ export default function SessionDetailPage() {
                     ? "bg-red-500/10 text-red-500"
                     : session.status === "running"
                       ? "bg-yellow-500/10 text-yellow-500"
-                      : ""
+                      : session.status === "queued"
+                        ? "bg-amber-500/10 text-amber-500"
+                        : ""
               }
             >
               {session.status}
             </Badge>
             <Badge variant="outline">{session.mode}</Badge>
+            <SessionOutcomeBadge outcome={session.outcome} />
             {session.agentType && (
               <Badge variant="secondary" className="text-[10px]">
                 {AGENT_TYPE_LABELS[session.agentType] || session.agentType}
@@ -190,7 +195,7 @@ export default function SessionDetailPage() {
           )}
         </div>
         <div className="flex gap-2">
-          {session.status === "running" && (
+          {(session.status === "running" || session.status === "queued") && (
             <Button
               variant="destructive"
               size="sm"

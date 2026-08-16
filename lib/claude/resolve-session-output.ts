@@ -1,5 +1,6 @@
 import { parseClaudeOutput, isNoTextualOutputFallback } from "./json-parser";
 import type { ClaudeResult } from "./spawn";
+import type { SessionOutcome } from "@/lib/agent-sessions/lifecycle";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -37,6 +38,50 @@ export function resolveSessionOutput(
 
   // Fall back to error or default
   return result?.error || defaultMessage;
+}
+
+/**
+ * Deterministically classifies a finished agent run into its delivery verdict.
+ *
+ * This is the single choke point every dispatch route threads through
+ * `markSessionTerminal` so the outcome is persisted for ALL agent paths:
+ *
+ *   - error:          the run failed (missing result counts as failure)
+ *   - asked_question: the agent ended by asking the user a question
+ *                     (`endedWithQuestion` is detected by the providers via
+ *                     `hasAskUserQuestion` over their output streams)
+ *   - answered:       the run produced a textual deliverable, either in the
+ *                     final result envelope or streamed via `lastNonEmptyText`
+ *   - silent:         success, but no textual deliverable anywhere
+ *                     (the NO_TEXTUAL_OUTPUT_FALLBACK-style empty case)
+ *
+ * The text checks mirror `resolveSessionOutput`'s resolution order so the
+ * verdict never disagrees with the output shown to the user.
+ */
+export function classifySessionOutcome(
+  result: ClaudeResult | undefined | null,
+  sessionId: string,
+): SessionOutcome {
+  if (!result?.success) {
+    return "error";
+  }
+
+  if (result.endedWithQuestion) {
+    return "asked_question";
+  }
+
+  if (result.result) {
+    const parsed = parseClaudeOutput(result.result).content;
+    if (parsed && !isNoTextualOutputFallback(parsed)) {
+      return "answered";
+    }
+  }
+
+  if (getLastNonEmptyText(sessionId)) {
+    return "answered";
+  }
+
+  return "silent";
 }
 
 function getLastNonEmptyText(sessionId: string): string | null {

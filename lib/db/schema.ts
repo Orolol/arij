@@ -149,6 +149,10 @@ export const agentSessions = sqliteTable("agent_sessions", {
   completedAt: text("completed_at"),
   lastNonEmptyText: text("last_non_empty_text"),
   error: text("error"),
+  // Delivery verdict, set once at session end:
+  // answered | asked_question | silent | error. NULL while running/queued,
+  // for user-cancelled sessions, and for legacy rows.
+  outcome: text("outcome"),
   // Legacy column, scheduled for removal — read only via resolveCliSessionId().
   claudeSessionId: text("claude_session_id"),
   cliSessionId: text("cli_session_id"),

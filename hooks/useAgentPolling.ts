@@ -16,6 +16,10 @@ export interface UnifiedActivity {
   startedAt: string;
   source: "db" | "registry";
   cancellable: boolean;
+  /** Newest output chunk timestamp for running DB sessions (null otherwise). */
+  lastActivityAt?: string | null;
+  /** Watchdog verdict: no output past the staleness threshold. */
+  stale?: boolean;
 }
 
 export interface FailedSessionInfo {

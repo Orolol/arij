@@ -27,6 +27,7 @@ const mockSession = {
   completedAt: new Date().toISOString(),
   createdAt: new Date(Date.now() - 120000).toISOString(),
   lastNonEmptyText: "All tests passed.",
+  outcome: "answered",
   error: null,
   logs: {
     success: true,
@@ -66,6 +67,15 @@ describe("SessionDetailPage", () => {
     await waitFor(() => {
       expect(screen.getByText("All tests passed.")).toBeInTheDocument();
     });
+  });
+
+  it("renders the delivery-verdict badge", async () => {
+    render(<SessionDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("session-outcome-answered")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Answered")).toBeInTheDocument();
   });
 
   it("renders provider badge", async () => {

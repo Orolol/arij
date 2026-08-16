@@ -24,6 +24,9 @@ const mockResolveAgentByNamedId = vi.hoisted(() =>
   vi.fn(() => ({ provider: "claude-code" })),
 );
 
+const mockHandleAskedQuestionOutcome = vi.hoisted(() => vi.fn());
+const mockMarkSessionTerminal = vi.hoisted(() => vi.fn());
+
 vi.mock("@/lib/db", () => {
   const chain = {
     select: vi.fn().mockReturnThis(),
@@ -125,8 +128,12 @@ vi.mock("@/lib/sync/export", () => ({
 vi.mock("@/lib/agent-sessions/lifecycle", () => ({
   createQueuedSession: vi.fn(),
   markSessionRunning: vi.fn(),
-  markSessionTerminal: vi.fn(),
+  markSessionTerminal: mockMarkSessionTerminal,
   isSessionLifecycleConflictError: vi.fn(() => false),
+}));
+
+vi.mock("@/lib/workflow/agent-question", () => ({
+  handleAskedQuestionOutcome: mockHandleAskedQuestionOutcome,
 }));
 
 vi.mock("fs", () => ({
@@ -159,6 +166,8 @@ describe("Build Route", () => {
     mockState.updateCalls = [];
     mockState.processManagerResult = { success: true, duration: 1000 };
     mockResolveAgentByNamedId.mockReturnValue({ provider: "claude-code" });
+    mockHandleAskedQuestionOutcome.mockClear();
+    mockMarkSessionTerminal.mockClear();
   });
 
   it("rejects team mode when resolved provider is not claude-code", async () => {
@@ -286,5 +295,73 @@ describe("Build Route", () => {
       (u) => u.values.status === "review"
     );
     expect(reviewUpdates).toHaveLength(0);
+  });
+
+  it("persists the asked_question verdict and fires the workflow effects", async () => {
+    mockState.processManagerResult = {
+      success: true,
+      duration: 1000,
+      result: "Which auth provider should I integrate?",
+      endedWithQuestion: true,
+    };
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/build/route"
+    );
+
+    const res = await POST(mockRequest({ epicIds: ["epic-1"] }), {
+      params: Promise.resolve({ projectId: "proj-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    // The verdict is threaded through markSessionTerminal...
+    expect(mockMarkSessionTerminal).toHaveBeenCalledWith(
+      "test-session-id",
+      expect.objectContaining({ success: true, outcome: "asked_question" }),
+      expect.any(String)
+    );
+
+    // ...and the shared asked-question effects run for the held epic.
+    expect(mockHandleAskedQuestionOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: "proj-1",
+        epicIds: ["epic-1"],
+        sessionId: "test-session-id",
+        ticketStatus: "in_progress",
+      })
+    );
+  });
+
+  it("classifies a normal successful build as answered and skips the question effects", async () => {
+    mockState.processManagerResult = {
+      success: true,
+      duration: 1000,
+      result: "Implemented the feature; tests green.",
+    };
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/build/route"
+    );
+
+    const res = await POST(mockRequest({ epicIds: ["epic-1"] }), {
+      params: Promise.resolve({ projectId: "proj-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    await flushBackground();
+
+    expect(mockMarkSessionTerminal).toHaveBeenCalledWith(
+      "test-session-id",
+      expect.objectContaining({ success: true, outcome: "answered" }),
+      expect.any(String)
+    );
+    expect(mockHandleAskedQuestionOutcome).not.toHaveBeenCalled();
+
+    const reviewUpdates = mockState.updateCalls.filter(
+      (u) => u.values.status === "review"
+    );
+    expect(reviewUpdates.length).toBeGreaterThan(0);
   });
 });

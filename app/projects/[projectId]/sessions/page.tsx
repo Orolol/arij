@@ -15,6 +15,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
+import { SessionOutcomeBadge } from "@/components/shared/SessionOutcomeBadge";
 
 // --- Discriminated union types ---
 
@@ -32,6 +33,7 @@ interface AgentSession {
   lastNonEmptyText?: string;
   error?: string;
   agentType?: string;
+  outcome?: string | null;
   cliSessionId?: string | null;
   namedAgentName?: string | null;
   model?: string | null;
@@ -72,7 +74,7 @@ const STATUS_CONFIG: Record<
   string,
   { icon: typeof Clock; color: string; label: string }
 > = {
-  queued: { icon: Clock, color: "text-muted-foreground", label: "Queued" },
+  queued: { icon: Clock, color: "text-amber-500", label: "Queued" },
   pending: { icon: Clock, color: "text-muted-foreground", label: "Pending" },
   running: { icon: Loader2, color: "text-yellow-500", label: "Running" },
   completed: {
@@ -129,6 +131,11 @@ export default function SessionsPage() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-bold">Sessions</h2>
         <div className="flex gap-2 text-xs text-muted-foreground">
+          {agentSessions.some((s) => s.status === "queued") && (
+            <span className="text-amber-500">
+              {agentSessions.filter((s) => s.status === "queued").length} queued
+            </span>
+          )}
           <span>{agentSessions.filter((s) => s.status === "running").length} running</span>
           <span>{agentSessions.filter((s) => s.status === "completed").length} completed</span>
           <span>{agentSessions.filter((s) => s.status === "failed").length} failed</span>
@@ -199,6 +206,7 @@ function AgentSessionCard({
               <Badge variant="outline" className="text-xs">
                 {session.mode}
               </Badge>
+              <SessionOutcomeBadge outcome={session.outcome} />
               {session.namedAgentName ? (
                 <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-400/30">
                   {session.namedAgentName}

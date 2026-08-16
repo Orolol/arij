@@ -1,0 +1,299 @@
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { settings } from "@/lib/db/schema";
+import {
+  isSessionLifecycleConflictError,
+  isSessionNotFoundError,
+  markSessionTerminal,
+} from "@/lib/agent-sessions/lifecycle";
+import {
+  AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY,
+  DEFAULT_MAX_CONCURRENT_AGENTS,
+  agentMaxConcurrentSettingKey,
+  parseMaxConcurrentSetting,
+} from "@/lib/agents/scheduler-constants";
+
+/**
+ * In-process agent scheduler: a real queue behind the DB 'queued' status.
+ *
+ * Batch-style agent launches (epic/story build, projects/build solo+team,
+ * epic/story review, merge auto-agent, QA check) create their session row
+ * with `createQueuedSession` and then `submit()` a launch closure here
+ * instead of spawning inline. The scheduler gates starts on a per-project
+ * "Max concurrent agents" budget; excess submissions wait FIFO in memory
+ * while their DB row stays 'queued'. `markSessionRunning` happens inside
+ * the launch closure, so the DB status only moves to 'running' when the CLI
+ * actually spawns.
+ *
+ * EXEMPT (launched immediately, never scheduled): interactive
+ * chat/conversation spawns (lib/chat, spec generation and other
+ * activity-registry flows) — a user is sitting in front of those and
+ * queueing them behind batch work would read as a hang. The same reasoning
+ * exempts the other single-shot request/response agent paths
+ * (resolve-merge, release notes, git pull): the user triggers one and
+ * watches it. Only batch-style dispatch goes through the queue.
+ *
+ * Budget resolution per project (first hit wins, clamped to >= 1):
+ *   1. settings key `agent_max_concurrent:<projectId>`
+ *   2. settings key `agent_max_concurrent` (global default)
+ *   3. DEFAULT_MAX_CONCURRENT_AGENTS (3)
+ * The budget is re-read whenever a start decision is made, so setting
+ * changes apply to the very next slot without a restart.
+ *
+ * Like lib/claude/process-manager.ts, the singleton lives in module scope
+ * and persists across requests within one server process. Queue entries are
+ * launch closures and therefore die with the process: sessions left
+ * 'queued' in the DB by a dead server are unrecoverable and are cancelled
+ * at boot ('orphaned by restart') by
+ * lib/agent-sessions/boot-cleanup.ts, wired in instrumentation.ts.
+ */
+
+/** A launch closure waiting for a slot. */
+interface QueuedLaunch {
+  sessionId: string;
+  launch: () => Promise<void>;
+}
+
+interface ProjectSchedulerState {
+  /** Session ids currently holding a slot (launch closure not settled). */
+  running: Set<string>;
+  /** FIFO backlog of launches waiting for a slot. */
+  queue: QueuedLaunch[];
+}
+
+export interface SchedulerProjectCounts {
+  projectId: string;
+  running: number;
+  queued: number;
+}
+
+export interface SubmitResult {
+  /** True when the launch started immediately; false when it queued. */
+  started: boolean;
+  /** Number of entries ahead of this one in the queue (0 when started). */
+  queuedAhead: number;
+}
+
+/**
+ * Reads the effective per-project concurrency budget from settings.
+ * Exported for the scheduler default wiring and for tests.
+ */
+export function resolveMaxConcurrentForProject(projectId: string): number {
+  for (const key of [
+    agentMaxConcurrentSettingKey(projectId),
+    AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY,
+  ]) {
+    const row = db
+      .select({ value: settings.value })
+      .from(settings)
+      .where(eq(settings.key, key))
+      .get();
+
+    const parsed = row ? parseMaxConcurrentSetting(row.value) : null;
+    if (parsed !== null) return parsed;
+  }
+
+  return DEFAULT_MAX_CONCURRENT_AGENTS;
+}
+
+export interface AgentSchedulerOptions {
+  /** Injectable budget resolver (tests); defaults to the settings lookup. */
+  getMaxConcurrent?: (projectId: string) => number;
+}
+
+export class AgentScheduler {
+  private readonly states = new Map<string, ProjectSchedulerState>();
+  private readonly getMaxConcurrent: (projectId: string) => number;
+
+  constructor(options: AgentSchedulerOptions = {}) {
+    this.getMaxConcurrent =
+      options.getMaxConcurrent ?? resolveMaxConcurrentForProject;
+  }
+
+  /**
+   * Submits a session launch. Starts it synchronously when the project has
+   * a free slot (so immediate dispatches behave exactly like the historical
+   * inline spawn), otherwise appends it to the project's FIFO queue.
+   *
+   * The launch closure owns the whole session lifetime: it must call
+   * `markSessionRunning`, spawn the CLI, wait for completion, and finalize
+   * the session row. Its settled promise — resolved or rejected — frees the
+   * slot. Errors it throws never propagate to the submitter; they surface
+   * on the session row (see `handleLaunchFailure`).
+   */
+  submit(
+    projectId: string,
+    sessionId: string,
+    launch: () => Promise<void>
+  ): SubmitResult {
+    const state = this.stateFor(projectId);
+
+    if (
+      state.running.has(sessionId) ||
+      state.queue.some((entry) => entry.sessionId === sessionId)
+    ) {
+      throw new Error(`Session ${sessionId} is already scheduled`);
+    }
+
+    // A budget below 1 is impossible (resolution clamps to >= 1), so an idle
+    // project always starts immediately — without paying a settings read.
+    if (
+      state.running.size === 0 ||
+      state.running.size < this.effectiveLimit(projectId)
+    ) {
+      this.start(projectId, state, { sessionId, launch });
+      return { started: true, queuedAhead: 0 };
+    }
+
+    state.queue.push({ sessionId, launch });
+    return { started: false, queuedAhead: state.queue.length - 1 };
+  }
+
+  /**
+   * Removes a not-yet-started session from the queue (e.g. cancelled by the
+   * user while waiting). Returns false when the session is not queued —
+   * already started, already finished, or never submitted.
+   */
+  remove(sessionId: string): boolean {
+    for (const [projectId, state] of this.states) {
+      const index = state.queue.findIndex(
+        (entry) => entry.sessionId === sessionId
+      );
+      if (index !== -1) {
+        state.queue.splice(index, 1);
+        this.cleanup(projectId, state);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Introspection: live counts for one project (for monitors/tests). */
+  getCounts(projectId: string): { running: number; queued: number } {
+    const state = this.states.get(projectId);
+    return {
+      running: state?.running.size ?? 0,
+      queued: state?.queue.length ?? 0,
+    };
+  }
+
+  /** Introspection: live counts for every project with scheduler state. */
+  listCounts(): SchedulerProjectCounts[] {
+    return Array.from(this.states.entries()).map(([projectId, state]) => ({
+      projectId,
+      running: state.running.size,
+      queued: state.queue.length,
+    }));
+  }
+
+  // -------------------------------------------------------------------------
+  // Internals
+  // -------------------------------------------------------------------------
+
+  private stateFor(projectId: string): ProjectSchedulerState {
+    let state = this.states.get(projectId);
+    if (!state) {
+      state = { running: new Set(), queue: [] };
+      this.states.set(projectId, state);
+    }
+    return state;
+  }
+
+  private effectiveLimit(projectId: string): number {
+    try {
+      const limit = this.getMaxConcurrent(projectId);
+      return Number.isInteger(limit) && limit >= 1
+        ? limit
+        : DEFAULT_MAX_CONCURRENT_AGENTS;
+    } catch (error) {
+      console.error(
+        `[agent-scheduler] Failed to resolve max concurrency for project ${projectId}; using default`,
+        error
+      );
+      return DEFAULT_MAX_CONCURRENT_AGENTS;
+    }
+  }
+
+  private start(
+    projectId: string,
+    state: ProjectSchedulerState,
+    entry: QueuedLaunch
+  ): void {
+    state.running.add(entry.sessionId);
+
+    // The async wrapper funnels synchronous throws from `launch()` into the
+    // same rejection path as async failures, so a bad spawn can never crash
+    // the submitting route or leak the slot.
+    void (async () => entry.launch())()
+      .catch((error) => this.handleLaunchFailure(entry.sessionId, error))
+      .finally(() => this.release(projectId, entry.sessionId));
+  }
+
+  /**
+   * Safety net for launch closures that reject: without it the session row
+   * would sit 'queued'/'running' forever. Lifecycle conflicts are expected
+   * noise (the session was cancelled while queued, or the closure already
+   * finalized the row before failing) and stay silent.
+   */
+  private handleLaunchFailure(sessionId: string, error: unknown): void {
+    if (
+      isSessionLifecycleConflictError(error) ||
+      isSessionNotFoundError(error)
+    ) {
+      return;
+    }
+
+    console.error(
+      `[agent-scheduler] Launch for session ${sessionId} failed`,
+      error
+    );
+
+    try {
+      markSessionTerminal(sessionId, {
+        success: false,
+        error: error instanceof Error ? error.message : "Agent launch failed",
+      });
+    } catch (finalizeError) {
+      if (
+        !isSessionLifecycleConflictError(finalizeError) &&
+        !isSessionNotFoundError(finalizeError)
+      ) {
+        console.error(
+          `[agent-scheduler] Failed to finalize crashed session ${sessionId}`,
+          finalizeError
+        );
+      }
+    }
+  }
+
+  private release(projectId: string, sessionId: string): void {
+    const state = this.states.get(projectId);
+    if (!state) return;
+
+    state.running.delete(sessionId);
+
+    // Re-read the budget on every drain so setting changes take effect on
+    // the next slot. `while` (not `if`) copes with a raised limit.
+    while (
+      state.queue.length > 0 &&
+      state.running.size < this.effectiveLimit(projectId)
+    ) {
+      const next = state.queue.shift()!;
+      this.start(projectId, state, next);
+    }
+
+    this.cleanup(projectId, state);
+  }
+
+  private cleanup(projectId: string, state: ProjectSchedulerState): void {
+    if (state.running.size === 0 && state.queue.length === 0) {
+      this.states.delete(projectId);
+    }
+  }
+}
+
+/**
+ * Singleton scheduler instance. Production code must use this; the class is
+ * exported for unit tests that need isolated instances.
+ */
+export const agentScheduler = new AgentScheduler();

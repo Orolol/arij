@@ -56,6 +56,15 @@ const mockSchema = vi.hoisted(() => ({
     author: "author",
     createdAt: "createdAt",
   },
+  agentSessions: {
+    __name: "agentSessions",
+    id: "id",
+    epicId: "epicId",
+    outcome: "outcome",
+    endedAt: "endedAt",
+    completedAt: "completedAt",
+    createdAt: "createdAt",
+  },
 }));
 
 const mockDbState = vi.hoisted(() => ({
@@ -145,6 +154,7 @@ vi.mock("@/lib/db/schema", () => ({
   projects: mockSchema.projects,
   userStories: mockSchema.userStories,
   ticketComments: mockSchema.ticketComments,
+  agentSessions: mockSchema.agentSessions,
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({
@@ -249,6 +259,9 @@ describe("POST /api/projects/[projectId]/epics", () => {
           latestCommentId: "comment-2",
           latestCommentAuthor: "agent",
           latestCommentCreatedAt: "2026-02-14T11:22:00.000Z",
+          latestSessionOutcome: "asked_question",
+          latestSessionEndedAt: "2026-02-14T11:20:00.000Z",
+          latestUserCommentCreatedAt: "2026-02-14T10:00:00.000Z",
         },
       ],
     ];
@@ -263,9 +276,14 @@ describe("POST /api/projects/[projectId]/epics", () => {
       usCount: 2,
       usDone: 1,
       latestCommentId: "comment-2",
+      latestSessionOutcome: "asked_question",
+      latestSessionEndedAt: "2026-02-14T11:20:00.000Z",
+      latestUserCommentCreatedAt: "2026-02-14T10:00:00.000Z",
     });
-    expect((db as unknown as { leftJoin: ReturnType<typeof vi.fn> }).leftJoin).toHaveBeenCalledTimes(2);
-    expect((db as unknown as { groupBy: ReturnType<typeof vi.fn> }).groupBy).toHaveBeenCalledTimes(1);
+    // story counts + latest comments + latest sessions + latest user comments
+    expect((db as unknown as { leftJoin: ReturnType<typeof vi.fn> }).leftJoin).toHaveBeenCalledTimes(4);
+    // story counts + latest user comments
+    expect((db as unknown as { groupBy: ReturnType<typeof vi.fn> }).groupBy).toHaveBeenCalledTimes(2);
 
     const sqlFragments = mockSql.mock.calls.map(([template]) =>
       Array.isArray(template) ? template.join(" ") : String(template),

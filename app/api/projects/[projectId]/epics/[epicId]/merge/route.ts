@@ -12,7 +12,10 @@ import { tryExportArjiJson } from "@/lib/sync/export";
 import { createId } from "@/lib/utils/nanoid";
 import { processManager } from "@/lib/claude/process-manager";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import {
+  classifySessionOutcome,
+  resolveSessionOutput,
+} from "@/lib/claude/resolve-session-output";
 import {
   createQueuedSession,
   markSessionRunning,
@@ -22,6 +25,8 @@ import {
 import {
   getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import { agentScheduler } from "@/lib/agents/scheduler";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import { applyTransition } from "@/lib/workflow/transition-service";
 import { emitTicketMoved } from "@/lib/events/emit";
 import { logTransition } from "@/lib/workflow/log";
@@ -159,22 +164,19 @@ export async function POST(
       createdAt: now,
     });
 
-    markSessionRunning(sessionId, now);
-    processManager.start(sessionId, {
-      mode: "code",
-      prompt,
-      cwd: worktreePath,
-      allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-      cliSessionId,
-    });
+    // Scheduled merge-fix launch: spawn when a slot frees, wait for
+    // completion, then attempt the merge again (no retry cap).
+    agentScheduler.submit(projectId, sessionId, async () => {
+      markSessionRunning(sessionId);
+      processManager.start(sessionId, {
+        mode: "code",
+        prompt,
+        cwd: worktreePath,
+        allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+        cliSessionId,
+      });
 
-    // Background: wait for completion, attempt merge again (no retry cap)
-    (async () => {
-      let info = processManager.getStatus(sessionId);
-      while (info && info.status === "running") {
-        await new Promise((r) => setTimeout(r, 2000));
-        info = processManager.getStatus(sessionId);
-      }
+      const info = await waitForProcessCompletion(sessionId);
 
       const completedAt = new Date().toISOString();
       const agentResult = info?.result;
@@ -191,6 +193,7 @@ export async function POST(
           {
             success: !!agentResult?.success,
             error: agentResult?.error || null,
+            outcome: classifySessionOutcome(agentResult, sessionId),
           },
           completedAt
         );
@@ -240,7 +243,7 @@ export async function POST(
           createdAt: completedAt,
         })
         .run();
-    })();
+    });
 
     return NextResponse.json({
       data: {

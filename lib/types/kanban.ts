@@ -63,6 +63,12 @@ export interface KanbanEpic {
   latestCommentId?: string | null;
   latestCommentAuthor?: string | null;
   latestCommentCreatedAt?: string | null;
+  /** Delivery verdict of the epic's latest agent session (any status). */
+  latestSessionOutcome?: string | null;
+  /** When that session ended (used to order user replies vs. the question). */
+  latestSessionEndedAt?: string | null;
+  /** Creation time of the epic's latest user-authored comment. */
+  latestUserCommentCreatedAt?: string | null;
 }
 
 export type KanbanAgentActionType = "build" | "review" | "merge";

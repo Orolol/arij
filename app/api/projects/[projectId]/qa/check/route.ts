@@ -7,7 +7,11 @@ import { qaReports } from "@/lib/db/schema";
 import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { createId } from "@/lib/utils/nanoid";
 import { processManager } from "@/lib/claude/process-manager";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
+import {
+  classifySessionOutcome,
+  resolveSessionOutput,
+} from "@/lib/claude/resolve-session-output";
 import { buildTechCheckPrompt, buildE2eTestPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
@@ -18,6 +22,7 @@ import {
   markSessionRunning,
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
+import { agentScheduler } from "@/lib/agents/scheduler";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -119,26 +124,24 @@ export async function POST(request: NextRequest, { params }: Params) {
     })
     .run();
 
-  markSessionRunning(sessionId, now);
+  // Scheduled QA launch via the per-project scheduler: the closure spawns
+  // the agent, waits for completion, and finalizes the report.
+  agentScheduler.submit(projectId, sessionId, async () => {
+    markSessionRunning(sessionId);
 
-  processManager.start(
-    sessionId,
-    {
-      mode: "code",
-      prompt,
-      cwd: project.gitRepoPath,
-      model: resolvedAgent.model,
-      cliSessionId,
-    },
-    resolvedAgent.provider,
-  );
+    processManager.start(
+      sessionId,
+      {
+        mode: "code",
+        prompt,
+        cwd: project.gitRepoPath,
+        model: resolvedAgent.model,
+        cliSessionId,
+      },
+      resolvedAgent.provider,
+    );
 
-  void (async () => {
-    let info = processManager.getStatus(sessionId);
-    while (info && info.status === "running") {
-      await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-      info = processManager.getStatus(sessionId);
-    }
+    const info = await waitForProcessCompletion(sessionId, POLL_INTERVAL_MS);
 
     const completedAt = new Date().toISOString();
     const result = info?.result;
@@ -152,7 +155,11 @@ export async function POST(request: NextRequest, { params }: Params) {
     try {
       markSessionTerminal(
         sessionId,
-        { success: !!result?.success, error: result?.error ?? null },
+        {
+          success: !!result?.success,
+          error: result?.error ?? null,
+          outcome: classifySessionOutcome(result, sessionId),
+        },
         completedAt,
       );
     } catch (error) {
@@ -180,7 +187,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       })
       .where(eq(qaReports.id, reportId))
       .run();
-  })();
+  });
 
   return NextResponse.json({
     data: { reportId, sessionId },

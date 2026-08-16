@@ -231,6 +231,27 @@ describe("initDb", () => {
     });
   });
 
+  it("runs column-adding migrations on legacy databases that lack the column", () => {
+    const file = tempDbPath();
+
+    // Simulate a push-created database from before 0023: full schema minus
+    // bookkeeping, with the outcome column removed again.
+    withDb(file, (conn) => {
+      initDb(conn);
+      conn.exec('DROP TABLE "__drizzle_migrations"');
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN outcome");
+    });
+
+    withDb(file, (conn) => {
+      expect(() => initDb(conn)).not.toThrow();
+
+      // The column migration was not stamped away — it actually ran.
+      expect(columnNames(conn, "agent_sessions")).toContain("outcome");
+      expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
+      expectFullSchema(conn);
+    });
+  });
+
   it("migrates a database bootstrapped only by the old ad-hoc DDL (pre-refactor data/arij.db state)", () => {
     const file = tempDbPath();
 

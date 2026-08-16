@@ -9,6 +9,35 @@ export type AgentSessionLifecycleStatus =
   | "failed"
   | "cancelled";
 
+/**
+ * Delivery verdict for a terminal session — the persisted, first-class signal
+ * of how the agent's run ended:
+ *
+ *   - answered:       the agent delivered textual output (default success)
+ *   - asked_question: the agent ended by asking the user a question
+ *   - silent:         the run succeeded but produced no textual deliverable
+ *   - error:          the session failed
+ *
+ * NULL in the database means "not classified": legacy rows, non-terminal
+ * sessions, and user-cancelled sessions (cancellation is a user decision,
+ * not a delivery verdict).
+ */
+export const SESSION_OUTCOMES = [
+  "answered",
+  "asked_question",
+  "silent",
+  "error",
+] as const;
+
+export type SessionOutcome = (typeof SESSION_OUTCOMES)[number];
+
+export function isSessionOutcome(value: unknown): value is SessionOutcome {
+  return (
+    typeof value === "string" &&
+    (SESSION_OUTCOMES as readonly string[]).includes(value)
+  );
+}
+
 export const SESSION_LIFECYCLE_CONFLICT_CODE = "INVALID_SESSION_TRANSITION";
 export const SESSION_NOT_FOUND_CODE = "SESSION_NOT_FOUND";
 
@@ -149,13 +178,15 @@ export interface SessionTransitionPatch {
   endedAt?: string;
   completedAt?: string;
   error?: string | null;
+  outcome?: SessionOutcome;
 }
 
 export function buildSessionTransitionPatch(
   session: SessionLifecycleSnapshot,
   toStatus: AgentSessionLifecycleStatus,
   at: string,
-  error?: string | null
+  error?: string | null,
+  outcome?: SessionOutcome
 ): SessionTransitionPatch {
   const fromStatus = normalizeSessionLifecycleStatus(session.status);
   if (!fromStatus || !isValidSessionTransition(fromStatus, toStatus)) {
@@ -186,6 +217,9 @@ export function buildSessionTransitionPatch(
     } else if (toStatus === "completed") {
       patch.error = null;
     }
+    if (outcome !== undefined) {
+      patch.outcome = outcome;
+    }
   }
 
   return patch;
@@ -196,6 +230,7 @@ export interface TransitionSessionStatusInput {
   toStatus: AgentSessionLifecycleStatus;
   at?: string;
   error?: string | null;
+  outcome?: SessionOutcome;
 }
 
 export function transitionSessionStatus({
@@ -203,6 +238,7 @@ export function transitionSessionStatus({
   toStatus,
   at = new Date().toISOString(),
   error,
+  outcome,
 }: TransitionSessionStatusInput): SessionTransitionPatch {
   const session = db
     .select({
@@ -220,7 +256,7 @@ export function transitionSessionStatus({
     throw new SessionNotFoundError(sessionId);
   }
 
-  const patch = buildSessionTransitionPatch(session, toStatus, at, error);
+  const patch = buildSessionTransitionPatch(session, toStatus, at, error, outcome);
 
   db.update(agentSessions)
     .set(patch)
@@ -258,7 +294,17 @@ export function markSessionRunning(
 
 export function markSessionTerminal(
   sessionId: string,
-  result: { success: boolean; error?: string | null },
+  result: {
+    success: boolean;
+    error?: string | null;
+    /**
+     * Delivery verdict for this run (see `classifySessionOutcome` in
+     * lib/claude/resolve-session-output.ts). When omitted, failed sessions
+     * still get 'error' so the verdict column never lies about failures;
+     * successful sessions stay unclassified (NULL).
+     */
+    outcome?: SessionOutcome;
+  },
   at?: string
 ): SessionTransitionPatch {
   return transitionSessionStatus({
@@ -266,6 +312,7 @@ export function markSessionTerminal(
     toStatus: result.success ? "completed" : "failed",
     at,
     error: result.error ?? null,
+    outcome: result.outcome ?? (result.success ? undefined : "error"),
   });
 }
 

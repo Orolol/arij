@@ -15,14 +15,20 @@ import {
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import { buildTicketBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import {
+  classifySessionOutcome,
+  resolveSessionOutput,
+} from "@/lib/claude/resolve-session-output";
+import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import { agentScheduler } from "@/lib/agents/scheduler";
 import fs from "fs";
 import path from "path";
 import {
@@ -232,25 +238,22 @@ export async function POST(request: NextRequest, { params }: Params) {
     .where(eq(epics.id, epic.id))
     .run();
 
-  // Spawn agent
-  markSessionRunning(sessionId, now);
-  processManager.start(sessionId, {
-    mode: "code",
-    prompt: enrichedPrompt,
-    cwd: worktreePath,
-    allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-    model: resolvedAgent.model,
-    cliSessionId,
-    resumeSession,
-  }, resolvedAgent.provider);
+  // Batch-style launch via the per-project scheduler: the session stays
+  // 'queued' until a slot frees, then the closure spawns the agent, waits
+  // for completion, updates the DB, and posts the agent comment.
+  agentScheduler.submit(projectId, sessionId, async () => {
+    markSessionRunning(sessionId);
+    processManager.start(sessionId, {
+      mode: "code",
+      prompt: enrichedPrompt,
+      cwd: worktreePath,
+      allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+      model: resolvedAgent.model,
+      cliSessionId,
+      resumeSession,
+    }, resolvedAgent.provider);
 
-  // Background: wait for completion, update DB, post agent comment
-  (async () => {
-    let info = processManager.getStatus(sessionId);
-    while (info && info.status === "running") {
-      await new Promise((r) => setTimeout(r, 2000));
-      info = processManager.getStatus(sessionId);
-    }
+    const info = await waitForProcessCompletion(sessionId);
 
     const completedAt = new Date().toISOString();
     const result = info?.result;
@@ -263,12 +266,15 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
 
     // Update session
+    const outcome = classifySessionOutcome(result, sessionId);
+
     try {
       markSessionTerminal(
         sessionId,
         {
           success: !!result?.success,
           error: result?.error || null,
+          outcome,
         },
         completedAt
       );
@@ -280,7 +286,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     // On success: move story to review (not done — requires review/approval first).
     // If the agent asked a follow-up question, keep it in progress.
-    if (result?.success && !result?.endedWithQuestion) {
+    if (result?.success && outcome !== "asked_question") {
       db.update(userStories)
         .set({ status: "review" })
         .where(
@@ -308,6 +314,15 @@ export async function POST(request: NextRequest, { params }: Params) {
           .where(eq(epics.id, epic.id))
           .run();
       }
+    } else if (result?.success) {
+      // asked_question: hold the story in in_progress, notify with a deep
+      // link to the epic, and log the decision to the activity feed.
+      handleAskedQuestionOutcome({
+        projectId,
+        epicIds: [epic.id],
+        sessionId,
+        ticketStatus: "in_progress",
+      });
     }
 
     // Post agent output as comment
@@ -323,7 +338,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         createdAt: completedAt,
       })
       .run();
-  })();
+  });
 
   return NextResponse.json({
     data: { sessionId, branchName, worktreePath },

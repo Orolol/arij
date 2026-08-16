@@ -42,6 +42,13 @@ export interface SessionChunkStore {
     sessionId: string,
     streamType: AgentSessionStreamType
   ) => SessionChunk[];
+  /**
+   * Timestamp of the most recent chunk for a session across all stream
+   * types, or null when the session has no chunks yet. Cheap (single
+   * indexed MAX) — used by the silent-session watchdog and the active
+   * sessions monitor to derive "last output" freshness.
+   */
+  lastChunkAt: (sessionId: string) => string | null;
 }
 
 type ChunkRow = {
@@ -139,6 +146,14 @@ export function createSessionChunkStore(
     .orderBy(asc(agentSessionChunks.sequence))
     .prepare();
 
+  const lastChunkAtStmt = db
+    .select({
+      lastChunkAt: sql<string | null>`max(${agentSessionChunks.createdAt})`,
+    })
+    .from(agentSessionChunks)
+    .where(eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")))
+    .prepare();
+
   const updateLastNonEmptyTextStmt = db
     .update(agentSessions)
     // Wrapped in `sql` because `.set()` only accepts SQL / literal values.
@@ -222,6 +237,9 @@ export function createSessionChunkStore(
     ): SessionChunk[] {
       return listChunksStmt.all({ sessionId, streamType }).map(toSessionChunk);
     },
+    lastChunkAt(sessionId: string): string | null {
+      return lastChunkAtStmt.get({ sessionId })?.lastChunkAt ?? null;
+    },
   };
 }
 
@@ -245,4 +263,8 @@ export function listSessionChunks(
   streamType: AgentSessionStreamType
 ): SessionChunk[] {
   return getDefaultStore().listChunks(sessionId, streamType);
+}
+
+export function lastSessionChunkAt(sessionId: string): string | null {
+  return getDefaultStore().lastChunkAt(sessionId);
 }

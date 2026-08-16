@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSessionTransitionPatch,
+  isSessionOutcome,
   normalizeSessionLifecycleStatus,
   SessionLifecycleConflictError,
   SESSION_LIFECYCLE_CONFLICT_CODE,
+  SESSION_OUTCOMES,
 } from "@/lib/agent-sessions/lifecycle";
 
 describe("session lifecycle transitions", () => {
@@ -84,6 +86,74 @@ describe("session lifecycle transitions", () => {
     expect(patch.endedAt).toBeUndefined();
     expect(patch.completedAt).toBeUndefined();
     expect(patch.error).toBe("Agent failed");
+  });
+
+  it("carries the delivery verdict on terminal transitions", () => {
+    const patch = buildSessionTransitionPatch(
+      {
+        id: "s6",
+        status: "running",
+        startedAt: "2026-02-12T00:00:00.000Z",
+        endedAt: null,
+        completedAt: null,
+      },
+      "completed",
+      "2026-02-12T00:05:00.000Z",
+      null,
+      "asked_question"
+    );
+
+    expect(patch.status).toBe("completed");
+    expect(patch.outcome).toBe("asked_question");
+  });
+
+  it("omits the outcome from the patch when not provided", () => {
+    const patch = buildSessionTransitionPatch(
+      {
+        id: "s7",
+        status: "running",
+        startedAt: "2026-02-12T00:00:00.000Z",
+        endedAt: null,
+        completedAt: null,
+      },
+      "completed",
+      "2026-02-12T00:05:00.000Z"
+    );
+
+    expect(patch.outcome).toBeUndefined();
+  });
+
+  it("never attaches an outcome to non-terminal transitions", () => {
+    const patch = buildSessionTransitionPatch(
+      {
+        id: "s8",
+        status: "queued",
+        startedAt: null,
+        endedAt: null,
+        completedAt: null,
+      },
+      "running",
+      "2026-02-12T00:00:00.000Z",
+      undefined,
+      "answered"
+    );
+
+    expect(patch.status).toBe("running");
+    expect(patch.outcome).toBeUndefined();
+  });
+
+  it("exposes the closed outcome vocabulary with a type guard", () => {
+    expect(SESSION_OUTCOMES).toEqual([
+      "answered",
+      "asked_question",
+      "silent",
+      "error",
+    ]);
+    for (const outcome of SESSION_OUTCOMES) {
+      expect(isSessionOutcome(outcome)).toBe(true);
+    }
+    expect(isSessionOutcome("completed")).toBe(false);
+    expect(isSessionOutcome(null)).toBe(false);
   });
 
   it("rejects invalid transitions with machine-readable conflict code", () => {

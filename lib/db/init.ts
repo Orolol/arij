@@ -26,8 +26,28 @@ export const DEFAULT_NAMED_AGENT_MODEL = "claude-opus-4-6";
  * and including this timestamp as already applied ("baseline"), so that
  * `migrate()` only runs migrations added after the switch — which are written
  * to be no-ops (IF NOT EXISTS) when the objects already exist.
+ *
+ * Column-adding migrations cannot be written as no-ops (SQLite has no
+ * `ADD COLUMN IF NOT EXISTS`), so `stampLegacyBaseline` additionally stamps
+ * those as applied when the column is already present — see
+ * POST_BASELINE_COLUMN_MIGRATIONS.
  */
 export const LEGACY_BASELINE_MS = 1771372800000;
+
+/**
+ * Post-baseline migrations that ADD COLUMNs, keyed by their journal `when`
+ * timestamp. On bookkeeping-less databases these are stamped as applied when
+ * the column already exists (re-running the ALTER would throw), and left to
+ * run normally when it does not.
+ */
+const POST_BASELINE_COLUMN_MIGRATIONS: Array<{
+  folderMillis: number;
+  table: string;
+  column: string;
+}> = [
+  // 0023_agent_session_outcome
+  { folderMillis: 1786712000000, table: "agent_sessions", column: "outcome" },
+];
 
 /** Default on-disk location of the drizzle migration files. */
 export function defaultMigrationsFolder(): string {
@@ -38,6 +58,17 @@ function tableExists(connection: Database.Database, name: string): boolean {
   const row = connection
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
     .get(name);
+  return row !== undefined;
+}
+
+function columnExists(
+  connection: Database.Database,
+  table: string,
+  column: string
+): boolean {
+  const row = connection
+    .prepare("SELECT 1 FROM pragma_table_info(?) WHERE name = ?")
+    .get(table, column);
   return row !== undefined;
 }
 
@@ -58,7 +89,21 @@ function stampLegacyBaseline(
   if (!tableExists(connection, "projects")) return; // fresh DB: let migrate() run the full chain
 
   const migrations = readMigrationFiles({ migrationsFolder });
-  const baseline = migrations.filter((m) => m.folderMillis <= LEGACY_BASELINE_MS);
+
+  // Column-adding migrations after the baseline cannot be no-op re-runs.
+  // When such a column is already present, the schema is provably at least
+  // as new as that migration — raise the stamp ceiling to it so drizzle
+  // neither re-runs the ALTER (would throw) nor the intermediate no-ops.
+  const stampCeilingMs = POST_BASELINE_COLUMN_MIGRATIONS.reduce(
+    (ceiling, spec) =>
+      spec.folderMillis > ceiling &&
+      columnExists(connection, spec.table, spec.column)
+        ? spec.folderMillis
+        : ceiling,
+    LEGACY_BASELINE_MS
+  );
+
+  const toStamp = migrations.filter((m) => m.folderMillis <= stampCeilingMs);
 
   connection.exec(
     `CREATE TABLE IF NOT EXISTS "__drizzle_migrations" (
@@ -72,7 +117,7 @@ function stampLegacyBaseline(
     `INSERT INTO "__drizzle_migrations" ("hash", "created_at") VALUES (?, ?)`
   );
   const stampAll = connection.transaction(() => {
-    for (const migration of baseline) {
+    for (const migration of toStamp) {
       insert.run(migration.hash, migration.folderMillis);
     }
   });

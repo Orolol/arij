@@ -33,6 +33,7 @@ import {
   type KanbanEpicAgentActivity,
 } from "@/lib/types/kanban";
 import { useKanban } from "@/hooks/useKanban";
+import { isAwaitingReply } from "@/lib/kanban/awaiting-reply";
 import { BoardSkeleton } from "./BoardSkeleton";
 import type { FailedSessionInfo } from "@/hooks/useAgentPolling";
 
@@ -253,6 +254,7 @@ export function Board({
           isRunning: runningEpicIds?.has(epic.id) || false,
           activity: activeAgentActivities?.[epic.id],
           unreadAi: unreadAiByEpicId[epic.id] || false,
+          awaitingReply: isAwaitingReply(epic),
           failedSession,
           onToggleSelect: onToggleSelect
             ? () => onToggleSelect(epic.id)
@@ -319,6 +321,7 @@ export function Board({
       isRunning: runningEpicIds?.has(activeEpic.id) || false,
       activity: activeAgentActivities?.[activeEpic.id],
       unreadAi: unreadAiByEpicId[activeEpic.id],
+      awaitingReply: isAwaitingReply(activeEpic),
       onLinkedAgentHoverChange,
     };
   }, [

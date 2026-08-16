@@ -28,7 +28,11 @@ vi.mock("@/lib/utils/nanoid", () => ({
 import {
   buildTitle,
   buildTargetUrl,
+  buildAskedQuestionTitle,
+  buildEpicTargetUrl,
+  buildStalledTitle,
   createNotificationFromSession,
+  createAskedQuestionNotificationFromSession,
 } from "@/lib/notifications/create";
 
 // ---- Tests ----
@@ -160,5 +164,136 @@ describe("createNotificationFromSession()", () => {
     const payload = dbMockState.insertCalls[0] as Record<string, unknown>;
     expect(payload.title).toBe("Review: Security completed");
     expect(payload.projectName).toBe("Security Proj");
+  });
+
+  it("skips sessions with the asked_question verdict (owned by the question creator)", () => {
+    dbMockState.getQueue.push(
+      {
+        id: "s4",
+        projectId: "p1",
+        epicId: "e1",
+        status: "completed",
+        agentType: "build",
+        outcome: "asked_question",
+      },
+      { name: "My Project" },
+      { title: "Login feature", readableId: "E-proj-003" }
+    );
+
+    createNotificationFromSession("s4");
+
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+});
+
+describe("buildAskedQuestionTitle()", () => {
+  it("uses readable id and title when both exist", () => {
+    expect(buildAskedQuestionTitle("Login feature", "E-proj-003")).toBe(
+      "Agent asked a question on E-proj-003: Login feature"
+    );
+  });
+
+  it("falls back to whichever identifier exists", () => {
+    expect(buildAskedQuestionTitle("Login feature", null)).toBe(
+      "Agent asked a question on Login feature"
+    );
+    expect(buildAskedQuestionTitle(null, "E-proj-003")).toBe(
+      "Agent asked a question on E-proj-003"
+    );
+  });
+
+  it("degrades to the bare copy without any ticket context", () => {
+    expect(buildAskedQuestionTitle(null, null)).toBe("Agent asked a question");
+  });
+});
+
+describe("buildEpicTargetUrl()", () => {
+  it("deep-links to the ticket on the board", () => {
+    expect(buildEpicTargetUrl("p1", "e1")).toBe("/projects/p1?ticket=e1");
+  });
+});
+
+describe("buildStalledTitle()", () => {
+  it("uses readable id and title when both exist", () => {
+    expect(buildStalledTitle(5, "Login feature", "E-proj-003")).toBe(
+      "Agent seems stalled on E-proj-003: Login feature — no output for 5m"
+    );
+  });
+
+  it("falls back to whichever identifier exists", () => {
+    expect(buildStalledTitle(12, "Login feature", null)).toBe(
+      "Agent seems stalled on Login feature — no output for 12m"
+    );
+    expect(buildStalledTitle(12, null, "E-proj-003")).toBe(
+      "Agent seems stalled on E-proj-003 — no output for 12m"
+    );
+  });
+
+  it("degrades to the bare copy without any ticket context", () => {
+    expect(buildStalledTitle(7, null, null)).toBe(
+      "Agent seems stalled — no output for 7m"
+    );
+  });
+});
+
+describe("createAskedQuestionNotificationFromSession()", () => {
+  beforeEach(() => {
+    resetDbMockState();
+    mockSqliteState.pruneCount = { cnt: 5 };
+  });
+
+  it("creates the question notification deep-linking to the epic", () => {
+    dbMockState.getQueue.push(
+      {
+        id: "s5",
+        projectId: "p1",
+        epicId: "e1",
+        status: "completed",
+        agentType: "build",
+        outcome: "asked_question",
+      },
+      { name: "My Project" },
+      { title: "Login feature", readableId: "E-proj-003" }
+    );
+
+    createAskedQuestionNotificationFromSession("s5");
+
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    const payload = dbMockState.insertCalls[0] as Record<string, unknown>;
+    expect(payload.title).toBe(
+      "Agent asked a question on E-proj-003: Login feature"
+    );
+    expect(payload.targetUrl).toBe("/projects/p1?ticket=e1");
+    expect(payload.status).toBe("completed");
+    expect(payload.agentType).toBe("build");
+  });
+
+  it("falls back to the session detail when the session has no epic", () => {
+    dbMockState.getQueue.push(
+      {
+        id: "s6",
+        projectId: "p1",
+        epicId: null,
+        status: "completed",
+        agentType: "team_build",
+        outcome: "asked_question",
+      },
+      { name: "My Project" }
+    );
+
+    createAskedQuestionNotificationFromSession("s6");
+
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    const payload = dbMockState.insertCalls[0] as Record<string, unknown>;
+    expect(payload.title).toBe("Agent asked a question");
+    expect(payload.targetUrl).toBe("/projects/p1/sessions/s6");
+  });
+
+  it("does nothing when the session is gone", () => {
+    dbMockState.getQueue.push(undefined);
+
+    createAskedQuestionNotificationFromSession("missing");
+
+    expect(dbMockState.insertCalls).toHaveLength(0);
   });
 });

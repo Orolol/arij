@@ -25,6 +25,7 @@ import {
   GitMerge,
   Bot,
   AlertTriangle,
+  MessageCircleQuestion,
   RotateCcw,
   type LucideIcon,
 } from "lucide-react";
@@ -52,6 +53,11 @@ export interface EpicCardView {
   activity?: KanbanEpicAgentActivity;
   /** Whether the latest comment is AI-origin and still unseen */
   unreadAi?: boolean;
+  /**
+   * Latest agent session ended by asking a question and no user reply since
+   * (delivery-verdict signal, derived by the Board from the epic row)
+   */
+  awaitingReply?: boolean;
   /** Info about the most recent failed agent session for this epic */
   failedSession?: FailedSessionInfo;
   onToggleSelect?: () => void;
@@ -106,6 +112,7 @@ export function EpicCard({
     autoIncluded,
     activity: activeAgentActivity,
     unreadAi: hasUnreadAiUpdate = false,
+    awaitingReply = false,
     failedSession,
     onToggleSelect,
     onLinkedAgentHoverChange,
@@ -255,6 +262,16 @@ export function EpicCard({
               data-testid={`epic-unread-ai-${epic.id}`}
             >
               <Bot className="h-3.5 w-3.5" />
+            </span>
+          )}
+          {awaitingReply && (
+            <span
+              className="inline-flex items-center justify-center rounded-sm bg-amber-500/15 text-amber-600 p-0.5"
+              aria-label="Agent asked a question — awaiting your reply"
+              title="Agent asked a question — awaiting your reply"
+              data-testid={`epic-awaiting-reply-${epic.id}`}
+            >
+              <MessageCircleQuestion className="h-3.5 w-3.5" />
             </span>
           )}
           {failedSession && !activeAgentActivity && (

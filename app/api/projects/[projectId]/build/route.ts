@@ -10,13 +10,18 @@ import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import {
   buildBuildPrompt,
   buildTeamBuildPrompt,
   type TeamEpic,
 } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import {
+  classifySessionOutcome,
+  resolveSessionOutput,
+} from "@/lib/claude/resolve-session-output";
+import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
 
 import fs from "fs";
 import path from "path";
@@ -25,6 +30,7 @@ import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import { agentScheduler } from "@/lib/agents/scheduler";
 import {
   createQueuedSession,
   isSessionLifecycleConflictError,
@@ -255,33 +261,30 @@ export async function POST(
         .where(eq(projects.id, projectId))
         .run();
 
-      // Spawn single CC session from main repo root with Task in allowedTools
-      markSessionRunning(sessionId, now);
-      processManager.start(sessionId, {
-        mode: "code",
-        prompt: enrichedTeamPrompt,
-        cwd: gitRepoPath,
-        allowedTools: [
-          "Edit",
-          "Write",
-          "Bash",
-          "Read",
-          "Glob",
-          "Grep",
-          "Task",
-        ],
-        model: resolvedTeamAgent.model,
-        cliSessionId: teamCliSessionId,
-      }, resolvedTeamAgent.provider);
-
-      // Background: wait for completion, update all epic statuses
+      // Scheduled team launch: one slot for the whole coordinating session.
+      // Spawns a single CC session from main repo root with Task in
+      // allowedTools, waits for completion, updates all epic statuses.
       const allEpicIds = epicRecords.map((e) => e.id);
-      (async () => {
-        let info = processManager.getStatus(sessionId);
-        while (info && info.status === "running") {
-          await new Promise((r) => setTimeout(r, 2000));
-          info = processManager.getStatus(sessionId);
-        }
+      agentScheduler.submit(projectId, sessionId, async () => {
+        markSessionRunning(sessionId);
+        processManager.start(sessionId, {
+          mode: "code",
+          prompt: enrichedTeamPrompt,
+          cwd: gitRepoPath,
+          allowedTools: [
+            "Edit",
+            "Write",
+            "Bash",
+            "Read",
+            "Glob",
+            "Grep",
+            "Task",
+          ],
+          model: resolvedTeamAgent.model,
+          cliSessionId: teamCliSessionId,
+        }, resolvedTeamAgent.provider);
+
+        const info = await waitForProcessCompletion(sessionId);
 
         const completedAt = new Date().toISOString();
         const result = info?.result;
@@ -292,12 +295,15 @@ export async function POST(
           // ignore
         }
 
+        const outcome = classifySessionOutcome(result, sessionId);
+
         try {
           markSessionTerminal(
             sessionId,
             {
               success: !!result?.success,
               error: result?.error || null,
+              outcome,
             },
             completedAt
           );
@@ -308,13 +314,22 @@ export async function POST(
         }
 
         // Update all associated epics unless the agent ended by asking a question.
-        if (result?.success && !result?.endedWithQuestion) {
+        if (result?.success && outcome !== "asked_question") {
           for (const eid of allEpicIds) {
             db.update(epics)
               .set({ status: "review", updatedAt: completedAt })
               .where(eq(epics.id, eid))
               .run();
           }
+        } else if (result?.success) {
+          // asked_question: hold every coordinated epic, notify once, and
+          // log the decision on each epic's activity feed.
+          handleAskedQuestionOutcome({
+            projectId,
+            epicIds: allEpicIds,
+            sessionId,
+            ticketStatus: "in_progress",
+          });
         }
 
         // Post output as comment on each epic
@@ -332,7 +347,7 @@ export async function POST(
             })
             .run();
         }
-      })();
+      });
 
       sessionsCreated.push(sessionId);
       tryExportArjiJson(projectId);
@@ -463,24 +478,21 @@ export async function POST(
       .where(eq(projects.id, projectId))
       .run();
 
-    // Spawn agent via process manager
-    markSessionRunning(sessionId, now);
-    processManager.start(sessionId, {
-      mode: "code",
-      prompt: enrichedPrompt,
-      cwd: worktreePath,
-      allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-      model: resolvedBuildAgent.model,
-      cliSessionId: soloCliSessionId,
-    }, resolvedBuildAgent.provider);
+    // Scheduled launch via the per-project scheduler: a batch of N epics
+    // enqueues N sessions but only maxConcurrent CLIs run at once. The
+    // closure spawns the agent, waits for completion, and updates the DB.
+    agentScheduler.submit(projectId, sessionId, async () => {
+      markSessionRunning(sessionId);
+      processManager.start(sessionId, {
+        mode: "code",
+        prompt: enrichedPrompt,
+        cwd: worktreePath,
+        allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+        model: resolvedBuildAgent.model,
+        cliSessionId: soloCliSessionId,
+      }, resolvedBuildAgent.provider);
 
-    // Background: wait for completion and update DB
-    (async () => {
-      let info = processManager.getStatus(sessionId);
-      while (info && info.status === "running") {
-        await new Promise((r) => setTimeout(r, 2000));
-        info = processManager.getStatus(sessionId);
-      }
+      const info = await waitForProcessCompletion(sessionId);
 
       const completedAt = new Date().toISOString();
       const result = info?.result;
@@ -491,12 +503,15 @@ export async function POST(
         // ignore
       }
 
+      const outcome = classifySessionOutcome(result, sessionId);
+
       try {
         markSessionTerminal(
           sessionId,
           {
             success: !!result?.success,
             error: result?.error || null,
+            outcome,
           },
           completedAt
         );
@@ -508,7 +523,7 @@ export async function POST(
 
       // Move epic + US to review if successful.
       // If the agent asked a follow-up question, keep work in progress.
-      if (result?.success && !result?.endedWithQuestion) {
+      if (result?.success && outcome !== "asked_question") {
         db.update(userStories)
           .set({ status: "review" })
           .where(
@@ -523,6 +538,15 @@ export async function POST(
           .set({ status: "review", updatedAt: completedAt })
           .where(eq(epics.id, epicId))
           .run();
+      } else if (result?.success) {
+        // asked_question: hold the epic in in_progress, notify with a deep
+        // link to the epic, and log the decision to the activity feed.
+        handleAskedQuestionOutcome({
+          projectId,
+          epicIds: [epicId],
+          sessionId,
+          ticketStatus: "in_progress",
+        });
       }
 
       // Post output as epic comment
@@ -538,7 +562,7 @@ export async function POST(
           createdAt: completedAt,
         })
         .run();
-    })();
+    });
 
     sessionsCreated.push(sessionId);
   }

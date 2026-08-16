@@ -162,6 +162,7 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       completedAt: "completed_at",
       lastNonEmptyText: "last_non_empty_text",
       error: "error",
+      outcome: "outcome",
       claudeSessionId: "claude_session_id",
       cliSessionId: "cli_session_id",
       namedAgentId: "named_agent_id",

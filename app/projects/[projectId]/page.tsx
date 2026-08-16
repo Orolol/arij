@@ -88,6 +88,9 @@ export default function KanbanPage() {
 
       for (const activity of activities) {
         if (!activity.epicId) continue;
+        // Queued sessions surface in the AgentMonitor; the kanban agent
+        // chip stays reserved for agents that are actually running.
+        if (activity.status !== "running") continue;
         if (!["build", "review", "merge"].includes(activity.type)) continue;
 
         map[activity.epicId] = {
@@ -201,6 +204,20 @@ export default function KanbanPage() {
     const query = next.toString();
     router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
   }, [addToast, projectId, router, searchParams]);
+
+  // Deep link: /projects/<id>?ticket=<epicId> opens the ticket detail
+  // (used by "Agent asked a question" notifications), then strips the param.
+  useEffect(() => {
+    const ticket = searchParams.get("ticket");
+    if (!ticket) return;
+
+    batch.setSelectedTicketIds(selectOnlyTicket(ticket));
+
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("ticket");
+    const query = next.toString();
+    router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
+  }, [batch.setSelectedTicketIds, projectId, router, searchParams]);
 
   // Reset team mode when selection drops below 2
   useEffect(() => {

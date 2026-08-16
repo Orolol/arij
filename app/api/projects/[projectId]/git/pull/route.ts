@@ -23,6 +23,8 @@ import {
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
 import { processManager } from "@/lib/claude/process-manager";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
+import { classifySessionOutcome } from "@/lib/claude/resolve-session-output";
 import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
 import fs from "fs";
 import path from "path";
@@ -184,11 +186,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         );
 
         (async () => {
-          let info = processManager.getStatus(sessionId);
-          while (info && info.status === "running") {
-            await new Promise((r) => setTimeout(r, 2000));
-            info = processManager.getStatus(sessionId);
-          }
+          const info = await waitForProcessCompletion(sessionId);
           const completedAt = new Date().toISOString();
           const agentResult = info?.result;
           try {
@@ -202,6 +200,7 @@ export async function POST(request: NextRequest, { params }: Params) {
               {
                 success: !!agentResult?.success,
                 error: agentResult?.error || null,
+                outcome: classifySessionOutcome(agentResult, sessionId),
               },
               completedAt
             );

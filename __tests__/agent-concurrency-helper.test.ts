@@ -9,6 +9,7 @@ vi.mock("drizzle-orm", () => ({
   and: vi.fn(() => ({})),
   or: vi.fn(() => ({})),
   desc: vi.fn(() => ({})),
+  inArray: vi.fn(() => ({})),
 }));
 
 vi.mock("@/lib/db/schema", () => ({
@@ -48,7 +49,9 @@ vi.mock("@/lib/db", () => {
   chain.orderBy.mockReturnValue(chain);
   chain.all.mockImplementation(() =>
     mockState.rows
-      .filter((row) => row.status === "running")
+      // Mirrors the helper's ACTIVE_SESSION_STATUSES filter: queued sessions
+      // (waiting in the scheduler) block a target just like running ones.
+      .filter((row) => row.status === "running" || row.status === "queued")
       .map((row) => ({
         id: row.id as string,
         projectId: row.projectId as string,
@@ -140,5 +143,30 @@ describe("agent concurrency helper", () => {
       epicId: "epic-1",
     });
     expect(afterCompletion).toBeNull();
+  });
+
+  it("treats queued sessions as active for the target", async () => {
+    const { getRunningSessionForTarget } = await import("@/lib/agents/concurrency");
+
+    mockState.rows = [
+      {
+        id: "session-q",
+        projectId: "proj-1",
+        epicId: "epic-1",
+        userStoryId: null,
+        status: "queued",
+        mode: "code",
+        provider: "claude-code",
+        startedAt: null,
+        createdAt: "2026-02-12T10:00:00.000Z",
+      },
+    ];
+
+    const active = getRunningSessionForTarget({
+      scope: "epic",
+      projectId: "proj-1",
+      epicId: "epic-1",
+    });
+    expect(active?.id).toBe("session-q");
   });
 });
