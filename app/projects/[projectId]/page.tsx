@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/tooltip";
 import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug, Search, GitMerge, Lock, Bot } from "lucide-react";
 import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
+import { QuickCapture } from "@/components/kanban/QuickCapture";
 import type { KanbanEpicAgentActivity } from "@/lib/types/kanban";
 import { getActiveDetailTicketId, selectOnlyTicket } from "@/lib/kanban/selection";
 import { useProjectEvents, type ConnectionStatus } from "@/hooks/useProjectEvents";
@@ -447,6 +448,11 @@ export default function KanbanPage() {
                 <Bug className="h-3 w-3 mr-1" />
                 New Bug
               </Button>
+              <QuickCapture
+                projectId={projectId}
+                onCreated={() => setRefreshTrigger((t) => t + 1)}
+                onError={(message) => addToast("error", message)}
+              />
             </div>
 
             {/* Batch action toolbar */}

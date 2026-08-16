@@ -68,6 +68,18 @@ interface EpicCardProps {
   highlight?: boolean;
   /** Per-epic state and callbacks, built by the Board */
   view?: EpicCardView;
+  /** Disable dnd-kit sortable wiring (set by the Board while filters are active) */
+  dragDisabled?: boolean;
+}
+
+/**
+ * A card with no description and no stories is a bare idea (e.g. from quick
+ * capture): flag it as a draft to nudge refinement before dispatching agents.
+ */
+export function isDraftEpic(
+  epic: Pick<KanbanEpic, "description" | "usCount">
+): boolean {
+  return (!epic.description || epic.description.trim() === "") && epic.usCount === 0;
 }
 
 const ACTIVITY_ICON_BY_TYPE: Record<
@@ -87,6 +99,7 @@ export function EpicCard({
   onClick,
   highlight = false,
   view = EMPTY_VIEW,
+  dragDisabled = false,
 }: EpicCardProps) {
   const {
     selected,
@@ -106,7 +119,9 @@ export function EpicCard({
     transform,
     transition,
     isDragging,
-  } = useSortable({ id: epic.id });
+  } = useSortable({ id: epic.id, disabled: dragDisabled });
+
+  const isDraft = isDraftEpic(epic);
 
   // Flash highlight animation state
   const [isHighlighted, setIsHighlighted] = useState(false);
@@ -185,7 +200,7 @@ export function EpicCard({
         selected ? "ring-2 ring-primary" : autoIncluded ? "ring-2 ring-blue-400/50" : ""
       } ${epic.type === "bug" ? "border-l-2 border-l-red-500" : ""} ${
         isHighlighted ? "ring-2 ring-primary/70 bg-primary/5 motion-reduce:ring-0 motion-reduce:bg-transparent" : ""
-      }`}
+      } ${isDraft ? "border-dashed" : ""}`}
     >
       <div className="mb-1">
         <div className="flex items-start gap-2">
@@ -223,6 +238,15 @@ export function EpicCard({
           <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{epic.description}</p>
         )}
         <div className="flex items-center gap-1 flex-wrap mt-1">
+          {isDraft && (
+            <span
+              className="inline-flex items-center rounded-sm border border-dashed border-muted-foreground/40 px-1 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+              title="Draft — add a description or stories before dispatching"
+              data-testid={`epic-draft-${epic.id}`}
+            >
+              Draft
+            </span>
+          )}
           {hasUnreadAiUpdate && (
             <span
               className="inline-flex items-center justify-center rounded-sm bg-sky-500/15 text-sky-600 p-0.5"

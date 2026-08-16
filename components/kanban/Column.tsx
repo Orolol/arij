@@ -19,6 +19,8 @@ interface ColumnProps {
   onEpicClick: (epicId: string) => void;
   /** Per-epic state and callbacks, keyed by epic id and built by the Board */
   epicViews?: Record<string, EpicCardView>;
+  /** Disable drag-and-drop (set by the Board while filters are active) */
+  dragDisabled?: boolean;
 }
 
 export function Column({
@@ -26,8 +28,12 @@ export function Column({
   epics,
   onEpicClick,
   epicViews,
+  dragDisabled = false,
 }: ColumnProps) {
-  const { setNodeRef, isOver } = useDroppable({ id: status });
+  const { setNodeRef, isOver } = useDroppable({
+    id: status,
+    disabled: dragDisabled,
+  });
 
   // Track newly arrived epics for highlight animation
   const prevEpicIdsRef = useRef<Set<string>>(new Set());
@@ -97,6 +103,7 @@ export function Column({
                   onClick={() => onEpicClick(epic.id)}
                   highlight={highlightedEpicIds.has(epic.id)}
                   view={epicViews?.[epic.id]}
+                  dragDisabled={dragDisabled}
                 />
               </div>
             ))}
