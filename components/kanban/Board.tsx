@@ -17,8 +17,17 @@ import { Column } from "./Column";
 import { ReleasedColumn } from "./ReleasedColumn";
 import { EpicCard, type EpicCardView } from "./EpicCard";
 import {
+  FilterBar,
+  EMPTY_FILTERS,
+  countActiveFilters,
+  epicMatchesFilters,
+  parseStoredFilters,
+  type KanbanFilters,
+} from "./FilterBar";
+import {
   KANBAN_COLUMNS,
   DRAGGABLE_COLUMNS,
+  COLUMN_LABELS,
   type KanbanStatus,
   type KanbanEpic,
   type KanbanEpicAgentActivity,
@@ -47,6 +56,31 @@ function isAiCommentAuthor(author: string | null | undefined) {
   return author.toLowerCase() !== "user";
 }
 
+/** Focus-mode placeholder: a column reduced to its header and card count. */
+function CollapsedColumn({
+  label,
+  count,
+  testId,
+}: {
+  label: string;
+  count: number;
+  testId: string;
+}) {
+  return (
+    <div
+      className="flex flex-col w-24 shrink-0 rounded-lg bg-muted/30"
+      data-testid={testId}
+    >
+      <div className="px-3 py-2 flex items-center justify-between gap-1">
+        <h3 className="font-medium text-sm truncate">{label}</h3>
+        <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5">
+          {count}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 export function Board({
   projectId,
   onEpicClick,
@@ -69,6 +103,47 @@ export function Board({
     () => `arij:kanban:seen-ai-comments:${projectId}`,
     [projectId]
   );
+
+  // Client-side filters + focus mode, persisted per project in localStorage
+  // (house pattern: the arij.unified-chat-panel.* keys).
+  const [filters, setFilters] = useState<KanbanFilters>(EMPTY_FILTERS);
+  const [focusMode, setFocusMode] = useState(false);
+  const filtersStorageKey = useMemo(
+    () => `arij.kanban-board.filters.${projectId}`,
+    [projectId]
+  );
+  const focusStorageKey = useMemo(
+    () => `arij.kanban-board.focus.${projectId}`,
+    [projectId]
+  );
+
+  // Read persisted filters/focus on mount (before the write effects below run
+  // with fresh state, so the stored value is captured first).
+  useEffect(() => {
+    try {
+      setFilters(parseStoredFilters(window.localStorage.getItem(filtersStorageKey)));
+      setFocusMode(window.localStorage.getItem(focusStorageKey) === "true");
+    } catch {
+      setFilters(EMPTY_FILTERS);
+      setFocusMode(false);
+    }
+  }, [filtersStorageKey, focusStorageKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(filtersStorageKey, JSON.stringify(filters));
+    } catch {
+      // ignore storage write failures
+    }
+  }, [filters, filtersStorageKey]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(focusStorageKey, focusMode ? "true" : "false");
+    } catch {
+      // ignore storage write failures
+    }
+  }, [focusMode, focusStorageKey]);
 
   useEffect(() => {
     if (refreshTrigger) refresh();
@@ -205,6 +280,36 @@ export function Board({
     onRetryBuild,
   ]);
 
+  // Pure client-side filter layer over the board columns. While any filter is
+  // active, drag-and-drop is disabled entirely (see the guards in the drag
+  // handlers and the disabled flags threaded to Column/EpicCard): drop indices
+  // against a filtered list would not match the underlying board order.
+  const activeFilterCount = countActiveFilters(filters);
+  const filtersActive = activeFilterCount > 0;
+
+  const visibleColumns = useMemo(() => {
+    if (!filtersActive) return board.columns;
+
+    const next = { ...board.columns };
+    for (const status of DRAGGABLE_COLUMNS) {
+      next[status] = board.columns[status].filter((epic) =>
+        epicMatchesFilters(epic, filters, {
+          isRunning: runningEpicIds?.has(epic.id) || false,
+          unreadAi: unreadAiByEpicId[epic.id] || false,
+          hasFailedSession: !!failedSessions?.[epic.id],
+        })
+      );
+    }
+    return next;
+  }, [
+    board,
+    filters,
+    filtersActive,
+    runningEpicIds,
+    unreadAiByEpicId,
+    failedSessions,
+  ]);
+
   // The drag overlay is a preview: it deliberately shows only the live agent
   // signals, never selection rings or failed-session affordances.
   const overlayView = useMemo<EpicCardView | undefined>(() => {
@@ -227,6 +332,8 @@ export function Board({
   if (loading) return <BoardSkeleton />;
 
   function handleDragStart(event: DragStartEvent) {
+    // No drag while filtering: the visible order diverges from board order.
+    if (filtersActive) return;
     const found = findEpicById(event.active.id as string);
     if (!found) return;
     // Block dragging from the released column
@@ -236,6 +343,9 @@ export function Board({
 
   function handleDragEnd(event: DragEndEvent) {
     setActiveEpic(null);
+
+    // Dropping into a filtered view must be impossible, not just visually odd.
+    if (filtersActive) return;
 
     const { active, over } = event;
     if (!over) return;
@@ -284,20 +394,46 @@ export function Board({
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div className="flex gap-4 h-full p-4 overflow-x-auto">
-        {DRAGGABLE_COLUMNS.map((status) => (
-          <Column
-            key={status}
-            status={status}
-            epics={board.columns[status]}
-            onEpicClick={handleEpicClick}
-            epicViews={epicViews}
-          />
-        ))}
-        <ReleasedColumn
-          releaseGroups={board.releaseGroups || []}
-          onEpicClick={handleEpicClick}
+      <div className="flex flex-col h-full">
+        <FilterBar
+          filters={filters}
+          onFiltersChange={setFilters}
+          focusMode={focusMode}
+          onFocusModeChange={setFocusMode}
         />
+        <div className="flex gap-4 flex-1 min-h-0 p-4 pt-2 overflow-x-auto">
+          {DRAGGABLE_COLUMNS.map((status) =>
+            focusMode && status === "done" ? (
+              <CollapsedColumn
+                key={status}
+                label={COLUMN_LABELS[status]}
+                count={visibleColumns[status].length}
+                testId="collapsed-column-done"
+              />
+            ) : (
+              <Column
+                key={status}
+                status={status}
+                epics={visibleColumns[status]}
+                onEpicClick={handleEpicClick}
+                epicViews={epicViews}
+                dragDisabled={filtersActive}
+              />
+            )
+          )}
+          {focusMode ? (
+            <CollapsedColumn
+              label={COLUMN_LABELS.released}
+              count={board.columns.released.length}
+              testId="collapsed-column-released"
+            />
+          ) : (
+            <ReleasedColumn
+              releaseGroups={board.releaseGroups || []}
+              onEpicClick={handleEpicClick}
+            />
+          )}
+        </div>
       </div>
       <DragOverlay>
         {activeEpic && (

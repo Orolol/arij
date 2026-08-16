@@ -8,6 +8,7 @@ import {
 } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 import { AGENT_TYPE_LABELS } from "@/lib/agent-config/constants";
+import { durationMsBetween, sendProjectWebhook } from "@/lib/webhooks/send";
 
 const MAX_NOTIFICATIONS = 200;
 
@@ -71,6 +72,9 @@ export function createNotificationFromSession(sessionId: string): void {
       epicId: agentSessions.epicId,
       status: agentSessions.status,
       agentType: agentSessions.agentType,
+      startedAt: agentSessions.startedAt,
+      endedAt: agentSessions.endedAt,
+      error: agentSessions.error,
     })
     .from(agentSessions)
     .where(eq(agentSessions.id, sessionId))
@@ -121,6 +125,17 @@ export function createNotificationFromSession(sessionId: string): void {
 
   // Prune old notifications beyond MAX_NOTIFICATIONS
   pruneNotifications();
+
+  // Fire-and-forget outbound webhook (no-op unless the project configured one).
+  void sendProjectWebhook(session.projectId, {
+    event: notifStatus === "failed" ? "session.failed" : "session.completed",
+    ticketTitle: epicTitle,
+    epicId: session.epicId,
+    sessionId: session.id,
+    durationMs: durationMsBetween(session.startedAt, session.endedAt),
+    error: notifStatus === "failed" ? session.error : null,
+    path: targetUrl,
+  });
 }
 
 function pruneNotifications(): void {

@@ -1,7 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { EpicDetail } from "@/components/kanban/EpicDetail";
+import { EpicGitSection } from "@/components/kanban/epic-detail/EpicGitSection";
+
+// Radix tooltips need a provider + hover to reveal their content; render the
+// content inline instead so the freshness tooltip copy is directly assertable.
+vi.mock("@/components/ui/tooltip", () => ({
+  Tooltip: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipTrigger: ({ children }: { children: ReactNode }) => <>{children}</>,
+  TooltipContent: ({ children }: { children: ReactNode }) => (
+    <div data-testid="tooltip-content">{children}</div>
+  ),
+  TooltipProvider: ({ children }: { children: ReactNode }) => <>{children}</>,
+}));
 
 const mockUseEpicDetail = vi.hoisted(() => vi.fn());
 const mockUseTicketComments = vi.hoisted(() => vi.fn());
@@ -245,6 +257,128 @@ describe("EpicDetail git section", () => {
     ).toBeInTheDocument();
     expect(onMerged).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("threads fetch freshness from useGitStatus into the git section", () => {
+    mockUseGitHubConfig.mockReturnValue({ isConfigured: true });
+    mockUseGitStatus.mockReturnValue({
+      ahead: 0,
+      behind: 0,
+      lastFetchedAt: Date.now() - 3 * 60 * 1000,
+      lastFetchError: null,
+      loading: false,
+      error: null,
+      refresh: vi.fn(),
+      push: vi.fn(),
+      pushing: false,
+    });
+    renderSubject();
+    expect(screen.getByText(/^Synced /)).toBeInTheDocument();
+    const tooltips = screen.getAllByTestId("tooltip-content");
+    expect(
+      tooltips.some((tooltip) =>
+        tooltip.textContent?.includes("Last successful fetch from the remote"),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("EpicGitSection fetch freshness", () => {
+  const baseProps: ComponentProps<typeof EpicGitSection> = {
+    projectId: "proj-1",
+    branchName: "feature/payments",
+    epicStatus: "in_progress",
+    githubConfigured: true,
+    isRunning: false,
+    ahead: 1,
+    behind: 2,
+    gitStatusLoading: false,
+    gitStatusError: null,
+    onRefreshGitStatus: vi.fn(),
+    onPush: vi.fn(),
+    pushing: false,
+    pr: null,
+    prLoading: false,
+    prError: null,
+    onCreatePr: vi.fn(),
+    onSyncPr: vi.fn(),
+    merging: false,
+    mergeError: null,
+    onMerge: vi.fn(),
+    resolvingMerge: false,
+    onOpenResolveMerge: vi.fn(),
+  };
+
+  beforeEach(() => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [] }),
+    }) as unknown as typeof fetch;
+  });
+
+  it('shows "Synced Xm ago" next to the ahead/behind counters', () => {
+    render(
+      <EpicGitSection
+        {...baseProps}
+        lastFetchedAt={Date.now() - 3 * 60 * 1000}
+        lastFetchError={null}
+      />,
+    );
+
+    expect(screen.getByText("Synced 3m ago")).toBeInTheDocument();
+    expect(
+      screen.getByText("Last successful fetch from the remote"),
+    ).toBeInTheDocument();
+  });
+
+  it("renders no freshness label when the API reported nothing", () => {
+    render(<EpicGitSection {...baseProps} />);
+
+    expect(screen.queryByText(/^Synced /)).toBeNull();
+    expect(screen.queryByText("Never synced")).toBeNull();
+  });
+
+  it("tooltips the fetch error and falls back to Never synced", () => {
+    render(
+      <EpicGitSection
+        {...baseProps}
+        lastFetchedAt={null}
+        lastFetchError="network unreachable"
+      />,
+    );
+
+    expect(screen.getByText("Never synced")).toBeInTheDocument();
+    expect(
+      screen.getByText("Could not fetch from remote: network unreachable"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the last known sync time when a later fetch fails", () => {
+    render(
+      <EpicGitSection
+        {...baseProps}
+        lastFetchedAt={Date.now() - 2 * 60 * 60 * 1000}
+        lastFetchError="network unreachable"
+      />,
+    );
+
+    expect(screen.getByText("Synced 2h ago")).toBeInTheDocument();
+    expect(
+      screen.getByText("Could not fetch from remote: network unreachable"),
+    ).toBeInTheDocument();
+  });
+
+  it("hides the freshness label while the status is loading", () => {
+    render(
+      <EpicGitSection
+        {...baseProps}
+        gitStatusLoading={true}
+        lastFetchedAt={Date.now()}
+      />,
+    );
+
+    expect(screen.getByText("Checking...")).toBeInTheDocument();
+    expect(screen.queryByText(/^Synced /)).toBeNull();
   });
 });
 

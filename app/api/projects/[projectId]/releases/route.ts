@@ -30,6 +30,7 @@ import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { applyTransition } from "@/lib/workflow/transition-service";
 import { emitReleaseCreated } from "@/lib/events/emit";
+import { sendProjectWebhook } from "@/lib/webhooks/send";
 import type { KanbanStatus } from "@/lib/types/kanban";
 import fs from "fs";
 import path from "path";
@@ -461,6 +462,13 @@ ${ticketContext}
 
   // Emit release:created event for real-time board refresh
   emitReleaseCreated(projectId, id, version, epicIds);
+
+  // Fire-and-forget outbound webhook (no-op unless the project configured one).
+  void sendProjectWebhook(projectId, {
+    event: "release.created",
+    ticketTitle: title ? `v${version} — ${title}` : `v${version}`,
+    path: `/projects/${projectId}/releases`,
+  });
 
   const release = db.select().from(releases).where(eq(releases.id, id)).get();
 

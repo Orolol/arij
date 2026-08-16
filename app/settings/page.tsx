@@ -9,6 +9,12 @@ interface GitHubPatSetting {
   hasToken?: boolean;
 }
 
+interface ProjectWebhook {
+  projectId: string;
+  projectName: string;
+  url: string;
+}
+
 export default function SettingsPage() {
   const [globalPrompt, setGlobalPrompt] = useState("");
   const [savingPrompt, setSavingPrompt] = useState(false);
@@ -19,6 +25,22 @@ export default function SettingsPage() {
   const [globalMessage, setGlobalMessage] = useState<string | null>(null);
   const [gitHubMessage, setGitHubMessage] = useState<string | null>(null);
   const [gitHubError, setGitHubError] = useState<string | null>(null);
+  const [webhooks, setWebhooks] = useState<ProjectWebhook[]>([]);
+  const [savingWebhookId, setSavingWebhookId] = useState<string | null>(null);
+  const [webhookMessage, setWebhookMessage] = useState<string | null>(null);
+  const [webhookError, setWebhookError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/settings/webhooks")
+      .then((r) => r.json())
+      .then((d) => {
+        const list = d?.data?.webhooks;
+        if (Array.isArray(list)) {
+          setWebhooks(list as ProjectWebhook[]);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     fetch("/api/settings")
@@ -62,6 +84,52 @@ export default function SettingsPage() {
       );
     } finally {
       setSavingPrompt(false);
+    }
+  }
+
+  function handleWebhookChange(projectId: string, url: string) {
+    setWebhooks((current) =>
+      current.map((entry) =>
+        entry.projectId === projectId ? { ...entry, url } : entry
+      )
+    );
+  }
+
+  async function handleSaveWebhook(projectId: string) {
+    const entry = webhooks.find((w) => w.projectId === projectId);
+    if (!entry) return;
+
+    setWebhookMessage(null);
+    setWebhookError(null);
+    setSavingWebhookId(projectId);
+
+    try {
+      const response = await fetch("/api/settings/webhooks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectId, url: entry.url.trim() }),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setWebhookError(
+          payload?.error ??
+            "Failed to save webhook URL. Check the error details and retry."
+        );
+        return;
+      }
+
+      setWebhookMessage(
+        entry.url.trim()
+          ? `Webhook saved for ${entry.projectName}.`
+          : `Webhook cleared for ${entry.projectName}.`
+      );
+    } catch {
+      setWebhookError(
+        "Failed to save webhook URL. Check your connection and retry."
+      );
+    } finally {
+      setSavingWebhookId(null);
     }
   }
 
@@ -218,6 +286,60 @@ export default function SettingsPage() {
 
         {gitHubMessage && <p className="text-sm text-muted-foreground">{gitHubMessage}</p>}
         {gitHubError && <p className="text-sm text-destructive">{gitHubError}</p>}
+      </section>
+
+      <section className="space-y-4 rounded-md border border-border p-4">
+        <div>
+          <h2 className="text-lg font-semibold">Webhooks</h2>
+          <p className="text-sm text-muted-foreground">
+            Post a JSON notification when an agent session finishes or a release
+            is created. Works with ntfy.sh, Discord and Slack-compatible
+            endpoints. Leave a field empty to disable it.
+          </p>
+        </div>
+
+        {webhooks.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            No projects yet. Create a project to configure a webhook.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            {webhooks.map((entry) => (
+              <div key={entry.projectId} className="space-y-2">
+                <label
+                  htmlFor={`webhook-${entry.projectId}`}
+                  className="block text-sm font-medium"
+                >
+                  {entry.projectName}
+                </label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id={`webhook-${entry.projectId}`}
+                    type="url"
+                    value={entry.url}
+                    onChange={(e) =>
+                      handleWebhookChange(entry.projectId, e.target.value)
+                    }
+                    placeholder="https://ntfy.sh/my-topic"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => handleSaveWebhook(entry.projectId)}
+                    disabled={savingWebhookId === entry.projectId}
+                  >
+                    {savingWebhookId === entry.projectId ? "Saving..." : "Save"}
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {webhookMessage && (
+          <p className="text-sm text-muted-foreground">{webhookMessage}</p>
+        )}
+        {webhookError && <p className="text-sm text-destructive">{webhookError}</p>}
       </section>
     </div>
   );

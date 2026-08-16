@@ -19,7 +19,7 @@ import { useEpicMutations } from "@/hooks/useEpicMutations";
 import { AgentActionsBar } from "@/components/shared/AgentActionsBar";
 import { AgentDispatchDialog } from "@/components/shared/AgentDispatchDialog";
 import { TicketTypeBadge } from "@/components/shared/TicketTypeBadge";
-import { CommentThread } from "@/components/story/CommentThread";
+import { EpicActivityFeed } from "./epic-detail/EpicActivityFeed";
 import { PRIORITY_LABELS, KANBAN_COLUMNS, COLUMN_LABELS } from "@/lib/types/kanban";
 import { useEpicPr } from "@/hooks/useEpicPr";
 import { Wrench, FileCode } from "lucide-react";
@@ -92,6 +92,8 @@ export function EpicDetail({
   const {
     ahead,
     behind,
+    lastFetchedAt,
+    lastFetchError,
     loading: gitStatusLoading,
     error: gitStatusError,
     refresh: refreshGitStatus,
@@ -339,6 +341,8 @@ export function EpicDetail({
                 behind={behind}
                 gitStatusLoading={gitStatusLoading}
                 gitStatusError={gitStatusError}
+                lastFetchedAt={lastFetchedAt}
+                lastFetchError={lastFetchError}
                 onRefreshGitStatus={refreshGitStatus}
                 onPush={pushToRemote}
                 pushing={pushing}
@@ -410,10 +414,11 @@ export function EpicDetail({
               {/* Activity Tab */}
               <TabsContent value="activity" className="mt-4">
                 <div className="min-h-[200px]">
-                  <CommentThread
+                  <EpicActivityFeed
                     projectId={projectId}
+                    epicId={epicId}
                     comments={comments}
-                    loading={commentsLoading}
+                    commentsLoading={commentsLoading}
                     onAddComment={addComment}
                     onSendToDev={
                       epic && ["backlog", "todo", "in_progress", "review"].includes(epic.status)

@@ -32,6 +32,74 @@ describe("useGitStatus", () => {
     );
   });
 
+  it("exposes the server's lastFetchedAt / lastFetchError", async () => {
+    const fetchedAt = 1_800_000_000_000;
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          data: {
+            ahead: 0,
+            behind: 4,
+            lastFetchedAt: fetchedAt,
+            lastFetchError: null,
+          },
+        }),
+    });
+
+    const { result } = renderHook(() => useGitStatus("proj-1", "main", true));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.lastFetchedAt).toBe(fetchedAt);
+    expect(result.current.lastFetchError).toBeNull();
+  });
+
+  it("surfaces lastFetchError while still reporting counters", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          data: {
+            ahead: 1,
+            behind: 0,
+            lastFetchedAt: null,
+            lastFetchError: "network unreachable",
+          },
+        }),
+    });
+
+    const { result } = renderHook(() => useGitStatus("proj-1", "main", true));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.ahead).toBe(1);
+    expect(result.current.lastFetchedAt).toBeNull();
+    expect(result.current.lastFetchError).toBe("network unreachable");
+    // The implicit fetch failing is NOT a status error — the panel stays usable.
+    expect(result.current.error).toBeNull();
+  });
+
+  it("defaults lastFetchedAt to null when the API omits it", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ data: { ahead: 0, behind: 0 } }),
+    });
+
+    const { result } = renderHook(() => useGitStatus("proj-1", "main", true));
+
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+    });
+
+    expect(result.current.lastFetchedAt).toBeNull();
+    expect(result.current.lastFetchError).toBeNull();
+  });
+
   it("returns zeros when no remote tracking branch exists", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,

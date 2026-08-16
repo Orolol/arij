@@ -7,7 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
 import { SessionPicker } from "@/components/shared/SessionPicker";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useNamedAgentsList } from "@/hooks/useNamedAgentsList";
+import { timeAgo } from "@/lib/utils/format-date";
 import { Loader2, ArrowDownToLine, ArrowUpToLine, RefreshCw } from "lucide-react";
 
 interface Toast {
@@ -23,6 +29,8 @@ interface StatusResponse {
     ahead: number;
     behind: number;
     hasRemoteBranch: boolean;
+    lastFetchedAt?: number | null;
+    lastFetchError?: string | null;
   };
   error?: string;
 }
@@ -41,6 +49,8 @@ export default function GitSyncPage() {
   const [ahead, setAhead] = useState(0);
   const [behind, setBehind] = useState(0);
   const [hasRemoteBranch, setHasRemoteBranch] = useState(true);
+  const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
+  const [lastFetchError, setLastFetchError] = useState<string | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(true);
   const [pulling, setPulling] = useState(false);
   const [pushing, setPushing] = useState(false);
@@ -86,6 +96,8 @@ export default function GitSyncPage() {
       setAhead(json.data.ahead);
       setBehind(json.data.behind);
       setHasRemoteBranch(json.data.hasRemoteBranch);
+      setLastFetchedAt(json.data.lastFetchedAt ?? null);
+      setLastFetchError(json.data.lastFetchError ?? null);
     } catch {
       setError("Failed to fetch git status");
     } finally {
@@ -207,6 +219,26 @@ export default function GitSyncPage() {
           <span>Ahead: <b>{ahead}</b></span>
           <span>Behind: <b>{behind}</b></span>
           <span>Remote branch: <b>{hasRemoteBranch ? "yes" : "no"}</b></span>
+          {(lastFetchedAt !== null || lastFetchError) && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span
+                  className={
+                    lastFetchError ? "text-amber-500" : "text-muted-foreground"
+                  }
+                >
+                  {lastFetchedAt !== null
+                    ? `Synced ${timeAgo(new Date(lastFetchedAt).toISOString())}`
+                    : "Never synced"}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                {lastFetchError
+                  ? `Could not fetch from remote: ${lastFetchError}`
+                  : "Last successful fetch from the remote"}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
 
         <label className="flex items-center gap-2 text-sm">

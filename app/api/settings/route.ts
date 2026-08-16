@@ -32,6 +32,17 @@ export async function GET() {
       continue;
     }
 
+    // Webhook URLs are capability credentials (Slack/Discord incoming
+    // webhooks grant post access) — mask them like the PAT; the dedicated
+    // /api/settings/webhooks route serves the editing UI.
+    if (row.key.startsWith("webhook_url:")) {
+      const parsed = parseValue(row.value);
+      data[row.key] = {
+        hasUrl: typeof parsed === "string" && parsed.trim().length > 0,
+      };
+      continue;
+    }
+
     data[row.key] = parseValue(row.value);
   }
 
