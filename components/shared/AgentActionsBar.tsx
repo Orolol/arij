@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { MentionTextarea } from "@/components/documents/MentionTextarea";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,22 @@ import {
 } from "lucide-react";
 import { AgentDispatchDialog } from "@/components/shared/AgentDispatchDialog";
 import { ReviewTypesPicker } from "@/components/shared/ReviewTypesPicker";
+import {
+  PROVIDER_LABELS,
+  REVIEW_TYPE_TO_AGENT_TYPE,
+  isAgentProvider,
+  type BuiltinReviewType,
+} from "@/lib/agent-config/constants";
+
+interface ReviewResolutionPreview {
+  provider: string;
+  segregated: boolean;
+  builderProvider: string | null;
+}
+
+function providerLabel(provider: string): string {
+  return isAgentProvider(provider) ? PROVIDER_LABELS[provider] : provider;
+}
 
 interface EpicItem {
   id: string;
@@ -96,6 +112,8 @@ export function AgentActionsBar({
   const [approving, setApproving] = useState(false);
   const [resumeSessionId, setResumeSessionId] = useState<string | undefined>();
   const [reviewResumeSessionId, setReviewResumeSessionId] = useState<string | undefined>();
+  const [reviewResolution, setReviewResolution] =
+    useState<ReviewResolutionPreview | null>(null);
 
   const config = TARGET_CONFIG[target.kind];
   const item = target.kind === "epic" ? target.epic : target.story;
@@ -103,6 +121,54 @@ export function AgentActionsBar({
   // sessions scoped to the story (and its parent epic when known).
   const sessionEpicId = target.kind === "epic" ? target.epic.id : target.story.epicId;
   const sessionUserStoryId = target.kind === "epic" ? undefined : target.story.id;
+
+  // Preview which provider a review dispatch would resolve to (surfaces the
+  // "Reviewer must differ from builder" redirect in the dialog).
+  const firstReviewType = Array.from(reviewTypes)[0];
+  useEffect(() => {
+    if (!reviewOpen || !firstReviewType) {
+      setReviewResolution(null);
+      return;
+    }
+    const agentType =
+      REVIEW_TYPE_TO_AGENT_TYPE[firstReviewType as BuiltinReviewType] ??
+      "review_feature";
+    const searchParams = new URLSearchParams({ agentType });
+    if (sessionUserStoryId) searchParams.set("storyId", sessionUserStoryId);
+    if (sessionEpicId) searchParams.set("epicId", sessionEpicId);
+    if (reviewAgentId) searchParams.set("namedAgentId", reviewAgentId);
+
+    let cancelled = false;
+    try {
+      fetch(`/api/projects/${projectId}/review-resolution?${searchParams}`)
+        .then((r) => r.json())
+        .then((json) => {
+          if (!cancelled && json?.data) {
+            setReviewResolution(json.data as ReviewResolutionPreview);
+          }
+        })
+        .catch(() => {
+          // preview is best-effort — dispatch still works without it
+        });
+    } catch {
+      // ignore (no fetch in some test environments)
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    reviewOpen,
+    firstReviewType,
+    reviewAgentId,
+    projectId,
+    sessionEpicId,
+    sessionUserStoryId,
+  ]);
+
+  const segregationNotice =
+    reviewResolution?.segregated && reviewResolution.builderProvider
+      ? `Review by ${providerLabel(reviewResolution.provider)} (builder was ${providerLabel(reviewResolution.builderProvider)})`
+      : undefined;
 
   const status = item.status;
   const canSendToDev = config.sendToDevStatuses.includes(status);
@@ -311,6 +377,7 @@ export function AgentActionsBar({
           selectedSessionId: reviewResumeSessionId,
           onSelect: setReviewResumeSessionId,
         }}
+        notice={segregationNotice}
         extraContent={
           <ReviewTypesPicker selected={reviewTypes} onToggle={toggleReviewType} />
         }

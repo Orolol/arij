@@ -23,7 +23,7 @@ import fs from "fs";
 import path from "path";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { REVIEW_TYPE_TO_AGENT_TYPE } from "@/lib/agent-config/constants";
-import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { resolveAgentForDispatch } from "@/lib/agent-config/agent-resolution";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
@@ -174,6 +174,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
 
   const sessionsCreated: string[] = [];
+  const resolutions: Array<{
+    sessionId: string;
+    reviewType: ReviewType;
+    provider: string;
+    segregated: boolean;
+    builderProvider: string | null;
+  }> = [];
 
   for (const [idx, reviewType] of reviewTypes.entries()) {
     const reviewSystemPrompt = await resolveAgentPrompt(
@@ -204,10 +211,11 @@ export async function POST(request: NextRequest, { params }: Params) {
       throw error;
     }
 
-    const resolvedAgent = resolveAgentByNamedId(
+    const resolvedAgent = await resolveAgentForDispatch(
       REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
       projectId,
-      namedAgentId
+      namedAgentId,
+      { purpose: "review", projectId, epicId }
     );
 
     const sessionId = createId();
@@ -362,12 +370,20 @@ export async function POST(request: NextRequest, { params }: Params) {
     })(sessionId, label);
 
     sessionsCreated.push(sessionId);
+    resolutions.push({
+      sessionId,
+      reviewType,
+      provider: resolvedAgent.provider,
+      segregated: !!resolvedAgent.segregated,
+      builderProvider: resolvedAgent.builderProvider ?? null,
+    });
   }
 
   return NextResponse.json({
     data: {
       sessions: sessionsCreated,
       count: sessionsCreated.length,
+      resolutions,
     },
   });
 }

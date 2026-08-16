@@ -277,6 +277,27 @@ export interface ResolvedAgent {
   model?: string;
   name?: string;
   namedAgentId?: string | null;
+  /**
+   * True when review-provider segregation redirected the resolution away
+   * from the provider that built the target.
+   */
+  segregated?: boolean;
+  /**
+   * Provider of the target's last successful build. Present whenever
+   * segregation was evaluated (even when no redirect happened).
+   */
+  builderProvider?: AgentProvider;
+}
+
+/**
+ * Dispatch context for {@link resolveAgentForDispatch}. Only review
+ * dispatch routes pass this; build routes are unaffected.
+ */
+export interface AgentResolutionContext {
+  purpose: "review";
+  projectId: string;
+  epicId?: string;
+  storyId?: string;
 }
 
 /**
@@ -380,6 +401,95 @@ export function resolveAgentByNamedId(
 
   // Fall through to standard resolution (no provider override)
   return resolveAgent(agentType, projectId);
+}
+
+/**
+ * Dispatch-time agent resolution with optional purpose context.
+ *
+ * Precedence (in order):
+ *   1. An explicitly picked named agent ALWAYS wins — review-provider
+ *      segregation never overrides the user's explicit choice.
+ *   2. Standard default resolution (project → global → builtin chain).
+ *   3. When `context.purpose === 'review'`, the global
+ *      'review_provider_segregation' setting is enabled, and the default
+ *      resolution lands on the same provider that produced the target's
+ *      last successful build (agentType build/ticket_build), the provider
+ *      is redirected to the first available alternative in stable
+ *      PROVIDER_OPTIONS order. When no alternative CLI is installed, the
+ *      default resolution is returned unchanged.
+ *
+ * The result carries `segregated: true` plus `builderProvider` when a
+ * redirect happened so routes/UI can surface the choice.
+ */
+export async function resolveAgentForDispatch(
+  agentType: AgentType,
+  projectId?: string,
+  namedAgentId?: string | null,
+  context?: AgentResolutionContext
+): Promise<ResolvedAgent> {
+  // 1. Explicit named-agent override — never segregated.
+  if (namedAgentId) {
+    const agent = db
+      .select()
+      .from(namedAgents)
+      .where(eq(namedAgents.id, namedAgentId))
+      .get();
+
+    if (agent) {
+      return {
+        provider: normalizeProvider(agent.provider),
+        model: agent.model,
+        name: agent.name,
+        namedAgentId: agent.id,
+      };
+    }
+  }
+
+  // 2. Default resolution chain.
+  const base = resolveAgent(agentType, projectId);
+
+  if (!context || context.purpose !== "review") {
+    return base;
+  }
+
+  // 3. Review-provider segregation.
+  const {
+    isReviewProviderSegregationEnabled,
+    findLastSuccessfulBuildProvider,
+    pickAlternativeReviewProvider,
+  } = await import("./review-segregation");
+
+  if (!isReviewProviderSegregationEnabled()) {
+    return base;
+  }
+
+  const builderProvider = findLastSuccessfulBuildProvider({
+    projectId: context.projectId,
+    epicId: context.epicId,
+    storyId: context.storyId,
+  });
+
+  if (!builderProvider) {
+    return base;
+  }
+
+  if (base.provider !== builderProvider) {
+    // Default resolution already differs from the builder — no redirect.
+    return { ...base, builderProvider };
+  }
+
+  const alternative = await pickAlternativeReviewProvider(builderProvider);
+  if (!alternative) {
+    // No alternative CLI installed — fall back to the default resolution.
+    return { ...base, builderProvider };
+  }
+
+  return {
+    provider: alternative,
+    namedAgentId: null,
+    segregated: true,
+    builderProvider,
+  };
 }
 
 function resolveFromRow(row: {

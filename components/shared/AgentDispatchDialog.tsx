@@ -37,6 +37,11 @@ interface AgentDispatchDialogProps {
     selectedSessionId: string | undefined;
     onSelect: (sessionId: string | undefined) => void;
   };
+  /**
+   * Small muted note under the pickers — e.g. the review-provider
+   * segregation notice ("Review by Gemini CLI (builder was Claude Code)").
+   */
+  notice?: ReactNode;
   /** Extra body content rendered between the pickers and the footer. */
   extraContent?: ReactNode;
   confirmLabel: ReactNode;
@@ -63,6 +68,7 @@ export function AgentDispatchDialog({
   projectId,
   agentProps,
   sessionPicker,
+  notice,
   extraContent,
   confirmLabel,
   confirmIcon,
@@ -91,6 +97,14 @@ export function AgentDispatchDialog({
         </div>
         {sessionPicker && (
           <SessionPicker projectId={projectId} {...sessionPicker} />
+        )}
+        {notice != null && (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="dispatch-notice"
+          >
+            {notice}
+          </p>
         )}
         {extraContent}
         <DialogFooter>

@@ -179,6 +179,7 @@ vi.mock("@/lib/agent-config/prompts", () => ({
 vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgent: vi.fn(() => ({ provider: "claude-code", namedAgentId: null })),
   resolveAgentByNamedId: vi.fn(() => ({ provider: "claude-code", namedAgentId: null })),
+  resolveAgentForDispatch: vi.fn(async () => ({ provider: "claude-code", namedAgentId: null })),
 }));
 
 vi.mock("@/lib/agent-config/constants", () => ({

@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useAgentProviders, useNamedAgents } from "@/hooks/useAgentConfig";
 import {
   AGENT_TYPES,
@@ -11,7 +12,9 @@ import {
   type AgentProvider,
 } from "@/lib/agent-config/constants";
 import { useProvidersAvailable } from "@/hooks/useProvidersAvailable";
+import { REVIEW_PROVIDER_SEGREGATION_SETTING_KEY } from "@/lib/agent-config/review-segregation-constants";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
   SelectContent,
@@ -47,6 +50,45 @@ export function ProviderDefaultsTab({
   const { data, loading, updateProvider } = useAgentProviders(scope, projectId);
   const { data: namedAgents } = useNamedAgents();
   const { providers: providerAvailability } = useProvidersAvailable();
+  // null = not loaded yet
+  const [segregation, setSegregation] = useState<boolean | null>(null);
+  const [savingSegregation, setSavingSegregation] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/settings")
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled) return;
+        const value = json?.data?.[REVIEW_PROVIDER_SEGREGATION_SETTING_KEY];
+        setSegregation(value === true || value === "true");
+      })
+      .catch(() => {
+        if (!cancelled) setSegregation(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function toggleSegregation(next: boolean) {
+    const previous = segregation;
+    setSegregation(next);
+    setSavingSegregation(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          [REVIEW_PROVIDER_SEGREGATION_SETTING_KEY]: next ? "true" : "false",
+        }),
+      });
+      if (!res.ok) setSegregation(previous);
+    } catch {
+      setSegregation(previous);
+    }
+    setSavingSegregation(false);
+  }
 
   if (loading) {
     return (
@@ -61,6 +103,27 @@ export function ProviderDefaultsTab({
   return (
     <ScrollArea className="h-full">
       <div className="space-y-2 p-1">
+        <div className="flex items-start gap-3 px-4 py-3 rounded-lg border border-border">
+          <Checkbox
+            id="review-provider-segregation"
+            checked={segregation === true}
+            disabled={segregation === null || savingSegregation}
+            onCheckedChange={(checked) => toggleSegregation(checked === true)}
+          />
+          <div className="space-y-1">
+            <label
+              htmlFor="review-provider-segregation"
+              className="text-sm font-medium leading-none cursor-pointer"
+            >
+              Reviewer must differ from builder
+            </label>
+            <p className="text-xs text-muted-foreground">
+              When enabled, review agents avoid the provider that built the
+              ticket, when another CLI is available. An explicitly picked named
+              agent always wins. Applies globally.
+            </p>
+          </div>
+        </div>
         {AGENT_TYPES.map((agentType) => {
           const entry = providerMap.get(agentType);
           const currentProvider = entry?.provider ?? "claude-code";
