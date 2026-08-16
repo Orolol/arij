@@ -84,6 +84,10 @@ export async function exportArjiJson(projectId: string): Promise<void> {
 
 /** Fire-and-forget wrapper — never throws, never blocks the caller. */
 export function tryExportArjiJson(projectId: string): void {
+  // Never export during test runs: a test that reaches this path through the
+  // real db would destructively rewrite the tracked arji.json of THIS repo
+  // from whatever the local dev database happens to contain.
+  if (process.env.VITEST) return;
   exportArjiJson(projectId).catch((err) =>
     console.warn("[sync/export] failed:", err)
   );
