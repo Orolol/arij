@@ -8,6 +8,10 @@ import { Loader2, RefreshCw, FileCode, MessageSquare, GitBranch, AlertTriangle }
 import { Button } from "@/components/ui/button";
 import { FileDiffView } from "./FileDiffView";
 import { ReviewActions } from "./ReviewActions";
+import {
+  UnanchoredFindings,
+  partitionUnanchoredComments,
+} from "./UnanchoredFindings";
 
 interface DiffViewerProps {
   projectId: string;
@@ -39,6 +43,11 @@ export function DiffViewer({
     resolveAll,
     refresh: refreshComments,
   } = useReviewComments(projectId, epicId);
+
+  // Review comments (typically agent-submitted findings) whose file:line has
+  // no matching line in the rendered diff — they must stay visible because
+  // open ones block approval.
+  const unanchoredComments = partitionUnanchoredComments(files, comments);
 
   const totalAdditions = files.reduce(
     (sum, f) => sum + f.hunks.reduce((s, h) => s + h.lines.filter((l) => l.type === "add").length, 0),
@@ -123,6 +132,17 @@ export function DiffViewer({
           <RefreshCw className="h-3 w-3 mr-1" />
           Refresh
         </Button>
+
+        {/* Even without a diff, open findings block approval — keep them visible. */}
+        {unanchoredComments.length > 0 && (
+          <div className="max-w-2xl mx-auto text-left">
+            <UnanchoredFindings
+              comments={unanchoredComments}
+              onUpdateComment={updateComment}
+              onDeleteComment={deleteComment}
+            />
+          </div>
+        )}
       </div>
     );
   }
@@ -172,6 +192,13 @@ export function DiffViewer({
         onResolveAll={resolveAll}
         dispatching={dispatching}
         isRunning={isRunning}
+      />
+
+      {/* Findings anchored outside the visible diff */}
+      <UnanchoredFindings
+        comments={unanchoredComments}
+        onUpdateComment={updateComment}
+        onDeleteComment={deleteComment}
       />
 
       {/* File diffs */}

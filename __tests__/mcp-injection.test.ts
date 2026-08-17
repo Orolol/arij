@@ -1,0 +1,446 @@
+/**
+ * Arij MCP tool-channel injection — argument construction layer.
+ *
+ * Covers the per-provider CLI wiring for the MCP spawn config
+ * (lib/claude/spawn.ts buildClaudeArgs/prepareClaudeSpawn,
+ * lib/providers/codex.ts buildArgs), the 0600 temp-file form of claude's
+ * --mcp-config (which is what keeps the bearer token out of argv and thus out
+ * of /proc/<pid>/cmdline), the token redaction in persisted display commands,
+ * the arijToolsSection prompt block, and the mcp_tools_enabled setting parse
+ * (default ON).
+ *
+ * The process-manager gating matrix + token lifecycle live in
+ * __tests__/mcp-injection-lifecycle.test.ts (they need module resets and a
+ * db chain mock; this file stays pure).
+ */
+import { existsSync, readFileSync, statSync } from "node:fs";
+import { dirname } from "node:path";
+import { describe, it, expect, vi } from "vitest";
+
+const { mockSpawn } = vi.hoisted(() => ({
+  mockSpawn: vi.fn(),
+}));
+
+// child_process is only needed by the spawnClaude display-command test; the
+// codex provider imports execSync at module level but never calls it here.
+vi.mock("child_process", () => {
+  const execSync = vi.fn();
+  return {
+    spawn: mockSpawn,
+    execSync,
+    default: { spawn: mockSpawn, execSync },
+  };
+});
+
+import { buildClaudeArgs, prepareClaudeSpawn, spawnClaude } from "@/lib/claude/spawn";
+import { CodexProvider } from "@/lib/providers/codex";
+import { arijToolsSection } from "@/lib/claude/prompt-sections";
+import {
+  ARIJ_MCP_ALLOWED_TOOL_NAMES,
+  ARIJ_MCP_SERVER_NAME,
+  buildMcpSpawnConfig,
+  cleanupMcpConfigFile,
+  parseMcpToolsEnabledSetting,
+  providerSupportsMcp,
+  writeMcpConfigFile,
+} from "@/lib/claude/mcp-injection";
+import type { McpSpawnConfig, ProviderSpawnOptions } from "@/lib/providers/types";
+
+const TOKEN = "arij-mcp-secret-token-12345";
+
+const sampleMcp: McpSpawnConfig = {
+  serverName: "arij",
+  command: "/usr/bin/node",
+  args: ["/app/bin/arij-mcp.mjs"],
+  env: {
+    ARIJ_BASE_URL: "http://localhost:3000",
+    ARIJ_MCP_TOKEN: TOKEN,
+  },
+  allowedToolNames: [...ARIJ_MCP_ALLOWED_TOOL_NAMES],
+};
+
+const EXPECTED_MCP_CONFIG_JSON = JSON.stringify({
+  mcpServers: {
+    arij: {
+      type: "stdio",
+      command: "/usr/bin/node",
+      args: ["/app/bin/arij-mcp.mjs"],
+      env: {
+        ARIJ_BASE_URL: "http://localhost:3000",
+        ARIJ_MCP_TOKEN: TOKEN,
+      },
+    },
+  },
+});
+
+/** Stand-in path for the pure buildClaudeArgs tests (no file is written). */
+const FAKE_CONFIG_PATH = "/tmp/arij-mcp-fake/mcp-config.json";
+
+function createFakeChild() {
+  return {
+    stdout: { on: vi.fn() },
+    stderr: { on: vi.fn() },
+    on: vi.fn(),
+    kill: vi.fn(),
+    killed: false,
+  };
+}
+
+describe("buildClaudeArgs — MCP config injection", () => {
+  it("stays byte-identical without mcp (no MCP flags leak into plain spawns)", () => {
+    const args = buildClaudeArgs(
+      { mode: "code", prompt: "hello", allowedTools: ["Edit", "Bash"] },
+      "json",
+    );
+    expect(args).toEqual([
+      "--permission-mode",
+      "bypassPermissions",
+      "--output-format",
+      "json",
+      "--print",
+      "-p",
+      "hello",
+      "--allowedTools",
+      "Edit",
+      "Bash",
+    ]);
+  });
+
+  it("appends --mcp-config <file path> + --strict-mcp-config and merges the exact tool names", () => {
+    const args = buildClaudeArgs(
+      {
+        mode: "code",
+        prompt: "hello",
+        allowedTools: ["Edit", "Bash"],
+        mcp: sampleMcp,
+      },
+      "json",
+      FAKE_CONFIG_PATH,
+    );
+
+    expect(args).toEqual([
+      "--permission-mode",
+      "bypassPermissions",
+      "--output-format",
+      "json",
+      "--print",
+      "-p",
+      "hello",
+      "--mcp-config",
+      FAKE_CONFIG_PATH,
+      "--strict-mcp-config",
+      "--allowedTools",
+      "Edit",
+      "Bash",
+      "mcp__arij__get_ticket",
+      "mcp__arij__update_ticket_status",
+      "mcp__arij__post_comment",
+      "mcp__arij__ask_question",
+      "mcp__arij__submit_findings",
+    ]);
+  });
+
+  it("never puts the token in argv — no argument carries it, inline JSON is gone", () => {
+    const args = buildClaudeArgs(
+      { mode: "code", prompt: "hello", mcp: sampleMcp },
+      "json",
+      FAKE_CONFIG_PATH,
+    );
+
+    expect(args.join(" ")).not.toContain(TOKEN);
+    expect(args.some((a) => a.includes("ARIJ_MCP_TOKEN"))).toBe(false);
+    expect(args.some((a) => a.includes("mcpServers"))).toBe(false);
+  });
+
+  it("degrades to a plain spawn when no config path was produced (write failure)", () => {
+    const args = buildClaudeArgs(
+      { mode: "code", prompt: "hello", allowedTools: ["Edit"], mcp: sampleMcp },
+      "json",
+    );
+
+    expect(args).not.toContain("--mcp-config");
+    expect(args).not.toContain("--strict-mcp-config");
+    // no allowlist entries for a server that was never configured
+    expect(args.slice(args.indexOf("--allowedTools") + 1)).toEqual(["Edit"]);
+  });
+
+  it("adds --allowedTools with only the MCP names when no base tools exist (plan mode)", () => {
+    const args = buildClaudeArgs(
+      { mode: "plan", prompt: "p", mcp: sampleMcp },
+      "json",
+      FAKE_CONFIG_PATH,
+    );
+    expect(args).toContain("--strict-mcp-config");
+    const allowedIdx = args.indexOf("--allowedTools");
+    expect(allowedIdx).toBeGreaterThan(-1);
+    expect(args.slice(allowedIdx + 1)).toEqual([...ARIJ_MCP_ALLOWED_TOOL_NAMES]);
+    // plan mode keeps its read-only permission mode
+    expect(args.slice(0, 2)).toEqual(["--permission-mode", "plan"]);
+  });
+
+  it("merges on top of the analyze-mode default toolset", () => {
+    const args = buildClaudeArgs(
+      { mode: "analyze", prompt: "p", mcp: sampleMcp },
+      "json",
+      FAKE_CONFIG_PATH,
+    );
+    const allowedIdx = args.indexOf("--allowedTools");
+    expect(args.slice(allowedIdx + 1)).toEqual([
+      "Read",
+      "Glob",
+      "Grep",
+      "Write",
+      ...ARIJ_MCP_ALLOWED_TOOL_NAMES,
+    ]);
+  });
+});
+
+describe("writeMcpConfigFile / cleanupMcpConfigFile", () => {
+  it("writes the config as a 0600 file whose contents carry the token", () => {
+    const filePath = writeMcpConfigFile(sampleMcp);
+    try {
+      expect(existsSync(filePath)).toBe(true);
+      expect(readFileSync(filePath, "utf-8")).toBe(EXPECTED_MCP_CONFIG_JSON);
+      // owner-only: no group/other bits on the file…
+      expect(statSync(filePath).mode & 0o777).toBe(0o600);
+      // …nor on the temp directory holding it
+      expect(statSync(dirname(filePath)).mode & 0o077).toBe(0);
+    } finally {
+      cleanupMcpConfigFile(filePath);
+    }
+  });
+
+  it("mints a distinct unpredictable path per call", () => {
+    const a = writeMcpConfigFile(sampleMcp);
+    const b = writeMcpConfigFile(sampleMcp);
+    try {
+      expect(a).not.toBe(b);
+    } finally {
+      cleanupMcpConfigFile(a);
+      cleanupMcpConfigFile(b);
+    }
+  });
+
+  it("removes the file and its temp directory, and is idempotent", () => {
+    const filePath = writeMcpConfigFile(sampleMcp);
+    const dir = dirname(filePath);
+
+    cleanupMcpConfigFile(filePath);
+    expect(existsSync(filePath)).toBe(false);
+    expect(existsSync(dir)).toBe(false);
+
+    // second call (and a nullish path) must not throw
+    expect(() => cleanupMcpConfigFile(filePath)).not.toThrow();
+    expect(() => cleanupMcpConfigFile(null)).not.toThrow();
+    expect(() => cleanupMcpConfigFile(undefined)).not.toThrow();
+  });
+});
+
+describe("prepareClaudeSpawn — token lands in the file, never in argv", () => {
+  it("writes the config file and points --mcp-config at it", () => {
+    const { args, mcpConfigPath } = prepareClaudeSpawn(
+      { mode: "code", prompt: "hello", mcp: sampleMcp },
+      "json",
+    );
+
+    try {
+      expect(mcpConfigPath).toBeTruthy();
+      expect(args[args.indexOf("--mcp-config") + 1]).toBe(mcpConfigPath);
+      expect(args.join(" ")).not.toContain(TOKEN);
+
+      const written = JSON.parse(readFileSync(mcpConfigPath!, "utf-8"));
+      expect(written.mcpServers.arij.env.ARIJ_MCP_TOKEN).toBe(TOKEN);
+      expect(written.mcpServers.arij.type).toBe("stdio");
+    } finally {
+      cleanupMcpConfigFile(mcpConfigPath);
+    }
+  });
+
+  it("writes nothing when there is no mcp config", () => {
+    const { args, mcpConfigPath } = prepareClaudeSpawn(
+      { mode: "code", prompt: "hello" },
+      "json",
+    );
+    expect(mcpConfigPath).toBeNull();
+    expect(args).not.toContain("--mcp-config");
+  });
+});
+
+describe("spawnClaude — display command redaction", () => {
+  it("never leaks the bearer token into the persisted cliCommand", () => {
+    mockSpawn.mockReturnValue(createFakeChild());
+
+    const { command, mcpConfigPath } = spawnClaude({
+      mode: "code",
+      prompt: "do the thing",
+      mcp: sampleMcp,
+    });
+
+    try {
+      expect(command).toBeDefined();
+      expect(command).toContain("<mcp-config>");
+      expect(command).toContain("--strict-mcp-config");
+      expect(command).not.toContain(TOKEN);
+
+      // The token lives in the temp file, and the spawned argv points at it.
+      expect(mcpConfigPath).toBeTruthy();
+      expect(readFileSync(mcpConfigPath!, "utf-8")).toContain(TOKEN);
+      const spawnedArgs = mockSpawn.mock.calls[0][1] as string[];
+      expect(spawnedArgs.join(" ")).not.toContain(TOKEN);
+      expect(spawnedArgs[spawnedArgs.indexOf("--mcp-config") + 1]).toBe(
+        mcpConfigPath,
+      );
+    } finally {
+      // the fake child never emits "close", so clean up by hand
+      cleanupMcpConfigFile(mcpConfigPath);
+    }
+  });
+});
+
+describe("CodexProvider.buildArgs — -c mcp_servers overrides", () => {
+  const provider = new CodexProvider();
+
+  function baseOptions(
+    overrides: Partial<ProviderSpawnOptions> = {},
+  ): ProviderSpawnOptions {
+    return {
+      sessionId: "s1",
+      prompt: "PROMPT",
+      cwd: "/work",
+      mode: "code",
+      ...overrides,
+    };
+  }
+
+  const spawnContext = { outputFile: "/tmp/codex-out-test.txt" };
+
+  it("adds the three TOML overrides in the non-resume branch, before the prompt", () => {
+    const args = provider.buildArgs(baseOptions({ mcp: sampleMcp }), spawnContext);
+
+    const expectedOverrides = [
+      "-c",
+      'mcp_servers.arij.command="/usr/bin/node"',
+      "-c",
+      'mcp_servers.arij.args=["/app/bin/arij-mcp.mjs"]',
+      "-c",
+      `mcp_servers.arij.env={ARIJ_BASE_URL="http://localhost:3000",ARIJ_MCP_TOKEN=${JSON.stringify(TOKEN)}}`,
+    ];
+    const start = args.indexOf(expectedOverrides[1]) - 1;
+    expect(start).toBeGreaterThan(-1);
+    expect(args.slice(start, start + 6)).toEqual(expectedOverrides);
+    // prompt stays the last positional argument
+    expect(args[args.length - 1]).toBe("PROMPT");
+  });
+
+  it("adds the same overrides in the resume branch", () => {
+    const args = provider.buildArgs(
+      baseOptions({
+        mcp: sampleMcp,
+        cliSessionId: "cli-123",
+        resumeSession: true,
+      }),
+      spawnContext,
+    );
+
+    expect(args.slice(0, 3)).toEqual(["exec", "resume", "cli-123"]);
+    expect(args).toContain('mcp_servers.arij.command="/usr/bin/node"');
+    expect(args).toContain('mcp_servers.arij.args=["/app/bin/arij-mcp.mjs"]');
+    expect(args).toContain(
+      `mcp_servers.arij.env={ARIJ_BASE_URL="http://localhost:3000",ARIJ_MCP_TOKEN=${JSON.stringify(TOKEN)}}`,
+    );
+    expect(args[args.length - 1]).toBe("PROMPT");
+  });
+
+  it("emits no mcp_servers overrides without mcp", () => {
+    const withoutMcp = provider.buildArgs(baseOptions(), spawnContext);
+    expect(withoutMcp.some((a) => a.startsWith("mcp_servers."))).toBe(false);
+  });
+
+  it("masks the token-bearing env override in the display command only", () => {
+    const args = provider.buildArgs(baseOptions({ mcp: sampleMcp }), spawnContext);
+    const command = provider.buildDisplayCommand(args, "PROMPT");
+
+    expect(command).not.toContain(TOKEN);
+    expect(command).toContain("mcp_servers.arij.env=<redacted>");
+    // command/args overrides carry no secret and stay readable
+    expect(command).toContain('mcp_servers.arij.command="/usr/bin/node"');
+    expect(command).toContain('mcp_servers.arij.args=["/app/bin/arij-mcp.mjs"]');
+  });
+});
+
+describe("arijToolsSection", () => {
+  it("renders the section with the mcp__arij__* instructions", () => {
+    const text = arijToolsSection("build");
+    expect(text.startsWith("## Arij tools\n\n")).toBe(true);
+    expect(text).toContain("mcp__arij__*");
+    expect(text).toContain("ask_question");
+    expect(text).toContain("update_ticket_status");
+    expect(text).not.toContain("submit_findings");
+    expect(text).not.toContain("Overall Verdict");
+  });
+
+  it.each(["review_security", "review_code", "review_compliance", "review_feature"])(
+    "adds the submit_findings + Overall Verdict sentence for %s",
+    (agentType) => {
+      const text = arijToolsSection(agentType);
+      expect(text).toContain("submit_findings");
+      expect(text).toContain("'**Overall Verdict: …**'");
+    },
+  );
+
+  it.each([null, "chat", "merge", "memory_distill"])(
+    "keeps the base section for non-review agent type %s",
+    (agentType) => {
+      const text = arijToolsSection(agentType);
+      expect(text).toContain("mcp__arij__*");
+      expect(text).not.toContain("submit_findings");
+    },
+  );
+});
+
+describe("parseMcpToolsEnabledSetting — default ON", () => {
+  it.each([
+    [JSON.stringify(false), false],
+    ["false", false],
+    ['"false"', false],
+    ["FALSE", false],
+    [false, false],
+    [JSON.stringify(true), true],
+    ["true", true],
+    [true, true],
+    ["garbage", true],
+    ["", true],
+    [null, true],
+    [undefined, true],
+    [42, true],
+  ])("parses %j as %s", (value, expected) => {
+    expect(parseMcpToolsEnabledSetting(value)).toBe(expected);
+  });
+});
+
+describe("providerSupportsMcp — contract verdicts", () => {
+  it.each([
+    ["claude-code", true],
+    ["codex", true],
+    ["gemini-cli", false],
+    ["mistral-vibe", false],
+    ["qwen-code", false],
+    ["opencode", false],
+  ])("%s -> %s", (provider, expected) => {
+    expect(providerSupportsMcp(provider)).toBe(expected);
+  });
+});
+
+describe("buildMcpSpawnConfig", () => {
+  it("targets the app-root shim via the running node binary and carries the token", () => {
+    const config = buildMcpSpawnConfig({ token: TOKEN });
+    expect(config.serverName).toBe(ARIJ_MCP_SERVER_NAME);
+    expect(config.command).toBe(process.execPath);
+    expect(config.args).toHaveLength(1);
+    expect(config.args[0].endsWith("bin/arij-mcp.mjs")).toBe(true);
+    expect(config.args[0].startsWith(process.cwd())).toBe(true);
+    expect(config.env.ARIJ_MCP_TOKEN).toBe(TOKEN);
+    expect(config.env.ARIJ_BASE_URL.length).toBeGreaterThan(0);
+    expect(config.allowedToolNames).toEqual([...ARIJ_MCP_ALLOWED_TOOL_NAMES]);
+  });
+});

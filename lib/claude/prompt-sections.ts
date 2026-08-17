@@ -117,3 +117,37 @@ export function projectContextSections(
   ];
   return parts.filter(Boolean).join("\n");
 }
+
+/**
+ * Instructions for the Arij MCP tool channel (mcp__arij__* tools).
+ *
+ * Deliberately called by NO builder function in prompt-builder.ts: the
+ * section is appended centrally by processManager.start() — and only when
+ * MCP injection is active for that spawn — so prompts stay byte-identical
+ * when the toggle is off, for unsupported providers, and for direct
+ * spawnClaude call sites (generate-spec, import, chat) that never inject.
+ *
+ * Review agents (agentType `review_*`) get an extra sentence pointing at
+ * submit_findings while keeping the prose "**Overall Verdict: …**" line the
+ * review route still parses (the verdict stays prose-driven in v1).
+ */
+export function arijToolsSection(agentType: string | null): string {
+  const base =
+    "You are connected to Arij, the orchestrator that launched this session, " +
+    "through MCP tools named mcp__arij__*. Use them for structured signals " +
+    "instead of prose conventions: get_ticket to re-read current ticket " +
+    "state; post_comment for substantive progress/result notes; " +
+    "update_ticket_status to move the ticket (transitions are validated — " +
+    "review→done requires human approval); ask_question when you are blocked " +
+    "on the user — it reliably holds the ticket and marks the session as " +
+    "awaiting a reply, so prefer it over ending with a question in text.";
+
+  const reviewExtra =
+    agentType && agentType.startsWith("review_")
+      ? " File review findings with submit_findings (file+line anchored; " +
+        "open findings block approval), and still end your final message " +
+        "with the required '**Overall Verdict: …**' line."
+      : "";
+
+  return section("Arij tools", base + reviewExtra);
+}

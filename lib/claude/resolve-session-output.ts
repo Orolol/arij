@@ -11,6 +11,7 @@ import type {
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { wasQuestionAskedViaMcp } from "@/lib/mcp/token-store";
 
 /**
  * Resolves the best available text output for a completed agent session.
@@ -54,9 +55,15 @@ export function resolveSessionOutput(
  * `markSessionTerminal` so the outcome is persisted for ALL agent paths:
  *
  *   - error:          the run failed (missing result counts as failure)
- *   - asked_question: the agent ended by asking the user a question
- *                     (`endedWithQuestion` is detected by the providers via
- *                     `hasAskUserQuestion` over their output streams)
+ *   - asked_question: the agent ended by asking the user a question. Two
+ *                     signals feed this, in precedence order:
+ *                       1. the MCP `ask_question` tool call — an authoritative,
+ *                          structured signal recorded on the session's token
+ *                          record (`wasQuestionAskedViaMcp`), and
+ *                       2. the prose heuristic (`endedWithQuestion`, detected
+ *                          by the providers via `hasAskUserQuestion` over
+ *                          their output streams) — the fallback for sessions
+ *                          without MCP injection.
  *   - answered:       the run produced a textual deliverable, either in the
  *                     final result envelope or streamed via `lastNonEmptyText`
  *   - silent:         success, but no textual deliverable anywhere
@@ -71,6 +78,16 @@ export function classifySessionOutcome(
 ): SessionOutcome {
   if (!result?.success) {
     return "error";
+  }
+
+  // Authoritative structured signal: the agent called the MCP
+  // `mcp__arij__ask_question` tool during this run. Checked after the error
+  // branch (a failed run stays "error" even if it asked first) and before
+  // the prose heuristic (the tool call is verifiable; text detection is a
+  // guess). In-memory storage is sufficient — classification always happens
+  // in-process before markSessionTerminal, and revocation keeps the record.
+  if (wasQuestionAskedViaMcp(sessionId)) {
+    return "asked_question";
   }
 
   if (result.endedWithQuestion) {

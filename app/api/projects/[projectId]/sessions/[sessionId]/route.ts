@@ -9,6 +9,10 @@ import fs from "fs";
 import { extractLastNonEmptyTextFromFile } from "@/lib/agent-sessions/last-text";
 import { listSessionChunks } from "@/lib/agent-sessions/chunks";
 import {
+  collectArijActions,
+  type ArijAction,
+} from "@/lib/agent-sessions/arij-actions";
+import {
   getSessionStatusForApi,
   isSessionLifecycleConflictError,
   isSessionNotFoundError,
@@ -59,6 +63,15 @@ export async function GET(
     chunkStreams = null;
   }
 
+  // Structured board effects of this session (MCP tool calls + dispatch
+  // wrapper artifacts) — best-effort, the detail page must not 500 over it.
+  let arijActions: ArijAction[] = [];
+  try {
+    arijActions = collectArijActions({ sessionId });
+  } catch {
+    arijActions = [];
+  }
+
   const extractedLastNonEmptyText = extractLastNonEmptyTextFromFile(session.logsPath);
   const lastNonEmptyText = extractedLastNonEmptyText || session.lastNonEmptyText || null;
 
@@ -71,6 +84,7 @@ export async function GET(
       logs,
       chunkStreams,
       lastNonEmptyText,
+      arijActions,
     },
   });
 }
