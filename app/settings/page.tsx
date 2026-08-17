@@ -16,6 +16,14 @@ import {
   parsePipelineMaxAttempts,
   parsePipelineMaxFixCycles,
 } from "@/lib/pipeline/constants";
+import {
+  DEFAULT_NIGHT_CIRCUIT_BREAKER,
+  NIGHT_CIRCUIT_BREAKER_RANGE,
+  NIGHT_CIRCUIT_BREAKER_SETTING_KEY,
+  NIGHT_COST_CAP_SETTING_KEY,
+  parseNightCircuitBreaker,
+  parseNightCostCap,
+} from "@/lib/night/constants";
 
 interface GitHubPatSetting {
   hasToken?: boolean;
@@ -58,6 +66,12 @@ export default function SettingsPage() {
   );
   const [savingPipeline, setSavingPipeline] = useState(false);
   const [pipelineMessage, setPipelineMessage] = useState<string | null>(null);
+  // Night-run defaults. Kept as raw strings: an empty cost cap means
+  // "unlimited", which no number state can express.
+  const [nightCircuitBreaker, setNightCircuitBreaker] = useState("");
+  const [nightCostCap, setNightCostCap] = useState("");
+  const [savingNight, setSavingNight] = useState(false);
+  const [nightMessage, setNightMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/settings/webhooks")
@@ -99,6 +113,14 @@ export default function SettingsPage() {
             d.data?.[PIPELINE_MAX_FIX_CYCLES_SETTING_KEY]
           ) ?? DEFAULT_PIPELINE_MAX_FIX_CYCLES
         );
+        // Night defaults: absent keys stay empty, meaning "engine default"
+        // for the breaker and "unlimited" for the cost cap.
+        const breaker = parseNightCircuitBreaker(
+          d.data?.[NIGHT_CIRCUIT_BREAKER_SETTING_KEY]
+        );
+        setNightCircuitBreaker(breaker == null ? "" : String(breaker));
+        const cap = parseNightCostCap(d.data?.[NIGHT_COST_CAP_SETTING_KEY]);
+        setNightCostCap(cap == null ? "" : String(cap));
       })
       .catch(() => {});
   }, []);
@@ -166,6 +188,56 @@ export default function SettingsPage() {
         ? "Fix cycles disabled: blocking findings end the run immediately."
         : `Pipelines now run up to ${next} review → fix cycle${next === 1 ? "" : "s"}.`
     );
+  }
+
+  /**
+   * Saves the two night-run defaults. Empty inputs are stored as null: the
+   * breaker falls back to the engine default, the cost cap to unlimited.
+   */
+  async function handleSaveNightDefaults() {
+    setSavingNight(true);
+    setNightMessage(null);
+
+    const breaker =
+      nightCircuitBreaker.trim() === ""
+        ? null
+        : parseNightCircuitBreaker(nightCircuitBreaker);
+    const cap =
+      nightCostCap.trim() === "" ? null : parseNightCostCap(nightCostCap);
+
+    if (nightCircuitBreaker.trim() !== "" && breaker === null) {
+      setNightMessage("Circuit breaker must be a whole number between 0 and 10.");
+      setSavingNight(false);
+      return;
+    }
+    if (nightCostCap.trim() !== "" && cap === null) {
+      setNightMessage("Cost cap must be a positive dollar amount.");
+      setSavingNight(false);
+      return;
+    }
+
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          [NIGHT_CIRCUIT_BREAKER_SETTING_KEY]: breaker,
+          [NIGHT_COST_CAP_SETTING_KEY]: cap,
+        }),
+      });
+      if (!response.ok) {
+        setNightMessage("Failed to save the night run defaults.");
+        return;
+      }
+      // Reflect what was actually stored (clamped / normalized).
+      setNightCircuitBreaker(breaker == null ? "" : String(breaker));
+      setNightCostCap(cap == null ? "" : String(cap));
+      setNightMessage("Night run defaults saved.");
+    } catch {
+      setNightMessage("Failed to save the night run defaults.");
+    } finally {
+      setSavingNight(false);
+    }
   }
 
   async function handleToggleMcpTools(next: boolean) {
@@ -552,6 +624,87 @@ export default function SettingsPage() {
 
         {pipelineMessage && (
           <p className="text-xs text-muted-foreground">{pipelineMessage}</p>
+        )}
+      </section>
+
+      <section
+        className="space-y-3 rounded-md border border-border p-4"
+        data-testid="night-settings"
+      >
+        <div>
+          <h2 className="text-lg font-semibold">Night Runs</h2>
+          <p className="text-sm text-muted-foreground">
+            Defaults for unattended overnight runs (the &quot;Night run&quot;
+            button on a project board). Each run can override them.
+          </p>
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1">
+            <label
+              htmlFor="night-circuit-breaker-setting"
+              className="block text-sm font-medium"
+            >
+              Circuit breaker
+            </label>
+            <Input
+              id="night-circuit-breaker-setting"
+              data-testid="night-circuit-breaker-setting"
+              type="number"
+              min={NIGHT_CIRCUIT_BREAKER_RANGE.min}
+              max={NIGHT_CIRCUIT_BREAKER_RANGE.max}
+              value={nightCircuitBreaker}
+              disabled={savingNight}
+              placeholder={String(DEFAULT_NIGHT_CIRCUIT_BREAKER)}
+              onChange={(e) => setNightCircuitBreaker(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Abort the run after this many consecutive epic failures (
+              {NIGHT_CIRCUIT_BREAKER_RANGE.min}–{NIGHT_CIRCUIT_BREAKER_RANGE.max};
+              0 disables it, empty keeps the default of{" "}
+              {DEFAULT_NIGHT_CIRCUIT_BREAKER}).
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="night-cost-cap-setting"
+              className="block text-sm font-medium"
+            >
+              Cost cap (USD)
+            </label>
+            <Input
+              id="night-cost-cap-setting"
+              data-testid="night-cost-cap-setting"
+              type="number"
+              min={0}
+              step="0.5"
+              value={nightCostCap}
+              disabled={savingNight}
+              placeholder="Unlimited"
+              onChange={(e) => setNightCostCap(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Stop launching new waves once the run has spent this much. Only
+              Claude-reported costs are counted — other providers are
+              invisible, so the real spend can be higher.
+            </p>
+          </div>
+        </div>
+
+        <Button
+          type="button"
+          onClick={handleSaveNightDefaults}
+          disabled={savingNight}
+          data-testid="night-settings-save"
+        >
+          {savingNight ? "Saving..." : "Save Night Defaults"}
+        </Button>
+
+        {nightMessage && (
+          <p className="text-xs text-muted-foreground" data-testid="night-settings-message">
+            {nightMessage}
+          </p>
         )}
       </section>
 

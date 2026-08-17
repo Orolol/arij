@@ -221,6 +221,7 @@ describe("startPipelineRun", () => {
       deadSessionId: "s-build",
       stage: "build",
       attempts: 1,
+      batchRunId: null,
     });
 
     expect(pipelineRegistry.get(runId)).toMatchObject({

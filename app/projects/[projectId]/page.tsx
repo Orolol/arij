@@ -23,8 +23,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Hammer, Layers, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug, Search, GitMerge, Lock, Bot } from "lucide-react";
+import { Hammer, Layers, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug, Search, GitMerge, Lock, Bot, Moon } from "lucide-react";
 import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
+import { NightRunDialog } from "@/components/night/NightRunDialog";
+import { NightRunSummaryDialog } from "@/components/night/NightRunSummaryDialog";
+import { useNightRuns } from "@/hooks/useNightRuns";
 import { QuickCapture } from "@/components/kanban/QuickCapture";
 import type { KanbanEpicAgentActivity } from "@/lib/types/kanban";
 import { getActiveDetailTicketId, selectOnlyTicket } from "@/lib/kanban/selection";
@@ -55,9 +58,18 @@ export default function KanbanPage() {
   const [batchMerging, setBatchMerging] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [bugDialogOpen, setBugDialogOpen] = useState(false);
+  const [nightDialogOpen, setNightDialogOpen] = useState(false);
+  const [nightSummaryRunId, setNightSummaryRunId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [highlightedActivityId, setHighlightedActivityId] = useState<string | null>(null);
   const { activities, failedSessions } = useAgentPolling(projectId, 3000, refreshTrigger);
+  // Night runs: the summary is normally reached from its notification, but a
+  // run also has to be findable from the board the morning after.
+  const { runs: nightRuns, activeRun: activeNightRun } = useNightRuns(
+    projectId,
+    true,
+    15000
+  );
   const prevSessionIds = useRef<Set<string>>(new Set());
   const panelRef = useRef<UnifiedChatPanelHandle>(null);
 
@@ -218,6 +230,20 @@ export default function KanbanPage() {
     const query = next.toString();
     router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
   }, [batch.setSelectedTicketIds, projectId, router, searchParams]);
+
+  // Deep link: /projects/<id>?nightRun=<runId> opens the morning summary
+  // (used by the "Night run finished" notification), then strips the param.
+  useEffect(() => {
+    const nightRun = searchParams.get("nightRun");
+    if (!nightRun) return;
+
+    setNightSummaryRunId(nightRun);
+
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("nightRun");
+    const query = next.toString();
+    router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
+  }, [projectId, router, searchParams]);
 
   // Reset team mode when selection drops below 2
   useEffect(() => {
@@ -467,6 +493,32 @@ export default function KanbanPage() {
                 <Bug className="h-3 w-3 mr-1" />
                 New Bug
               </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setNightDialogOpen(true)}
+                className="h-7 text-xs"
+                data-testid="night-run-button"
+                title="Run every To Do epic overnight through the autonomous pipeline"
+              >
+                <Moon className="h-3 w-3 mr-1" />
+                Night run
+              </Button>
+              {(activeNightRun ?? nightRuns[0]) && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() =>
+                    setNightSummaryRunId(
+                      (activeNightRun ?? nightRuns[0]).runId
+                    )
+                  }
+                  className="h-7 text-xs text-indigo-400"
+                  data-testid="night-last-run-button"
+                >
+                  {activeNightRun ? "Night run in progress" : "Last night run"}
+                </Button>
+              )}
               <QuickCapture
                 projectId={projectId}
                 onCreated={() => setRefreshTrigger((t) => t + 1)}
@@ -719,6 +771,27 @@ export default function KanbanPage() {
         onOpenChange={setBugDialogOpen}
         onCreated={() => setRefreshTrigger((t) => t + 1)}
         namedAgentId={namedAgentId}
+      />
+
+      <NightRunDialog
+        projectId={projectId}
+        open={nightDialogOpen}
+        onOpenChange={setNightDialogOpen}
+        defaultNamedAgentId={namedAgentId}
+        onStarted={(result) => {
+          addToast("success", result.message);
+          setRefreshTrigger((t) => t + 1);
+        }}
+        onError={(message) => addToast("error", message)}
+      />
+
+      <NightRunSummaryDialog
+        projectId={projectId}
+        runId={nightSummaryRunId}
+        open={nightSummaryRunId !== null}
+        onOpenChange={(open) => {
+          if (!open) setNightSummaryRunId(null);
+        }}
       />
 
     </div>

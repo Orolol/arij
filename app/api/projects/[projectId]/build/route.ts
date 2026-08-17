@@ -59,6 +59,11 @@ import {
 import { dagBatchRegistry } from "@/lib/agents/dag-batch-registry";
 import { logTransition } from "@/lib/workflow/log";
 import { createDagWaveOutcomeNotification } from "@/lib/notifications/create";
+import { listPipelineRunsByProject } from "@/lib/pipeline";
+import { isPipelineRunActive } from "@/lib/pipeline/constants";
+import { NIGHT_RUN_ID_PREFIX } from "@/lib/night/constants";
+import { nightRunRegistry } from "@/lib/night/registry";
+import { startNightRun } from "@/lib/night/run";
 
 /**
  * Batch build options (everything except `epicIds`, which keeps its
@@ -67,12 +72,21 @@ import { createDagWaveOutcomeNotification } from "@/lib/notifications/create";
  *   - "halt" (default): a blocked epic skips its dependents, but independent
  *     branches keep building.
  *   - "stop": abandon all remaining waves after the first blocked wave.
+ *
+ * `pipeline: true` is only legal with mode "dag" and turns the batch into a
+ * NIGHT RUN: every epic runs the full autonomous pipeline, waves settle at
+ * pipeline terminal, and the breaker/cost-cap overrides apply (see
+ * lib/night). The pipeline_enabled setting is deliberately ignored here —
+ * the explicit request flag is the only trigger.
  */
 const batchBuildOptionsSchema = z.object({
   mode: z.enum(["sequential", "parallel", "dag"]).default("parallel"),
   team: z.boolean().default(false),
   namedAgentId: z.string().nullable().default(null),
   failurePolicy: z.enum(["halt", "stop"]).default("halt"),
+  pipeline: z.boolean().default(false),
+  circuitBreaker: z.number().int().min(0).max(10).optional(),
+  costCapUsd: z.number().positive().optional(),
 });
 
 function collectEpicMentionSources(
@@ -107,20 +121,6 @@ export async function POST(
     );
   }
 
-  // The autonomous pipeline is a single-ticket feature in v1: wave-blocking
-  // semantics for paused runs and N concurrent pipelines against the budget
-  // are real design surface batch mode does not need. Rejected for ALL batch
-  // modes; this route never consults the pipeline_enabled setting.
-  if ((body as { pipeline?: unknown } | null)?.pipeline === true) {
-    return NextResponse.json(
-      {
-        error:
-          "Pipeline mode is not available for batch builds in v1 — dispatch tickets individually",
-      },
-      { status: 400 }
-    );
-  }
-
   const parsedOptions = batchBuildOptionsSchema.safeParse(body ?? {});
   if (!parsedOptions.success) {
     return NextResponse.json(
@@ -131,7 +131,25 @@ export async function POST(
       { status: 400 }
     );
   }
-  const { mode, team, namedAgentId, failurePolicy } = parsedOptions.data;
+  const {
+    mode,
+    team,
+    namedAgentId,
+    failurePolicy,
+    pipeline,
+    circuitBreaker,
+    costCapUsd,
+  } = parsedOptions.data;
+
+  // Pipelines compose with the wave engine only: each epic's ticket settles
+  // at PIPELINE terminal, so dependency ordering stays meaningful. The flat
+  // batch modes have no blocking semantics to hang a pipeline on.
+  if (pipeline && mode !== "dag") {
+    return NextResponse.json(
+      { error: "Pipeline batch builds run as dependency waves — use mode 'dag'" },
+      { status: 400 }
+    );
+  }
 
   if (team && mode === "dag") {
     return NextResponse.json(
@@ -432,6 +450,12 @@ export async function POST(
     }
   }
 
+  // Batch/night run tag stamped on every session this request creates
+  // (agent_sessions.batch_run_id). Set by the dag branch (plain batches get
+  // their batchId, night runs their night_ runId); sequential/parallel
+  // dispatches stay untagged.
+  let currentBatchRunId: string | null = null;
+
   // -----------------------------------------------------------------------
   // SOLO MODE — one session per epic (existing behavior). DAG mode reuses
   // this launcher wave by wave; the returned `settled` promise resolves when
@@ -523,6 +547,7 @@ export async function POST(
       agentType: "build",
       namedAgentName: resolvedBuildAgent.name || null,
       model: resolvedBuildAgent.model || null,
+      batchRunId: currentBatchRunId,
       createdAt: now,
     });
 
@@ -698,8 +723,88 @@ export async function POST(
 
       const plan = buildExecutionPlan(projectId, buildableEpicIds);
       const graph = loadProjectGraph(projectId);
-      const batchId = createId();
       const totalWaves = plan.layers.length;
+
+      // -------------------------------------------------------------------
+      // NIGHT SEMANTICS — dag + pipeline. Guards run synchronously between
+      // the plan build and startNightRun (which registers the run before
+      // returning), so the double-POST race window is a single sync block.
+      // Conflicting work is REFUSED, never queued. Plain dag batches get
+      // none of these guards (behavior preserved).
+      // -------------------------------------------------------------------
+      if (pipeline) {
+        if (nightRunRegistry.getActiveByProject(projectId)) {
+          return NextResponse.json(
+            {
+              error: "A night run is already active for this project",
+              code: "NIGHT_RUN_ACTIVE",
+            },
+            { status: 409 }
+          );
+        }
+        if (dagBatchRegistry.listByProject(projectId).length > 0) {
+          return NextResponse.json(
+            {
+              error:
+                "A wave batch build is already running for this project",
+              code: "BATCH_ACTIVE",
+            },
+            { status: 409 }
+          );
+        }
+        const buildableSet = new Set(buildableEpicIds);
+        const activePipeline = listPipelineRunsByProject(projectId).find(
+          (run) => isPipelineRunActive(run.state) && buildableSet.has(run.epicId)
+        );
+        if (activePipeline) {
+          return NextResponse.json(
+            {
+              error:
+                "An autonomous pipeline is already running on an epic in the selection",
+              code: "PIPELINE_ACTIVE_ON_EPIC",
+            },
+            { status: 409 }
+          );
+        }
+
+        const nightRunId = `${NIGHT_RUN_ID_PREFIX}${createId()}`;
+        currentBatchRunId = nightRunId;
+
+        const { firstWaveLaunched, engineDone } = startNightRun({
+          projectId,
+          runId: nightRunId,
+          plan,
+          graph,
+          failurePolicy,
+          namedAgentId,
+          breakerThreshold: circuitBreaker ?? null,
+          costCapUsd: costCapUsd ?? null,
+          launchBuild: async (epicId) => (await launchEpic(epicId)) ?? null,
+        });
+
+        const firstWaveSessions = await Promise.race([
+          firstWaveLaunched,
+          engineDone.then(() => [] as string[]),
+        ]);
+
+        tryExportArjiJson(projectId);
+        return NextResponse.json({
+          data: {
+            sessions: firstWaveSessions,
+            count: firstWaveSessions.length,
+            orchestrationMode: "dag",
+            batchId: nightRunId,
+            waves: totalWaves,
+            totalEpics: buildableEpicIds.length,
+            failurePolicy,
+            pipeline: true,
+          },
+        });
+      }
+
+      const batchId = createId();
+      // Retroactive benefit: plain DAG batches tag their sessions too.
+      currentBatchRunId = batchId;
 
       dagBatchRegistry.start({
         batchId,

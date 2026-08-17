@@ -19,6 +19,12 @@
  * Dispatch goes through the per-project agent scheduler with the normal
  * session lifecycle (queued → running → terminal), like every other
  * batch-style agent.
+ *
+ * Batch attribution: when the source session carries a `batch_run_id` (a DAG
+ * batch or a night run), the distill session inherits it. Otherwise a night
+ * run's auto-distills would spend real money outside its cost cap and go
+ * missing from the morning summary — both of which read `batch_run_id` and
+ * nothing else, so the tag alone wires them up.
  */
 
 import fs from "fs";
@@ -261,6 +267,13 @@ interface SourceSessionContext {
   agentType: string | null;
   outcome: string | null;
   resultSummary: string | null;
+  /**
+   * Batch/night run that owns the source session. Inherited by the distill
+   * session so its cost is counted by the night run's cost cap and by the
+   * morning summary — both query purely on `agent_sessions.batch_run_id`, so
+   * tagging the row is the ENTIRE integration.
+   */
+  batchRunId: string | null;
 }
 
 function loadSourceSessionContext(
@@ -277,6 +290,7 @@ function loadSourceSessionContext(
       outcome: agentSessions.outcome,
       lastNonEmptyText: agentSessions.lastNonEmptyText,
       logsPath: agentSessions.logsPath,
+      batchRunId: agentSessions.batchRunId,
     })
     .from(agentSessions)
     .where(
@@ -327,6 +341,7 @@ function loadSourceSessionContext(
     agentType: session.agentType ?? null,
     outcome: session.outcome ?? null,
     resultSummary,
+    batchRunId: session.batchRunId ?? null,
   };
 }
 
@@ -402,6 +417,11 @@ export async function dispatchMemoryDistillSession(
   // concurrency guards must not treat a background distill as "an agent is
   // already running for this epic". The activity log below still anchors to
   // the source ticket.
+  //
+  // batchRunId IS inherited though: a distill auto-triggered by a night-run
+  // build is work that run caused, so its cost must land inside the run's
+  // cost cap and morning summary instead of escaping both. (No epicId means
+  // the summary counts it in the run total, not against a single epic.)
   createQueuedSession({
     id: sessionId,
     projectId: input.projectId,
@@ -414,6 +434,7 @@ export async function dispatchMemoryDistillSession(
     agentType: "memory_distill",
     namedAgentName: resolvedAgent.name || null,
     model: resolvedAgent.model || null,
+    batchRunId: sourceContext?.batchRunId ?? null,
     createdAt: now,
   });
 

@@ -239,8 +239,9 @@ describe("Kanban Build Toolbar", () => {
       );
     });
 
+    // endsWith, not includes: the page also polls /build/night-runs.
     const call = mockFetch.mock.calls.find(
-      (c: unknown[]) => typeof c[0] === "string" && c[0].includes("/build")
+      (c: unknown[]) => typeof c[0] === "string" && c[0].endsWith("/build")
     );
     expect(call).toBeTruthy();
     const body = JSON.parse(call![1].body);

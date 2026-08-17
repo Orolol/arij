@@ -26,7 +26,8 @@ export const DEFAULT_APP_BASE_URL = "http://localhost:3000";
 export type WebhookEventName =
   | "session.completed"
   | "session.failed"
-  | "release.created";
+  | "release.created"
+  | "night_run.completed";
 
 /** Caller-supplied context. Everything else on the wire is derived here. */
 export interface WebhookEventInput {
@@ -37,6 +38,8 @@ export interface WebhookEventInput {
   sessionId?: string | null;
   durationMs?: number | null;
   error?: string | null;
+  /** Human-readable one-line summary (night runs: the notification title). */
+  summary?: string | null;
   /** App-relative deep-link path; defaults to the project board. */
   path?: string | null;
 }
@@ -52,6 +55,7 @@ export interface WebhookPayload {
   sessionId?: string;
   durationMs?: number;
   error?: string;
+  summary?: string;
 }
 
 /** Settings key holding a project's webhook URL. */
@@ -155,6 +159,7 @@ export function buildWebhookPayload(
     payload.durationMs = event.durationMs;
   }
   if (event.error) payload.error = event.error;
+  if (event.summary) payload.summary = event.summary;
 
   return payload;
 }
