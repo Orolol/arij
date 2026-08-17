@@ -4,6 +4,18 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  DEFAULT_PIPELINE_MAX_ATTEMPTS,
+  DEFAULT_PIPELINE_MAX_FIX_CYCLES,
+  PIPELINE_ENABLED_SETTING_KEY,
+  PIPELINE_MAX_ATTEMPTS_RANGE,
+  PIPELINE_MAX_ATTEMPTS_SETTING_KEY,
+  PIPELINE_MAX_FIX_CYCLES_RANGE,
+  PIPELINE_MAX_FIX_CYCLES_SETTING_KEY,
+  parsePipelineEnabledSetting,
+  parsePipelineMaxAttempts,
+  parsePipelineMaxFixCycles,
+} from "@/lib/pipeline/constants";
 
 interface GitHubPatSetting {
   hasToken?: boolean;
@@ -37,6 +49,15 @@ export default function SettingsPage() {
   const [mcpToolsEnabled, setMcpToolsEnabled] = useState(true);
   const [savingMcpTools, setSavingMcpTools] = useState(false);
   const [mcpToolsMessage, setMcpToolsMessage] = useState<string | null>(null);
+  const [pipelineEnabled, setPipelineEnabled] = useState(false);
+  const [pipelineMaxAttempts, setPipelineMaxAttempts] = useState(
+    DEFAULT_PIPELINE_MAX_ATTEMPTS
+  );
+  const [pipelineMaxFixCycles, setPipelineMaxFixCycles] = useState(
+    DEFAULT_PIPELINE_MAX_FIX_CYCLES
+  );
+  const [savingPipeline, setSavingPipeline] = useState(false);
+  const [pipelineMessage, setPipelineMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/settings/webhooks")
@@ -64,9 +85,88 @@ export default function SettingsPage() {
         // Default ON: only an explicitly-false value disables the MCP tools.
         const mcpTools = d.data?.mcp_tools_enabled;
         setMcpToolsEnabled(!(mcpTools === false || mcpTools === "false"));
+        // Autonomous pipeline: OFF unless explicitly enabled globally.
+        setPipelineEnabled(
+          parsePipelineEnabledSetting(d.data?.[PIPELINE_ENABLED_SETTING_KEY]) ??
+            false
+        );
+        setPipelineMaxAttempts(
+          parsePipelineMaxAttempts(d.data?.[PIPELINE_MAX_ATTEMPTS_SETTING_KEY]) ??
+            DEFAULT_PIPELINE_MAX_ATTEMPTS
+        );
+        setPipelineMaxFixCycles(
+          parsePipelineMaxFixCycles(
+            d.data?.[PIPELINE_MAX_FIX_CYCLES_SETTING_KEY]
+          ) ?? DEFAULT_PIPELINE_MAX_FIX_CYCLES
+        );
       })
       .catch(() => {});
   }, []);
+
+  /** PATCHes one or more pipeline settings, reverting local state on failure. */
+  async function savePipelineSettings(
+    patch: Record<string, unknown>,
+    revert: () => void,
+    successMessage: string
+  ) {
+    setSavingPipeline(true);
+    setPipelineMessage(null);
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patch),
+      });
+      if (!response.ok) {
+        revert();
+        setPipelineMessage("Failed to save the pipeline settings.");
+        return;
+      }
+      setPipelineMessage(successMessage);
+    } catch {
+      revert();
+      setPipelineMessage("Failed to save the pipeline settings.");
+    } finally {
+      setSavingPipeline(false);
+    }
+  }
+
+  async function handleTogglePipeline(next: boolean) {
+    setPipelineEnabled(next);
+    await savePipelineSettings(
+      { [PIPELINE_ENABLED_SETTING_KEY]: next },
+      () => setPipelineEnabled(!next),
+      next
+        ? "Autonomous pipeline enabled by default for new single-ticket builds."
+        : "Autonomous pipeline disabled by default."
+    );
+  }
+
+  async function handleChangeMaxAttempts(raw: string) {
+    const next = parsePipelineMaxAttempts(raw);
+    if (next === null) return;
+    const previous = pipelineMaxAttempts;
+    setPipelineMaxAttempts(next);
+    await savePipelineSettings(
+      { [PIPELINE_MAX_ATTEMPTS_SETTING_KEY]: next },
+      () => setPipelineMaxAttempts(previous),
+      `Each pipeline stage now retries up to ${next} time${next === 1 ? "" : "s"}.`
+    );
+  }
+
+  async function handleChangeMaxFixCycles(raw: string) {
+    const next = parsePipelineMaxFixCycles(raw);
+    if (next === null) return;
+    const previous = pipelineMaxFixCycles;
+    setPipelineMaxFixCycles(next);
+    await savePipelineSettings(
+      { [PIPELINE_MAX_FIX_CYCLES_SETTING_KEY]: next },
+      () => setPipelineMaxFixCycles(previous),
+      next === 0
+        ? "Fix cycles disabled: blocking findings end the run immediately."
+        : `Pipelines now run up to ${next} review → fix cycle${next === 1 ? "" : "s"}.`
+    );
+  }
 
   async function handleToggleMcpTools(next: boolean) {
     setMcpToolsEnabled(next);
@@ -368,6 +468,90 @@ export default function SettingsPage() {
         </label>
         {mcpToolsMessage && (
           <p className="text-xs text-muted-foreground">{mcpToolsMessage}</p>
+        )}
+      </section>
+
+      <section
+        className="space-y-3 rounded-md border border-border p-4"
+        data-testid="pipeline-settings"
+      >
+        <div>
+          <h2 className="text-lg font-semibold">Autonomous Pipeline</h2>
+          <p className="text-sm text-muted-foreground">
+            Chains a code review onto every single-ticket build and dispatches
+            fix agents until the review is clean. The pipeline never approves a
+            ticket — a green run leaves it in Review awaiting your sign-off.
+          </p>
+        </div>
+        <label className="flex items-start gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            data-testid="pipeline-enabled-toggle"
+            checked={pipelineEnabled}
+            disabled={savingPipeline}
+            onChange={(e) => handleTogglePipeline(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Run the pipeline by default</span>
+            <span className="block text-muted-foreground">
+              Pre-checks the &quot;Run full pipeline&quot; box in the Send to Dev
+              dialog. Off by default; each dispatch can still override it.
+            </span>
+          </span>
+        </label>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1">
+            <label
+              htmlFor="pipeline-max-attempts"
+              className="block text-sm font-medium"
+            >
+              Attempts per stage
+            </label>
+            <Input
+              id="pipeline-max-attempts"
+              type="number"
+              min={PIPELINE_MAX_ATTEMPTS_RANGE.min}
+              max={PIPELINE_MAX_ATTEMPTS_RANGE.max}
+              value={pipelineMaxAttempts}
+              disabled={savingPipeline}
+              onChange={(e) => handleChangeMaxAttempts(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              How many times a failed build, fix or review stage is retried
+              before the run gives up ({PIPELINE_MAX_ATTEMPTS_RANGE.min}–
+              {PIPELINE_MAX_ATTEMPTS_RANGE.max}).
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <label
+              htmlFor="pipeline-max-fix-cycles"
+              className="block text-sm font-medium"
+            >
+              Review → fix cycles
+            </label>
+            <Input
+              id="pipeline-max-fix-cycles"
+              type="number"
+              min={PIPELINE_MAX_FIX_CYCLES_RANGE.min}
+              max={PIPELINE_MAX_FIX_CYCLES_RANGE.max}
+              value={pipelineMaxFixCycles}
+              disabled={savingPipeline}
+              onChange={(e) => handleChangeMaxFixCycles(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              How many times blocking findings may send the ticket back to a fix
+              agent ({PIPELINE_MAX_FIX_CYCLES_RANGE.min}–
+              {PIPELINE_MAX_FIX_CYCLES_RANGE.max}; 0 reports findings without
+              fixing them).
+            </p>
+          </div>
+        </div>
+
+        {pipelineMessage && (
+          <p className="text-xs text-muted-foreground">{pipelineMessage}</p>
         )}
       </section>
 

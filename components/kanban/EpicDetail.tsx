@@ -187,8 +187,13 @@ export function EpicDetail({
     refresh();
   }
 
-  async function handleSendToDev(comment?: string, namedAgentId?: string | null, resumeSessionId?: string) {
-    await sendToDev(comment, namedAgentId, resumeSessionId);
+  async function handleSendToDev(
+    comment?: string,
+    namedAgentId?: string | null,
+    resumeSessionId?: string,
+    pipeline?: boolean
+  ) {
+    await sendToDev(comment, namedAgentId, resumeSessionId, pipeline);
     refresh();
   }
 

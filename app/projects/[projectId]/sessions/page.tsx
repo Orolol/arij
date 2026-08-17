@@ -73,6 +73,7 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
   tech_check: "Tech Check",
   release_notes: "Release Notes",
   memory_distill: "Memory Distill",
+  forensic: "Forensic",
 };
 
 const STATUS_CONFIG: Record<

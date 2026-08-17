@@ -72,12 +72,20 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
   );
 
   const sendToDev = useCallback(
-    async (comment?: string, namedAgentId?: string | null, resumeSessionId?: string) => {
+    async (
+      comment?: string,
+      namedAgentId?: string | null,
+      resumeSessionId?: string,
+      pipeline?: boolean
+    ) => {
       if (!targetPath) return;
       setDispatching(true);
       try {
         const body: Record<string, unknown> = { comment, namedAgentId };
         if (resumeSessionId) body.resumeSessionId = resumeSessionId;
+        // Only sent when the caller made an explicit choice — omitting the
+        // field lets the server fall back to the pipeline_enabled setting.
+        if (typeof pipeline === "boolean") body.pipeline = pipeline;
         const data = await requestJson(`${targetPath}/build`, body);
         await pollSessions();
         return data;

@@ -143,6 +143,9 @@ vi.mock("@/lib/db/schema", () => ({
     projectId: "projectId",
     epicId: "epicId",
   },
+  // Read by resolvePipelineEnabled (build routes); get() returns null for
+  // this table, so the pipeline stays OFF in these tests.
+  settings: { _name: "settings", key: "key", value: "value" },
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({ createId: vi.fn(() => "test-id") }));

@@ -79,7 +79,7 @@ Ne pas exposer de bouton Fetch (l'utilisateur d'Arij ne pense pas en plomberie g
 > uniquement) ; les queued orphelines au boot sont annulées, pas ré-adoptées (les closures
 > meurent avec le process) ; voir les messages de commit pour le détail.
 
-## 🚀 Gros paris — MCP livré (feat/mcp-server, 2026-08-17), 3 restants
+## 🚀 Gros paris — MCP + pipeline autonome livrés (2026-08-17), 2 restants (mode nuit, timeline)
 
 ### Arij serveur MCP : le contrat de sortie des agents devient outillé `L`
 (integrations — le pari structurant.) Exposer un serveur MCP local avec update_ticket_status, post_comment, ask_question, submit_findings, injecté dans chaque session spawnée via --mcp-config. Cause racine de la classe de bugs dominante : les agents n'ont aucun canal structuré vers Arij, leur contrat de sortie est une convention de prose espérée dans le prompt. Avec MCP, « l'agent pose une question » devient un appel d'outil vérifiable qui garde le ticket in_progress — le Verdict de livraison (tier M) est le palliatif immédiat, MCP est la solution durable qui le rend presque obsolète. Commencer claude-code + codex ; sécuriser par token de session par agent.
