@@ -1,25 +1,38 @@
 "use client";
 
 import { KANBAN_COLUMNS, COLUMN_LABELS, type KanbanStatus } from "@/lib/types/kanban";
+import { cn } from "@/lib/utils";
 
+/** Loading board: the real column grammar with pulsing card ghosts. */
 export function BoardSkeleton() {
   return (
-    <div className="flex gap-4 h-full p-4">
+    <div className="flex h-full gap-[16px] p-[22px]">
       {KANBAN_COLUMNS.map((status) => (
         <div
           key={status}
-          className="flex flex-col w-72 shrink-0 rounded-lg bg-muted/30"
+          className="flex min-w-[196px] max-w-[280px] flex-1 flex-col gap-[12px]"
         >
-          <div className="px-3 py-2">
-            <h3 className="font-medium text-sm">
+          <div
+            className={cn(
+              "flex items-baseline justify-between border-b pb-[9px]",
+              status === "in_progress" ? "border-agent-border" : "border-border"
+            )}
+          >
+            <span
+              className={cn(
+                "text-[11.5px] uppercase tracking-[.09em]",
+                status === "in_progress" ? "text-agent" : "text-muted-foreground"
+              )}
+            >
               {COLUMN_LABELS[status as KanbanStatus]}
-            </h3>
+            </span>
+            <span className="font-mono text-[11.5px] text-meta">&nbsp;</span>
           </div>
-          <div className="px-2 pb-2 space-y-2">
+          <div className="flex flex-col gap-[12px]">
             {[1, 2].map((i) => (
               <div
                 key={i}
-                className="h-20 rounded-md bg-muted/50 animate-pulse"
+                className="h-[76px] animate-pulse rounded-[11px] border border-border bg-card motion-reduce:animate-none"
               />
             ))}
           </div>

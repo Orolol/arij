@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { ComponentProps } from "react";
 import { EpicDetail } from "@/components/kanban/EpicDetail";
 
@@ -137,9 +138,27 @@ describe("EpicDetail delete flow", () => {
     return { onClose, onDeleted };
   }
 
-  it("shows confirmation dialog with irreversible warning", () => {
+  /**
+   * Delete lives behind the header's overflow menu now — the in-flow danger
+   * zone was removed in the 3a redesign.
+   */
+  async function openDeleteDialog() {
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("epic-overflow-menu"));
+    await waitFor(() => {
+      expect(screen.getByTestId("epic-delete-menu-item")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("epic-delete-menu-item"));
+    await waitFor(() => {
+      expect(
+        screen.getByRole("button", { name: "Confirm Delete" }),
+      ).toBeInTheDocument();
+    });
+  }
+
+  it("shows confirmation dialog with irreversible warning", async () => {
     renderSubject();
-    fireEvent.click(screen.getByRole("button", { name: "Delete Epic" }));
+    await openDeleteDialog();
     expect(screen.getByRole("heading", { name: "Delete Epic" })).toBeInTheDocument();
     expect(screen.getByText("This action cannot be undone.")).toBeInTheDocument();
   });
@@ -151,7 +170,9 @@ describe("EpicDetail delete flow", () => {
   });
 
   it("submits exactly one delete request while in-flight", async () => {
-    let resolveFetch: ((value: unknown) => void) | null = null;
+    // Definite assignment: the executor runs synchronously, but TS cannot see
+    // through the callback — a `| null` union would narrow to `null` below.
+    let resolveFetch!: (value: unknown) => void;
     const fetchPromise = new Promise((resolve) => {
       resolveFetch = resolve;
     });
@@ -168,7 +189,7 @@ describe("EpicDetail delete flow", () => {
     global.fetch = fetchMock as unknown as typeof fetch;
 
     const { onClose, onDeleted } = renderSubject();
-    fireEvent.click(screen.getByRole("button", { name: "Delete Epic" }));
+    await openDeleteDialog();
     const confirmButton = screen.getByRole("button", { name: "Confirm Delete" });
 
     fireEvent.click(confirmButton);
@@ -180,7 +201,7 @@ describe("EpicDetail delete flow", () => {
     expect(deleteCalls).toHaveLength(1);
     expect(confirmButton).toBeDisabled();
 
-    resolveFetch?.({
+    resolveFetch({
       ok: true,
       json: async () => ({ data: { deleted: true } }),
     });
@@ -198,7 +219,7 @@ describe("EpicDetail delete flow", () => {
     }) as unknown as typeof fetch;
 
     const { onClose, onDeleted } = renderSubject();
-    fireEvent.click(screen.getByRole("button", { name: "Delete Epic" }));
+    await openDeleteDialog();
     fireEvent.click(screen.getByRole("button", { name: "Confirm Delete" }));
 
     await waitFor(() => {

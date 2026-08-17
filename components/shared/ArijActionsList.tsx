@@ -21,7 +21,11 @@ export interface ArijActionItem {
   at: string | null;
 }
 
-const KIND_ICONS: Record<ArijActionItem["kind"], LucideIcon> = {
+/**
+ * Icon per action kind. Exported so the ticket panel's "What the agent did"
+ * block renders the same visual vocabulary as this list.
+ */
+export const ARIJ_ACTION_ICONS: Record<ArijActionItem["kind"], LucideIcon> = {
   status_change: ArrowRightLeft,
   comment: MessageSquare,
   question: HelpCircle,
@@ -29,15 +33,27 @@ const KIND_ICONS: Record<ArijActionItem["kind"], LucideIcon> = {
   tool_call: Wrench,
 };
 
-const KIND_COLORS: Record<ArijActionItem["kind"], string> = {
-  status_change: "text-blue-400",
+/**
+ * Token-based color per action kind (no raw hex — the cassette palette drives
+ * these through CSS custom properties).
+ */
+export const ARIJ_ACTION_COLORS: Record<ArijActionItem["kind"], string> = {
+  status_change: "text-agent",
   comment: "text-muted-foreground",
-  question: "text-amber-400",
-  findings: "text-purple-400",
-  tool_call: "text-muted-foreground/70",
+  question: "text-priority-yellow",
+  findings: "text-agent",
+  tool_call: "text-meta",
 };
 
-function formatActionTime(at: string | null): string | null {
+export function arijActionIcon(kind: ArijActionItem["kind"]): LucideIcon {
+  return ARIJ_ACTION_ICONS[kind] ?? Wrench;
+}
+
+export function arijActionColor(kind: ArijActionItem["kind"]): string {
+  return ARIJ_ACTION_COLORS[kind] ?? "text-muted-foreground";
+}
+
+export function formatArijActionTime(at: string | null): string | null {
   if (!at) return null;
   const date = new Date(at);
   if (Number.isNaN(date.getTime())) return null;
@@ -54,30 +70,32 @@ export function ArijActionsList({ actions }: { actions?: ArijActionItem[] | null
   if (!actions || actions.length === 0) return null;
 
   return (
-    <Card className="p-4 mb-6" data-testid="arij-actions">
-      <h3 className="text-sm font-medium mb-3">Arij actions</h3>
+    <Card className="mb-6 rounded-[11px] p-4" data-testid="arij-actions">
+      <h3 className="mb-3 text-[11.5px] uppercase tracking-[.08em] text-meta">
+        Arij actions
+      </h3>
       <ul className="space-y-2">
         {actions.map((action, idx) => {
-          const Icon = KIND_ICONS[action.kind] ?? Wrench;
-          const color = KIND_COLORS[action.kind] ?? "text-muted-foreground";
-          const time = formatActionTime(action.at);
+          const Icon = arijActionIcon(action.kind);
+          const color = arijActionColor(action.kind);
+          const time = formatArijActionTime(action.at);
           return (
             <li
               key={idx}
-              className="flex items-start gap-2 text-sm"
+              className="flex items-start gap-2 text-[13px]"
               data-testid={`arij-action-${action.kind}`}
             >
-              <Icon className={`h-4 w-4 mt-0.5 shrink-0 ${color}`} />
+              <Icon className={`mt-0.5 h-[13px] w-[13px] shrink-0 ${color}`} />
               <div className="min-w-0 flex-1">
                 <span>{action.summary}</span>
                 {action.detail && (
-                  <p className="text-xs text-muted-foreground truncate">
+                  <p className="truncate text-[12px] text-muted-foreground">
                     {action.detail}
                   </p>
                 )}
               </div>
               {time && (
-                <span className="text-xs text-muted-foreground shrink-0">
+                <span className="shrink-0 font-mono text-[11px] text-meta">
                   {time}
                 </span>
               )}

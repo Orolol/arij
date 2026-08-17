@@ -4,6 +4,7 @@ import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { useEffect, useRef, useState, type MouseEvent } from "react";
 import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 import { PriorityBadge } from "@/components/shared/PriorityBadge";
 import { TicketTypeBadge } from "@/components/shared/TicketTypeBadge";
 import {
@@ -20,14 +21,9 @@ import {
 import { formatElapsed } from "@/lib/utils/format-elapsed";
 import {
   GitPullRequest,
-  Hammer,
-  Search,
-  GitMerge,
   Bot,
-  AlertTriangle,
-  MessageCircleQuestion,
-  RotateCcw,
-  type LucideIcon,
+  TriangleAlert,
+  RefreshCw,
 } from "lucide-react";
 import type { FailedSessionInfo } from "@/hooks/useAgentPolling";
 
@@ -88,13 +84,10 @@ export function isDraftEpic(
   return (!epic.description || epic.description.trim() === "") && epic.usCount === 0;
 }
 
-const ACTIVITY_ICON_BY_TYPE: Record<
-  KanbanAgentActionType,
-  { Icon: LucideIcon; label: string }
-> = {
-  build: { Icon: Hammer, label: "Build" },
-  review: { Icon: Search, label: "Review" },
-  merge: { Icon: GitMerge, label: "Merge" },
+const ACTIVITY_LABEL_BY_TYPE: Record<KanbanAgentActionType, string> = {
+  build: "Build",
+  review: "Review",
+  merge: "Merge",
 };
 
 const EMPTY_VIEW: EpicCardView = {};
@@ -146,13 +139,13 @@ export function EpicCard({
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
-    rotate: isOverlay ? "2deg" : undefined,
   };
 
-  const activityConfig = activeAgentActivity
-    ? ACTIVITY_ICON_BY_TYPE[activeAgentActivity.actionType]
+  const activityLabel = activeAgentActivity
+    ? ACTIVITY_LABEL_BY_TYPE[activeAgentActivity.actionType]
     : null;
   const linkedActivityId = activeAgentActivity?.sessionId ?? null;
+  const showFailure = !!failedSession && !activeAgentActivity;
 
   // Elapsed time ticker for active agent
   const [elapsedText, setElapsedText] = useState("");
@@ -201,131 +194,173 @@ export function EpicCard({
         }
         onLinkedAgentHoverChange?.(null);
       }}
-      className={`p-2 gap-0 rounded-md shadow-none cursor-pointer hover:bg-accent/50 transition-all duration-300 motion-reduce:transition-none ${
-        isOverlay ? "shadow-lg" : ""
-      } ${isDragging ? "shadow-md" : ""} ${
-        selected ? "ring-2 ring-primary" : autoIncluded ? "ring-2 ring-blue-400/50" : ""
-      } ${epic.type === "bug" ? "border-l-2 border-l-red-500" : ""} ${
-        isHighlighted ? "ring-2 ring-primary/70 bg-primary/5 motion-reduce:ring-0 motion-reduce:bg-transparent" : ""
-      } ${isDraft ? "border-dashed" : ""}`}
+      data-selected={selected ? "true" : undefined}
+      data-auto-included={autoIncluded ? "true" : undefined}
+      className={cn(
+        "cursor-pointer gap-[9px] rounded-[11px] border border-border bg-card px-[15px] py-[14px]",
+        "shadow-[0_1px_2px_rgba(36,33,29,.04)] transition-all duration-300 motion-reduce:transition-none",
+        "hover:border-muted-foreground/25 hover:shadow-[0_1px_2px_rgba(36,33,29,.09)]",
+        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/40",
+        isDraft && "border-dashed",
+        activeAgentActivity && "gap-[11px] border-agent-border",
+        showFailure && "gap-[11px] border-destructive",
+        // The auto-included dependency reads as agent-added, not user-picked,
+        // so it keeps its dashed teal frame even though the Board also marks
+        // it selected (it ships with the batch).
+        autoIncluded
+          ? "gap-[8px] border-dashed border-agent"
+          : selected
+            ? "gap-[8px] border-primary shadow-[0_0_0_3px] shadow-primary/10"
+            : undefined,
+        isOverlay &&
+          "rotate-[1.5deg] shadow-[0_8px_20px_rgba(58,48,44,.16)]",
+        isHighlighted &&
+          "ring-2 ring-primary/70 bg-primary/5 motion-reduce:ring-0 motion-reduce:bg-transparent"
+      )}
     >
-      <div className="mb-1">
-        <div className="flex items-start gap-2">
-          {activityConfig && (
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    className="relative shrink-0 mt-0.5 inline-flex items-center justify-center rounded-sm bg-yellow-500/10 text-yellow-600 p-0.5"
-                    aria-label={`${activityConfig.label} active: ${activeAgentActivity!.agentName}`}
-                    data-testid={`epic-activity-${epic.id}`}
-                  >
-                    <span className="absolute inset-0 rounded-sm bg-yellow-500/20 animate-pulse motion-reduce:animate-none" />
-                    <activityConfig.Icon className="relative h-3.5 w-3.5" />
+      <h4 className="line-clamp-2 text-[14px] font-medium leading-[1.35] [text-wrap:pretty]">
+        {epic.title}
+      </h4>
+
+      {activityLabel && (
+        <>
+          <TooltipProvider delayDuration={200}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div
+                  className="flex items-center gap-[8px] text-[12px] text-agent"
+                  aria-label={`${activityLabel} active: ${activeAgentActivity!.agentName}`}
+                  data-testid={`epic-activity-${epic.id}`}
+                >
+                  <span className="breathing-dot h-[7px] w-[7px] shrink-0" />
+                  <span className="truncate">
+                    {activityLabel} {"·"}{" "}
+                    {providerLabel(activeAgentActivity!.provider)}
+                    {elapsedText && ` · ${elapsedText}`}
                   </span>
-                </TooltipTrigger>
-                <TooltipContent side="right" className="text-xs">
-                  <div className="flex flex-col gap-0.5">
-                    <span className="font-medium">{activityConfig.label}: {activeAgentActivity!.agentName}</span>
-                    <span className="text-muted-foreground">
-                      {providerLabel(activeAgentActivity!.provider)}
-                      {elapsedText && ` \u00B7 ${elapsedText}`}
-                    </span>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          <div className="flex-1 min-w-0">
-            <span className="text-xs text-muted-foreground font-mono">{epic.readableId || epic.id}</span>
-            <h4 className="text-sm font-medium leading-tight line-clamp-2">{epic.title}</h4>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="right" className="text-xs">
+                <div className="flex flex-col gap-0.5">
+                  <span className="font-medium">
+                    {activityLabel}: {activeAgentActivity!.agentName}
+                  </span>
+                  <span className="text-muted-foreground">
+                    {providerLabel(activeAgentActivity!.provider)}
+                    {elapsedText && ` · ${elapsedText}`}
+                  </span>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <div className="progress-track" aria-hidden="true">
+            <div className="crawl-fill" />
           </div>
+        </>
+      )}
+
+      {awaitingReply && (
+        <div
+          className="flex items-center gap-[7px] text-[12px] text-primary"
+          aria-label="Agent asked a question — awaiting your reply"
+          title="Agent asked a question — awaiting your reply"
+          data-testid={`epic-awaiting-reply-${epic.id}`}
+        >
+          <Bot className="h-[13px] w-[13px] shrink-0" />
+          Awaiting your reply
         </div>
-        {epic.description && (
-          <p className="text-xs text-muted-foreground line-clamp-2 mt-0.5">{epic.description}</p>
-        )}
-        <div className="flex items-center gap-1 flex-wrap mt-1">
-          {isDraft && (
-            <span
-              className="inline-flex items-center rounded-sm border border-dashed border-muted-foreground/40 px-1 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
-              title="Draft — add a description or stories before dispatching"
-              data-testid={`epic-draft-${epic.id}`}
-            >
-              Draft
+      )}
+
+      {showFailure && (
+        <>
+          <div
+            className="flex items-start gap-[7px] text-[12px] text-destructive"
+            aria-label="Agent session failed"
+            title={failedSession!.error}
+            data-testid={`epic-error-${epic.id}`}
+          >
+            <TriangleAlert className="mt-[2px] h-[13px] w-[13px] shrink-0" />
+            <span className="min-w-0 break-words">
+              Session failed {"·"} {failedSession!.error}
             </span>
-          )}
-          {hasUnreadAiUpdate && (
-            <span
-              className="inline-flex items-center justify-center rounded-sm bg-sky-500/15 text-sky-600 p-0.5"
-              aria-label="Unread AI update"
-              title="Unread AI update"
-              data-testid={`epic-unread-ai-${epic.id}`}
+          </div>
+          <div className="flex flex-wrap items-center gap-[8px]">
+            {onRetryBuild && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onRetryBuild();
+                }}
+                className="inline-flex h-[27px] shrink-0 items-center gap-[6px] rounded-[7px] bg-destructive px-[11px] text-[12.5px] text-primary-foreground transition-colors hover:bg-destructive/90 motion-reduce:transition-none"
+                aria-label="Retry failed agent session"
+                data-testid={`epic-retry-${epic.id}`}
+              >
+                <RefreshCw className="h-3 w-3" />
+                Retry
+              </button>
+            )}
+            <a
+              href={`/projects/${epic.projectId}/sessions/${failedSession!.sessionId}`}
+              onClick={(e) => e.stopPropagation()}
+              className="inline-flex h-[27px] shrink-0 items-center rounded-[7px] border border-border px-[11px] text-[12.5px] transition-colors hover:bg-band motion-reduce:transition-none"
+              data-testid={`epic-view-log-${epic.id}`}
             >
-              <Bot className="h-3.5 w-3.5" />
-            </span>
-          )}
-          {awaitingReply && (
-            <span
-              className="inline-flex items-center justify-center rounded-sm bg-amber-500/15 text-amber-600 p-0.5"
-              aria-label="Agent asked a question — awaiting your reply"
-              title="Agent asked a question — awaiting your reply"
-              data-testid={`epic-awaiting-reply-${epic.id}`}
-            >
-              <MessageCircleQuestion className="h-3.5 w-3.5" />
-            </span>
-          )}
-          {failedSession && !activeAgentActivity && (
-            <TooltipProvider delayDuration={200}>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span
-                    className="inline-flex items-center gap-0.5 rounded-sm bg-red-500/15 text-red-500 px-1 py-0.5"
-                    aria-label="Agent session failed"
-                    data-testid={`epic-error-${epic.id}`}
-                  >
-                    <AlertTriangle className="h-3 w-3" />
-                  </span>
-                </TooltipTrigger>
-                <TooltipContent side="bottom" className="text-xs max-w-xs">
-                  <div className="flex flex-col gap-1">
-                    <span className="font-medium text-red-400">Agent failed</span>
-                    <span className="text-muted-foreground break-words">{failedSession.error}</span>
-                  </div>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          )}
-          {failedSession && !activeAgentActivity && onRetryBuild && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onRetryBuild();
-              }}
-              className="inline-flex items-center gap-0.5 rounded-sm bg-red-500/10 hover:bg-red-500/20 text-red-400 hover:text-red-300 px-1.5 py-0.5 text-xs transition-colors"
-              aria-label="Retry failed agent session"
-              data-testid={`epic-retry-${epic.id}`}
-            >
-              <RotateCcw className="h-3 w-3" />
-              Retry
-            </button>
-          )}
-          <PriorityBadge priority={epic.priority} />
-          <TicketTypeBadge type={epic.type} />
+              View log
+            </a>
+          </div>
+        </>
+      )}
+
+      {autoIncluded && (
+        <div
+          className="text-[12px] text-agent"
+          data-testid={`epic-auto-included-${epic.id}`}
+        >
+          Added — required dependency
         </div>
-      </div>
-      <div className="flex items-center justify-between mt-1">
-        {epic.type !== "bug" && (
-          <span className="text-xs text-muted-foreground">
+      )}
+
+      <div
+        className="flex flex-wrap items-center gap-[9px] font-mono text-[11px] text-meta"
+        data-testid={`epic-meta-${epic.id}`}
+      >
+        <span className="font-mono">{epic.readableId || epic.id}</span>
+        <span aria-hidden="true">{"·"}</span>
+        {epic.type === "bug" ? (
+          <TicketTypeBadge type={epic.type} variant="meta" />
+        ) : (
+          <span>
             {epic.usDone}/{epic.usCount} US
           </span>
         )}
+        {isDraft && (
+          <span
+            className="inline-flex items-center rounded-[4px] border border-dashed border-muted-foreground/40 px-[5px] text-[10px] uppercase tracking-wide"
+            title="Draft — add a description or stories before dispatching"
+            data-testid={`epic-draft-${epic.id}`}
+          >
+            Draft
+          </span>
+        )}
+        {hasUnreadAiUpdate && (
+          <span
+            className="inline-flex items-center justify-center text-agent"
+            aria-label="Unread AI update"
+            title="Unread AI update"
+            data-testid={`epic-unread-ai-${epic.id}`}
+          >
+            <Bot className="h-3 w-3" />
+          </span>
+        )}
+        <PriorityBadge priority={epic.priority} className="font-sans" />
         {epic.prNumber && epic.prUrl && (
           <a
             href={epic.prUrl}
             target="_blank"
             rel="noopener noreferrer"
             onClick={(e) => e.stopPropagation()}
-            className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="ml-auto inline-flex items-center gap-[4px] text-muted-foreground transition-colors hover:text-foreground motion-reduce:transition-none"
           >
             <GitPullRequest className="h-3 w-3" />
             <span>#{epic.prNumber}</span>

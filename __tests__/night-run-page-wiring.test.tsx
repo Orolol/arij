@@ -1,12 +1,13 @@
 /**
- * Project board wiring for night runs: the header-bar button (available
- * without any selection), the success toast, and the
- * `?nightRun=<runId>` deep link that opens the morning summary — the same
- * shape as the existing `?ticket=` link.
+ * Project board wiring for night runs. The trigger button itself now lives in
+ * the project chrome (the layout header, Builder A) and reaches this page
+ * through `?night=start` — the same URL mechanism as the existing `?ticket=`
+ * and `?nightRun=` links. What this file owns is the page side of that seam:
+ * the dialog it opens, the toast it raises, and the summary deep link.
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import {
   forwardRef,
   useCallback,
@@ -113,21 +114,37 @@ describe("Project board — night run wiring", () => {
       .mockResolvedValue({ ok: true, json: async () => ({ data: {} }) });
   });
 
-  it("offers the Night run button with nothing selected", async () => {
+  it("keeps the dialog closed until something asks for it", async () => {
     render(<KanbanPage />);
-    expect(await screen.findByTestId("night-run-button")).toBeInTheDocument();
+    expect(await screen.findByTestId("board")).toBeInTheDocument();
     expect(screen.queryByTestId("night-dialog-open")).not.toBeInTheDocument();
   });
 
-  it("opens the confirm dialog on click", async () => {
+  it("opens the confirm dialog from ?night=start and strips the param", async () => {
+    searchParams = new URLSearchParams("night=start");
     render(<KanbanPage />);
-    fireEvent.click(await screen.findByTestId("night-run-button"));
-    expect(screen.getByTestId("night-dialog-open")).toBeInTheDocument();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("night-dialog-open")).toBeInTheDocument()
+    );
+    expect(routerReplace).toHaveBeenCalledWith("/projects/proj1");
+  });
+
+  it("ignores an unrelated night param value", async () => {
+    searchParams = new URLSearchParams("night=maybe");
+    render(<KanbanPage />);
+
+    await screen.findByTestId("board");
+    expect(screen.queryByTestId("night-dialog-open")).not.toBeInTheDocument();
   });
 
   it("toasts the launch message the dialog reports", async () => {
+    searchParams = new URLSearchParams("night=start");
     render(<KanbanPage />);
-    fireEvent.click(await screen.findByTestId("night-run-button"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("night-dialog-open")).toBeInTheDocument()
+    );
 
     act(() => {
       startedHandler?.({ message: "Night run started — wave 1/3, 5 epics" });
@@ -154,68 +171,16 @@ describe("Project board — night run wiring", () => {
 
   it("does not open the summary without the param", async () => {
     render(<KanbanPage />);
-    await screen.findByTestId("night-run-button");
+    await screen.findByTestId("board");
     expect(screen.queryByTestId("night-summary-open")).not.toBeInTheDocument();
   });
 
-  it("offers a shortcut to the latest night run and opens its summary", async () => {
-    global.fetch = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.includes("/build/night-runs")) {
-        return {
-          ok: true,
-          json: async () => ({
-            data: [
-              { runId: "night_last", state: "finished", interrupted: false },
-              { runId: "night_older", state: "finished", interrupted: false },
-            ],
-          }),
-        };
-      }
-      return { ok: true, json: async () => ({ data: {} }) };
-    }) as unknown as typeof fetch;
-
+  it("no longer renders night-run chrome on the board itself", async () => {
     render(<KanbanPage />);
-
-    const shortcut = await screen.findByTestId("night-last-run-button");
-    expect(shortcut).toHaveTextContent("Last night run");
-    fireEvent.click(shortcut);
-
-    expect(screen.getByTestId("night-summary-open")).toHaveTextContent(
-      "night_last"
-    );
-  });
-
-  it("labels the shortcut as in progress while a run is still going", async () => {
-    global.fetch = vi.fn(async (input: string | URL | Request) => {
-      const url = String(input);
-      if (url.includes("/build/night-runs")) {
-        return {
-          ok: true,
-          json: async () => ({
-            data: [
-              { runId: "night_done", state: "finished", interrupted: false },
-              { runId: "night_live", state: "running", interrupted: false },
-            ],
-          }),
-        };
-      }
-      return { ok: true, json: async () => ({ data: {} }) };
-    }) as unknown as typeof fetch;
-
-    render(<KanbanPage />);
-
-    const shortcut = await screen.findByTestId("night-last-run-button");
-    expect(shortcut).toHaveTextContent("Night run in progress");
-    fireEvent.click(shortcut);
-    expect(screen.getByTestId("night-summary-open")).toHaveTextContent(
-      "night_live"
-    );
-  });
-
-  it("hides the shortcut when the project never ran a night", async () => {
-    render(<KanbanPage />);
-    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    await screen.findByTestId("board");
+    // Both affordances moved to the project chrome (header button + cockpit
+    // night cell); the page is reached by URL only.
+    expect(screen.queryByTestId("night-run-button")).not.toBeInTheDocument();
     expect(
       screen.queryByTestId("night-last-run-button")
     ).not.toBeInTheDocument();

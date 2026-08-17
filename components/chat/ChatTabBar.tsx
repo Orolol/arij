@@ -1,5 +1,6 @@
 "use client";
 
+import type { ReactNode } from "react";
 import { Loader2, MessageSquare, Plus, Sparkles, X } from "lucide-react";
 import {
   DropdownMenu,
@@ -26,26 +27,38 @@ interface ChatTabBarProps {
   onSelectTab: (conversationId: string) => void;
   onCloseTab: (conversationId: string) => void;
   onCreateTab: (options: { type: string; label: string }) => void;
+  /** Right-aligned slot (provider / named-agent picker). */
+  trailing?: ReactNode;
 }
 
+/**
+ * Conversation sub-tabs: underlined in the accent color, with the `+` menu
+ * and an optional right-aligned trailing slot on the same row.
+ */
 export function ChatTabBar({
   conversations,
   activeId,
   onSelectTab,
   onCloseTab,
   onCreateTab,
+  trailing,
 }: ChatTabBarProps) {
   return (
     <div
-      className="border-b border-border flex items-center gap-0 overflow-x-auto"
+      className="flex items-center gap-[14px] overflow-x-auto border-b border-border px-[18px] py-[12px]"
       data-testid="chat-tab-bar"
     >
       {conversations.map((conversation) => {
         const isActive = conversation.id === activeId;
+        const fullLabel = resolveLegacyConversationLabel(
+          conversation.type,
+          conversation.label,
+        );
         return (
           <button
             key={conversation.id}
             type="button"
+            title={fullLabel}
             data-testid={`conversation-tab-${conversation.id}`}
             data-agent-type={
               isEpicCreationConversationAgentType(conversation.type)
@@ -54,29 +67,17 @@ export function ChatTabBar({
             }
             onClick={() => onSelectTab(conversation.id)}
             className={cn(
-              "group flex items-center gap-1.5 px-3 py-2 text-xs font-medium whitespace-nowrap border-b-2 transition-colors",
+              "group flex shrink-0 items-center gap-1.5 whitespace-nowrap pb-[6px] text-[13px] transition-colors",
               isActive
-                ? "border-primary text-foreground"
-                : "border-transparent text-muted-foreground hover:text-foreground",
+                ? "font-medium text-foreground shadow-[inset_0_-2px_0_var(--primary)]"
+                : "text-meta hover:text-foreground",
             )}
           >
-            {isEpicCreationConversationAgentType(conversation.type) ? (
-              <Sparkles className="h-3 w-3" />
-            ) : (
-              <MessageSquare className="h-3 w-3" />
-            )}
-            <span>
-              {truncateLabel(
-                resolveLegacyConversationLabel(
-                  conversation.type,
-                  conversation.label,
-                ),
-              )}
-            </span>
+            <span>{truncateLabel(fullLabel)}</span>
             {isLegacyConversationGenerating(conversation.status) && (
               <Loader2
                 data-testid={`active-indicator-${conversation.id}`}
-                className="h-3 w-3 animate-spin text-primary"
+                className="h-3 w-3 animate-spin text-agent"
                 aria-label="Agent active"
               />
             )}
@@ -88,7 +89,7 @@ export function ChatTabBar({
                   event.stopPropagation();
                   onCloseTab(conversation.id);
                 }}
-                className="ml-1 opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity"
+                className="ml-1 opacity-0 transition-opacity group-hover:opacity-100 hover:text-destructive"
               >
                 <X className="h-3 w-3" />
               </span>
@@ -102,10 +103,10 @@ export function ChatTabBar({
           <button
             type="button"
             data-testid="new-conversation-tab"
-            className="flex items-center justify-center w-7 h-7 mx-1 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[6px] text-meta transition-colors hover:bg-band hover:text-foreground"
             title="New conversation"
           >
-            <Plus className="h-3.5 w-3.5" />
+            <Plus className="h-[13px] w-[13px]" />
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
@@ -113,18 +114,20 @@ export function ChatTabBar({
             data-testid="new-tab-brainstorm"
             onClick={() => onCreateTab({ type: "brainstorm", label: "Brainstorm" })}
           >
-            <MessageSquare className="h-4 w-4 mr-2" />
+            <MessageSquare className="mr-2 h-4 w-4" />
             Brainstorm
           </DropdownMenuItem>
           <DropdownMenuItem
             data-testid="new-tab-epic"
             onClick={() => onCreateTab({ type: "epic_creation", label: "New Epic" })}
           >
-            <Sparkles className="h-4 w-4 mr-2" />
+            <Sparkles className="mr-2 h-4 w-4" />
             New Epic
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
+
+      {trailing && <div className="ml-auto shrink-0">{trailing}</div>}
     </div>
   );
 }

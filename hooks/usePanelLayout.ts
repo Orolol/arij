@@ -6,9 +6,13 @@ const DEFAULT_PANEL_RATIO = 0.4;
 const MIN_PANEL_WIDTH = 300;
 const MIN_BOARD_WIDTH = 400;
 const DETAIL_PANEL_MIN_BOARD_WIDTH = 220;
-const DETAIL_PANEL_MIN_WIDTH = 420;
-const DETAIL_PANEL_MAX_WIDTH = 560;
-const DETAIL_PANEL_RATIO = 0.34;
+/**
+ * The shared detail panel is a fixed 440px (design spec). It is a reading
+ * column, not a proportional split: widening it with the viewport only
+ * stretched the same text. It shrinks solely to keep the board usable on a
+ * narrow window (see DETAIL_PANEL_MIN_BOARD_WIDTH).
+ */
+const DETAIL_PANEL_WIDTH = 440;
 export const DIVIDER_WIDTH = 6;
 const MOBILE_BREAKPOINT = 768;
 
@@ -100,13 +104,8 @@ export function usePanelLayout({
   const panelWidthPx = computePanelWidth(panelRatio);
   const detailPanelWidthPx = useMemo(() => {
     const totalWidth = getContainerWidth();
-    const targetWidth = clamp(
-      totalWidth * DETAIL_PANEL_RATIO,
-      DETAIL_PANEL_MIN_WIDTH,
-      DETAIL_PANEL_MAX_WIDTH,
-    );
     const maxWidth = Math.max(160, totalWidth - DETAIL_PANEL_MIN_BOARD_WIDTH);
-    return Math.round(Math.min(targetWidth, maxWidth));
+    return Math.round(Math.min(DETAIL_PANEL_WIDTH, maxWidth));
   }, [getContainerWidth]);
 
   // Persist panelRatio — read on mount

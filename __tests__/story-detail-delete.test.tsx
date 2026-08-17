@@ -104,7 +104,9 @@ describe("Story detail delete flow", () => {
   });
 
   it("submits one delete request and redirects on success", async () => {
-    let resolveFetch: ((value: unknown) => void) | null = null;
+    // Definite assignment: the executor runs synchronously, but TS cannot see
+    // through the callback — a `| null` union would narrow to `null` below.
+    let resolveFetch!: (value: unknown) => void;
     const fetchPromise = new Promise((resolve) => {
       resolveFetch = resolve;
     });
@@ -120,7 +122,7 @@ describe("Story detail delete flow", () => {
     expect(global.fetch).toHaveBeenCalledTimes(1);
     expect(confirmButton).toBeDisabled();
 
-    resolveFetch?.({
+    resolveFetch({
       ok: true,
       json: async () => ({ data: { deleted: true, epicId: "epic-1" } }),
     });

@@ -3,7 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { MentionTextarea } from "@/components/documents/MentionTextarea";
-import { Send, ImagePlus, X, Loader2 } from "lucide-react";
+import { ArrowRight, ImagePlus, X, Loader2 } from "lucide-react";
 
 export interface PendingAttachment {
   id: string;
@@ -116,10 +116,10 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
   const hasContent = value.trim().length > 0 || attachments.length > 0;
 
   return (
-    <div className="p-4 border-t border-border">
+    <div className="border-t border-border px-[18px] py-[14px]">
       {/* Attachment preview strip */}
       {(attachments.length > 0 || uploading) && (
-        <div className="flex gap-2 mb-2 flex-wrap">
+        <div className="mb-2 flex flex-wrap gap-2">
           {attachments.map((att) => (
             <div key={att.id} className="relative group">
               <img
@@ -129,7 +129,7 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
               />
               <button
                 onClick={() => removeAttachment(att.id)}
-                className="absolute -top-1.5 -right-1.5 bg-destructive text-destructive-foreground rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute -top-1.5 -right-1.5 bg-destructive text-background rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                 type="button"
               >
                 <X className="h-3 w-3" />
@@ -144,7 +144,7 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex items-end gap-[10px]">
         <MentionTextarea
           projectId={projectId}
           value={value}
@@ -152,11 +152,11 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
           placeholder={placeholder}
-          rows={3}
-          className="min-h-24 resize-none"
+          rows={2}
+          className="min-h-[54px] resize-none rounded-[8px] text-[13.5px]"
           disabled={disabled}
         />
-        <div className="flex flex-col gap-1 shrink-0">
+        <div className="flex shrink-0 flex-col gap-[6px]">
           <Button
             size="icon"
             variant="outline"
@@ -164,19 +164,22 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
             disabled={disabled || uploading}
             title="Attach image"
             type="button"
+            className="h-[30px] w-[30px] rounded-[8px]"
           >
             {uploading ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
+              <Loader2 className="h-[14px] w-[14px] animate-spin" />
             ) : (
-              <ImagePlus className="h-5 w-5" />
+              <ImagePlus className="h-[14px] w-[14px]" />
             )}
           </Button>
           <Button
             size="icon"
             onClick={handleSubmit}
             disabled={disabled || !hasContent || uploading}
+            aria-label="Send message"
+            className="h-[30px] w-[30px] rounded-[8px] bg-primary"
           >
-            <Send className="h-5 w-5" />
+            <ArrowRight className="h-[14px] w-[14px]" />
           </Button>
         </div>
       </div>

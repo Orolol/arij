@@ -126,14 +126,25 @@ describe("SessionDetailPage", () => {
     });
   });
 
-  it("does not show Cancel button for completed sessions", async () => {
+  it("does not show the Stop button for completed sessions", async () => {
     render(<SessionDetailPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/sess-123/)).toBeInTheDocument();
     });
 
-    expect(screen.queryByText("Cancel")).not.toBeInTheDocument();
+    expect(screen.queryByText("Stop")).not.toBeInTheDocument();
+  });
+
+  it("renders the key/value rows of the session panel", async () => {
+    render(<SessionDetailPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("Started")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Duration")).toBeInTheDocument();
+    expect(screen.getByText("Cost")).toBeInTheDocument();
+    expect(screen.getByText("Tokens")).toBeInTheDocument();
   });
 });
 
@@ -152,11 +163,11 @@ describe("SessionDetailPage - running session", () => {
     });
   });
 
-  it("shows Cancel button for running sessions", async () => {
+  it("shows the Stop button for running sessions", async () => {
     render(<SessionDetailPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Cancel")).toBeInTheDocument();
+      expect(screen.getByText("Stop")).toBeInTheDocument();
     });
   });
 

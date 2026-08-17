@@ -1,17 +1,17 @@
 "use client";
 
 import { useCallback, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { usePolling } from "@/hooks/usePolling";
 import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   StopCircle,
   Download,
   RefreshCw,
-  Clock,
+  GitCompare,
   XCircle,
   Brain,
 } from "lucide-react";
@@ -22,6 +22,7 @@ import {
   type ArijActionItem,
 } from "@/components/shared/ArijActionsList";
 import { formatCostUsd, formatTokens } from "@/lib/utils/format-usage";
+import { cn } from "@/lib/utils";
 
 interface SessionDetail {
   id: string;
@@ -70,6 +71,15 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
   forensic: "Forensic",
 };
 
+/** Token-only colouring for the state pill. */
+const STATUS_PILL: Record<string, string> = {
+  completed: "bg-agent-bg text-agent",
+  failed: "bg-destructive/10 text-destructive",
+  running: "bg-agent-bg text-agent",
+  queued: "bg-priority-yellow/10 text-priority-yellow",
+  cancelled: "bg-band text-meta",
+};
+
 /**
  * Contained scroll pane for monospace output content.
  * Fixed height, no horizontal spillover, preserves whitespace.
@@ -83,9 +93,34 @@ function ScrollPane({
 }) {
   return (
     <div
-      className={`max-h-[500px] overflow-y-auto overflow-x-hidden font-mono text-xs whitespace-pre-wrap break-words ${className}`}
+      className={`max-h-[500px] overflow-y-auto overflow-x-hidden font-mono text-[11.5px] leading-[1.7] whitespace-pre-wrap break-words ${className}`}
     >
       {children}
+    </div>
+  );
+}
+
+/** One key/value line of the detail body. */
+function DetailRow({
+  label,
+  children,
+  last = false,
+}: {
+  label: string;
+  children: React.ReactNode;
+  last?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex items-start justify-between gap-4 border-t border-border-soft py-[11px]",
+        last && "border-b"
+      )}
+    >
+      <span className="shrink-0 text-[12.5px] text-muted-foreground">
+        {label}
+      </span>
+      <div className="min-w-0 text-right text-[13px]">{children}</div>
     </div>
   );
 }
@@ -161,9 +196,7 @@ export default function SessionDetailPage() {
     if (!session?.startedAt) return "-";
     const start = new Date(session.startedAt).getTime();
     const endAt = session.endedAt || session.completedAt;
-    const end = endAt
-      ? new Date(endAt).getTime()
-      : Date.now();
+    const end = endAt ? new Date(endAt).getTime() : Date.now();
     const seconds = Math.floor((end - start) / 1000);
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -175,80 +208,71 @@ export default function SessionDetailPage() {
     return <div className="p-6 text-muted-foreground">Loading...</div>;
   }
 
+  const isRunning = session.status === "running";
+  const providerLabel =
+    session.namedAgentName ||
+    (session.provider
+      ? (PROVIDER_LABELS[session.provider as keyof typeof PROVIDER_LABELS] ??
+        session.provider)
+      : "Agent");
+  const typeLabel = session.agentType
+    ? (AGENT_TYPE_LABELS[session.agentType] ?? session.agentType)
+    : session.mode;
+
   return (
-    <div className="p-6 max-w-4xl">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-xl font-bold">Session #{session.id.slice(0, 8)}</h2>
-          <div className="flex items-center gap-2 mt-1">
-            <Badge
-              className={
-                session.status === "completed"
-                  ? "bg-green-500/10 text-green-500"
-                  : session.status === "failed"
-                    ? "bg-red-500/10 text-red-500"
-                    : session.status === "running"
-                      ? "bg-yellow-500/10 text-yellow-500"
-                      : session.status === "queued"
-                        ? "bg-amber-500/10 text-amber-500"
-                        : ""
-              }
-            >
-              {session.status}
-            </Badge>
-            <Badge variant="outline">{session.mode}</Badge>
-            <SessionOutcomeBadge outcome={session.outcome} />
-            {session.agentType && (
-              <Badge variant="secondary" className="text-[10px]">
-                {AGENT_TYPE_LABELS[session.agentType] || session.agentType}
-              </Badge>
-            )}
-            {session.namedAgentName ? (
-              <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-400/30">
-                {session.namedAgentName}
-              </Badge>
-            ) : session.provider ? (
-              <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                {PROVIDER_LABELS[session.provider as keyof typeof PROVIDER_LABELS] ?? session.provider}
-              </Badge>
-            ) : null}
-            {session.model && (
-              <span className="text-[10px] text-muted-foreground font-mono">
-                {session.model}
-              </span>
-            )}
-            {session.cliSessionId && (
-              <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-400/30">
-                resumable
-              </Badge>
-            )}
-            <span className="text-sm text-muted-foreground flex items-center gap-1">
-              <Clock className="h-3 w-3" />
-              {getDuration()}
-            </span>
-          </div>
-          {session.lastNonEmptyText && (
-            <p className="mt-1 text-xs text-muted-foreground/70 font-mono truncate max-w-lg">
-              {session.lastNonEmptyText}
-            </p>
+    <div className="flex max-w-[900px] flex-col gap-[16px] p-[24px]">
+      {/* Identity line */}
+      <div className="flex flex-wrap items-center gap-[10px]">
+        <span className="font-mono text-[11.5px] text-meta">
+          {session.id.slice(0, 8)}
+        </span>
+        <span
+          className={cn(
+            "inline-flex items-center gap-[7px] rounded-full px-[10px] py-[4px] text-[12px]",
+            STATUS_PILL[session.status] ?? "bg-band text-meta"
           )}
-        </div>
-        <div className="flex gap-2">
-          {(session.status === "running" || session.status === "queued") && (
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={handleCancel}
-            >
-              <StopCircle className="h-4 w-4 mr-1" />
-              Cancel
-            </Button>
-          )}
+        >
+          {isRunning && <span className="breathing-dot h-[7px] w-[7px]" />}
+          {session.status}
+        </span>
+        <SessionOutcomeBadge outcome={session.outcome} />
+        <Badge
+          variant="outline"
+          className="rounded-full px-[8px] py-[1px] text-[11px] font-normal text-meta"
+        >
+          {session.mode}
+        </Badge>
+        {session.provider && (
+          <Badge
+            variant="outline"
+            className="rounded-full px-[8px] py-[1px] text-[11px] font-normal text-meta"
+          >
+            {PROVIDER_LABELS[
+              session.provider as keyof typeof PROVIDER_LABELS
+            ] ?? session.provider}
+          </Badge>
+        )}
+        {session.model && (
+          <span className="font-mono text-[11px] text-meta">
+            {session.model}
+          </span>
+        )}
+        {session.cliSessionId && (
+          <Badge
+            variant="outline"
+            className="rounded-full px-[8px] py-[1px] text-[11px] font-normal text-agent border-agent-border"
+          >
+            resumable
+          </Badge>
+        )}
+
+        <div className="ml-auto flex items-center gap-2">
           {session.status === "completed" &&
             session.agentType !== "memory_distill" && (
               <Button
                 variant="outline"
                 size="sm"
+                className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
                 onClick={handleDistill}
                 disabled={distilling}
                 title="Merge this session's learnings into the project memory"
@@ -258,96 +282,108 @@ export default function SessionDetailPage() {
               </Button>
             )}
           {session.logs && (
-            <Button variant="outline" size="sm" onClick={handleExportLogs}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
+              onClick={handleExportLogs}
+            >
               <Download className="h-4 w-4 mr-1" />
               Export Logs
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={loadSession}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
+            onClick={loadSession}
+          >
             <RefreshCw className="h-4 w-4 mr-1" />
             Refresh
           </Button>
         </div>
       </div>
 
-      {distillError && (
-        <p className="mb-4 text-sm text-destructive">{distillError}</p>
+      {/* Title + target */}
+      <div className="flex flex-col gap-[6px]">
+        <h2 className="text-[18px] font-medium leading-[1.3]">
+          {providerLabel} · {typeLabel}
+        </h2>
+        {(session.epicId || session.branchName) && (
+          <span className="font-mono text-[12px] text-muted-foreground">
+            {[session.epicId, session.branchName].filter(Boolean).join(" · ")}
+          </span>
+        )}
+        {session.lastNonEmptyText && (
+          <p className="truncate font-mono text-[11.5px] text-meta">
+            {session.lastNonEmptyText}
+          </p>
+        )}
+      </div>
+
+      {isRunning && (
+        <div className="progress-track">
+          <div className="crawl-fill" />
+        </div>
       )}
 
-      {/* Metadata */}
-      <div className="grid grid-cols-2 gap-4 mb-6">
-        {session.branchName && (
-          <Card className="p-3">
-            <div className="text-xs text-muted-foreground">Branch</div>
-            <div className="text-sm font-mono">{session.branchName}</div>
-          </Card>
-        )}
-        {session.worktreePath && (
-          <Card className="p-3">
-            <div className="text-xs text-muted-foreground">Worktree</div>
-            <div className="text-sm font-mono truncate">
-              {session.worktreePath}
-            </div>
-          </Card>
-        )}
-        <Card className="p-3">
-          <div className="text-xs text-muted-foreground">Started</div>
-          <div className="text-sm">
-            {session.startedAt
-              ? new Date(session.startedAt).toLocaleString()
+      {distillError && (
+        <p className="text-[13px] text-destructive">{distillError}</p>
+      )}
+
+      {/* Key/value rows */}
+      <div className="flex flex-col">
+        <DetailRow label="Started">
+          {session.startedAt
+            ? new Date(session.startedAt).toLocaleString()
+            : "-"}
+        </DetailRow>
+        <DetailRow label="Completed">
+          {session.endedAt || session.completedAt
+            ? new Date(
+                session.endedAt || session.completedAt || ""
+              ).toLocaleString()
+            : isRunning
+              ? "In progress..."
               : "-"}
-          </div>
-        </Card>
-        <Card className="p-3">
-          <div className="text-xs text-muted-foreground">Completed</div>
-          <div className="text-sm">
-            {session.endedAt || session.completedAt
-              ? new Date(session.endedAt || session.completedAt || "").toLocaleString()
-              : session.status === "running"
-                ? "In progress..."
-                : "-"}
-          </div>
-        </Card>
-        {(session.inputTokens != null ||
-          session.outputTokens != null ||
-          session.totalCostUsd != null) && (
-          <Card className="p-3">
-            <div className="text-xs text-muted-foreground">Usage</div>
-            <div className="text-sm">
-              {session.inputTokens != null || session.outputTokens != null ? (
-                <span>
-                  {formatTokens(session.inputTokens) ?? "—"} in /{" "}
-                  {formatTokens(session.outputTokens) ?? "—"} out
-                </span>
-              ) : null}
-              {session.totalCostUsd != null && (
-                <span className="text-muted-foreground">
-                  {session.inputTokens != null || session.outputTokens != null
-                    ? " · "
-                    : ""}
-                  {formatCostUsd(session.totalCostUsd)}
-                </span>
-              )}
-            </div>
-          </Card>
+        </DetailRow>
+        <DetailRow label="Duration">
+          <span className="font-mono">{getDuration()}</span>
+        </DetailRow>
+        <DetailRow label="Cost">
+          <span className="font-mono">
+            {formatCostUsd(session.totalCostUsd) ?? "—"}
+          </span>
+        </DetailRow>
+        <DetailRow label="Tokens">
+          <span className="font-mono">
+            {session.inputTokens != null || session.outputTokens != null
+              ? `${formatTokens(session.inputTokens) ?? "—"} in · ${
+                  formatTokens(session.outputTokens) ?? "—"
+                } out`
+              : "—"}
+          </span>
+        </DetailRow>
+        {session.worktreePath && (
+          <DetailRow label="Worktree">
+            <span className="block truncate font-mono text-[12px]">
+              {session.worktreePath}
+            </span>
+          </DetailRow>
         )}
         {session.cliSessionId && (
-          <Card className="p-3 col-span-2">
-            <div className="text-xs text-muted-foreground">CLI Session ID</div>
-            <div className="text-sm font-mono text-blue-400 truncate">
+          <DetailRow label="CLI session">
+            <span className="block truncate font-mono text-[12px] text-agent">
               {session.cliSessionId}
-            </div>
-          </Card>
+            </span>
+          </DetailRow>
         )}
         {session.cliCommand && (
-          <Card className="p-3 col-span-2">
-            <div className="text-xs text-muted-foreground">Command</div>
-            <div className="max-h-[80px] overflow-y-auto overflow-x-hidden">
-              <div className="text-sm font-mono text-muted-foreground break-all whitespace-pre-wrap">
-                {session.cliCommand}
-              </div>
-            </div>
-          </Card>
+          <DetailRow label="Command" last>
+            <span className="block max-h-[80px] overflow-y-auto break-all font-mono text-[12px] text-muted-foreground whitespace-pre-wrap">
+              {session.cliCommand}
+            </span>
+          </DetailRow>
         )}
       </div>
 
@@ -356,18 +392,18 @@ export default function SessionDetailPage() {
 
       {/* Error */}
       {session.error && (
-        <Card className="p-4 mb-6 border-destructive/50">
-          <div className="flex items-center gap-2 mb-2">
+        <div className="rounded-[11px] border border-destructive/50 bg-band p-[14px]">
+          <div className="mb-2 flex items-center gap-2">
             <XCircle className="h-4 w-4 text-destructive" />
-            <h3 className="text-sm font-medium text-destructive">Error</h3>
+            <h3 className="text-[13px] font-medium text-destructive">Error</h3>
           </div>
           <ScrollPane className="max-h-[200px] text-destructive/80">
             {session.error}
           </ScrollPane>
-        </Card>
+        </div>
       )}
 
-      {/* Tabs: Response / Prompt / Raw Logs */}
+      {/* Output: Response / Prompt / Raw Logs */}
       <Tabs defaultValue="response">
         <TabsList>
           <TabsTrigger value="response">Response</TabsTrigger>
@@ -376,51 +412,79 @@ export default function SessionDetailPage() {
         </TabsList>
 
         <TabsContent value="response">
-          <Card className="p-4 overflow-hidden">
+          <div className="overflow-hidden rounded-[11px] bg-band p-[14px]">
             {session.logs?.result ? (
               <ScrollPane className="text-muted-foreground">
                 {session.logs.result}
               </ScrollPane>
-            ) : session.status === "running" ? (
-              <p className="text-sm text-muted-foreground">
+            ) : isRunning ? (
+              <p className="text-[13px] text-muted-foreground">
                 Waiting for agent to respond...
               </p>
             ) : (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 No response available
               </p>
             )}
-          </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="prompt">
-          <Card className="p-4 overflow-hidden">
+          <div className="overflow-hidden rounded-[11px] bg-band p-[14px]">
             {session.prompt ? (
               <ScrollPane className="text-muted-foreground">
                 {session.prompt}
               </ScrollPane>
             ) : (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 No prompt available
               </p>
             )}
-          </Card>
+          </div>
         </TabsContent>
 
         <TabsContent value="raw">
-          <Card className="p-4 overflow-hidden">
+          <div className="overflow-hidden rounded-[11px] bg-band p-[14px]">
             {session.logs ? (
               <ScrollPane className="text-muted-foreground">
                 {JSON.stringify(session.logs, null, 2)}
               </ScrollPane>
             ) : (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-[13px] text-muted-foreground">
                 No logs available
               </p>
             )}
-          </Card>
+          </div>
         </TabsContent>
       </Tabs>
+
+      {/* Session actions */}
+      {(session.epicId || isRunning || session.status === "queued") && (
+        <div className="flex gap-[10px]">
+          {session.epicId && (
+            <Button
+              asChild
+              variant="outline"
+              className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
+            >
+              <Link href={`/projects/${projectId}?ticket=${session.epicId}`}>
+                <GitCompare className="h-4 w-4 mr-1" />
+                View diff
+              </Link>
+            </Button>
+          )}
+          {(isRunning || session.status === "queued") && (
+            <Button
+              variant="outline"
+              className="h-[31px] rounded-[8px] border-destructive px-[12px] text-[13px] text-destructive hover:bg-destructive/10 hover:text-destructive"
+              onClick={handleCancel}
+            >
+              <StopCircle className="h-4 w-4 mr-1" />
+              Stop
+            </Button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

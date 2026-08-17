@@ -21,7 +21,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { ChatTabBar } from "@/components/chat/ChatTabBar";
-import { ChatWorkspaceHeader } from "@/components/chat/ChatWorkspaceHeader";
+import {
+  ChatProposalCard,
+  ChatWorkspaceHeader,
+} from "@/components/chat/ChatWorkspaceHeader";
 import { MessageList } from "@/components/chat/MessageList";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { QuestionCards } from "@/components/chat/QuestionCards";
@@ -62,10 +65,18 @@ interface UnifiedChatPanelProps {
   children: ReactNode;
   onEpicCreated?: () => void;
   sharedPanelView?: UnifiedSharedPanelView | null;
+  /**
+   * Fires whenever the panel occupies board width (expanded on desktop).
+   * The board uses it to hide the Released digest and reclaim the space.
+   */
+  onExpandedChange?: (expanded: boolean) => void;
 }
 
 export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPanelProps>(
-  function UnifiedChatPanel({ projectId, children, onEpicCreated, sharedPanelView }, ref) {
+  function UnifiedChatPanel(
+    { projectId, children, onEpicCreated, sharedPanelView, onExpandedChange },
+    ref,
+  ) {
     const router = useRouter();
     const [activePanelContent, setActivePanelContent] = useState<"chat" | "shared">("chat");
     const [, forceConversationRefresh] = useState(0);
@@ -269,6 +280,11 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       return () => window.removeEventListener("keydown", onEscape);
     }, [panelContentMode, panelState, setPanelState, sharedPanelView]);
 
+    // Board seam: the Released digest hides while the panel eats board width.
+    useEffect(() => {
+      onExpandedChange?.(panelState === "expanded" && !isMobile);
+    }, [panelState, isMobile, onExpandedChange]);
+
     const sendMessage = useCallback(
       async (content: string, attachmentIds: string[]) => {
         if (!activeId) return;
@@ -301,38 +317,33 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
     }
 
     const chatWorkspace = (
-      <div className="flex h-full flex-col">
+      <div className="flex h-full min-h-0 flex-col">
         <ChatTabBar
           conversations={tabConversations}
           activeId={activeId}
           onSelectTab={setActiveId}
           onCloseTab={(conversationId) => void closeTab(conversationId)}
           onCreateTab={(options) => void createNewConversationTab(options)}
-        />
-
-        <ChatWorkspaceHeader
-          activeConversation={activeConversation}
-          activeProvider={activeProvider}
-          hasMessages={hasMessages}
-          isBusy={isCurrentConversationBusy}
-          onAgentChange={handleAgentChange}
-          showGenerateSpec={isBrainstorm}
-          generatingSpec={generatingSpec}
-          onGenerateSpec={generateSpec}
-          showCreateEpic={canCreateEpic}
-          epicCreating={epicCreating}
-          onCreateEpic={handleCreateEpic}
+          trailing={
+            <ChatWorkspaceHeader
+              activeConversation={activeConversation}
+              activeProvider={activeProvider}
+              hasMessages={hasMessages}
+              isBusy={isCurrentConversationBusy}
+              onAgentChange={handleAgentChange}
+            />
+          }
         />
 
         {(epicError || specError || chatError) && (
-          <div className="mx-3 mt-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+          <div className="mx-[18px] mt-2 rounded-[8px] border border-destructive/50 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
             {epicError || specError || chatError}
           </div>
         )}
 
-        <div className="flex-1 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-auto">
           {isEpicCreation && !hasMessages && !loading && (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+            <div className="px-[18px] py-8 text-center text-[13.5px] text-muted-foreground">
               Describe your epic idea and I&apos;ll help you structure it with user stories and acceptance criteria.
             </div>
           )}
@@ -342,7 +353,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
             streamStatus={streamStatus}
           />
           {pendingQuestions && (
-            <div className="px-3 pb-3">
+            <div className="px-[18px] pb-[14px]">
               <QuestionCards
                 questions={pendingQuestions}
                 onSubmit={answerQuestions}
@@ -350,6 +361,15 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
               />
             </div>
           )}
+          <ChatProposalCard
+            activeConversation={activeConversation}
+            showGenerateSpec={isBrainstorm}
+            generatingSpec={generatingSpec}
+            onGenerateSpec={generateSpec}
+            showCreateEpic={canCreateEpic}
+            epicCreating={epicCreating}
+            onCreateEpic={handleCreateEpic}
+          />
         </div>
 
         <MessageInput
@@ -414,14 +434,14 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
               onMouseDown={startDrag}
               onDoubleClick={resetPanelRatio}
               className={cn(
-                "h-full w-[6px] shrink-0 border-l border-r border-border/60 bg-muted/60 transition-colors",
+                "h-full w-[6px] shrink-0 border-l border-r border-border bg-band transition-colors",
                 isDragging ? "bg-primary/30" : "hover:bg-primary/20",
               )}
             />
           )}
 
           <aside
-            className="h-full shrink-0 border-l border-border bg-background/95 backdrop-blur transition-all duration-200"
+            className="h-full min-h-0 shrink-0 border-l border-border bg-card transition-[width] duration-200 motion-reduce:transition-none"
             style={{ width: panelWidthStyle }}
             data-testid={
               panelContentMode === "shared"
@@ -429,73 +449,102 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
                 : "unified-panel-expanded"
             }
           >
-            <div className="flex h-10 items-center justify-between gap-1 border-b border-border px-2">
-              <div className="flex items-center gap-1">
-                {hasSharedPanelView && (
-                  <>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={panelContentMode === "chat" ? "secondary" : "ghost"}
-                      onClick={() => setActivePanelContent("chat")}
-                      className="h-7 px-2 text-xs"
-                    >
-                      Chat
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={panelContentMode === "shared" ? "secondary" : "ghost"}
-                      onClick={() => setActivePanelContent("shared")}
-                      className="h-7 px-2 text-xs"
-                    >
-                      {sharedPanelView?.label ?? "Details"}
-                    </Button>
-                  </>
-                )}
-              </div>
+            <div className="flex h-full min-h-0 flex-col">
+              {hasSharedPanelView && (
+                <div className="flex shrink-0 items-center gap-[8px] border-b border-border px-[18px] py-[14px]">
+                  <button
+                    type="button"
+                    onClick={() => setActivePanelContent("chat")}
+                    className={cn(
+                      "rounded-[7px] px-[10px] py-[4px] text-[13px] transition-colors",
+                      panelContentMode === "chat"
+                        ? "bg-band font-medium text-foreground"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    Chat
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePanelContent("shared")}
+                    className={cn(
+                      "rounded-[7px] px-[10px] py-[4px] text-[13px] transition-colors",
+                      panelContentMode === "shared"
+                        ? "bg-band font-medium text-foreground"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {sharedPanelView?.label ?? "Details"}
+                  </button>
 
-              <div className="flex items-center gap-1">
-                {panelContentMode === "shared" ? (
+                  <div className="ml-auto flex items-center gap-[2px]">
+                    {panelContentMode === "shared" ? (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7 text-meta"
+                        onClick={() => sharedPanelView?.onClose?.()}
+                        aria-label="Close detail panel"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    ) : (
+                      <>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-meta"
+                          onClick={() => setPanelState("collapsed")}
+                          aria-label="Collapse panel"
+                        >
+                          <PanelRightClose className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="h-7 w-7 text-meta"
+                          onClick={() => setPanelState("hidden")}
+                          aria-label="Hide panel"
+                        >
+                          <EyeOff className="h-4 w-4" />
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {!hasSharedPanelView && (
+                <div className="flex shrink-0 items-center justify-end gap-[2px] border-b border-border px-[18px] py-[10px]">
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon"
-                    className="h-7 w-7"
-                    onClick={() => sharedPanelView?.onClose?.()}
-                    aria-label="Close detail panel"
+                    className="h-7 w-7 text-meta"
+                    onClick={() => setPanelState("collapsed")}
+                    aria-label="Collapse panel"
                   >
-                    <X className="h-4 w-4" />
+                    <PanelRightClose className="h-4 w-4" />
                   </Button>
-                ) : (
-                  <>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => setPanelState("collapsed")}
-                      aria-label="Collapse panel"
-                    >
-                      <PanelRightClose className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7"
-                      onClick={() => setPanelState("hidden")}
-                      aria-label="Hide panel"
-                    >
-                      <EyeOff className="h-4 w-4" />
-                    </Button>
-                  </>
-                )}
-              </div>
-            </div>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-meta"
+                    onClick={() => setPanelState("hidden")}
+                    aria-label="Hide panel"
+                  >
+                    <EyeOff className="h-4 w-4" />
+                  </Button>
+                </div>
+              )}
 
-            <div className="h-[calc(100%-2.5rem)]">
-              {panelContentMode === "shared" ? sharedPanelView?.content : chatWorkspace}
+              <div className="min-h-0 flex-1">
+                {panelContentMode === "shared" ? sharedPanelView?.content : chatWorkspace}
+              </div>
             </div>
           </aside>
         </div>
@@ -511,20 +560,20 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
             type="button"
             onClick={() => void openChatConversation()}
             className={cn(
-              "relative h-full w-14 shrink-0 flex items-center justify-center border-l border-border bg-muted/60 text-muted-foreground backdrop-blur transition-colors hover:bg-muted/80 hover:text-foreground",
-              hasActiveAgents && "bg-primary/10 shadow-[-6px_0_24px_rgba(59,130,246,0.25)]",
+              "relative flex h-full w-[44px] shrink-0 items-center justify-center border-l border-border bg-card text-meta transition-colors hover:bg-band hover:text-foreground",
+              hasActiveAgents && "bg-agent-bg text-agent",
             )}
             aria-label="Open chat panel"
             data-testid="collapsed-chat-strip"
           >
-            <span className="flex flex-col items-center gap-2 text-[10px] font-medium uppercase tracking-[0.2em]">
-              <MessageSquare className="h-4 w-4" />
+            <span className="flex flex-col items-center gap-2 text-[11.5px] font-medium uppercase tracking-[0.14em] [writing-mode:vertical-rl]">
+              <MessageSquare className="h-4 w-4 [writing-mode:horizontal-tb]" />
               Chat
             </span>
             {hasActiveAgents && (
               <span
                 data-testid="collapsed-active-badge"
-                className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-primary animate-pulse"
+                className="breathing-dot absolute top-[8px] right-[8px] h-2 w-2"
               />
             )}
           </button>
@@ -539,7 +588,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
         <button
           type="button"
           onClick={() => setPanelState("collapsed")}
-          className="absolute right-2 top-2 z-30 rounded-full border border-border bg-background/95 p-1.5 text-muted-foreground shadow-sm hover:text-foreground"
+          className="absolute right-2 top-2 z-30 rounded-full border border-border bg-card p-1.5 text-meta shadow-[0_1px_2px_rgba(36,33,29,.04)] hover:text-foreground"
           aria-label="Show chat strip"
         >
           <PanelRightOpen className="h-4 w-4" />

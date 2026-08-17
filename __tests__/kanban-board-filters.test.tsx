@@ -159,6 +159,30 @@ describe("Kanban board filters and focus mode", () => {
     expect(screen.getByText("Bug Card")).toBeInTheDocument();
   });
 
+  it("says a column is filtered out, not empty, when filters hide its cards", () => {
+    const feature = makeEpic({ title: "Feature Card", type: "feature" });
+    setBoard({ todo: [feature] });
+
+    render(<Board projectId="proj-1" onEpicClick={vi.fn()} />);
+
+    // Untouched columns are genuinely empty and still invite a capture.
+    expect(screen.getByTestId("column-empty-backlog")).toHaveTextContent(
+      "Nothing waiting."
+    );
+
+    fireEvent.click(screen.getByTestId("filter-type-bug"));
+
+    const todoEmpty = screen.getByTestId("column-empty-todo");
+    expect(todoEmpty).toHaveTextContent("Nothing matches the filters.");
+    expect(todoEmpty).not.toHaveTextContent("Nothing waiting.");
+    expect(screen.getByTestId("column-empty-backlog")).toHaveTextContent(
+      "Nothing matches the filters."
+    );
+    expect(
+      screen.queryByRole("button", { name: "Capture" })
+    ).not.toBeInTheDocument();
+  });
+
   it("combines type and priority filters (AND)", () => {
     const critical = makeEpic({ title: "Critical Feature", priority: 3 });
     const low = makeEpic({ title: "Low Feature", priority: 0 });
