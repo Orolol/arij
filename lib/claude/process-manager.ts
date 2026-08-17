@@ -7,6 +7,17 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 import { appendSessionChunk } from "@/lib/agent-sessions/chunks";
 import { parseClaudeOutput, isNoTextualOutputFallback } from "./json-parser";
+import {
+  isMcpToolsEnabled,
+  providerSupportsMcp,
+  buildMcpSpawnConfig,
+  cleanupMcpConfigFile,
+} from "./mcp-injection";
+import { arijToolsSection } from "./prompt-sections";
+import {
+  mintMcpToken,
+  revokeMcpTokensForSession,
+} from "@/lib/mcp/token-store";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
@@ -29,6 +40,8 @@ export interface TrackedSession {
   kill: () => void;
   /** Provider session handle (PID-based for CC, thread-based for Codex). */
   providerSession?: ProviderSession;
+  /** Temp `--mcp-config` file for claude-code spawns, cleared on teardown. */
+  mcpConfigPath?: string;
 }
 
 export interface SessionInfo {
@@ -88,9 +101,51 @@ class ClaudeProcessManager {
       );
     }
 
+    // Arij MCP tool channel — mint a per-session bearer token, attach the
+    // MCP server config for the provider to inject, and append the tools
+    // prompt section. This is the SINGLE wiring point: every dispatch route
+    // threads through here, while direct spawnClaude call sites
+    // (generate-spec, import, chat streaming) never get injection.
+    // Strictly best-effort: a session must never fail to spawn because
+    // injection did. Gates: settings toggle (absent row = enabled),
+    // provider support (claude-code/codex), and an agent_sessions row —
+    // the row is the authority for the project scope the token binds to.
+    try {
+      if (providerSupportsMcp(provider) && isMcpToolsEnabled()) {
+        const row = db
+          .select({
+            projectId: agentSessions.projectId,
+            epicId: agentSessions.epicId,
+            userStoryId: agentSessions.userStoryId,
+            agentType: agentSessions.agentType,
+          })
+          .from(agentSessions)
+          .where(eq(agentSessions.id, sessionId))
+          .get();
+
+        if (row) {
+          const token = mintMcpToken({
+            sessionId,
+            projectId: row.projectId,
+            epicId: row.epicId,
+            userStoryId: row.userStoryId,
+            agentType: row.agentType,
+          });
+          options.mcp = buildMcpSpawnConfig({ token });
+          options.prompt += "\n" + arijToolsSection(row.agentType ?? null);
+        }
+      }
+    } catch (error) {
+      console.warn(
+        `[process-manager] MCP injection skipped for session ${sessionId}:`,
+        error instanceof Error ? error.message : error,
+      );
+    }
+
     let kill: () => void;
     let promise: Promise<ClaudeResult>;
     let providerSession: ProviderSession | undefined;
+    let mcpConfigPath: string | undefined;
 
     if (provider !== "claude-code") {
       const dynamicProvider = getProvider(provider);
@@ -103,6 +158,7 @@ class ClaudeProcessManager {
         model: options.model,
         cliSessionId: options.cliSessionId,
         resumeSession: options.resumeSession,
+        mcp: options.mcp,
         onChunk: (chunk) => {
           try {
             appendSessionChunk({
@@ -138,6 +194,7 @@ class ClaudeProcessManager {
       const spawned = spawnClaude(options);
       kill = spawned.kill;
       promise = spawned.promise;
+      mcpConfigPath = spawned.mcpConfigPath;
 
       // Persist CLI command
       if (spawned.command) {
@@ -159,6 +216,7 @@ class ClaudeProcessManager {
       startedAt: new Date(),
       kill,
       providerSession,
+      mcpConfigPath,
     };
 
     this.sessions.set(sessionId, session);
@@ -166,6 +224,12 @@ class ClaudeProcessManager {
     // Handle completion in the background
     promise
       .then((result) => {
+        // Tear the tool channel down the moment the process exits.
+        // Revocation keeps the token-store record (the askedQuestion flag
+        // must survive until the dispatch route classifies the outcome);
+        // the grace-period purge is the destructor.
+        this.teardownMcpChannel(sessionId, mcpConfigPath);
+
         const tracked = this.sessions.get(sessionId);
         if (!tracked) return;
 
@@ -193,6 +257,8 @@ class ClaudeProcessManager {
         }
       })
       .catch((err: Error) => {
+        this.teardownMcpChannel(sessionId, mcpConfigPath);
+
         const tracked = this.sessions.get(sessionId);
         if (!tracked) return;
 
@@ -232,6 +298,10 @@ class ClaudeProcessManager {
       error: "Process was cancelled by user.",
       duration: Date.now() - session.startedAt.getTime(),
     };
+
+    // Cancellation is terminal for the tool channel too — don't wait for
+    // the killed process's close event to invalidate the token.
+    this.teardownMcpChannel(sessionId, session.mcpConfigPath);
 
     return true;
   }
@@ -305,6 +375,40 @@ class ClaudeProcessManager {
   // -------------------------------------------------------------------------
   // Internal helpers
   // -------------------------------------------------------------------------
+
+  /**
+   * Best-effort teardown of the session's MCP tool channel: revoke its bearer
+   * tokens and delete the temp `--mcp-config` file that holds a copy of one.
+   * A completion handler must never fail (and mark the session failed)
+   * because the token store or the filesystem did. No-op for sessions that
+   * never got injection.
+   *
+   * The config path is passed in (not read off the tracked session) so a late
+   * handler from a previous run can never delete a restarted session's file.
+   * Deleting is idempotent — spawnClaude already clears the file on exit;
+   * this is the backstop for paths where its close event never lands.
+   */
+  private teardownMcpChannel(
+    sessionId: string,
+    mcpConfigPath?: string,
+  ): void {
+    try {
+      revokeMcpTokensForSession(sessionId);
+    } catch (error) {
+      console.warn(
+        `[process-manager] Failed to revoke MCP tokens for session ${sessionId}`,
+        error,
+      );
+    }
+    try {
+      cleanupMcpConfigFile(mcpConfigPath);
+    } catch (error) {
+      console.warn(
+        `[process-manager] Failed to remove MCP config file for session ${sessionId}`,
+        error,
+      );
+    }
+  }
 
   /**
    * Persist the result text from a completed session as a session chunk.

@@ -25,6 +25,33 @@ export interface ProviderChunk {
   emittedAt?: string;
 }
 
+/**
+ * Per-session Arij MCP server injection config, built by
+ * `lib/claude/mcp-injection.ts` at spawn time (processManager.start is the
+ * single wiring point). Providers translate it into their CLI's MCP wiring:
+ * Claude Code via `--mcp-config <0600 temp file>` + `--strict-mcp-config`,
+ * Codex via `-c mcp_servers.<name>.*` TOML overrides. The bearer token rides
+ * INSIDE this config (never in the child's process env), so agent Bash
+ * subshells never see it. Claude's file form additionally keeps it out of
+ * argv/`/proc/<pid>/cmdline`; codex has no file form — see the residual
+ * exposure note in lib/providers/codex.ts.
+ */
+export interface McpSpawnConfig {
+  /** MCP server name exposed to the agent — tool prefix `mcp__<name>__*`. */
+  serverName: string;
+  /** Executable that launches the stdio MCP shim (the running node binary). */
+  command: string;
+  /** Shim arguments — app-root-absolute path to bin/arij-mcp.mjs. */
+  args: string[];
+  /** Environment for the shim process only: base URL + per-session token. */
+  env: {
+    ARIJ_BASE_URL: string;
+    ARIJ_MCP_TOKEN: string;
+  };
+  /** Exact tool names merged into the allowlist (no wildcards). */
+  allowedToolNames: string[];
+}
+
 export interface ProviderSpawnOptions {
   /** Unique session identifier used for tracking. */
   sessionId: string;
@@ -46,6 +73,8 @@ export interface ProviderSpawnOptions {
   cliSessionId?: string;
   /** When true, use --resume instead of --session-id. */
   resumeSession?: boolean;
+  /** Arij MCP tool-channel injection (claude-code and codex only). */
+  mcp?: McpSpawnConfig;
 }
 
 export interface ProviderResult {

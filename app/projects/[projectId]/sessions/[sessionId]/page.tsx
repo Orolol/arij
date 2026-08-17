@@ -17,6 +17,10 @@ import {
 } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 import { SessionOutcomeBadge } from "@/components/shared/SessionOutcomeBadge";
+import {
+  ArijActionsList,
+  type ArijActionItem,
+} from "@/components/shared/ArijActionsList";
 import { formatCostUsd, formatTokens } from "@/lib/utils/format-usage";
 
 interface SessionDetail {
@@ -43,6 +47,7 @@ interface SessionDetail {
   inputTokens?: number | null;
   outputTokens?: number | null;
   totalCostUsd?: number | null;
+  arijActions?: ArijActionItem[] | null;
   logs?: {
     success?: boolean;
     result?: string;
@@ -344,6 +349,9 @@ export default function SessionDetailPage() {
           </Card>
         )}
       </div>
+
+      {/* Structured board effects (MCP tool calls + dispatch artifacts) */}
+      <ArijActionsList actions={session.arijActions} />
 
       {/* Error */}
       {session.error && (

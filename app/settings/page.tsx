@@ -34,6 +34,9 @@ export default function SettingsPage() {
   const [autoDistillMessage, setAutoDistillMessage] = useState<string | null>(
     null
   );
+  const [mcpToolsEnabled, setMcpToolsEnabled] = useState(true);
+  const [savingMcpTools, setSavingMcpTools] = useState(false);
+  const [mcpToolsMessage, setMcpToolsMessage] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/settings/webhooks")
@@ -58,9 +61,40 @@ export default function SettingsPage() {
         setHasSavedGitHubPat(Boolean(githubSetting?.hasToken));
         const autoDistill = d.data?.memory_auto_distill;
         setMemoryAutoDistill(autoDistill === true || autoDistill === "true");
+        // Default ON: only an explicitly-false value disables the MCP tools.
+        const mcpTools = d.data?.mcp_tools_enabled;
+        setMcpToolsEnabled(!(mcpTools === false || mcpTools === "false"));
       })
       .catch(() => {});
   }, []);
+
+  async function handleToggleMcpTools(next: boolean) {
+    setMcpToolsEnabled(next);
+    setSavingMcpTools(true);
+    setMcpToolsMessage(null);
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mcp_tools_enabled: next }),
+      });
+      if (!response.ok) {
+        setMcpToolsEnabled(!next);
+        setMcpToolsMessage("Failed to save the MCP tools setting.");
+        return;
+      }
+      setMcpToolsMessage(
+        next
+          ? "Arij MCP tools enabled: new agent sessions get the structured tool channel."
+          : "Arij MCP tools disabled: new agent sessions spawn without the tool channel."
+      );
+    } catch {
+      setMcpToolsEnabled(!next);
+      setMcpToolsMessage("Failed to save the MCP tools setting.");
+    } finally {
+      setSavingMcpTools(false);
+    }
+  }
 
   async function handleToggleAutoDistill(next: boolean) {
     setMemoryAutoDistill(next);
@@ -303,6 +337,37 @@ export default function SettingsPage() {
         </label>
         {autoDistillMessage && (
           <p className="text-xs text-muted-foreground">{autoDistillMessage}</p>
+        )}
+      </section>
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <div>
+          <h2 className="text-lg font-semibold">Agent Tools (MCP)</h2>
+          <p className="text-sm text-muted-foreground">
+            Agent sessions launched by Arij (Claude Code and Codex) get
+            structured MCP tools to read their ticket, post comments, update
+            the board status, ask blocking questions, and file review
+            findings — instead of relying on prose conventions.
+          </p>
+        </div>
+        <label className="flex items-start gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={mcpToolsEnabled}
+            disabled={savingMcpTools}
+            onChange={(e) => handleToggleMcpTools(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Enable Arij MCP tools</span>
+            <span className="block text-muted-foreground">
+              On by default. Turning this off makes new agent sessions spawn
+              without the tool channel; running sessions are unaffected.
+            </span>
+          </span>
+        </label>
+        {mcpToolsMessage && (
+          <p className="text-xs text-muted-foreground">{mcpToolsMessage}</p>
         )}
       </section>
 

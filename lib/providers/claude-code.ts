@@ -46,6 +46,7 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       model,
       cliSessionId,
       resumeSession,
+      mcp,
     } = options;
 
     const { promise: rawPromise, kill, command } = spawnClaude({
@@ -56,6 +57,7 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       model,
       cliSessionId,
       resumeSession,
+      mcp,
     });
 
     // Map ClaudeResult → ProviderResult

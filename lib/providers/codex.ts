@@ -25,6 +25,7 @@ import {
   type ProviderSpawnContext,
 } from "./base-provider";
 import type {
+  McpSpawnConfig,
   ProviderResult,
   ProviderSpawnOptions,
 } from "./types";
@@ -34,6 +35,51 @@ interface CodexSpawnContext extends ProviderSpawnContext {
   outputFile: string;
   /** Contents of the -o file, cached by extractResult() for chunk emission. */
   fileOutput?: string;
+}
+
+/**
+ * Per-spawn `-c mcp_servers.<name>.*` TOML overrides — the same mechanism
+ * as developer_instructions. `JSON.stringify` of a JS string produces a
+ * valid TOML basic string, and stringifying the args array produces a valid
+ * TOML string array; env is a TOML inline table. The local ~/.codex
+ * config.toml has no [mcp_servers] section, so these overrides collide with
+ * nothing. Codex launches the MCP server itself (outside the exec sandbox),
+ * so localhost HTTP works in all sandbox modes; no allowlist flag exists or
+ * is needed — configured servers' tools are exposed directly.
+ *
+ * RESIDUAL EXPOSURE, accepted: unlike claude's `--mcp-config`, which takes a
+ * file path (see lib/claude/spawn.ts — that is why the claude token is NOT in
+ * argv), codex's `-c` mechanism has no file form, so the bearer token has to
+ * ride in the child's argv and is therefore readable via
+ * /proc/<pid>/cmdline for the lifetime of the process. That is a LOCAL-ONLY
+ * exposure on a single-user machine, bounded by the token's per-session scope
+ * and by revocation at process exit. Everything downstream of the spawn is
+ * masked: the persisted cliCommand (buildDisplayCommand), the console spawn
+ * log (beforeSpawn), and the NDJSON log header (redactMcpToken in
+ * lib/claude/logger.ts). Revisit if codex gains a config-file override.
+ */
+function buildCodexMcpOverrideArgs(mcp: McpSpawnConfig): string[] {
+  const prefix = `mcp_servers.${mcp.serverName}`;
+  return [
+    "-c",
+    `${prefix}.command=${JSON.stringify(mcp.command)}`,
+    "-c",
+    `${prefix}.args=${JSON.stringify(mcp.args)}`,
+    "-c",
+    `${prefix}.env={ARIJ_BASE_URL=${JSON.stringify(mcp.env.ARIJ_BASE_URL)},ARIJ_MCP_TOKEN=${JSON.stringify(mcp.env.ARIJ_MCP_TOKEN)}}`,
+  ];
+}
+
+/**
+ * The `-c mcp_servers.<name>.env=…` override value carries the per-session
+ * bearer token — never let it reach the persisted display command or the
+ * console spawn log.
+ */
+function maskCodexMcpSecret(arg: string): string {
+  if (arg.startsWith("mcp_servers.") && arg.includes("ARIJ_MCP_TOKEN")) {
+    return `${arg.slice(0, arg.indexOf("="))}=<redacted>`;
+  }
+  return arg;
 }
 
 export class CodexProvider extends BaseCliProvider {
@@ -65,7 +111,8 @@ export class CodexProvider extends BaseCliProvider {
     options: ProviderSpawnOptions,
     spawnContext?: ProviderSpawnContext,
   ): string[] {
-    const { mode, prompt, cwd, model, cliSessionId, resumeSession } = options;
+    const { mode, prompt, cwd, model, cliSessionId, resumeSession, mcp } =
+      options;
     const effectiveCwd = cwd || process.cwd();
     const isResume = !!(cliSessionId && resumeSession);
     const developerInstructions = this.developerInstructions;
@@ -89,6 +136,10 @@ export class CodexProvider extends BaseCliProvider {
 
       if (developerInstructions && developerInstructions.trim()) {
         args.push("-c", `developer_instructions=${JSON.stringify(developerInstructions)}`);
+      }
+
+      if (mcp) {
+        args.push(...buildCodexMcpOverrideArgs(mcp));
       }
 
       // Prompt as positional argument (after session ID)
@@ -122,6 +173,10 @@ export class CodexProvider extends BaseCliProvider {
         args.push("-c", `developer_instructions=${JSON.stringify(developerInstructions)}`);
       }
 
+      if (mcp) {
+        args.push(...buildCodexMcpOverrideArgs(mcp));
+      }
+
       // Prompt as positional argument
       args.push(prompt);
     }
@@ -132,9 +187,21 @@ export class CodexProvider extends BaseCliProvider {
   protected beforeSpawn(args: string[], cwd: string): void {
     console.log(
       "[spawn] codex",
-      args.map((a) => (a.length > 100 ? a.slice(0, 100) + "..." : a)).join(" ")
+      args
+        .map(maskCodexMcpSecret)
+        .map((a) => (a.length > 100 ? a.slice(0, 100) + "..." : a))
+        .join(" ")
     );
     console.log("[spawn] cwd:", cwd);
+  }
+
+  /**
+   * Same display command as the base class, with the token-bearing MCP env
+   * override masked before the prompt redaction runs (the command string is
+   * persisted to agent_sessions.cliCommand and rendered in the UI).
+   */
+  buildDisplayCommand(args: string[], prompt: string): string {
+    return super.buildDisplayCommand(args.map(maskCodexMcpSecret), prompt);
   }
 
   extractResult(

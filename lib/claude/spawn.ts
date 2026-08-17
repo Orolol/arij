@@ -7,6 +7,8 @@ import {
   type StreamLogContext,
 } from "./logger";
 import { extractCliSessionIdFromOutput, hasAskUserQuestion } from "./json-parser";
+import { cleanupMcpConfigFile, writeMcpConfigFile } from "./mcp-injection";
+import type { McpSpawnConfig } from "@/lib/providers/types";
 
 export interface ClaudeOptions {
   mode: "plan" | "code" | "analyze";
@@ -17,6 +19,14 @@ export interface ClaudeOptions {
   logIdentifier?: string;
   cliSessionId?: string;
   resumeSession?: boolean;
+  /**
+   * Arij MCP tool-channel injection. When set, the spawn writes the config
+   * to a 0600 temp file and buildClaudeArgs adds `--mcp-config <file>` +
+   * `--strict-mcp-config`, merging the exact tool names into --allowedTools.
+   * Set centrally by processManager.start() — direct spawnClaude call sites
+   * (generate-spec, import, chat) never pass it.
+   */
+  mcp?: McpSpawnConfig;
 }
 
 export interface ClaudeResult {
@@ -33,6 +43,12 @@ export interface SpawnedClaude {
   promise: Promise<ClaudeResult>;
   kill: () => void;
   command?: string;
+  /**
+   * Path of the temp `--mcp-config` file, when MCP injection was active.
+   * spawnClaude deletes it itself on exit/spawn failure; exposed so the
+   * process manager can also clear it on its own teardown path.
+   */
+  mcpConfigPath?: string;
 }
 
 export interface QuestionOption {
@@ -61,12 +77,21 @@ export interface SpawnedClaudeStream {
  * Builds the `claude` CLI argument list shared by spawnClaude() and
  * spawnClaudeStream(). The two only differ in output format: "json"
  * for the one-shot spawn, "stream-json" (plus --verbose) for streaming.
+ *
+ * MCP wiring is emitted only when BOTH `options.mcp` and `mcpConfigPath` are
+ * present — the config file is what actually configures the server, so a
+ * failed file write degrades to a plain (uninjected) spawn rather than
+ * allowlisting tools for a server that was never configured. Callers get the
+ * path from `prepareClaudeSpawn`; this function stays pure.
  */
 export function buildClaudeArgs(
   options: ClaudeOptions,
   outputFormat: "json" | "stream-json",
+  mcpConfigPath?: string | null,
 ): string[] {
-  const { mode, prompt, allowedTools, model, cliSessionId, resumeSession } = options;
+  const { mode, prompt, allowedTools, model, cliSessionId, resumeSession } =
+    options;
+  const mcp = mcpConfigPath ? options.mcp : undefined;
 
   // --permission-mode: "plan" for read-only, "bypassPermissions" for code/analyze
   const permissionMode = mode === "plan" ? "plan" : "bypassPermissions";
@@ -76,6 +101,12 @@ export function buildClaudeArgs(
     mode === "analyze" && (!allowedTools || allowedTools.length === 0)
       ? ["Read", "Glob", "Grep", "Write"]
       : allowedTools;
+
+  // Arij MCP tools ride the same allowlist — exact names, no wildcards, so
+  // they are auto-approved in every permission mode (plan included).
+  const mergedAllowedTools = mcp
+    ? [...(effectiveAllowedTools ?? []), ...mcp.allowedToolNames]
+    : effectiveAllowedTools;
 
   const args: string[] = [
     "--permission-mode",
@@ -100,11 +131,55 @@ export function buildClaudeArgs(
     args.push("--model", model);
   }
 
-  if (effectiveAllowedTools && effectiveAllowedTools.length > 0) {
-    args.push("--allowedTools", ...effectiveAllowedTools);
+  if (mcp) {
+    // `--mcp-config` takes JSON files as well as inline JSON strings, and we
+    // deliberately use the FILE form: an inline string would put the bearer
+    // token in the child's argv, i.e. in world-readable /proc/<pid>/cmdline,
+    // where the agent's own Bash tool could read it back. The env (base URL +
+    // token) lives inside the per-server config rather than the child's
+    // process env, so subshells never inherit it either.
+    // --strict-mcp-config ignores any user/project MCP configuration lying
+    // around in the worktree.
+    args.push("--mcp-config", mcpConfigPath!, "--strict-mcp-config");
+  }
+
+  if (mergedAllowedTools && mergedAllowedTools.length > 0) {
+    args.push("--allowedTools", ...mergedAllowedTools);
   }
 
   return args;
+}
+
+export interface PreparedClaudeSpawn {
+  args: string[];
+  /** Temp `--mcp-config` file to delete once the process is done, if any. */
+  mcpConfigPath: string | null;
+}
+
+/**
+ * Materializes the MCP config file (when injection is active) and builds the
+ * argv around it. Writing the file is best-effort: a session must never fail
+ * to spawn because the temp dir was unwritable, so a failure degrades to a
+ * spawn without the tool channel.
+ */
+export function prepareClaudeSpawn(
+  options: ClaudeOptions,
+  outputFormat: "json" | "stream-json",
+): PreparedClaudeSpawn {
+  let mcpConfigPath: string | null = null;
+
+  if (options.mcp) {
+    try {
+      mcpConfigPath = writeMcpConfigFile(options.mcp);
+    } catch (error) {
+      console.warn(
+        "[spawn] MCP config file write failed — spawning without the tool channel:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
+  return { args: buildClaudeArgs(options, outputFormat, mcpConfigPath), mcpConfigPath };
 }
 
 /**
@@ -116,7 +191,7 @@ export function buildClaudeArgs(
 export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
   const { prompt, cwd, cliSessionId } = options;
 
-  const args = buildClaudeArgs(options, "json");
+  const { args, mcpConfigPath } = prepareClaudeSpawn(options, "json");
 
   const effectiveCwd = cwd || process.cwd();
 
@@ -146,6 +221,9 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
 
     child.on("error", (err) => {
       const duration = Date.now() - startTime;
+      // Spawn failure is terminal — the config file (and its token) must not
+      // outlive the attempt.
+      cleanupMcpConfigFile(mcpConfigPath);
 
       if (err.message.includes("ENOENT")) {
         resolve({
@@ -165,6 +243,8 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
 
     child.on("close", (code) => {
       const duration = Date.now() - startTime;
+      // Session end (normal exit, failure, or kill) — drop the token file.
+      cleanupMcpConfigFile(mcpConfigPath);
       const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
       const stderr = Buffer.concat(stderrChunks).toString("utf-8");
       const parsedCliSessionId =
@@ -220,15 +300,18 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
     }
   };
 
-  // Build display command (replace prompt with <prompt>)
+  // Build display command (replace prompt with <prompt>; the --mcp-config
+  // value is an ephemeral temp path that means nothing in the UI, so it is
+  // collapsed to a placeholder)
   const displayArgs = args.map((a, i) => {
     if (i > 0 && (args[i - 1] === "-p" || args[i - 1] === "--print")) return "<prompt>";
+    if (i > 0 && args[i - 1] === "--mcp-config") return "<mcp-config>";
     if (a === prompt && a.length > 50) return "<prompt>";
     return a;
   });
   const command = `claude ${displayArgs.join(" ")}`;
 
-  return { promise, kill, command };
+  return { promise, kill, command, mcpConfigPath: mcpConfigPath ?? undefined };
 }
 
 // Events that are expected but carry no text to stream
@@ -272,7 +355,7 @@ function extractResultText(result: unknown): string {
 export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
   const { prompt, cwd, logIdentifier } = options;
 
-  const args = buildClaudeArgs(options, "stream-json");
+  const { args, mcpConfigPath } = prepareClaudeSpawn(options, "stream-json");
 
   const effectiveCwd = cwd || process.cwd();
 
@@ -440,6 +523,7 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
 
       child.on("error", (err) => {
         console.error("[stream-spawn] error:", err.message);
+        cleanupMcpConfigFile(mcpConfigPath);
         if (logCtx) {
           try {
             endStreamLog(logCtx, { exitCode: null, error: err.message });
@@ -449,6 +533,8 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
       });
 
       child.on("close", (code) => {
+        cleanupMcpConfigFile(mcpConfigPath);
+
         // Process any remaining buffer
         if (buffer.trim()) {
           processLine(buffer.trim());
