@@ -74,13 +74,33 @@ export function specSection(spec: string | null | undefined): string {
   return section("Project Specification", spec);
 }
 
+/** Heading used for the learned project memory block in every agent prompt. */
+export const PROJECT_MEMORY_HEADING =
+  "Project memory (conventions learned from previous sessions)";
+
+/**
+ * Learned project memory block. Empty string when the project has no
+ * memory document (or it is empty) — the section is simply omitted, so
+ * prompts for projects without memory are byte-identical to before.
+ * Token-cheap by construction: the content is hard-capped on write
+ * (PROJECT_MEMORY_MAX_CHARS in lib/documents/memory-constants.ts).
+ */
+export function memorySection(memory: string | null | undefined): string {
+  return section(PROJECT_MEMORY_HEADING, memory);
+}
+
 // ---------------------------------------------------------------------------
 // Composite helpers
 // ---------------------------------------------------------------------------
 
 /**
  * Standard project context block used by most builders:
- * `# Project: {name}` + Description + Specification + Reference Documents.
+ * `# Project: {name}` + Description + Specification + Project Memory +
+ * Reference Documents.
+ *
+ * The memory block renders from `project.memory` — builders resolve it from
+ * the memory document before composing (see `withProjectMemory` in
+ * prompt-builder.ts), keeping this module pure.
  *
  * Returns the parts joined as a single string (empty sections omitted).
  */
@@ -92,6 +112,7 @@ export function projectContextSections(
     projectHeader(project.name),
     descriptionSection(project.description),
     specSection(project.spec),
+    memorySection(project.memory),
     documentsSection(documents),
   ];
   return parts.filter(Boolean).join("\n");

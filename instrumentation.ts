@@ -12,6 +12,13 @@
  * Also starts the silent-session watchdog (lib/agents/watchdog.ts) — its
  * globalThis-backed singleton and idempotent start() make this safe under
  * dev hot reloads, which re-run instrumentation.
+ *
+ * Finally registers the session terminal hook
+ * (lib/agent-sessions/terminal-hooks.ts): completed sessions are offered to
+ * the memory auto-distillation trigger (lib/workflow/memory-distill.ts),
+ * which is a no-op unless the 'memory_auto_distill' setting is on and its
+ * guards pass. The hook slot is globalThis-backed and registration simply
+ * replaces it, so hot reloads are safe here too.
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === "nodejs") {
@@ -25,5 +32,17 @@ export async function register(): Promise<void> {
 
     const { startSessionWatchdog } = await import("@/lib/agents/watchdog");
     startSessionWatchdog();
+
+    const { setSessionTerminalHook } = await import(
+      "@/lib/agent-sessions/terminal-hooks"
+    );
+    const { maybeAutoDistillAfterSessionTerminal } = await import(
+      "@/lib/workflow/memory-distill"
+    );
+    setSessionTerminalHook((event) => {
+      if (event.status !== "completed") return;
+      // Fire-and-forget: the trigger owns its guards and never rejects.
+      void maybeAutoDistillAfterSessionTerminal(event.sessionId);
+    });
   }
 }

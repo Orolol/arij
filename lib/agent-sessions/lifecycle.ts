@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
+import { notifySessionTerminal } from "./terminal-hooks";
 
 export type AgentSessionLifecycleStatus =
   | "queued"
@@ -301,6 +302,16 @@ export function transitionSessionStatus({
     .set(patch)
     .where(eq(agentSessions.id, sessionId))
     .run();
+
+  // Post-terminal side effects (e.g. auto memory distillation) hang off the
+  // boot-registered hook — a no-op unless instrumentation wired one, and
+  // never able to throw into the transition (see terminal-hooks.ts).
+  if (TERMINAL_STATUSES.has(patch.status)) {
+    notifySessionTerminal({
+      sessionId,
+      status: patch.status as "completed" | "failed" | "cancelled",
+    });
+  }
 
   return patch;
 }

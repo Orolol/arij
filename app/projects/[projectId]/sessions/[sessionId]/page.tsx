@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Clock,
   XCircle,
+  Brain,
 } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 import { SessionOutcomeBadge } from "@/components/shared/SessionOutcomeBadge";
@@ -60,6 +61,7 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
   review_feature: "Feature Review",
   merge: "Merge",
   tech_check: "Tech Check",
+  memory_distill: "Memory Distill",
 };
 
 /**
@@ -89,6 +91,8 @@ export default function SessionDetailPage() {
   const sessionId = params.sessionId as string;
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [distilling, setDistilling] = useState(false);
+  const [distillError, setDistillError] = useState<string | null>(null);
 
   const loadSession = useCallback(async () => {
     const res = await fetch(
@@ -107,6 +111,31 @@ export default function SessionDetailPage() {
       method: "DELETE",
     });
     loadSession();
+  }
+
+  async function handleDistill() {
+    setDistilling(true);
+    setDistillError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/memory/distill`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sourceSessionId: sessionId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setDistillError(data.error || "Failed to start memory distillation.");
+        return;
+      }
+      const distillSessionId = data.data?.sessionId;
+      if (distillSessionId) {
+        router.push(`/projects/${projectId}/sessions/${distillSessionId}`);
+      }
+    } catch {
+      setDistillError("Failed to start memory distillation.");
+    } finally {
+      setDistilling(false);
+    }
   }
 
   function handleExportLogs() {
@@ -209,6 +238,19 @@ export default function SessionDetailPage() {
               Cancel
             </Button>
           )}
+          {session.status === "completed" &&
+            session.agentType !== "memory_distill" && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDistill}
+                disabled={distilling}
+                title="Merge this session's learnings into the project memory"
+              >
+                <Brain className="h-4 w-4 mr-1" />
+                {distilling ? "Distilling..." : "Distill learnings"}
+              </Button>
+            )}
           {session.logs && (
             <Button variant="outline" size="sm" onClick={handleExportLogs}>
               <Download className="h-4 w-4 mr-1" />
@@ -221,6 +263,10 @@ export default function SessionDetailPage() {
           </Button>
         </div>
       </div>
+
+      {distillError && (
+        <p className="mb-4 text-sm text-destructive">{distillError}</p>
+      )}
 
       {/* Metadata */}
       <div className="grid grid-cols-2 gap-4 mb-6">

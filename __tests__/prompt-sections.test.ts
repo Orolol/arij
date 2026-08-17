@@ -6,6 +6,8 @@ import {
   existingEpicsSection,
   chatHistorySection,
   specSection,
+  memorySection,
+  PROJECT_MEMORY_HEADING,
   projectHeader,
   descriptionSection,
   projectContextSections,
@@ -100,6 +102,23 @@ describe("prompt-sections", () => {
     });
   });
 
+  describe("memorySection()", () => {
+    it("wraps memory content under the learned-conventions heading", () => {
+      expect(memorySection("- Always use createId")).toBe(
+        `## ${PROJECT_MEMORY_HEADING}\n\n- Always use createId\n`
+      );
+      expect(PROJECT_MEMORY_HEADING).toBe(
+        "Project memory (conventions learned from previous sessions)"
+      );
+    });
+
+    it("returns empty string for null/undefined/empty memory", () => {
+      expect(memorySection(null)).toBe("");
+      expect(memorySection(undefined)).toBe("");
+      expect(memorySection("   ")).toBe("");
+    });
+  });
+
   describe("projectHeader()", () => {
     it("returns project heading", () => {
       expect(projectHeader("Arij")).toBe("# Project: Arij\n");
@@ -139,6 +158,33 @@ describe("prompt-sections", () => {
       expect(result).toContain("# Project: TestProj");
       expect(result).not.toContain("## Project Description");
       expect(result).not.toContain("## Project Specification");
+    });
+
+    it("includes the project memory block when set on the project", () => {
+      const project: PromptProject = {
+        name: "TestProj",
+        spec: "Spec",
+        memory: "- Convention: use zod for validation",
+      };
+      const result = projectContextSections(project, []);
+
+      expect(result).toContain(`## ${PROJECT_MEMORY_HEADING}`);
+      expect(result).toContain("- Convention: use zod for validation");
+    });
+
+    it("omits the memory block when memory is absent or empty", () => {
+      const withoutMemory = projectContextSections(
+        { name: "TestProj", spec: "Spec" },
+        []
+      );
+      const withEmptyMemory = projectContextSections(
+        { name: "TestProj", spec: "Spec", memory: "" },
+        []
+      );
+
+      expect(withoutMemory).not.toContain(PROJECT_MEMORY_HEADING);
+      // Empty memory renders byte-identical to no memory at all.
+      expect(withEmptyMemory).toBe(withoutMemory);
     });
   });
 });
