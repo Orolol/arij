@@ -12,7 +12,10 @@
  *     ticket/outcome/result context,
  *   - maybeAutoDistillAfterSessionTerminal end-to-end: off by default, spawns
  *     exactly one distill for an eligible build, and every guard denial
- *     (failure, distill-of-distill, pending distill) spawns nothing.
+ *     (failure, distill-of-distill, pending distill) spawns nothing,
+ *   - batch attribution: a distill inherits the source session's
+ *     `batch_run_id`, so a night run's cost cap and morning summary count it
+ *     without either query changing.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
@@ -76,6 +79,11 @@ const { getProjectMemoryContent, saveProjectMemory } = await import(
 const { PROJECT_MEMORY_MAX_CHARS } = await import(
   "@/lib/documents/memory-constants"
 );
+const {
+  computeNightRunDetail,
+  isNightRunCostPartial,
+  sumNightRunCost,
+} = await import("@/lib/night/summary");
 
 let counter = 0;
 
@@ -84,8 +92,13 @@ async function flushBackground() {
   await new Promise((r) => setTimeout(r, 25));
 }
 
-function claudeEnvelope(text: string): string {
-  return JSON.stringify({ type: "result", subtype: "success", result: text });
+function claudeEnvelope(text: string, costUsd?: number): string {
+  return JSON.stringify({
+    type: "result",
+    subtype: "success",
+    result: text,
+    ...(costUsd !== undefined ? { total_cost_usd: costUsd } : {}),
+  });
 }
 
 function seedProject() {
@@ -376,5 +389,111 @@ describe("maybeAutoDistillAfterSessionTerminal", () => {
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toContain("already pending");
     expect(distillSessions(projectId)).toHaveLength(1); // only the seeded one
+  });
+});
+
+/**
+ * Batch attribution. A night run's build terminals auto-trigger distills;
+ * untagged, their spend escapes the run's cost cap AND the morning summary.
+ * The whole fix is inheriting `batch_run_id` from the source session — both
+ * the cap (sumNightRunCost) and the summary query on that column and nothing
+ * else, so they pick the row up with ZERO changes.
+ */
+describe("memory_distill — batch_run_id inheritance", () => {
+  it("tags the auto-distill with the source session's run and counts its cost", async () => {
+    const { projectId, epicId } = seedProject();
+    const runId = `night_distill_${counter}`;
+    enableAutoDistill();
+    processManagerState.result = {
+      success: true,
+      result: claudeEnvelope("- Distilled rule", 0.75),
+      duration: 1000,
+    };
+
+    // The night run's build session: tagged, and already carrying its cost.
+    const sourceId = seedSourceSession(projectId, epicId, {
+      agentType: "build",
+      batchRunId: runId,
+      totalCostUsd: 2,
+    });
+
+    const decision = await maybeAutoDistillAfterSessionTerminal(sourceId);
+    await flushBackground();
+    expect(decision.allowed).toBe(true);
+
+    const spawned = distillSessions(projectId);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0]).toMatchObject({
+      agentType: "memory_distill",
+      status: "completed",
+      batchRunId: runId,
+      // Still no epic slot held — tagging the run does not change that.
+      epicId: null,
+    });
+    expect(spawned[0].totalCostUsd).toBeCloseTo(0.75, 10);
+
+    // Cost cap + summary see it through the untouched batch_run_id queries:
+    // 2 (build) + 0.75 (distill).
+    expect(sumNightRunCost(runId)).toBeCloseTo(2.75, 10);
+    expect(isNightRunCostPartial(runId)).toBe(false);
+
+    const detail = computeNightRunDetail(runId)!;
+    expect(detail.totalCostUsd).toBeCloseTo(2.75, 10);
+    // The distill carries no epicId, so it lands in the run total but not
+    // against the epic — whose own entry stays at its build cost.
+    const entry = detail.epics.find((e) => e.epicId === epicId)!;
+    expect(entry.sessionIds).toEqual([sourceId]);
+    expect(entry.costUsd).toBeCloseTo(2, 10);
+  });
+
+  it("leaves the tag NULL when the source session belongs to no batch", async () => {
+    const { projectId, epicId } = seedProject();
+    enableAutoDistill();
+    const sourceId = seedSourceSession(projectId, epicId, {
+      agentType: "build",
+    });
+
+    await maybeAutoDistillAfterSessionTerminal(sourceId);
+    await flushBackground();
+
+    const spawned = distillSessions(projectId);
+    expect(spawned).toHaveLength(1);
+    expect(spawned[0].batchRunId).toBeNull();
+  });
+
+  it("inherits the tag on the manual dispatch path too", async () => {
+    const { projectId, epicId } = seedProject();
+    const runId = `night_manual_${counter}`;
+    const sourceId = seedSourceSession(projectId, epicId, {
+      agentType: "ticket_build",
+      batchRunId: runId,
+    });
+
+    const { sessionId } = await dispatchMemoryDistillSession({
+      projectId,
+      sourceSessionId: sourceId,
+    });
+    await flushBackground();
+
+    const row = db
+      .select()
+      .from(agentSessions)
+      .where(eq(agentSessions.id, sessionId))
+      .get();
+    expect(row!.batchRunId).toBe(runId);
+  });
+
+  it("a distill with no source session carries no tag", async () => {
+    const { projectId } = seedProject();
+
+    const { sessionId } = await dispatchMemoryDistillSession({ projectId });
+    await flushBackground();
+
+    const row = db
+      .select()
+      .from(agentSessions)
+      .where(eq(agentSessions.id, sessionId))
+      .get();
+    expect(row!.batchRunId).toBeNull();
   });
 });

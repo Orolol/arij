@@ -8,7 +8,8 @@
  *   - the settled promise handed to startPipelineRun resolves with the
  *     build's terminal {sessionId, success, outcome, error},
  *   - story build route: same wiring with scope 'story',
- *   - batch build route: pipeline === true is rejected 400 for batch modes.
+ *   - batch build route: pipeline === true is rejected 400 for the flat
+ *     batch modes and dispatches a NIGHT RUN with mode 'dag'.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
@@ -24,6 +25,13 @@ const pipelineMocks = vi.hoisted(() => ({
   startPipelineRun: vi.fn((_input: unknown) => ({ runId: "run-test" })),
 }));
 
+const nightMocks = vi.hoisted(() => ({
+  startNightRun: vi.fn((_input: unknown) => ({
+    firstWaveLaunched: Promise.resolve(["s-night-1"]),
+    engineDone: Promise.resolve(),
+  })),
+}));
+
 vi.mock("@/lib/db", async () => {
   const { createTestDb } = await import("@/lib/db/test-utils");
   const created = createTestDb();
@@ -33,6 +41,11 @@ vi.mock("@/lib/db", async () => {
 vi.mock("@/lib/pipeline", () => ({
   resolvePipelineEnabled: pipelineMocks.resolvePipelineEnabled,
   startPipelineRun: pipelineMocks.startPipelineRun,
+  listPipelineRunsByProject: vi.fn(() => []),
+}));
+
+vi.mock("@/lib/night/run", () => ({
+  startNightRun: nightMocks.startNightRun,
 }));
 
 vi.mock("@/lib/git/manager", () => ({
@@ -301,9 +314,9 @@ describe("story build route — pipeline flag", () => {
   });
 });
 
-describe("batch build route — pipeline rejected in v1", () => {
-  it.each(["sequential", "parallel", "dag"] as const)(
-    "400s pipeline: true in %s mode",
+describe("batch build route — pipeline flag", () => {
+  it.each(["sequential", "parallel"] as const)(
+    "400s pipeline: true in %s mode (waves only)",
     async (mode) => {
       const { projectId, epicId } = seed();
       const res = await batchBuildPost(
@@ -313,13 +326,14 @@ describe("batch build route — pipeline rejected in v1", () => {
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toBe(
-        "Pipeline mode is not available for batch builds in v1 — dispatch tickets individually"
+        "Pipeline batch builds run as dependency waves — use mode 'dag'"
       );
+      expect(nightMocks.startNightRun).not.toHaveBeenCalled();
       expect(pipelineMocks.startPipelineRun).not.toHaveBeenCalled();
     }
   );
 
-  it("400s pipeline: true in team mode too", async () => {
+  it("400s pipeline: true in team mode too (team defaults to a flat mode)", async () => {
     const { projectId, epicId } = seed();
     const res = await batchBuildPost(
       mockJsonRequest({ epicIds: [epicId], team: true, pipeline: true }),
@@ -327,6 +341,54 @@ describe("batch build route — pipeline rejected in v1", () => {
     );
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error).toContain("not available for batch builds");
+    expect(json.error).toBe(
+      "Pipeline batch builds run as dependency waves — use mode 'dag'"
+    );
+  });
+
+  it("dag + pipeline dispatches a night run (no longer 400)", async () => {
+    const { projectId, epicId } = seed();
+    const res = await batchBuildPost(
+      mockJsonRequest({
+        epicIds: [epicId],
+        mode: "dag",
+        pipeline: true,
+        circuitBreaker: 2,
+        costCapUsd: 12.5,
+      }),
+      mockRouteContext({ projectId })
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+
+    expect(json.data).toMatchObject({
+      orchestrationMode: "dag",
+      pipeline: true,
+      sessions: ["s-night-1"],
+      count: 1,
+      waves: 1,
+      totalEpics: 1,
+      failurePolicy: "halt",
+    });
+    expect(json.data.batchId).toMatch(/^night_/);
+
+    expect(nightMocks.startNightRun).toHaveBeenCalledTimes(1);
+    const input = nightMocks.startNightRun.mock.calls[0][0] as unknown as {
+      projectId: string;
+      runId: string;
+      breakerThreshold: number | null;
+      costCapUsd: number | null;
+      failurePolicy: string;
+    };
+    expect(input).toMatchObject({
+      projectId,
+      runId: json.data.batchId,
+      breakerThreshold: 2,
+      costCapUsd: 12.5,
+      failurePolicy: "halt",
+    });
+    // The per-epic pipelines are the night engine's business — the route
+    // itself never starts one.
+    expect(pipelineMocks.startPipelineRun).not.toHaveBeenCalled();
   });
 });

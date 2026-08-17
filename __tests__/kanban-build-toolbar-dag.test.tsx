@@ -208,8 +208,9 @@ describe("Kanban Build Toolbar — Waves (DAG) mode", () => {
       );
     });
 
+    // endsWith, not includes: the page also polls /build/night-runs.
     const call = mockFetch.mock.calls.find(
-      (c: unknown[]) => typeof c[0] === "string" && c[0].includes("/build")
+      (c: unknown[]) => typeof c[0] === "string" && c[0].endsWith("/build")
     )!;
     const body = JSON.parse(call[1].body);
     expect(body.mode).toBe("dag");
@@ -228,8 +229,9 @@ describe("Kanban Build Toolbar — Waves (DAG) mode", () => {
       expect(mockFetch).toHaveBeenCalled();
     });
 
+    // endsWith, not includes: the page also polls /build/night-runs.
     const call = mockFetch.mock.calls.find(
-      (c: unknown[]) => typeof c[0] === "string" && c[0].includes("/build")
+      (c: unknown[]) => typeof c[0] === "string" && c[0].endsWith("/build")
     )!;
     const body = JSON.parse(call[1].body);
     expect(body.mode).toBe("parallel");

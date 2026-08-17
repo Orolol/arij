@@ -115,6 +115,11 @@ export interface PipelineStageDriverInit {
   userStoryId: string | null;
   /** The run's original request-level namedAgentId (attempt-1 code stages). */
   buildNamedAgentId: string | null;
+  /**
+   * Batch/night run that owns this pipeline; stamped on every stage session
+   * row (agent_sessions.batch_run_id). Null for standalone runs.
+   */
+  batchRunId?: string | null;
 }
 
 export interface PipelineStageDriver {
@@ -562,6 +567,7 @@ async function dispatchPipelineStage(
     agentType,
     namedAgentName: resolved.name || null,
     model: resolved.model || null,
+    batchRunId: init.batchRunId ?? null,
     createdAt: now,
   });
 

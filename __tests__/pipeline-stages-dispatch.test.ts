@@ -696,3 +696,56 @@ describe("guard probe", () => {
     );
   });
 });
+
+describe("batch run tagging (night runs)", () => {
+  it("stamps the driver's batchRunId on the stage session row; null when absent", async () => {
+    const { projectId, epicId } = seed("review");
+
+    const tagged = createPipelineStageDriver({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildNamedAgentId: null,
+      batchRunId: "night_test_run",
+    });
+    const handle = await tagged.launchStage({
+      stage: "review",
+      attempt: 1,
+      fixCycle: 0,
+      previousAttemptSessionId: null,
+      lastCodeSessionId: null,
+    });
+    await handle.settled;
+
+    const taggedRow = db
+      .select()
+      .from(agentSessions)
+      .where(eq(agentSessions.id, handle.sessionId!))
+      .get();
+    expect(taggedRow!.batchRunId).toBe("night_test_run");
+
+    // Standalone pipelines (no batchRunId on the init) leave the column NULL.
+    const untagged = createPipelineStageDriver({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildNamedAgentId: null,
+    });
+    const handle2 = await untagged.launchStage({
+      stage: "review",
+      attempt: 1,
+      fixCycle: 0,
+      previousAttemptSessionId: null,
+      lastCodeSessionId: null,
+    });
+    await handle2.settled;
+    const untaggedRow = db
+      .select()
+      .from(agentSessions)
+      .where(eq(agentSessions.id, handle2.sessionId!))
+      .get();
+    expect(untaggedRow!.batchRunId).toBeNull();
+  });
+});

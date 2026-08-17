@@ -9,6 +9,8 @@ import {
 import { createId } from "@/lib/utils/nanoid";
 import { AGENT_TYPE_LABELS } from "@/lib/agent-config/constants";
 import { durationMsBetween, sendProjectWebhook } from "@/lib/webhooks/send";
+import { NIGHT_STOPPED_ABORT_REASON } from "@/lib/night/constants";
+import type { TicketExecutionStatus } from "@/lib/dependencies/scheduler";
 
 const MAX_NOTIFICATIONS = 200;
 
@@ -404,6 +406,107 @@ export function createDagWaveOutcomeNotification(
       status,
       title: buildDagWaveOutcomeTitle(input, epicLabel),
       targetUrl: `/projects/${input.projectId}`,
+    })
+    .run();
+
+  pruneNotifications();
+}
+
+export interface NightRunSummaryNotificationInput {
+  projectId: string;
+  /** `night_`-prefixed run id; drives the `?nightRun=` deep link. */
+  runId: string;
+  counts: Record<TicketExecutionStatus, number>;
+  /** SUM of Claude-reported costs (lower bound, see costIsPartial). */
+  totalCostUsd: number;
+  /** True when at least one tagged session reported no cost. */
+  costIsPartial: boolean;
+  /** Wave-engine abort reason (circuit breaker / cost cap), else null. */
+  abortReason: string | null;
+  durationMs: number | null;
+}
+
+/**
+ * Title for the single morning-summary notification of a night run.
+ *
+ * Examples:
+ *   "Night run finished: 5 in review, 1 paused, 2 failed, 1 skipped — $4.20"
+ *   "Night run finished: 3 in review — ≥$1.10"
+ *   "Night run finished: 2 failed, 4 skipped — circuit breaker tripped"
+ *
+ * Zero buckets are omitted; wave status "done" reads "in review" (the
+ * pipeline never auto-approves) and "asked" reads "paused". The cost suffix
+ * appears only when > 0, prefixed "≥" when partial (non-Claude providers
+ * report no cost). A breaker/cost-cap abort appends its marker.
+ */
+export function buildNightRunSummaryTitle(
+  counts: Record<TicketExecutionStatus, number>,
+  totalCostUsd: number,
+  costIsPartial: boolean,
+  abortReason: string | null
+): string {
+  const parts: string[] = [];
+  if (counts.done > 0) parts.push(`${counts.done} in review`);
+  if (counts.asked > 0) parts.push(`${counts.asked} paused`);
+  if (counts.failed > 0) parts.push(`${counts.failed} failed`);
+  if (counts.skipped > 0) parts.push(`${counts.skipped} skipped`);
+
+  let title =
+    parts.length > 0
+      ? `Night run finished: ${parts.join(", ")}`
+      : "Night run finished";
+
+  if (totalCostUsd > 0) {
+    title += ` — ${costIsPartial ? "≥" : ""}$${totalCostUsd.toFixed(2)}`;
+  }
+
+  if (abortReason === NIGHT_STOPPED_ABORT_REASON) {
+    title += " — stopped by you";
+  } else if (abortReason?.startsWith("circuit breaker")) {
+    title += " — circuit breaker tripped";
+  } else if (abortReason?.startsWith("cost cap")) {
+    title += " — cost cap reached";
+  }
+
+  return title;
+}
+
+/**
+ * The EXACTLY-ONE morning-summary notification of a night run (fired from
+ * the night engine's terminal choke point — never on restart-interrupted
+ * runs). Not session-scoped: the run owns many sessions, and the actionable
+ * place is the summary dialog the `?nightRun=` deep link opens.
+ */
+export function createNightRunSummaryNotification(
+  input: NightRunSummaryNotificationInput
+): void {
+  const project = db
+    .select({ name: projects.name })
+    .from(projects)
+    .where(eq(projects.id, input.projectId))
+    .get();
+  if (!project) return;
+
+  const status =
+    input.counts.failed > 0 || input.abortReason !== null
+      ? "failed"
+      : "completed";
+
+  db.insert(notifications)
+    .values({
+      id: createId(),
+      projectId: input.projectId,
+      projectName: project.name,
+      sessionId: null,
+      agentType: "build",
+      status,
+      title: buildNightRunSummaryTitle(
+        input.counts,
+        input.totalCostUsd,
+        input.costIsPartial,
+        input.abortReason
+      ),
+      targetUrl: `/projects/${input.projectId}?nightRun=${input.runId}`,
     })
     .run();
 

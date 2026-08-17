@@ -166,6 +166,7 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       inputTokens: "input_tokens",
       outputTokens: "output_tokens",
       totalCostUsd: "total_cost_usd",
+      batchRunId: "batch_run_id",
       claudeSessionId: "claude_session_id",
       cliSessionId: "cli_session_id",
       namedAgentId: "named_agent_id",

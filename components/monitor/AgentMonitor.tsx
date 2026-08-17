@@ -14,8 +14,12 @@ import {
   Clock,
   Layers,
   Loader2,
+  Moon,
+  Square,
   Workflow,
 } from "lucide-react";
+import { isNightRunId } from "@/lib/night/constants";
+import { stopNightRun } from "@/hooks/useNightRuns";
 import { Button } from "@/components/ui/button";
 import { formatElapsed } from "@/lib/utils/format-elapsed";
 import { usePolling } from "@/hooks/usePolling";
@@ -68,6 +72,8 @@ export function AgentMonitor({
   const [expanded, setExpanded] = useState(true);
   const [elapsed, setElapsed] = useState<Record<string, string>>({});
   const [waveBatches, setWaveBatches] = useState<WaveBatchIndicator[]>([]);
+  /** Night run ids the user already asked to stop (local echo). */
+  const [stoppedRuns, setStoppedRuns] = useState<string[]>([]);
 
   // Active DAG batch builds ("Build by waves") — the registry only lists
   // running batches, so an empty array simply hides the indicator.
@@ -116,6 +122,17 @@ export function AgentMonitor({
     });
   }
 
+  // At most one night run is active per project (route guard), so the header
+  // gets a single stop control next to the moon chip.
+  const nightBatch = waveBatches.find((batch) => isNightRunId(batch.batchId));
+
+  async function handleStopNight(runId: string) {
+    setStoppedRuns((prev) => (prev.includes(runId) ? prev : [...prev, runId]));
+    await stopNightRun(projectId, runId);
+    // No refetch needed: the wave poller keeps running and the chip vanishes
+    // once the engine closes the run.
+  }
+
   // Running agents first; queued ones wait below them, mirroring the
   // scheduler's actual order of execution.
   const runningActivities = activities.filter((a) => a.status !== "queued");
@@ -124,36 +141,81 @@ export function AgentMonitor({
 
   return (
     <div className="border-t border-border bg-muted/30">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="w-full px-4 py-1.5 flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground"
-      >
-        <span className="relative flex h-2 w-2">
-          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-        </span>
-        <span className="font-medium">
-          {runningActivities.length} active agent
-          {runningActivities.length !== 1 ? "s" : ""}
-          {queuedActivities.length > 0 && ` · ${queuedActivities.length} queued`}
-        </span>
-        {waveBatches.map((batch) => (
-          <span
-            key={batch.batchId}
-            data-testid={`agent-monitor-wave-${batch.batchId}`}
-            className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-sky-500 shrink-0"
-            title="DAG batch build: dependency waves run in order"
-          >
-            <Layers className="h-3 w-3" />
-            Wave {Math.max(batch.currentWave, 1)}/{batch.totalWaves}
+      {/*
+        One header row, three interactive zones: the label toggles the list,
+        the wave/night chips sit inline (plus the night run's stop control —
+        a button, so it CANNOT be nested inside the toggle button), and the
+        chevron toggles as well.
+      */}
+      <div className="w-full px-4 py-1.5 flex items-center gap-2 text-xs text-muted-foreground">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-2 min-w-0 hover:text-foreground"
+        >
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
           </span>
-        ))}
-        {expanded ? (
-          <ChevronDown className="h-3 w-3 ml-auto" />
-        ) : (
-          <ChevronUp className="h-3 w-3 ml-auto" />
+          <span className="font-medium">
+            {runningActivities.length} active agent
+            {runningActivities.length !== 1 ? "s" : ""}
+            {queuedActivities.length > 0 &&
+              ` · ${queuedActivities.length} queued`}
+          </span>
+        </button>
+        {waveBatches.map((batch) => {
+          // A night run registers under the same wave registry, so the chip
+          // works unchanged — it only swaps its icon and wording to say the
+          // waves are running unattended through the pipeline.
+          const isNight = isNightRunId(batch.batchId);
+          const WaveIcon = isNight ? Moon : Layers;
+          return (
+            <span
+              key={batch.batchId}
+              data-testid={`agent-monitor-wave-${batch.batchId}`}
+              data-night={isNight ? "true" : undefined}
+              className={`flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide shrink-0 ${
+                isNight ? "text-indigo-400" : "text-sky-500"
+              }`}
+              title={
+                isNight
+                  ? "Night run: dependency waves, each epic chained through the autonomous pipeline"
+                  : "DAG batch build: dependency waves run in order"
+              }
+            >
+              <WaveIcon className="h-3 w-3" />
+              {isNight ? "Night wave" : "Wave"}{" "}
+              {Math.max(batch.currentWave, 1)}/{batch.totalWaves}
+            </span>
+          );
+        })}
+        {nightBatch && (
+          <button
+            type="button"
+            data-testid="agent-monitor-night-stop"
+            disabled={stoppedRuns.includes(nightBatch.batchId)}
+            onClick={() => handleStopNight(nightBatch.batchId)}
+            className="flex items-center gap-1 rounded-sm border border-border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground shrink-0 hover:text-foreground disabled:opacity-50"
+            title="Stop the night run: no new epic is launched. Epics already running finish their pipeline."
+          >
+            <Square className="h-3 w-3" />
+            {stoppedRuns.includes(nightBatch.batchId)
+              ? "Stopping…"
+              : "Stop night run"}
+          </button>
         )}
-      </button>
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="ml-auto hover:text-foreground"
+          aria-label={expanded ? "Collapse agent list" : "Expand agent list"}
+        >
+          {expanded ? (
+            <ChevronDown className="h-3 w-3" />
+          ) : (
+            <ChevronUp className="h-3 w-3" />
+          )}
+        </button>
+      </div>
 
       {expanded && (
         <div className="px-4 pb-2 space-y-1">

@@ -22,7 +22,11 @@ import {
 } from "./constants";
 import { pipelineRegistry, listPipelineRunsByProject } from "./registry";
 import { createPipelineStageDriver } from "./stages";
-import { runPipeline, type PipelineStageResult } from "./runner";
+import {
+  runPipeline,
+  type PipelineStageResult,
+  type PipelineTerminalSummary,
+} from "./runner";
 
 /**
  * Autonomous pipeline entry point (build → review → auto-fix → forensic).
@@ -48,6 +52,21 @@ export interface StartPipelineRunInput {
   buildProvider: AgentProvider;
   buildNamedAgentId: string | null;
   buildSettled: Promise<PipelineStageResult>;
+  /**
+   * Batch/night run that dispatched this pipeline. Threaded onto every
+   * session row the run creates (stage + forensic sessions) so DB-derived
+   * summaries and cost caps can group by run. Null/absent for standalone
+   * dispatches (the epic/story build routes).
+   */
+  batchRunId?: string | null;
+  /**
+   * Awaitable terminal seam: fires EXACTLY ONCE when the run reaches any
+   * terminal state — including the engine-crash safety net. Invoked after
+   * the registry snapshot is finished; must not rely on the run still being
+   * active. Exceptions are swallowed (the engine never crashes over a
+   * callback).
+   */
+  onTerminal?(summary: PipelineTerminalSummary): void;
 }
 
 function readSettingValue(key: string): string | null {
@@ -168,12 +187,30 @@ export function startPipelineRun(input: StartPipelineRunInput): {
 
   trace(PIPELINE_REASONS.started, input.buildSessionId);
 
+  // Terminal seam: fires input.onTerminal exactly once across the two
+  // possible terminal paths (runner onFinish, engine-crash catch), and never
+  // lets a callback exception escape into the engine.
+  let terminalFired = false;
+  const fireTerminal = (summary: PipelineTerminalSummary): void => {
+    if (terminalFired) return;
+    terminalFired = true;
+    try {
+      input.onTerminal?.(summary);
+    } catch (error) {
+      console.warn(
+        "[pipeline] onTerminal callback threw:",
+        error instanceof Error ? error.message : error
+      );
+    }
+  };
+
   const driver = createPipelineStageDriver({
     projectId: input.projectId,
     scope: input.scope,
     epicId: input.epicId,
     userStoryId: input.userStoryId,
     buildNamedAgentId: input.buildNamedAgentId,
+    batchRunId: input.batchRunId ?? null,
   });
 
   const engine = runPipeline({
@@ -196,6 +233,7 @@ export function startPipelineRun(input: StartPipelineRunInput): {
         deadSessionId: forensicInput.deadSessionId,
         stage: forensicInput.stage,
         attempts: forensicInput.attempts,
+        batchRunId: input.batchRunId ?? null,
       }),
     callbacks: {
       onStageChange: (state, stage, stageAttempt, fixCycles) => {
@@ -224,6 +262,7 @@ export function startPipelineRun(input: StartPipelineRunInput): {
         } catch {
           // best-effort
         }
+        fireTerminal(summary);
       },
     },
   });
@@ -238,11 +277,19 @@ export function startPipelineRun(input: StartPipelineRunInput): {
     } catch {
       // best-effort
     }
+    // The registry still serves the ring after finish, so the crash summary
+    // carries whatever sessions the run had recorded before it died.
+    fireTerminal({
+      state: "failed",
+      reason: "pipeline engine error",
+      sessionIds: pipelineRegistry.get(runId)?.sessionIds ?? [],
+      fixCycles: 0,
+    });
   });
 
   return { runId };
 }
 
 export { listPipelineRunsByProject, pipelineRegistry };
-export type { PipelineStageResult };
+export type { PipelineStageResult, PipelineTerminalSummary };
 export type { PipelineRunSnapshot } from "./constants";

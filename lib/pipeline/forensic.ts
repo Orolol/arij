@@ -97,6 +97,11 @@ export interface RunForensicInput {
   stage: "build" | "review" | "fix";
   /** Attempts burned on that stage. */
   attempts: number;
+  /**
+   * Batch/night run that owns the dooming pipeline; stamped on the forensic
+   * session row (agent_sessions.batch_run_id). Null for standalone runs.
+   */
+  batchRunId?: string | null;
 }
 
 export interface RunForensicResult {
@@ -284,6 +289,7 @@ export async function runForensic(
       agentType: "forensic",
       namedAgentName: resolvedAgent.name || null,
       model: resolvedAgent.model || null,
+      batchRunId: input.batchRunId ?? null,
       createdAt: now,
     });
 
