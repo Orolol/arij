@@ -107,6 +107,20 @@ export async function POST(
     );
   }
 
+  // The autonomous pipeline is a single-ticket feature in v1: wave-blocking
+  // semantics for paused runs and N concurrent pipelines against the budget
+  // are real design surface batch mode does not need. Rejected for ALL batch
+  // modes; this route never consults the pipeline_enabled setting.
+  if ((body as { pipeline?: unknown } | null)?.pipeline === true) {
+    return NextResponse.json(
+      {
+        error:
+          "Pipeline mode is not available for batch builds in v1 — dispatch tickets individually",
+      },
+      { status: 400 }
+    );
+  }
+
   const parsedOptions = batchBuildOptionsSchema.safeParse(body ?? {});
   if (!parsedOptions.success) {
     return NextResponse.json(

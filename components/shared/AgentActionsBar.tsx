@@ -10,6 +10,7 @@ import {
   Search,
   CheckCircle2,
   Loader2,
+  Workflow,
 } from "lucide-react";
 import { AgentDispatchDialog } from "@/components/shared/AgentDispatchDialog";
 import { ReviewTypesPicker } from "@/components/shared/ReviewTypesPicker";
@@ -19,6 +20,8 @@ import {
   isAgentProvider,
   type BuiltinReviewType,
 } from "@/lib/agent-config/constants";
+import { resolvePipelineEnabledDefault } from "@/lib/pipeline/constants";
+import { pipelineChipLabel, usePipelineRuns } from "@/hooks/usePipelineRuns";
 
 interface ReviewResolutionPreview {
   provider: string;
@@ -86,7 +89,12 @@ interface AgentActionsBarProps {
   dispatching: boolean;
   isRunning: boolean;
   activeSessionId?: string | null;
-  onSendToDev: (comment?: string, namedAgentId?: string | null, resumeSessionId?: string) => Promise<unknown>;
+  onSendToDev: (
+    comment?: string,
+    namedAgentId?: string | null,
+    resumeSessionId?: string,
+    pipeline?: boolean
+  ) => Promise<unknown>;
   onSendToReview: (types: string[], namedAgentId?: string | null, resumeSessionId?: string) => Promise<unknown>;
   onApprove: () => Promise<unknown>;
   onActionError?: (error: unknown) => void;
@@ -114,6 +122,17 @@ export function AgentActionsBar({
   const [reviewResumeSessionId, setReviewResumeSessionId] = useState<string | undefined>();
   const [reviewResolution, setReviewResolution] =
     useState<ReviewResolutionPreview | null>(null);
+  const [pipeline, setPipeline] = useState(false);
+
+  // Explains a session the user did not dispatch by hand: while an agent is
+  // running, check whether it belongs to an autonomous pipeline run.
+  const { sessionIndex: pipelineSessions } = usePipelineRuns(
+    projectId,
+    isRunning && !!activeSessionId
+  );
+  const activePipeline = activeSessionId
+    ? pipelineSessions[activeSessionId]
+    : undefined;
 
   const config = TARGET_CONFIG[target.kind];
   const item = target.kind === "epic" ? target.epic : target.story;
@@ -165,6 +184,35 @@ export function AgentActionsBar({
     sessionUserStoryId,
   ]);
 
+  // The pipeline checkbox defaults to the effective setting (per-project key
+  // first, then the global one, then OFF). Re-read each time the dialog
+  // opens so a settings change is picked up without a reload.
+  useEffect(() => {
+    if (!sendToDevOpen) return;
+    let cancelled = false;
+    try {
+      fetch("/api/settings")
+        .then((r) => r.json())
+        .then((json) => {
+          if (cancelled) return;
+          setPipeline(
+            resolvePipelineEnabledDefault(
+              json?.data as Record<string, unknown> | undefined,
+              projectId
+            )
+          );
+        })
+        .catch(() => {
+          // best-effort — the checkbox simply stays off
+        });
+    } catch {
+      // ignore (no fetch in some test environments)
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [sendToDevOpen, projectId]);
+
   const segregationNotice =
     reviewResolution?.segregated && reviewResolution.builderProvider
       ? `Review by ${providerLabel(reviewResolution.provider)} (builder was ${providerLabel(reviewResolution.builderProvider)})`
@@ -186,7 +234,12 @@ export function AgentActionsBar({
   // Send to Dev (from backlog/todo/in_progress — optional comment)
   async function handleSendToDev() {
     try {
-      await onSendToDev(devComment.trim() || undefined, devAgentId, resumeSessionId);
+      await onSendToDev(
+        devComment.trim() || undefined,
+        devAgentId,
+        resumeSessionId,
+        pipeline
+      );
       setSendToDevOpen(false);
       setDevComment("");
       setResumeSessionId(undefined);
@@ -199,7 +252,12 @@ export function AgentActionsBar({
   async function handleSendToDevFromReview() {
     if (!devComment.trim()) return;
     try {
-      await onSendToDev(devComment.trim(), devAgentId, resumeSessionId);
+      await onSendToDev(
+        devComment.trim(),
+        devAgentId,
+        resumeSessionId,
+        pipeline
+      );
       setSendToDevOpen(false);
       setDevComment("");
       setResumeSessionId(undefined);
@@ -253,6 +311,17 @@ export function AgentActionsBar({
         <Badge variant="outline" className="gap-1 text-yellow-500 border-yellow-500/30">
           <Loader2 className="h-3 w-3 animate-spin" />
           Agent running
+        </Badge>
+      )}
+      {activePipeline && (
+        <Badge
+          variant="outline"
+          data-testid="pipeline-chip"
+          className="gap-1 text-violet-400 border-violet-500/30"
+          title="Dispatched by an autonomous pipeline run — stopping this session stops the pipeline"
+        >
+          <Workflow className="h-3 w-3" />
+          {pipelineChipLabel(activePipeline)}
         </Badge>
       )}
       {lockMessage && (
@@ -332,18 +401,39 @@ export function AgentActionsBar({
           onSelect: setResumeSessionId,
         }}
         extraContent={
-          <MentionTextarea
-            projectId={projectId}
-            value={devComment}
-            onValueChange={setDevComment}
-            placeholder={
-              canSendToDevFromReview
-                ? "Describe what needs to be fixed..."
-                : "Optional instructions for the agent..."
-            }
-            rows={4}
-            className=""
-          />
+          <>
+            <MentionTextarea
+              projectId={projectId}
+              value={devComment}
+              onValueChange={setDevComment}
+              placeholder={
+                canSendToDevFromReview
+                  ? "Describe what needs to be fixed..."
+                  : "Optional instructions for the agent..."
+              }
+              rows={4}
+              className=""
+            />
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                data-testid="pipeline-checkbox"
+                checked={pipeline}
+                onChange={(e) => setPipeline(e.target.checked)}
+              />
+              <span>
+                <span className="font-medium">
+                  Run full pipeline (build → review → auto-fix)
+                </span>
+                <span className="block text-xs text-muted-foreground">
+                  After the build, Arij runs a code review and dispatches fix
+                  agents until the review is clean. Stopping the running
+                  session stops the pipeline.
+                </span>
+              </span>
+            </label>
+          </>
         }
         confirmLabel="Dispatch Agent"
         confirmIcon={<Hammer className="h-4 w-4 mr-1" />}

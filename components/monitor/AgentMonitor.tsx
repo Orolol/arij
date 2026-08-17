@@ -14,11 +14,13 @@ import {
   Clock,
   Layers,
   Loader2,
+  Workflow,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { formatElapsed } from "@/lib/utils/format-elapsed";
 import { usePolling } from "@/hooks/usePolling";
 import type { UnifiedActivity } from "@/hooks/useAgentPolling";
+import { pipelineChipLabel, usePipelineRuns } from "@/hooks/usePipelineRuns";
 
 /** Subset of DagBatchSnapshot the wave indicator renders. */
 interface WaveBatchIndicator {
@@ -79,6 +81,13 @@ export function AgentMonitor({
     }
   }, [projectId]);
   usePolling(pollWaves, 3000, activities.length > 0);
+
+  // Sessions owned by an autonomous pipeline run get a "Pipeline · <stage>"
+  // chip so a session nobody dispatched by hand is explicable at a glance.
+  const { sessionIndex: pipelineSessions } = usePipelineRuns(
+    projectId,
+    activities.length > 0
+  );
 
   useEffect(() => {
     if (activities.length === 0) return;
@@ -158,6 +167,7 @@ export function AgentMonitor({
             const staleTooltip = activity.lastActivityAt
               ? `No output for ${minutesSince(activity.lastActivityAt, new Date())}m`
               : "No output";
+            const pipelineInfo = pipelineSessions[activity.id];
             return (
               <div
                 key={activity.id}
@@ -172,6 +182,16 @@ export function AgentMonitor({
                   }`}
                 />
                 <span className="truncate">{activity.label}</span>
+                {pipelineInfo && (
+                  <span
+                    data-testid={`agent-monitor-pipeline-${activity.id}`}
+                    className="flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-violet-400 shrink-0"
+                    title="Dispatched by an autonomous pipeline run — stopping this session stops the pipeline"
+                  >
+                    <Workflow className="h-3 w-3" />
+                    {pipelineChipLabel(pipelineInfo)}
+                  </span>
+                )}
                 <span className="text-muted-foreground text-[10px] font-medium uppercase tracking-wide shrink-0">
                   {activity.namedAgentName || providerLabel(activity.provider)}
                 </span>

@@ -67,6 +67,7 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
   merge: "Merge",
   tech_check: "Tech Check",
   memory_distill: "Memory Distill",
+  forensic: "Forensic",
 };
 
 /**

@@ -16,6 +16,7 @@ import {
   ArrowRight,
   ChevronRight,
   ChevronDown,
+  Workflow,
 } from "lucide-react";
 import type { TicketComment } from "@/hooks/useTicketComments";
 import {
@@ -24,6 +25,11 @@ import {
 } from "@/hooks/useEpicActivity";
 import { formatTime, timeAgo } from "@/lib/utils/format-date";
 import { COLUMN_LABELS } from "@/lib/types/kanban";
+import {
+  isPipelineActivityReason,
+  pipelineReasonTone,
+  type PipelineReasonTone,
+} from "@/lib/pipeline/constants";
 
 /* ------------------------------------------------------------------ */
 /* Feed construction (pure, exported for tests)                        */
@@ -35,6 +41,7 @@ export const SYSTEM_GROUP_WINDOW_MS = 60_000;
 export type FeedItem =
   | { kind: "comment"; ts: string; comment: TicketComment }
   | { kind: "transition"; ts: string; entry: EpicActivityEntry }
+  | { kind: "pipeline"; ts: string; entry: EpicActivityEntry }
   | { kind: "transition-group"; ts: string; entries: EpicActivityEntry[] };
 
 /**
@@ -42,6 +49,12 @@ export type FeedItem =
  * feed. Runs of 2+ consecutive `system` transitions whose successive
  * timestamps are within `SYSTEM_GROUP_WINDOW_MS` collapse into a single
  * `transition-group` item (timestamped at the run's newest entry).
+ *
+ * Autonomous-pipeline trace entries are `system` transitions too, but they
+ * are the narration of a running pipeline — collapsing them behind an
+ * "N automatic transitions" toggle would hide exactly the information the
+ * user opened the feed for. They are split out as their own `pipeline`
+ * items, which also breaks any surrounding grouping run.
  */
 export function buildActivityFeed(
   comments: TicketComment[],
@@ -54,7 +67,9 @@ export function buildActivityFeed(
       comment,
     })),
     ...entries.map((entry) => ({
-      kind: "transition" as const,
+      kind: isPipelineActivityReason(entry.reason)
+        ? ("pipeline" as const)
+        : ("transition" as const),
       ts: entry.createdAt ?? "",
       entry,
     })),
@@ -156,6 +171,51 @@ function TransitionRow({
         <span className="w-full pl-5 italic text-muted-foreground">
           {entry.reason}
         </span>
+      )}
+    </div>
+  );
+}
+
+const PIPELINE_TONE_STYLES: Record<PipelineReasonTone, string> = {
+  progress: "text-violet-400",
+  success: "text-green-500",
+  paused: "text-amber-500",
+  failure: "text-destructive",
+};
+
+/**
+ * One line of the autonomous pipeline's narration. Renders the reason text
+ * itself (the trace strings are the contract) instead of the from→to status
+ * pair, which is always a no-op transition for these entries.
+ */
+function PipelineRow({
+  entry,
+  projectId,
+}: {
+  entry: EpicActivityEntry;
+  projectId: string;
+}) {
+  const reason = entry.reason ?? "Pipeline event";
+  const tone = pipelineReasonTone(reason);
+  return (
+    <div
+      data-testid="activity-pipeline"
+      data-tone={tone}
+      className="flex flex-wrap items-center gap-1.5 border-l-2 border-violet-500/40 px-1 py-0.5 pl-2 text-xs"
+    >
+      <Workflow className={`h-3.5 w-3.5 shrink-0 ${PIPELINE_TONE_STYLES[tone]}`} />
+      <span className={`font-medium ${PIPELINE_TONE_STYLES[tone]}`}>
+        {reason}
+      </span>
+      <span className="text-muted-foreground">{timeAgo(entry.createdAt)}</span>
+      {entry.sessionId && (
+        <Link
+          data-testid="activity-session-link"
+          href={`/projects/${projectId}/sessions/${entry.sessionId}`}
+          className="text-primary underline-offset-2 hover:underline"
+        >
+          View session
+        </Link>
       )}
     </div>
   );
@@ -326,6 +386,12 @@ export function EpicActivityFeed({
             feed.map((item) =>
               item.kind === "comment" ? (
                 <CommentRow key={item.comment.id} comment={item.comment} />
+              ) : item.kind === "pipeline" ? (
+                <PipelineRow
+                  key={item.entry.id}
+                  entry={item.entry}
+                  projectId={projectId}
+                />
               ) : item.kind === "transition" ? (
                 <TransitionRow
                   key={item.entry.id}

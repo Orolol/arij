@@ -145,8 +145,8 @@ export default function StoryDetailPage() {
           target={{ kind: "story", story }}
           dispatching={dispatching}
           isRunning={isRunning}
-          onSendToDev={async (comment, namedAgentId, resumeSessionId) => {
-            await sendToDev(comment, namedAgentId, resumeSessionId);
+          onSendToDev={async (comment, namedAgentId, resumeSessionId, pipeline) => {
+            await sendToDev(comment, namedAgentId, resumeSessionId, pipeline);
             refreshStory();
           }}
           onSendToReview={async (types, namedAgentId, resumeSessionId) => {
