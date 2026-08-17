@@ -4,8 +4,10 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { UploadZone } from "@/components/documents/UploadZone";
 import { DocumentViewer } from "@/components/documents/DocumentViewer";
+import { ProjectMemoryCard } from "@/components/documents/ProjectMemoryCard";
 import { Button } from "@/components/ui/button";
 import { Trash2 } from "lucide-react";
+import { MEMORY_DOC_KIND } from "@/lib/documents/memory-constants";
 
 interface Doc {
   id: string;
@@ -34,7 +36,12 @@ export default function DocumentsPage() {
       setError(data.error || "Failed to load documents.");
       return;
     }
-    const docs = (data.data || []) as Doc[];
+    // The learned project memory lives in the same table (kind 'memory')
+    // but has its own dedicated editor card — keep it out of the uploads
+    // list so it cannot be casually deleted like a reference document.
+    const docs = (
+      (data.data || []) as Array<Omit<Doc, "kind"> & { kind: string }>
+    ).filter((doc) => doc.kind !== MEMORY_DOC_KIND) as Doc[];
     setDocuments(docs);
     if (selectedDoc && !docs.some((doc) => doc.id === selectedDoc.id)) {
       setSelectedDoc(null);
@@ -83,6 +90,9 @@ export default function DocumentsPage() {
   return (
     <div className="p-6">
       <h2 className="text-xl font-bold mb-4">Documents</h2>
+      <div className="mb-6">
+        <ProjectMemoryCard projectId={projectId} />
+      </div>
       <UploadZone projectId={projectId} onUploaded={handleUploaded} />
       {error && <p className="text-sm text-destructive mt-3">{error}</p>}
       <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">

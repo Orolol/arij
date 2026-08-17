@@ -29,6 +29,11 @@ export default function SettingsPage() {
   const [savingWebhookId, setSavingWebhookId] = useState<string | null>(null);
   const [webhookMessage, setWebhookMessage] = useState<string | null>(null);
   const [webhookError, setWebhookError] = useState<string | null>(null);
+  const [memoryAutoDistill, setMemoryAutoDistill] = useState(false);
+  const [savingAutoDistill, setSavingAutoDistill] = useState(false);
+  const [autoDistillMessage, setAutoDistillMessage] = useState<string | null>(
+    null
+  );
 
   useEffect(() => {
     fetch("/api/settings/webhooks")
@@ -51,9 +56,39 @@ export default function SettingsPage() {
         }
         const githubSetting = d.data?.github_pat as GitHubPatSetting | undefined;
         setHasSavedGitHubPat(Boolean(githubSetting?.hasToken));
+        const autoDistill = d.data?.memory_auto_distill;
+        setMemoryAutoDistill(autoDistill === true || autoDistill === "true");
       })
       .catch(() => {});
   }, []);
+
+  async function handleToggleAutoDistill(next: boolean) {
+    setMemoryAutoDistill(next);
+    setSavingAutoDistill(true);
+    setAutoDistillMessage(null);
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ memory_auto_distill: next }),
+      });
+      if (!response.ok) {
+        setMemoryAutoDistill(!next);
+        setAutoDistillMessage("Failed to save the auto-distill setting.");
+        return;
+      }
+      setAutoDistillMessage(
+        next
+          ? "Auto-distillation enabled: successful builds will refresh each project's memory."
+          : "Auto-distillation disabled."
+      );
+    } catch {
+      setMemoryAutoDistill(!next);
+      setAutoDistillMessage("Failed to save the auto-distill setting.");
+    } finally {
+      setSavingAutoDistill(false);
+    }
+  }
 
   async function handleSaveGlobalPrompt() {
     setSavingPrompt(true);
@@ -238,6 +273,37 @@ export default function SettingsPage() {
         <Button onClick={handleSaveGlobalPrompt} disabled={savingPrompt}>
           {savingPrompt ? "Saving..." : "Save Settings"}
         </Button>
+      </section>
+
+      <section className="space-y-3 rounded-md border border-border p-4">
+        <div>
+          <h2 className="text-lg font-semibold">Project Memory</h2>
+          <p className="text-sm text-muted-foreground">
+            Each project can maintain a learned-memory document that is
+            injected into every agent prompt (editable in the project&apos;s
+            Docs tab).
+          </p>
+        </div>
+        <label className="flex items-start gap-2 text-sm cursor-pointer">
+          <input
+            type="checkbox"
+            className="mt-0.5"
+            checked={memoryAutoDistill}
+            disabled={savingAutoDistill}
+            onChange={(e) => handleToggleAutoDistill(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Auto-distill after builds</span>
+            <span className="block text-muted-foreground">
+              After a successful build session, automatically run a memory
+              distillation agent to merge new conventions into the project
+              memory. Off by default.
+            </span>
+          </span>
+        </label>
+        {autoDistillMessage && (
+          <p className="text-xs text-muted-foreground">{autoDistillMessage}</p>
+        )}
       </section>
 
       <section className="space-y-4 rounded-md border border-border p-4">

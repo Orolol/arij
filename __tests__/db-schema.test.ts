@@ -162,6 +162,10 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       completedAt: "completed_at",
       lastNonEmptyText: "last_non_empty_text",
       error: "error",
+      outcome: "outcome",
+      inputTokens: "input_tokens",
+      outputTokens: "output_tokens",
+      totalCostUsd: "total_cost_usd",
       claudeSessionId: "claude_session_id",
       cliSessionId: "cli_session_id",
       namedAgentId: "named_agent_id",
@@ -411,6 +415,14 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       readAt: "read_at",
     },
   },
+  ticketReadCursors: {
+    sqlName: "ticket_read_cursors",
+    columns: {
+      epicId: "epic_id",
+      lastReadAt: "last_read_at",
+      updatedAt: "updated_at",
+    },
+  },
 };
 
 /** Every SQLiteTable exported from the schema module, keyed by export name. */
@@ -554,6 +566,8 @@ const NOT_NULL: [string, string][] = [
   ["notifications", "title"],
   ["notifications", "targetUrl"],
   ["notificationReadCursor", "readAt"],
+  ["ticketReadCursors", "lastReadAt"],
+  ["ticketReadCursors", "updatedAt"],
 ];
 
 describe("db schema: NOT NULL columns", () => {
@@ -582,6 +596,9 @@ const NULLABLE: [string, string][] = [
   ["githubIssues", "importedAt"],
   ["agentSessions", "cliSessionId"],
   ["agentSessions", "namedAgentId"],
+  ["agentSessions", "inputTokens"],
+  ["agentSessions", "outputTokens"],
+  ["agentSessions", "totalCostUsd"],
   ["chatConversations", "cliSessionId"],
   ["chatConversations", "namedAgentId"],
   ["notifications", "sessionId"],
@@ -961,6 +978,15 @@ describe("db schema: exported types", () => {
     expect(cursor.id).toBe(1);
   });
 
+  it("TicketReadCursor select shape", () => {
+    const cursor: schema.TicketReadCursor = {
+      epicId: "e1",
+      lastReadAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    expect(cursor.epicId).toBe("e1");
+  });
+
   it("ReviewComment aliases exist", () => {
     const selected: schema.ReviewComment | undefined = undefined;
     const inserted: schema.NewReviewComment | undefined = undefined;
@@ -1076,6 +1102,66 @@ describe("db schema: migrated database", () => {
       expect(rows).toHaveLength(1);
       expect(rows[0].id).toBe(1);
       expect(rows[0].read_at).toBe("2026-02-01T00:00:00.000Z");
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("round-trips agent session usage columns", () => {
+    const { sqlite } = createTestDb();
+    try {
+      sqlite.prepare("INSERT INTO projects (id, name) VALUES ('p1', 'MyProject')").run();
+      sqlite
+        .prepare(
+          "INSERT INTO agent_sessions (id, project_id, input_tokens, output_tokens, total_cost_usd) VALUES ('s1', 'p1', 1500, 320, 0.0421)"
+        )
+        .run();
+      sqlite
+        .prepare("INSERT INTO agent_sessions (id, project_id) VALUES ('s2', 'p1')")
+        .run();
+
+      const rows = sqlite
+        .prepare("SELECT * FROM agent_sessions ORDER BY id")
+        .all() as Record<string, unknown>[];
+      expect(rows[0].input_tokens).toBe(1500);
+      expect(rows[0].output_tokens).toBe(320);
+      expect(rows[0].total_cost_usd).toBeCloseTo(0.0421);
+      // Usage is optional: legacy/non-reporting sessions stay NULL.
+      expect(rows[1].input_tokens).toBeNull();
+      expect(rows[1].output_tokens).toBeNull();
+      expect(rows[1].total_cost_usd).toBeNull();
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("supports the per-epic ticket_read_cursors upsert", () => {
+    const { sqlite } = createTestDb();
+    try {
+      sqlite
+        .prepare(
+          "INSERT INTO ticket_read_cursors (epic_id, last_read_at, updated_at) VALUES ('e1', '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z')"
+        )
+        .run();
+      sqlite
+        .prepare(
+          "INSERT INTO ticket_read_cursors (epic_id, last_read_at, updated_at) VALUES ('e2', '2026-01-15T00:00:00.000Z', '2026-01-15T00:00:00.000Z')"
+        )
+        .run();
+      // One cursor per epic: re-inserting the same epic replaces its row.
+      sqlite
+        .prepare(
+          "INSERT OR REPLACE INTO ticket_read_cursors (epic_id, last_read_at, updated_at) VALUES ('e1', '2026-02-01T00:00:00.000Z', '2026-02-01T00:00:00.000Z')"
+        )
+        .run();
+
+      const rows = sqlite
+        .prepare("SELECT * FROM ticket_read_cursors ORDER BY epic_id")
+        .all() as Record<string, unknown>[];
+      expect(rows).toHaveLength(2);
+      expect(rows[0].epic_id).toBe("e1");
+      expect(rows[0].last_read_at).toBe("2026-02-01T00:00:00.000Z");
+      expect(rows[1].epic_id).toBe("e2");
     } finally {
       sqlite.close();
     }

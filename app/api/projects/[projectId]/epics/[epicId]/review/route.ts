@@ -13,7 +13,11 @@ import {
   buildEpicReviewPrompt,
   type ReviewType,
 } from "@/lib/claude/prompt-builder";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import {
+  classifySessionOutcome,
+  extractSessionUsage,
+  resolveSessionOutput,
+} from "@/lib/claude/resolve-session-output";
 import {
   getEpicOr404,
   getProjectOr404,
@@ -28,6 +32,7 @@ import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import { agentScheduler } from "@/lib/agents/scheduler";
 import {
   createQueuedSession,
   isSessionLifecycleConflictError,
@@ -39,7 +44,9 @@ import {
   enrichPromptWithDocumentMentions,
 } from "@/lib/documents/mentions";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import { logTransition } from "@/lib/workflow/log";
+import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
 import {
   emitSessionStarted,
   emitSessionCompleted,
@@ -257,27 +264,24 @@ export async function POST(request: NextRequest, { params }: Params) {
       createdAt: now,
     });
 
-    markSessionRunning(sessionId, now);
-    processManager.start(sessionId, {
-      mode: agentMode,
-      prompt: enrichedPrompt,
-      cwd: worktreePath,
-      model: resolvedAgent.model,
-      cliSessionId,
-      resumeSession: useResume,
-    }, resolvedAgent.provider);
-
     emitSessionStarted(projectId, epicId, sessionId, REVIEW_TYPE_TO_AGENT_TYPE[reviewType]);
 
-    // Background: wait for completion, post review as epic comment
+    // Scheduled launch via the per-project scheduler: spawn when a slot
+    // frees, wait for completion, post the review as an epic comment.
     const label = REVIEW_LABELS[reviewType];
     ((sid, lbl) => {
-      (async () => {
-        let info = processManager.getStatus(sid);
-        while (info && info.status === "running") {
-          await new Promise((r) => setTimeout(r, 2000));
-          info = processManager.getStatus(sid);
-        }
+      agentScheduler.submit(projectId, sid, async () => {
+        markSessionRunning(sid);
+        processManager.start(sid, {
+          mode: agentMode,
+          prompt: enrichedPrompt,
+          cwd: worktreePath,
+          model: resolvedAgent.model,
+          cliSessionId,
+          resumeSession: useResume,
+        }, resolvedAgent.provider);
+
+        const info = await waitForProcessCompletion(sid);
 
         const completedAt = new Date().toISOString();
         const result = info?.result;
@@ -288,12 +292,16 @@ export async function POST(request: NextRequest, { params }: Params) {
           // ignore
         }
 
+        const outcome = classifySessionOutcome(result, sid);
+
         try {
           markSessionTerminal(
             sid,
             {
               success: !!result?.success,
               error: result?.error || null,
+              outcome,
+              usage: extractSessionUsage(result),
             },
             completedAt
           );
@@ -316,13 +324,27 @@ export async function POST(request: NextRequest, { params }: Params) {
           })
           .run();
 
+        // asked_question guard: the reviewer stopped to ask the user
+        // something, so its output is not a verdict — hold the ticket where
+        // it is, notify, log the decision, and skip verdict handling.
+        const askedQuestion = outcome === "asked_question";
+        if (askedQuestion) {
+          handleAskedQuestionOutcome({
+            projectId,
+            epicIds: [epicId],
+            sessionId: sid,
+            ticketStatus: epic.status ?? "review",
+          });
+        }
+
         // If the review verdict indicates work is not done, revert
         // epic and user stories back to in_progress
         const lowerOutput = output.toLowerCase();
         const isNegativeVerdict =
-          lowerOutput.includes("changes requested") ||
-          lowerOutput.includes("not complete") ||
-          lowerOutput.includes("partially complete");
+          !askedQuestion &&
+          (lowerOutput.includes("changes requested") ||
+            lowerOutput.includes("not complete") ||
+            lowerOutput.includes("partially complete"));
 
         if (result?.success) {
           emitSessionCompleted(projectId, epicId, sid);
@@ -366,7 +388,7 @@ export async function POST(request: NextRequest, { params }: Params) {
             });
           }
         }
-      })();
+      });
     })(sessionId, label);
 
     sessionsCreated.push(sessionId);

@@ -1,4 +1,4 @@
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 
@@ -27,12 +27,20 @@ export type AgentTaskTarget =
       epicId?: string | null;
     };
 
+/**
+ * Statuses that block a new dispatch for the same target. 'queued' counts:
+ * since the agent scheduler landed, a session can wait minutes for a slot,
+ * and stacking a second agent on the same epic/story during that window
+ * would be exactly the double-dispatch this guard exists to prevent.
+ */
+const ACTIVE_SESSION_STATUSES = ["queued", "running"];
+
 function findRunningSessionForTarget(
   target: AgentTaskTarget
 ): ActiveAgentSessionSummary | null {
   const baseConditions = [
     eq(agentSessions.projectId, target.projectId),
-    eq(agentSessions.status, "running"),
+    inArray(agentSessions.status, ACTIVE_SESSION_STATUSES),
   ];
 
   if (target.scope === "epic") {
@@ -79,6 +87,10 @@ function findRunningSessionForTarget(
   return rows[0] ?? null;
 }
 
+/**
+ * Returns the most recent active (queued or running) session for the
+ * target, or null when the target is free.
+ */
 export function getRunningSessionForTarget(
   target: AgentTaskTarget
 ): ActiveAgentSessionSummary | null {

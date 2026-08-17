@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { agentSessions, epics, userStories } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, inArray } from "drizzle-orm";
 import { getSessionStatusForApi } from "@/lib/agent-sessions/lifecycle";
 import { activityRegistry } from "@/lib/activity-registry";
+import {
+  getSessionLastActivityAt,
+  isSessionStale,
+} from "@/lib/agents/watchdog";
 
 export interface UnifiedActivity {
   id: string;
@@ -18,6 +22,20 @@ export interface UnifiedActivity {
   startedAt: string;
   source: "db" | "registry";
   cancellable: boolean;
+  /**
+   * Freshest output signal for running DB sessions: newest chunk createdAt,
+   * falling back to startedAt. Null for queued sessions (no output yet by
+   * definition) and registry activities (they stream outside the chunk
+   * store).
+   */
+  lastActivityAt: string | null;
+  /**
+   * True when lastActivityAt is older than the session's watchdog threshold
+   * (settings `watchdog_threshold_minutes[:<agentType>]`, default 5m) —
+   * same predicate the watchdog uses to notify, so the monitor's amber
+   * state and the stall notification always agree.
+   */
+  stale: boolean;
 }
 
 function inferDbActivityType(row: {
@@ -90,7 +108,9 @@ export async function GET(
 ) {
   const { projectId } = await params;
 
-  // DB sessions with LEFT JOINs for labels
+  // DB sessions with LEFT JOINs for labels. Queued sessions are active work
+  // too (the scheduler is holding them for a slot), so monitors can render
+  // them alongside running ones — distinguished by `status`.
   const rows = db
     .select({
       id: agentSessions.id,
@@ -104,6 +124,7 @@ export async function GET(
       namedAgentName: agentSessions.namedAgentName,
       prompt: agentSessions.prompt,
       startedAt: agentSessions.startedAt,
+      createdAt: agentSessions.createdAt,
       epicTitle: epics.title,
       storyTitle: userStories.title,
     })
@@ -113,10 +134,12 @@ export async function GET(
     .where(
       and(
         eq(agentSessions.projectId, projectId),
-        eq(agentSessions.status, "running")
+        inArray(agentSessions.status, ["running", "queued"])
       )
     )
     .all();
+
+  const now = new Date();
 
   const dbActivities: UnifiedActivity[] = rows.map((row) => {
     const type = inferDbActivityType(row);
@@ -124,6 +147,11 @@ export async function GET(
       row.orchestrationMode === "team"
         ? "Team Build"
         : buildDbActivityLabel(type, row);
+
+    // Staleness only means something for sessions that should be
+    // producing output — queued sessions are silent by design.
+    const isRunning = row.status === "running";
+    const lastActivityAt = isRunning ? getSessionLastActivityAt(row) : null;
 
     return {
       id: row.id,
@@ -135,9 +163,12 @@ export async function GET(
       mode: row.mode || "code",
       provider: row.provider || "claude-code",
       namedAgentName: row.namedAgentName ?? null,
-      startedAt: row.startedAt || new Date().toISOString(),
+      // Queued sessions have no startedAt yet — fall back to enqueue time.
+      startedAt: row.startedAt || row.createdAt || new Date().toISOString(),
       source: "db" as const,
       cancellable: true,
+      lastActivityAt,
+      stale: isRunning && isSessionStale(lastActivityAt, row.agentType, now),
     };
   });
 
@@ -157,6 +188,8 @@ export async function GET(
       startedAt: a.startedAt,
       source: "registry" as const,
       cancellable: !!a.kill,
+      lastActivityAt: null,
+      stale: false,
     }));
 
   return NextResponse.json({ data: [...dbActivities, ...registryActivities] });

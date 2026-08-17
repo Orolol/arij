@@ -13,10 +13,13 @@ import {
   existingEpicsSection,
   chatHistorySection,
   specSection,
+  memorySection,
   projectHeader,
   descriptionSection,
   projectContextSections,
 } from "./prompt-sections";
+import { getProjectMemoryContent } from "@/lib/documents/memory";
+import { PROJECT_MEMORY_MAX_CHARS } from "@/lib/documents/memory-constants";
 
 // ---------------------------------------------------------------------------
 // Types — lightweight projections of the Drizzle schema rows
@@ -26,6 +29,18 @@ export interface PromptProject {
   name: string;
   description?: string | null;
   spec?: string | null;
+  /**
+   * Project id — present when callers pass a full Drizzle project row (every
+   * dispatch route does). Enables the builders to resolve the learned
+   * project memory without each route wiring it explicitly.
+   */
+  id?: string | null;
+  /**
+   * Learned project memory content. `undefined` means "not resolved yet"
+   * (builders look it up from the memory document via `id`); `null`/empty
+   * means "resolved, none" and suppresses the section.
+   */
+  memory?: string | null;
 }
 
 export interface PromptDocument {
@@ -53,6 +68,24 @@ export interface PromptUserStory {
 // ---------------------------------------------------------------------------
 // Local helpers (not extracted to prompt-sections)
 // ---------------------------------------------------------------------------
+
+/**
+ * Resolves the learned project memory onto the project projection so every
+ * builder injects it uniformly (including call sites that predate the
+ * feature and pass plain Drizzle rows).
+ *
+ * - `memory` already set (even null): respected as-is — tests and the
+ *   distill flow control injection explicitly.
+ * - `id` present: looked up from the project's memory document (never
+ *   throws; missing/empty resolves to null and the section is omitted).
+ * - Neither: left unresolved, section omitted. Keeps builders pure for
+ *   plain `{ name, spec }` projections.
+ */
+function withProjectMemory<T extends PromptProject>(project: T): T {
+  if (project.memory !== undefined) return project;
+  if (!project.id) return project;
+  return { ...project, memory: getProjectMemoryContent(project.id) };
+}
 
 function userStoriesSection(
   userStories: PromptUserStory[],
@@ -106,6 +139,7 @@ export function buildChatPrompt(
   messages: PromptMessage[],
   systemPrompt?: string | null,
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
@@ -137,12 +171,14 @@ export function buildSpecGenerationPrompt(
   chatHistory: PromptMessage[],
   systemPrompt?: string | null,
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(descriptionSection(project.description));
   parts.push(section("Current Specification", project.spec));
+  parts.push(memorySection(project.memory));
   parts.push(documentsSection(documents));
   parts.push(chatHistorySection(chatHistory));
 
@@ -208,11 +244,13 @@ export function buildTechCheckPrompt(
   customPrompt?: string | null,
   systemPrompt?: string | null,
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(specSection(project.spec));
+  parts.push(memorySection(project.memory));
 
   if (customPrompt && customPrompt.trim()) {
     parts.push(`## Additional Instructions\n\n${customPrompt.trim()}\n`);
@@ -286,11 +324,13 @@ export function buildE2eTestPrompt(
   customPrompt?: string | null,
   systemPrompt?: string | null,
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(specSection(project.spec));
+  parts.push(memorySection(project.memory));
 
   if (customPrompt && customPrompt.trim()) {
     parts.push(`## Additional Instructions\n\n${customPrompt.trim()}\n`);
@@ -450,6 +490,7 @@ export function buildEpicRefinementPrompt(
   systemPrompt?: string | null,
   existingEpics: PromptEpic[] = [],
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
@@ -488,6 +529,7 @@ export function buildEpicFinalizationPrompt(
   systemPrompt?: string | null,
   existingEpics: PromptEpic[] = [],
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
@@ -586,11 +628,13 @@ export function buildTeamBuildPrompt(
   teamEpics: TeamEpic[],
   systemPrompt?: string | null,
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(specSection(project.spec));
+  parts.push(memorySection(project.memory));
   parts.push(documentsSection(documents));
 
   // Epics section
@@ -657,11 +701,13 @@ export function buildBuildPrompt(
   systemPrompt?: string | null,
   comments?: PromptComment[],
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(specSection(project.spec));
+  parts.push(memorySection(project.memory));
   parts.push(documentsSection(documents));
 
   // Epic section
@@ -725,11 +771,13 @@ export function buildTicketBuildPrompt(
   comments: PromptComment[],
   systemPrompt?: string | null,
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(specSection(project.spec));
+  parts.push(memorySection(project.memory));
   parts.push(documentsSection(documents));
 
   // Epic context
@@ -925,11 +973,13 @@ export function buildReviewPrompt(
   reviewType: ReviewType | CustomReviewAgentPrompt,
   systemPrompt?: string | null,
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(specSection(project.spec));
+  parts.push(memorySection(project.memory));
   parts.push(documentsSection(documents));
 
   // Epic context
@@ -1026,11 +1076,13 @@ export function buildMergeResolutionPrompt(
   conflictOutput: string,
   systemPrompt?: string | null,
 ): string {
+  project = withProjectMemory(project);
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(specSection(project.spec));
+  parts.push(memorySection(project.memory));
 
   parts.push(`## Epic Context\n`);
   parts.push(`### ${epic.title}\n`);
@@ -1080,12 +1132,14 @@ export function buildEpicReviewPrompt(
   systemPrompt?: string | null,
   comments?: PromptComment[],
 ): string {
+  project = withProjectMemory(project);
   const isBug = epic.type === "bug";
   const parts: string[] = [];
 
   parts.push(systemSection(systemPrompt));
   parts.push(projectHeader(project.name));
   parts.push(specSection(project.spec));
+  parts.push(memorySection(project.memory));
   parts.push(documentsSection(documents));
 
   // Epic / Bug details — use appropriate label
@@ -1180,6 +1234,101 @@ ${isBug ? "**IMPORTANT: This is a BUG FIX review.** Focus exclusively on the bug
 Your response should be a well-formatted markdown report.
 `);
   }
+
+  return parts.filter(Boolean).join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// 12. Memory Distillation Prompt
+// ---------------------------------------------------------------------------
+
+/**
+ * Context of the just-finished session a memory distillation runs after.
+ * All fields are optional — the prompt renders only what is known.
+ */
+export interface MemoryDistillSessionContext {
+  /** Title of the ticket (epic or user story) the session worked on. */
+  ticketTitle?: string | null;
+  /** Agent type of the source session (e.g. "build", "ticket_build"). */
+  agentType?: string | null;
+  /** Delivery verdict of the source session (answered/silent/...). */
+  outcome?: string | null;
+  /**
+   * Last textual output of the source session (result envelope or streamed
+   * chunks — see lib/workflow/memory-distill.ts for how it is resolved).
+   */
+  resultSummary?: string | null;
+}
+
+/**
+ * Builds the prompt for the 'memory_distill' agent: merge what the
+ * just-finished session taught into the project's memory document.
+ *
+ * Deliberately does NOT inject the memory section like other builders — the
+ * current memory is the object being rewritten and gets its own framing.
+ */
+export function buildMemoryDistillPrompt(
+  project: PromptProject,
+  currentMemory: string | null,
+  sessionContext: MemoryDistillSessionContext,
+  systemPrompt?: string | null,
+): string {
+  const parts: string[] = [];
+
+  parts.push(systemSection(systemPrompt));
+  parts.push(projectHeader(project.name));
+
+  parts.push(`## Current Project Memory\n`);
+  if (currentMemory && currentMemory.trim().length > 0) {
+    parts.push(currentMemory.trim() + "\n");
+  } else {
+    parts.push(`(The project memory is currently empty.)\n`);
+  }
+
+  parts.push(`## Just-Finished Session\n`);
+  const contextLines: string[] = [];
+  if (sessionContext.ticketTitle) {
+    contextLines.push(`- **Ticket:** ${sessionContext.ticketTitle.trim()}`);
+  }
+  if (sessionContext.agentType) {
+    contextLines.push(`- **Agent type:** ${sessionContext.agentType}`);
+  }
+  if (sessionContext.outcome) {
+    contextLines.push(`- **Outcome:** ${sessionContext.outcome}`);
+  }
+  parts.push(
+    (contextLines.length > 0
+      ? contextLines.join("\n")
+      : "(No session metadata available.)") + "\n"
+  );
+  if (sessionContext.resultSummary && sessionContext.resultSummary.trim()) {
+    parts.push(`### Session Result\n`);
+    parts.push(sessionContext.resultSummary.trim() + "\n");
+  }
+
+  parts.push(`## Task: Distill Project Memory
+
+You maintain this project's long-term memory: a compact markdown document of durable, non-obvious conventions that future agent sessions must know. It is injected into every agent prompt for this project.
+
+Rewrite the ENTIRE memory document, merging anything durable the just-finished session revealed into the current memory above.
+
+### Rules
+
+- KEEP it durable: coding conventions, architectural decisions, recurring pitfalls, commands that must (or must not) be used, naming/structure rules.
+- NEVER include per-ticket trivia: ticket titles, one-off bug details, session outcomes, dates, progress notes, or anything only relevant to a single change.
+- MERGE, don't append: deduplicate against the current memory, rewrite entries to stay general, and drop entries the session proved wrong or obsolete.
+- If the session revealed nothing durable, return the current memory (cleaned up if useful) unchanged in substance.
+- Prefer short bullet points grouped under a few \`##\` headings.
+- HARD LIMIT: the document must stay under ${PROJECT_MEMORY_MAX_CHARS} characters. Cut the least valuable entries first if space runs out.
+
+### Output Format
+
+Your ENTIRE response must be ONLY the new memory document body, as raw markdown.
+
+- Do NOT wrap it in code fences.
+- Do NOT add any preamble, explanation, or summary before or after it.
+- Do NOT address the user — the response is written verbatim into the memory document.
+`);
 
   return parts.filter(Boolean).join("\n");
 }

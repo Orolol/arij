@@ -13,7 +13,11 @@ import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { eq, desc, inArray, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import {
+  classifySessionOutcome,
+  extractSessionUsage,
+  resolveSessionOutput,
+} from "@/lib/claude/resolve-session-output";
 import simpleGit from "simple-git";
 import { createDraftRelease } from "@/lib/github/releases";
 import { logSyncOperation } from "@/lib/github/sync-log";
@@ -26,6 +30,7 @@ import {
   isSessionLifecycleConflictError,
 } from "@/lib/agent-sessions/lifecycle";
 import { processManager } from "@/lib/claude/process-manager";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { applyTransition } from "@/lib/workflow/transition-service";
@@ -238,11 +243,7 @@ ${ticketContext}
         agentProvider
       );
 
-      let info = processManager.getStatus(sessionId);
-      while (info && info.status === "running") {
-        await new Promise((r) => setTimeout(r, 1200));
-        info = processManager.getStatus(sessionId);
-      }
+      const info = await waitForProcessCompletion(sessionId, 1200);
       const result = info?.result;
 
       try {
@@ -257,6 +258,8 @@ ${ticketContext}
           {
             success: !!result?.success,
             error: result?.error || null,
+            outcome: classifySessionOutcome(result, sessionId),
+            usage: extractSessionUsage(result),
           },
           new Date().toISOString()
         );

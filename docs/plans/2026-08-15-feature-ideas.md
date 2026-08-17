@@ -4,7 +4,7 @@ Généré par 5 idéateurs (UX quotidienne, orchestration, observabilité, inté
 sur base d'un inventaire du produit ; 43 idées brutes, dédupliquées et vérifiées contre le code
 (chaque ancrage spot-checké par grep). Effort : S = une session, M = quelques jours, L/XL = structurant.
 
-## ⚡ Quick wins (une session chacun)
+## ⚡ Quick wins (une session chacun) — ✅ livrés (PR #2, mergée)
 
 ### Onglet Activity véritable — brancher enfin ticketActivityLog (+ récit du jour en phase 2) `S`
 Fusion des trois idées qui lisent la même table morte : une route GET epics/[epicId]/activity, l'entrelacement chronologique transitions/commentaires dans l'onglet Activity existant (acteur user/agent/system, raison, lien vers la session fautive), puis en phase 2 le digest narratif du Dashboard (« 3 epics livrés, l'agent X attend ta réponse depuis 2h ») qui se nourrit de la même route. Répond en 5 secondes à la question quotidienne du dogfooding : « qui a bougé ce ticket, quand, et pourquoi ? » — l'auditabilité des agents est le socle de confiance du produit. Prévoir un regroupement des transitions système consécutives pour les epics très travaillés.
@@ -36,7 +36,7 @@ Ne pas exposer de bouton Fetch (l'utilisateur d'Arij ne pense pas en plomberie g
 
 *Ancrage : Vérifié : lib/git/remote.ts:fetchGitRemote strictement orphelin (grep : un seul fichier) ; route git/status et useGitStatus.ts comme point d'appel et consommateur ; EpicGitSection et git-sync affichent les compteurs.*
 
-## 🔧 Features moyennes
+## 🔧 Features moyennes — ✅ livrées (branche feat/m-tier, 2026-08-17)
 
 ### Verdict de livraison : l'issue de chaque session devient un signal de première classe `M`
 (Fusion observabilité + paris-IA.) Promouvoir en champ persisté « outcome » sur agent_sessions ce que le code détecte déjà en booléens jetables : answered / asked_question / silent / error, affiché en badge sur les cartes kanban et la liste Sessions, et surtout branché sur le workflow — asked_question garde le ticket in_progress avec notification actionnable qui resume la session CLI. Les trois derniers bugs réels du dogfooding sont des agents qui livrent « à côté » (question au lieu d'action, markdown au lieu de réponse) : ce verdict transforme la classe de bugs dominante en mécanique produit. L'arbitre LLM court reste une option v2 pour les cas ambigus ; commencer par les verdicts déterministes sûrs, et logguer chaque décision dans ticketActivityLog.
@@ -72,6 +72,12 @@ Ne pas exposer de bouton Fetch (l'utilisateur d'Arij ne pense pas en plomberie g
 (paris-IA.) Après chaque session terminée, un agent greffier distille les conventions découvertes (« les tests utilisent createTestDb() », « ne jamais drizzle generate ») dans un document mémoire par projet, éditable dans l'onglet Docs, injecté dans tous les prompts via une memorySection à côté de specSection. Chaque session repart aujourd'hui de zéro — et la preuve du besoin est dans le repo même : un MEMORY.md est maintenu à la main côté Claude Code. Gain direct en tokens, en durée et en qualité. Taille plafonnée et relecture humaine pour éviter l'accumulation de faux.
 
 *Ancrage : Vérifié : lib/claude/prompt-sections.ts:73-95 (specSection + documentsSection assemblés par projectContextSections — la memorySection s'ajoute en une fonction) ; markSessionTerminal (lifecycle.ts:259) comme hook de fin de session ; table documents existante ; agentSessionChunks comme matière première.*
+
+
+> **Écarts assumés du tier M** (revue d'intégration finale) : le mini-badge de fiabilité
+> dans les sélecteurs de dispatch n'a pas été construit (stats visibles dans l'onglet Stats
+> uniquement) ; les queued orphelines au boot sont annulées, pas ré-adoptées (les closures
+> meurent avec le process) ; voir les messages de commit pour le détail.
 
 ## 🚀 Gros paris
 

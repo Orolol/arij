@@ -6,10 +6,13 @@ import {
   mockRouteContext,
 } from "@/__tests__/helpers/db-mock";
 
-const { mockListByProject, mockStatusForApi } = vi.hoisted(() => ({
-  mockListByProject: vi.fn(),
-  mockStatusForApi: vi.fn(),
-}));
+const { mockListByProject, mockStatusForApi, mockLastChunkAt } = vi.hoisted(
+  () => ({
+    mockListByProject: vi.fn(),
+    mockStatusForApi: vi.fn(),
+    mockLastChunkAt: vi.fn(),
+  })
+);
 
 // Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
 // column identity, so no fake column maps.
@@ -28,6 +31,12 @@ vi.mock("@/lib/agent-sessions/lifecycle", () => ({
   getSessionStatusForApi: mockStatusForApi,
 }));
 
+// The watchdog helpers read chunk freshness through this module; mocking it
+// lets tests steer lastActivityAt without a real chunk store.
+vi.mock("@/lib/agent-sessions/chunks", () => ({
+  lastSessionChunkAt: mockLastChunkAt,
+}));
+
 let registryRows: Array<Record<string, unknown>> = [];
 
 describe("sessions/active route activity typing", () => {
@@ -39,6 +48,7 @@ describe("sessions/active route activity typing", () => {
     mockStatusForApi.mockImplementation(
       (status: string | null | undefined) => status ?? "queued",
     );
+    mockLastChunkAt.mockReturnValue(null);
   });
 
   it("returns db sessions and registry chat activities with canonical status/mode fields", async () => {
@@ -104,6 +114,42 @@ describe("sessions/active route activity typing", () => {
       source: "registry",
       provider: "claude-code",
       cancellable: false,
+    });
+  });
+
+  it("surfaces queued sessions with their status and an enqueue-time startedAt fallback", async () => {
+    dbMockState.allRows = [
+      {
+        id: "sess-queued-1",
+        epicId: "epic-9",
+        userStoryId: null,
+        status: "queued",
+        mode: "code",
+        orchestrationMode: "solo",
+        provider: "claude-code",
+        agentType: null,
+        prompt: null,
+        startedAt: null,
+        createdAt: "2026-02-13T11:30:00.000Z",
+        epicTitle: "Queued Epic",
+        storyTitle: null,
+      },
+    ];
+
+    const { GET } = await import(
+      "@/app/api/projects/[projectId]/sessions/active/route"
+    );
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(json.data[0]).toMatchObject({
+      id: "sess-queued-1",
+      type: "build",
+      label: "Building: Queued Epic",
+      status: "queued",
+      startedAt: "2026-02-13T11:30:00.000Z",
+      cancellable: true,
     });
   });
 
@@ -217,6 +263,144 @@ describe("sessions/active route activity typing", () => {
       status: "running",
       mode: "code",
     });
+  });
+
+  it("reports fresh chunk activity as lastActivityAt with stale false", async () => {
+    const recent = new Date(Date.now() - 30_000).toISOString();
+    mockLastChunkAt.mockReturnValue(recent);
+    dbMockState.allRows = [
+      {
+        id: "sess-fresh",
+        epicId: "epic-1",
+        userStoryId: null,
+        status: "running",
+        mode: "code",
+        orchestrationMode: "solo",
+        provider: "claude-code",
+        agentType: "build",
+        prompt: null,
+        startedAt: new Date(Date.now() - 600_000).toISOString(),
+        createdAt: null,
+        epicTitle: "Fresh",
+        storyTitle: null,
+      },
+    ];
+
+    const { GET } = await import(
+      "@/app/api/projects/[projectId]/sessions/active/route"
+    );
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
+    const json = await response.json();
+
+    expect(json.data[0]).toMatchObject({
+      id: "sess-fresh",
+      lastActivityAt: recent,
+      stale: false,
+    });
+  });
+
+  it("marks a running session stale past the watchdog threshold, falling back to startedAt when it has no chunks", async () => {
+    const silentSince = new Date(Date.now() - 10 * 60_000).toISOString();
+    dbMockState.allRows = [
+      {
+        id: "sess-stale",
+        epicId: "epic-1",
+        userStoryId: null,
+        status: "running",
+        mode: "code",
+        orchestrationMode: "solo",
+        provider: "claude-code",
+        agentType: "build",
+        prompt: null,
+        startedAt: silentSince,
+        createdAt: null,
+        epicTitle: "Stale",
+        storyTitle: null,
+      },
+    ];
+
+    const { GET } = await import(
+      "@/app/api/projects/[projectId]/sessions/active/route"
+    );
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
+    const json = await response.json();
+
+    expect(json.data[0]).toMatchObject({
+      id: "sess-stale",
+      lastActivityAt: silentSince,
+      stale: true,
+    });
+  });
+
+  it("never marks watchdog-exempt chat sessions stale", async () => {
+    dbMockState.allRows = [
+      {
+        id: "sess-chat",
+        epicId: null,
+        userStoryId: null,
+        status: "running",
+        mode: "plan",
+        orchestrationMode: "solo",
+        provider: "claude-code",
+        agentType: "chat",
+        prompt: null,
+        startedAt: new Date(Date.now() - 60 * 60_000).toISOString(),
+        createdAt: null,
+        epicTitle: null,
+        storyTitle: null,
+      },
+    ];
+
+    const { GET } = await import(
+      "@/app/api/projects/[projectId]/sessions/active/route"
+    );
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
+    const json = await response.json();
+
+    expect(json.data[0]).toMatchObject({ id: "sess-chat", stale: false });
+  });
+
+  it("gives queued sessions and registry activities null lastActivityAt and stale false", async () => {
+    dbMockState.allRows = [
+      {
+        id: "sess-queued-activity",
+        epicId: "epic-9",
+        userStoryId: null,
+        status: "queued",
+        mode: "code",
+        orchestrationMode: "solo",
+        provider: "claude-code",
+        agentType: "build",
+        prompt: null,
+        startedAt: null,
+        createdAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+        epicTitle: "Queued",
+        storyTitle: null,
+      },
+    ];
+    registryRows = [
+      {
+        id: "chat-reg",
+        projectId: "proj-1",
+        type: "chat",
+        label: "Chat: Ideas",
+        provider: "claude-code",
+        startedAt: new Date(Date.now() - 30 * 60_000).toISOString(),
+      },
+    ];
+
+    const { GET } = await import(
+      "@/app/api/projects/[projectId]/sessions/active/route"
+    );
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
+    const json = await response.json();
+
+    const queued = json.data.find((a: { id: string }) => a.id === "sess-queued-activity");
+    expect(queued).toMatchObject({ lastActivityAt: null, stale: false });
+    expect(mockLastChunkAt).not.toHaveBeenCalledWith("sess-queued-activity");
+
+    const registry = json.data.find((a: { id: string }) => a.id === "chat-reg");
+    expect(registry).toMatchObject({ lastActivityAt: null, stale: false });
   });
 
   it("classifies release note sessions as release", async () => {

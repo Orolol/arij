@@ -13,16 +13,22 @@ import {
   isErrorResponse,
 } from "@/lib/api/route-helpers";
 import { createId } from "@/lib/utils/nanoid";
+import { isBuildableStatus } from "@/lib/types/kanban";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import { buildBuildPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import {
+  classifySessionOutcome,
+  extractSessionUsage,
+  resolveSessionOutput,
+} from "@/lib/claude/resolve-session-output";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import { agentScheduler } from "@/lib/agents/scheduler";
 import fs from "fs";
 import path from "path";
 import {
@@ -37,6 +43,7 @@ import {
   validateMentionsExist,
 } from "@/lib/documents/mentions";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import {
   emitSessionStarted,
   emitSessionCompleted,
@@ -44,6 +51,7 @@ import {
   emitTicketMoved,
 } from "@/lib/events/emit";
 import { logTransition } from "@/lib/workflow/log";
+import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -69,8 +77,8 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (isErrorResponse(foundEpic)) return foundEpic;
   const { epic } = foundEpic;
 
-  // Validate status
-  if (!["backlog", "todo", "in_progress", "review"].includes(epic.status ?? "")) {
+  // Validate status — same source of truth as the batch build's guard.
+  if (!isBuildableStatus(epic.status)) {
     return NextResponse.json(
       { error: "Epic must be in backlog, todo, in_progress, or review status to build" },
       { status: 400 }
@@ -270,18 +278,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     )
     .run();
 
-  // Spawn agent
-  markSessionRunning(sessionId, now);
-  processManager.start(sessionId, {
-    mode: "code",
-    prompt: enrichedPrompt,
-    cwd: worktreePath,
-    allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-    model: resolvedAgent.model,
-    cliSessionId,
-    resumeSession,
-  }, resolvedAgent.provider);
-
   emitSessionStarted(projectId, epicId, sessionId, "build");
   emitTicketMoved(projectId, epicId, epic.status ?? "backlog", "in_progress");
   logTransition({
@@ -294,13 +290,22 @@ export async function POST(request: NextRequest, { params }: Params) {
     sessionId,
   });
 
-  // Background: wait for completion, sync statuses, post agent comment
-  (async () => {
-    let info = processManager.getStatus(sessionId);
-    while (info && info.status === "running") {
-      await new Promise((r) => setTimeout(r, 2000));
-      info = processManager.getStatus(sessionId);
-    }
+  // Batch-style launch: goes through the per-project scheduler. The session
+  // stays 'queued' until a slot frees; the closure spawns, waits for
+  // completion, syncs statuses, and posts the agent comment.
+  agentScheduler.submit(projectId, sessionId, async () => {
+    markSessionRunning(sessionId);
+    processManager.start(sessionId, {
+      mode: "code",
+      prompt: enrichedPrompt,
+      cwd: worktreePath,
+      allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+      model: resolvedAgent.model,
+      cliSessionId,
+      resumeSession,
+    }, resolvedAgent.provider);
+
+    const info = await waitForProcessCompletion(sessionId);
 
     const completedAt = new Date().toISOString();
     const result = info?.result;
@@ -311,12 +316,16 @@ export async function POST(request: NextRequest, { params }: Params) {
       // ignore
     }
 
+    const outcome = classifySessionOutcome(result, sessionId);
+
     try {
       markSessionTerminal(
         sessionId,
         {
           success: !!result?.success,
           error: result?.error || null,
+          outcome,
+          usage: extractSessionUsage(result),
         },
         completedAt
       );
@@ -328,7 +337,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     // On success: all non-done US -> review, epic -> review.
     // If the agent asked a follow-up question, keep work in progress.
-    if (result?.success && !result?.endedWithQuestion) {
+    if (result?.success && outcome !== "asked_question") {
       db.update(userStories)
         .set({ status: "review" })
         .where(
@@ -356,6 +365,14 @@ export async function POST(request: NextRequest, { params }: Params) {
         sessionId,
       });
     } else if (result?.success) {
+      // asked_question: hold the ticket in in_progress, notify with a deep
+      // link to the epic, and log the decision to the activity feed.
+      handleAskedQuestionOutcome({
+        projectId,
+        epicIds: [epicId],
+        sessionId,
+        ticketStatus: "in_progress",
+      });
       emitSessionCompleted(projectId, epicId, sessionId);
     } else {
       emitSessionFailed(projectId, epicId, sessionId, result?.error || "Build failed");
@@ -374,7 +391,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         createdAt: completedAt,
       })
       .run();
-  })();
+  });
 
   return NextResponse.json({
     data: { sessionId, branchName, worktreePath },

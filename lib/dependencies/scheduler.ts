@@ -4,6 +4,8 @@ export type TicketExecutionStatus =
   | "pending"
   | "running"
   | "done"
+  /** Session succeeded but ended by asking a question — blocks dependents. */
+  | "asked"
   | "failed"
   | "skipped";
 

@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { processManager } from "@/lib/claude/process-manager";
+import { agentScheduler } from "@/lib/agents/scheduler";
 import { activityRegistry } from "@/lib/activity-registry";
 import fs from "fs";
 import { extractLastNonEmptyTextFromFile } from "@/lib/agent-sessions/last-text";
@@ -97,7 +98,9 @@ export async function DELETE(
     }
   }
 
-  // Cancel in process manager
+  // Drop a not-yet-started launch from the scheduler queue (no-op when the
+  // session already started), then cancel any live process.
+  agentScheduler.remove(sessionId);
   processManager.cancel(sessionId);
   const now = new Date().toISOString();
 

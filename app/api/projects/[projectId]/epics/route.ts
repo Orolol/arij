@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { epics, ticketComments, userStories } from "@/lib/db/schema";
+import {
+  agentSessions,
+  epics,
+  ticketComments,
+  ticketReadCursors,
+  userStories,
+} from "@/lib/db/schema";
 import { count, eq, sql, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
@@ -65,6 +71,67 @@ export async function GET(
     .where(eq(rankedEpicComments.rowNum, 1))
     .as("latest_epic_comments");
 
+  // Latest agent session per epic (any status) — carries the delivery
+  // verdict driving the card's "awaiting reply" signal.
+  const rankedEpicSessions = db
+    .select({
+      epicId: agentSessions.epicId,
+      latestSessionOutcome: agentSessions.outcome,
+      latestSessionEndedAt: sql<string | null>`COALESCE(
+        ${agentSessions.endedAt}, ${agentSessions.completedAt}, ${agentSessions.createdAt}
+      )`.as("latest_session_ended_at"),
+      rowNum: sql<number>`ROW_NUMBER() OVER (
+        PARTITION BY ${agentSessions.epicId}
+        ORDER BY ${agentSessions.createdAt} DESC, ${agentSessions.id} DESC
+      )`.as("session_row_num"),
+    })
+    .from(agentSessions)
+    .where(sql`${agentSessions.epicId} IS NOT NULL`)
+    .as("ranked_epic_sessions");
+
+  const latestEpicSessions = db
+    .select({
+      epicId: rankedEpicSessions.epicId,
+      latestSessionOutcome: rankedEpicSessions.latestSessionOutcome,
+      latestSessionEndedAt: rankedEpicSessions.latestSessionEndedAt,
+    })
+    .from(rankedEpicSessions)
+    .where(eq(rankedEpicSessions.rowNum, 1))
+    .as("latest_epic_sessions");
+
+  // Cumulative agent cost per epic — the sum of its sessions' reported
+  // total_cost_usd. NULL (not 0) when no session ever reported a cost.
+  const epicSessionCosts = db
+    .select({
+      epicId: agentSessions.epicId,
+      sessionsCostUsd: sql<number | null>`SUM(${agentSessions.totalCostUsd})`.as(
+        "sessions_cost_usd"
+      ),
+    })
+    .from(agentSessions)
+    .where(sql`${agentSessions.epicId} IS NOT NULL`)
+    .groupBy(agentSessions.epicId)
+    .as("epic_session_costs");
+
+  // Latest user-authored comment per epic — a user comment newer than the
+  // asked_question session counts as the reply.
+  const latestUserComments = db
+    .select({
+      epicId: ticketComments.epicId,
+      latestUserCommentCreatedAt: sql<string | null>`MAX(${ticketComments.createdAt})`.as(
+        "latest_user_comment_created_at"
+      ),
+    })
+    .from(ticketComments)
+    .where(
+      and(
+        sql`${ticketComments.epicId} IS NOT NULL`,
+        eq(ticketComments.author, "user")
+      )
+    )
+    .groupBy(ticketComments.epicId)
+    .as("latest_user_epic_comments");
+
   const result = db
     .select({
       id: epics.id,
@@ -92,10 +159,21 @@ export async function GET(
       latestCommentId: latestEpicComments.latestCommentId,
       latestCommentAuthor: latestEpicComments.latestCommentAuthor,
       latestCommentCreatedAt: latestEpicComments.latestCommentCreatedAt,
+      latestSessionOutcome: latestEpicSessions.latestSessionOutcome,
+      latestSessionEndedAt: latestEpicSessions.latestSessionEndedAt,
+      latestUserCommentCreatedAt: latestUserComments.latestUserCommentCreatedAt,
+      sessionsCostUsd: epicSessionCosts.sessionsCostUsd,
+      // Per-epic read cursor (ticket_read_cursors) — the client derives the
+      // "unread AI comment" dot from latestComment* vs this timestamp.
+      lastReadAt: ticketReadCursors.lastReadAt,
     })
     .from(epics)
     .leftJoin(storyCounts, eq(epics.id, storyCounts.epicId))
     .leftJoin(latestEpicComments, eq(epics.id, latestEpicComments.epicId))
+    .leftJoin(latestEpicSessions, eq(epics.id, latestEpicSessions.epicId))
+    .leftJoin(latestUserComments, eq(epics.id, latestUserComments.epicId))
+    .leftJoin(epicSessionCosts, eq(epics.id, epicSessionCosts.epicId))
+    .leftJoin(ticketReadCursors, eq(epics.id, ticketReadCursors.epicId))
     .where(eq(epics.projectId, projectId))
     .orderBy(epics.position)
     .all();

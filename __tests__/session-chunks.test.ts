@@ -203,4 +203,37 @@ describe("session chunk persistence", () => {
       .get("s5") as { lastNonEmptyText: string | null };
     expect(secondValue.lastNonEmptyText).toBe("final output line");
   });
+
+  it("reports the newest chunk timestamp across streams via lastChunkAt", () => {
+    const db = createTestDb();
+    seedSession(db, "s6");
+    seedSession(db, "s7");
+    const store = createSessionChunkStore(db);
+
+    expect(store.lastChunkAt("s6")).toBeNull();
+
+    store.appendChunk({
+      sessionId: "s6",
+      streamType: "raw",
+      content: "older",
+      createdAt: "2026-02-12T00:00:00.000Z",
+    });
+    store.appendChunk({
+      sessionId: "s6",
+      streamType: "output",
+      content: "newer",
+      createdAt: "2026-02-12T00:05:00.000Z",
+    });
+    // Another session's chunks never bleed in.
+    store.appendChunk({
+      sessionId: "s7",
+      streamType: "output",
+      content: "other session",
+      createdAt: "2026-02-12T09:00:00.000Z",
+    });
+
+    expect(store.lastChunkAt("s6")).toBe("2026-02-12T00:05:00.000Z");
+    expect(store.lastChunkAt("s7")).toBe("2026-02-12T09:00:00.000Z");
+    expect(store.lastChunkAt("missing")).toBeNull();
+  });
 });

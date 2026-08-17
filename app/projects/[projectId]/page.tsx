@@ -23,7 +23,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Hammer, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug, Search, GitMerge, Lock, Bot } from "lucide-react";
+import { Hammer, Layers, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug, Search, GitMerge, Lock, Bot } from "lucide-react";
 import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
 import { QuickCapture } from "@/components/kanban/QuickCapture";
 import type { KanbanEpicAgentActivity } from "@/lib/types/kanban";
@@ -44,7 +44,7 @@ export default function KanbanPage() {
   const searchParams = useSearchParams();
   const projectId = params.projectId as string;
   const batch = useBatchSelection(projectId);
-  const [buildMode, setBuildMode] = useState<"parallel" | "sequential">(
+  const [buildMode, setBuildMode] = useState<"parallel" | "sequential" | "dag">(
     "parallel"
   );
   const [teamMode, setTeamMode] = useState(false);
@@ -88,6 +88,9 @@ export default function KanbanPage() {
 
       for (const activity of activities) {
         if (!activity.epicId) continue;
+        // Queued sessions surface in the AgentMonitor; the kanban agent
+        // chip stays reserved for agents that are actually running.
+        if (activity.status !== "running") continue;
         if (!["build", "review", "merge"].includes(activity.type)) continue;
 
         map[activity.epicId] = {
@@ -202,6 +205,20 @@ export default function KanbanPage() {
     router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
   }, [addToast, projectId, router, searchParams]);
 
+  // Deep link: /projects/<id>?ticket=<epicId> opens the ticket detail
+  // (used by "Agent asked a question" notifications), then strips the param.
+  useEffect(() => {
+    const ticket = searchParams.get("ticket");
+    if (!ticket) return;
+
+    batch.setSelectedTicketIds(selectOnlyTicket(ticket));
+
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("ticket");
+    const query = next.toString();
+    router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
+  }, [batch.setSelectedTicketIds, projectId, router, searchParams]);
+
   // Reset team mode when selection drops below 2
   useEffect(() => {
     if (batch.allSelected.size < 2) {
@@ -277,7 +294,9 @@ export default function KanbanPage() {
           "success",
           teamMode
             ? `Launched team build session coordinating ${batch.allSelected.size} epics`
-            : `Launched ${data.data.count} build session${data.data.count > 1 ? "s" : ""}`
+            : data.data.orchestrationMode === "dag"
+              ? `Launched wave 1/${data.data.waves} — later waves start as dependencies finish`
+              : `Launched ${data.data.count} build session${data.data.count > 1 ? "s" : ""}`
         );
         batch.clear();
         setRefreshTrigger((t) => t + 1);
@@ -476,7 +495,7 @@ export default function KanbanPage() {
                 <Select
                   value={buildMode}
                   onValueChange={(v) =>
-                    setBuildMode(v as "parallel" | "sequential")
+                    setBuildMode(v as "parallel" | "sequential" | "dag")
                   }
                 >
                   <SelectTrigger className="w-32 h-7 text-xs">
@@ -485,8 +504,32 @@ export default function KanbanPage() {
                   <SelectContent>
                     <SelectItem value="parallel">Parallel</SelectItem>
                     <SelectItem value="sequential">Sequential</SelectItem>
+                    <SelectItem value="dag">Waves (DAG)</SelectItem>
                   </SelectContent>
                 </Select>
+
+                {/* Waves mode explainer — visible only when selected */}
+                {buildMode === "dag" && (
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span
+                          data-testid="dag-mode-hint"
+                          className="flex items-center gap-1 text-xs text-muted-foreground cursor-help"
+                        >
+                          <Layers className="h-3 w-3" />
+                          Waves
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        Dependencies build first: epics run in dependency
+                        waves, each wave waiting for the previous one. A
+                        failed epic (or one that asks a question) skips its
+                        dependents.
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                )}
 
                 {/* Team mode checkbox — visible when 2+ epics selected */}
                 {totalSelected >= 2 && (

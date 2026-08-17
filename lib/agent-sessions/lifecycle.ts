@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
+import { notifySessionTerminal } from "./terminal-hooks";
 
 export type AgentSessionLifecycleStatus =
   | "queued"
@@ -8,6 +9,47 @@ export type AgentSessionLifecycleStatus =
   | "completed"
   | "failed"
   | "cancelled";
+
+/**
+ * Delivery verdict for a terminal session — the persisted, first-class signal
+ * of how the agent's run ended:
+ *
+ *   - answered:       the agent delivered textual output (default success)
+ *   - asked_question: the agent ended by asking the user a question
+ *   - silent:         the run succeeded but produced no textual deliverable
+ *   - error:          the session failed
+ *
+ * NULL in the database means "not classified": legacy rows, non-terminal
+ * sessions, and user-cancelled sessions (cancellation is a user decision,
+ * not a delivery verdict).
+ */
+export const SESSION_OUTCOMES = [
+  "answered",
+  "asked_question",
+  "silent",
+  "error",
+] as const;
+
+export type SessionOutcome = (typeof SESSION_OUTCOMES)[number];
+
+export function isSessionOutcome(value: unknown): value is SessionOutcome {
+  return (
+    typeof value === "string" &&
+    (SESSION_OUTCOMES as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * Token/cost usage reported by the provider CLI for a finished run (see
+ * `extractSessionUsage` in lib/claude/resolve-session-output.ts). Fields are
+ * present only when the provider actually reported them — the corresponding
+ * columns stay NULL otherwise, never fake zeros.
+ */
+export interface SessionUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalCostUsd?: number;
+}
 
 export const SESSION_LIFECYCLE_CONFLICT_CODE = "INVALID_SESSION_TRANSITION";
 export const SESSION_NOT_FOUND_CODE = "SESSION_NOT_FOUND";
@@ -149,13 +191,19 @@ export interface SessionTransitionPatch {
   endedAt?: string;
   completedAt?: string;
   error?: string | null;
+  outcome?: SessionOutcome;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalCostUsd?: number;
 }
 
 export function buildSessionTransitionPatch(
   session: SessionLifecycleSnapshot,
   toStatus: AgentSessionLifecycleStatus,
   at: string,
-  error?: string | null
+  error?: string | null,
+  outcome?: SessionOutcome,
+  usage?: SessionUsage
 ): SessionTransitionPatch {
   const fromStatus = normalizeSessionLifecycleStatus(session.status);
   if (!fromStatus || !isValidSessionTransition(fromStatus, toStatus)) {
@@ -186,6 +234,23 @@ export function buildSessionTransitionPatch(
     } else if (toStatus === "completed") {
       patch.error = null;
     }
+    if (outcome !== undefined) {
+      patch.outcome = outcome;
+    }
+    if (usage) {
+      // Usage is only known once the run ended; copy the fields the
+      // provider actually reported (finite numbers only). Omitted fields
+      // leave their columns untouched (NULL for fresh sessions).
+      if (Number.isFinite(usage.inputTokens)) {
+        patch.inputTokens = usage.inputTokens;
+      }
+      if (Number.isFinite(usage.outputTokens)) {
+        patch.outputTokens = usage.outputTokens;
+      }
+      if (Number.isFinite(usage.totalCostUsd)) {
+        patch.totalCostUsd = usage.totalCostUsd;
+      }
+    }
   }
 
   return patch;
@@ -196,6 +261,8 @@ export interface TransitionSessionStatusInput {
   toStatus: AgentSessionLifecycleStatus;
   at?: string;
   error?: string | null;
+  outcome?: SessionOutcome;
+  usage?: SessionUsage;
 }
 
 export function transitionSessionStatus({
@@ -203,6 +270,8 @@ export function transitionSessionStatus({
   toStatus,
   at = new Date().toISOString(),
   error,
+  outcome,
+  usage,
 }: TransitionSessionStatusInput): SessionTransitionPatch {
   const session = db
     .select({
@@ -220,12 +289,29 @@ export function transitionSessionStatus({
     throw new SessionNotFoundError(sessionId);
   }
 
-  const patch = buildSessionTransitionPatch(session, toStatus, at, error);
+  const patch = buildSessionTransitionPatch(
+    session,
+    toStatus,
+    at,
+    error,
+    outcome,
+    usage
+  );
 
   db.update(agentSessions)
     .set(patch)
     .where(eq(agentSessions.id, sessionId))
     .run();
+
+  // Post-terminal side effects (e.g. auto memory distillation) hang off the
+  // boot-registered hook — a no-op unless instrumentation wired one, and
+  // never able to throw into the transition (see terminal-hooks.ts).
+  if (TERMINAL_STATUSES.has(patch.status)) {
+    notifySessionTerminal({
+      sessionId,
+      status: patch.status as "completed" | "failed" | "cancelled",
+    });
+  }
 
   return patch;
 }
@@ -258,7 +344,23 @@ export function markSessionRunning(
 
 export function markSessionTerminal(
   sessionId: string,
-  result: { success: boolean; error?: string | null },
+  result: {
+    success: boolean;
+    error?: string | null;
+    /**
+     * Delivery verdict for this run (see `classifySessionOutcome` in
+     * lib/claude/resolve-session-output.ts). When omitted, failed sessions
+     * still get 'error' so the verdict column never lies about failures;
+     * successful sessions stay unclassified (NULL).
+     */
+    outcome?: SessionOutcome;
+    /**
+     * Token/cost usage reported by the provider CLI (see
+     * `extractSessionUsage`). Omitted for providers whose results carry no
+     * usage — the columns stay NULL.
+     */
+    usage?: SessionUsage;
+  },
   at?: string
 ): SessionTransitionPatch {
   return transitionSessionStatus({
@@ -266,6 +368,8 @@ export function markSessionTerminal(
     toStatus: result.success ? "completed" : "failed",
     at,
     error: result.error ?? null,
+    outcome: result.outcome ?? (result.success ? undefined : "error"),
+    usage: result.usage,
   });
 }
 

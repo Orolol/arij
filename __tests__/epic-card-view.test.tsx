@@ -115,6 +115,40 @@ describe("EpicCard", () => {
     });
   });
 
+  describe("awaiting-reply badge", () => {
+    it("renders the badge when the view flags awaitingReply", () => {
+      render(<EpicCard epic={makeEpic()} view={{ awaitingReply: true }} />);
+      const badge = screen.getByTestId("epic-awaiting-reply-epic-abc123");
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveAttribute(
+        "aria-label",
+        "Agent asked a question — awaiting your reply"
+      );
+    });
+
+    it("does not render the badge by default", () => {
+      render(<EpicCard epic={makeEpic()} view={{}} />);
+      expect(
+        screen.queryByTestId("epic-awaiting-reply-epic-abc123")
+      ).not.toBeInTheDocument();
+    });
+
+    it("coexists with the unreadAi indicator (separate signals)", () => {
+      render(
+        <EpicCard
+          epic={makeEpic()}
+          view={{ awaitingReply: true, unreadAi: true }}
+        />
+      );
+      expect(
+        screen.getByTestId("epic-awaiting-reply-epic-abc123")
+      ).toBeInTheDocument();
+      expect(
+        screen.getByTestId("epic-unread-ai-epic-abc123")
+      ).toBeInTheDocument();
+    });
+  });
+
   describe("epic ID display", () => {
     it("displays the epic ID above the title in monospace text", () => {
       render(<EpicCard epic={makeEpic({ id: "epic-xyz789" })} />);

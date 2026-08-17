@@ -20,8 +20,13 @@ import {
   mergeWorktree,
 } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import {
+  classifySessionOutcome,
+  extractSessionUsage,
+  resolveSessionOutput,
+} from "@/lib/claude/resolve-session-output";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import {
@@ -207,11 +212,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   // Background completion handler
   (async () => {
-    let info = processManager.getStatus(sessionId);
-    while (info && info.status === "running") {
-      await new Promise((r) => setTimeout(r, 2000));
-      info = processManager.getStatus(sessionId);
-    }
+    const info = await waitForProcessCompletion(sessionId);
 
     const completedAt = new Date().toISOString();
     const result = info?.result;
@@ -228,6 +229,8 @@ export async function POST(request: NextRequest, { params }: Params) {
         {
           success: !!result?.success,
           error: result?.error || null,
+          outcome: classifySessionOutcome(result, sessionId),
+          usage: extractSessionUsage(result),
         },
         completedAt
       );

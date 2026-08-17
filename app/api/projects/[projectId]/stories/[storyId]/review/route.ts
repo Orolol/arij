@@ -9,11 +9,17 @@ import { eq } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import {
   buildReviewPrompt,
   type ReviewType,
 } from "@/lib/claude/prompt-builder";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import {
+  classifySessionOutcome,
+  extractSessionUsage,
+  resolveSessionOutput,
+} from "@/lib/claude/resolve-session-output";
+import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
 import {
   getEpicOr404,
   getProjectOr404,
@@ -29,6 +35,7 @@ import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import { agentScheduler } from "@/lib/agents/scheduler";
 import {
   createQueuedSession,
   isSessionLifecycleConflictError,
@@ -250,26 +257,23 @@ export async function POST(request: NextRequest, { params }: Params) {
       createdAt: now,
     });
 
-    // Spawn agent — feature_review runs in code mode, others in plan mode (read-only)
-    markSessionRunning(sessionId, now);
-    processManager.start(sessionId, {
-      mode: agentMode,
-      prompt: enrichedPrompt,
-      cwd: worktreePath,
-      model: resolvedAgent.model,
-      cliSessionId,
-      resumeSession: useResume,
-    }, resolvedAgent.provider);
-
-    // Background: wait for completion, post review comment
+    // Scheduled launch via the per-project scheduler. The closure spawns
+    // the agent — feature_review runs in code mode, others in plan mode
+    // (read-only) — waits for completion, and posts the review comment.
     const label = REVIEW_LABELS[reviewType];
-    ((sid, rt, lbl) => {
-      (async () => {
-        let info = processManager.getStatus(sid);
-        while (info && info.status === "running") {
-          await new Promise((r) => setTimeout(r, 2000));
-          info = processManager.getStatus(sid);
-        }
+    ((sid, lbl) => {
+      agentScheduler.submit(projectId, sid, async () => {
+        markSessionRunning(sid);
+        processManager.start(sid, {
+          mode: agentMode,
+          prompt: enrichedPrompt,
+          cwd: worktreePath,
+          model: resolvedAgent.model,
+          cliSessionId,
+          resumeSession: useResume,
+        }, resolvedAgent.provider);
+
+        const info = await waitForProcessCompletion(sid);
 
         const completedAt = new Date().toISOString();
         const result = info?.result;
@@ -282,12 +286,16 @@ export async function POST(request: NextRequest, { params }: Params) {
         }
 
         // Update session
+        const outcome = classifySessionOutcome(result, sid);
+
         try {
           markSessionTerminal(
             sid,
             {
               success: !!result?.success,
               error: result?.error || null,
+              outcome,
+              usage: extractSessionUsage(result),
             },
             completedAt
           );
@@ -311,13 +319,27 @@ export async function POST(request: NextRequest, { params }: Params) {
           })
           .run();
 
+        // asked_question guard: the reviewer stopped to ask the user
+        // something, so its output is not a verdict — hold the story where
+        // it is, notify, log the decision, and skip verdict handling.
+        const askedQuestion = outcome === "asked_question";
+        if (askedQuestion) {
+          handleAskedQuestionOutcome({
+            projectId,
+            epicIds: [epic.id],
+            sessionId: sid,
+            ticketStatus: story.status ?? "review",
+          });
+        }
+
         // If the review verdict indicates work is not done, revert
         // the story back to in_progress
         const lowerOutput = output.toLowerCase();
         const isNegativeVerdict =
-          lowerOutput.includes("changes requested") ||
-          lowerOutput.includes("not complete") ||
-          lowerOutput.includes("partially complete");
+          !askedQuestion &&
+          (lowerOutput.includes("changes requested") ||
+            lowerOutput.includes("not complete") ||
+            lowerOutput.includes("partially complete"));
 
         if (isNegativeVerdict) {
           const currentStory = db
@@ -347,8 +369,8 @@ export async function POST(request: NextRequest, { params }: Params) {
             }
           }
         }
-      })();
-    })(sessionId, reviewType, label);
+      });
+    })(sessionId, label);
 
     sessionsCreated.push(sessionId);
     resolutions.push({

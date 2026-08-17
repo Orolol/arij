@@ -13,7 +13,14 @@ import {
 } from "@/lib/agent-config/constants";
 import { useProvidersAvailable } from "@/hooks/useProvidersAvailable";
 import { REVIEW_PROVIDER_SEGREGATION_SETTING_KEY } from "@/lib/agent-config/review-segregation-constants";
+import {
+  AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY,
+  DEFAULT_MAX_CONCURRENT_AGENTS,
+  agentMaxConcurrentSettingKey,
+  parseMaxConcurrentSetting,
+} from "@/lib/agents/scheduler-constants";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Select,
@@ -53,6 +60,26 @@ export function ProviderDefaultsTab({
   // null = not loaded yet
   const [segregation, setSegregation] = useState<boolean | null>(null);
   const [savingSegregation, setSavingSegregation] = useState(false);
+  // Explicit values stored per settings key (null = key unset / inherits).
+  const [maxConcurrent, setMaxConcurrent] = useState<{
+    global: number | null;
+    project: number | null;
+  } | null>(null);
+  const [maxConcurrentInput, setMaxConcurrentInput] = useState("");
+  const [savingMaxConcurrent, setSavingMaxConcurrent] = useState(false);
+
+  const projectScoped = scope === "project" && !!projectId;
+  const maxConcurrentKey = projectScoped
+    ? agentMaxConcurrentSettingKey(projectId!)
+    : AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY;
+  const savedMaxConcurrent = maxConcurrent
+    ? projectScoped
+      ? maxConcurrent.project
+      : maxConcurrent.global
+    : null;
+  const inheritedMaxConcurrent = projectScoped
+    ? maxConcurrent?.global ?? DEFAULT_MAX_CONCURRENT_AGENTS
+    : DEFAULT_MAX_CONCURRENT_AGENTS;
 
   useEffect(() => {
     let cancelled = false;
@@ -62,14 +89,32 @@ export function ProviderDefaultsTab({
         if (cancelled) return;
         const value = json?.data?.[REVIEW_PROVIDER_SEGREGATION_SETTING_KEY];
         setSegregation(value === true || value === "true");
+
+        const global = parseMaxConcurrentSetting(
+          json?.data?.[AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY]
+        );
+        const project = projectId
+          ? parseMaxConcurrentSetting(
+              json?.data?.[agentMaxConcurrentSettingKey(projectId)]
+            )
+          : null;
+        setMaxConcurrent({ global, project });
       })
       .catch(() => {
-        if (!cancelled) setSegregation(false);
+        if (!cancelled) {
+          setSegregation(false);
+          setMaxConcurrent({ global: null, project: null });
+        }
       });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [projectId]);
+
+  // Re-seed the input whenever the loaded values or the scope change.
+  useEffect(() => {
+    setMaxConcurrentInput(savedMaxConcurrent === null ? "" : String(savedMaxConcurrent));
+  }, [savedMaxConcurrent, maxConcurrentKey]);
 
   async function toggleSegregation(next: boolean) {
     const previous = segregation;
@@ -88,6 +133,42 @@ export function ProviderDefaultsTab({
       setSegregation(previous);
     }
     setSavingSegregation(false);
+  }
+
+  const trimmedMaxConcurrentInput = maxConcurrentInput.trim();
+  const parsedMaxConcurrentInput =
+    trimmedMaxConcurrentInput === ""
+      ? null
+      : parseMaxConcurrentSetting(trimmedMaxConcurrentInput);
+  const maxConcurrentInputValid =
+    trimmedMaxConcurrentInput === "" || parsedMaxConcurrentInput !== null;
+  const maxConcurrentDirty =
+    maxConcurrent !== null && parsedMaxConcurrentInput !== savedMaxConcurrent;
+
+  async function saveMaxConcurrent() {
+    if (!maxConcurrent || !maxConcurrentInputValid) return;
+    setSavingMaxConcurrent(true);
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        // null clears the key so the scope falls back to its inherited value.
+        body: JSON.stringify({ [maxConcurrentKey]: parsedMaxConcurrentInput }),
+      });
+      if (res.ok) {
+        setMaxConcurrent((prev) =>
+          prev
+            ? {
+                ...prev,
+                [projectScoped ? "project" : "global"]: parsedMaxConcurrentInput,
+              }
+            : prev
+        );
+      }
+    } catch {
+      // keep the dirty input; the user can retry
+    }
+    setSavingMaxConcurrent(false);
   }
 
   if (loading) {
@@ -122,6 +203,48 @@ export function ProviderDefaultsTab({
               ticket, when another CLI is available. An explicitly picked named
               agent always wins. Applies globally.
             </p>
+          </div>
+        </div>
+        <div className="flex items-start gap-3 px-4 py-3 rounded-lg border border-border">
+          <div className="flex-1 space-y-1">
+            <label
+              htmlFor="agent-max-concurrent"
+              className="text-sm font-medium leading-none cursor-pointer"
+            >
+              Max concurrent agents
+            </label>
+            <p className="text-xs text-muted-foreground">
+              {projectScoped
+                ? `How many batch agents (builds, reviews, merges, QA) may run at once for this project. Extra launches wait in a queue. Leave empty to inherit the global default (${inheritedMaxConcurrent}).`
+                : `Default cap on batch agents (builds, reviews, merges, QA) running at once per project. Extra launches wait in a queue. Leave empty for the built-in default (${DEFAULT_MAX_CONCURRENT_AGENTS}).`}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <input
+              id="agent-max-concurrent"
+              type="number"
+              min={1}
+              step={1}
+              value={maxConcurrentInput}
+              onChange={(e) => setMaxConcurrentInput(e.target.value)}
+              placeholder={String(inheritedMaxConcurrent)}
+              disabled={maxConcurrent === null || savingMaxConcurrent}
+              className="w-20 bg-transparent border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:border-primary"
+            />
+            <Button
+              size="sm"
+              onClick={saveMaxConcurrent}
+              disabled={
+                savingMaxConcurrent ||
+                !maxConcurrentDirty ||
+                !maxConcurrentInputValid
+              }
+            >
+              {savingMaxConcurrent ? (
+                <Loader2 className="h-3 w-3 animate-spin mr-1" />
+              ) : null}
+              Save
+            </Button>
           </div>
         </div>
         {AGENT_TYPES.map((agentType) => {

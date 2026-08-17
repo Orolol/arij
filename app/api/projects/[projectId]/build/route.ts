@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/lib/db";
 import {
   projects,
@@ -10,13 +11,19 @@ import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
+import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import {
   buildBuildPrompt,
   buildTeamBuildPrompt,
   type TeamEpic,
 } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import {
+  classifySessionOutcome,
+  extractSessionUsage,
+  resolveSessionOutput,
+} from "@/lib/claude/resolve-session-output";
+import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
 
 import fs from "fs";
 import path from "path";
@@ -25,6 +32,7 @@ import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
 } from "@/lib/agents/concurrency";
+import { agentScheduler } from "@/lib/agents/scheduler";
 import {
   createQueuedSession,
   isSessionLifecycleConflictError,
@@ -36,6 +44,36 @@ import {
   enrichPromptWithDocumentMentions,
   MentionResolutionError,
 } from "@/lib/documents/mentions";
+import { buildExecutionPlan } from "@/lib/dependencies/scheduler";
+import {
+  filterBuildableTickets,
+  getTransitiveDependencies,
+  loadProjectGraph,
+} from "@/lib/dependencies/validation";
+import {
+  countPlanStatuses,
+  runExecutionWaves,
+  type WaveSkippedTicket,
+  type WaveTicketResult,
+} from "@/lib/dependencies/wave-runner";
+import { dagBatchRegistry } from "@/lib/agents/dag-batch-registry";
+import { logTransition } from "@/lib/workflow/log";
+import { createDagWaveOutcomeNotification } from "@/lib/notifications/create";
+
+/**
+ * Batch build options (everything except `epicIds`, which keeps its
+ * historical bespoke check and error message). `failurePolicy` only matters
+ * in "dag" mode:
+ *   - "halt" (default): a blocked epic skips its dependents, but independent
+ *     branches keep building.
+ *   - "stop": abandon all remaining waves after the first blocked wave.
+ */
+const batchBuildOptionsSchema = z.object({
+  mode: z.enum(["sequential", "parallel", "dag"]).default("parallel"),
+  team: z.boolean().default(false),
+  namedAgentId: z.string().nullable().default(null),
+  failurePolicy: z.enum(["halt", "stop"]).default("halt"),
+});
 
 function collectEpicMentionSources(
   epic: { title?: string | null; description?: string | null },
@@ -59,18 +97,8 @@ export async function POST(
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const body = await request.json();
-  const {
-    epicIds,
-    mode = "parallel",
-    team = false,
-    namedAgentId = null,
-  } = body as {
-    epicIds: string[];
-    mode?: "sequential" | "parallel";
-    team?: boolean;
-    namedAgentId?: string | null;
-  };
+  const body = await request.json().catch(() => null);
+  const { epicIds } = (body ?? {}) as { epicIds?: string[] };
 
   if (!epicIds || !Array.isArray(epicIds) || epicIds.length === 0) {
     return NextResponse.json(
@@ -79,8 +107,36 @@ export async function POST(
     );
   }
 
+  const parsedOptions = batchBuildOptionsSchema.safeParse(body ?? {});
+  if (!parsedOptions.success) {
+    return NextResponse.json(
+      {
+        error: "Validation failed",
+        details: parsedOptions.error.flatten().fieldErrors,
+      },
+      { status: 400 }
+    );
+  }
+  const { mode, team, namedAgentId, failurePolicy } = parsedOptions.data;
+
+  if (team && mode === "dag") {
+    return NextResponse.json(
+      { error: "Team mode cannot be combined with wave (dag) mode" },
+      { status: 400 }
+    );
+  }
+
+  // DAG mode plans over the full dependency closure: the client auto-includes
+  // prerequisites too, but the server re-expands so the waves are complete
+  // even for direct API callers. The closure already stops at done/released
+  // prerequisites (they are satisfied, not work).
+  const targetEpicIds =
+    mode === "dag"
+      ? Array.from(getTransitiveDependencies(projectId, epicIds))
+      : epicIds;
+
   // Conflict check up-front so batch launches fail fast with a deterministic payload.
-  for (const epicId of epicIds) {
+  for (const epicId of targetEpicIds) {
     const conflict = getRunningSessionForTarget({
       scope: "epic",
       projectId,
@@ -255,33 +311,30 @@ export async function POST(
         .where(eq(projects.id, projectId))
         .run();
 
-      // Spawn single CC session from main repo root with Task in allowedTools
-      markSessionRunning(sessionId, now);
-      processManager.start(sessionId, {
-        mode: "code",
-        prompt: enrichedTeamPrompt,
-        cwd: gitRepoPath,
-        allowedTools: [
-          "Edit",
-          "Write",
-          "Bash",
-          "Read",
-          "Glob",
-          "Grep",
-          "Task",
-        ],
-        model: resolvedTeamAgent.model,
-        cliSessionId: teamCliSessionId,
-      }, resolvedTeamAgent.provider);
-
-      // Background: wait for completion, update all epic statuses
+      // Scheduled team launch: one slot for the whole coordinating session.
+      // Spawns a single CC session from main repo root with Task in
+      // allowedTools, waits for completion, updates all epic statuses.
       const allEpicIds = epicRecords.map((e) => e.id);
-      (async () => {
-        let info = processManager.getStatus(sessionId);
-        while (info && info.status === "running") {
-          await new Promise((r) => setTimeout(r, 2000));
-          info = processManager.getStatus(sessionId);
-        }
+      agentScheduler.submit(projectId, sessionId, async () => {
+        markSessionRunning(sessionId);
+        processManager.start(sessionId, {
+          mode: "code",
+          prompt: enrichedTeamPrompt,
+          cwd: gitRepoPath,
+          allowedTools: [
+            "Edit",
+            "Write",
+            "Bash",
+            "Read",
+            "Glob",
+            "Grep",
+            "Task",
+          ],
+          model: resolvedTeamAgent.model,
+          cliSessionId: teamCliSessionId,
+        }, resolvedTeamAgent.provider);
+
+        const info = await waitForProcessCompletion(sessionId);
 
         const completedAt = new Date().toISOString();
         const result = info?.result;
@@ -292,12 +345,16 @@ export async function POST(
           // ignore
         }
 
+        const outcome = classifySessionOutcome(result, sessionId);
+
         try {
           markSessionTerminal(
             sessionId,
             {
               success: !!result?.success,
               error: result?.error || null,
+              outcome,
+              usage: extractSessionUsage(result),
             },
             completedAt
           );
@@ -308,13 +365,22 @@ export async function POST(
         }
 
         // Update all associated epics unless the agent ended by asking a question.
-        if (result?.success && !result?.endedWithQuestion) {
+        if (result?.success && outcome !== "asked_question") {
           for (const eid of allEpicIds) {
             db.update(epics)
               .set({ status: "review", updatedAt: completedAt })
               .where(eq(epics.id, eid))
               .run();
           }
+        } else if (result?.success) {
+          // asked_question: hold every coordinated epic, notify once, and
+          // log the decision on each epic's activity feed.
+          handleAskedQuestionOutcome({
+            projectId,
+            epicIds: allEpicIds,
+            sessionId,
+            ticketStatus: "in_progress",
+          });
         }
 
         // Post output as comment on each epic
@@ -332,7 +398,7 @@ export async function POST(
             })
             .run();
         }
-      })();
+      });
 
       sessionsCreated.push(sessionId);
       tryExportArjiJson(projectId);
@@ -353,9 +419,15 @@ export async function POST(
   }
 
   // -----------------------------------------------------------------------
-  // SOLO MODE — one session per epic (existing behavior)
+  // SOLO MODE — one session per epic (existing behavior). DAG mode reuses
+  // this launcher wave by wave; the returned `settled` promise resolves when
+  // the session reaches a terminal state (it never rejects).
   // -----------------------------------------------------------------------
-  async function launchEpic(epicId: string) {
+  async function launchEpic(
+    epicId: string
+  ): Promise<
+    { sessionId: string; settled: Promise<WaveTicketResult> } | undefined
+  > {
     const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
     if (!epic) return;
 
@@ -463,24 +535,21 @@ export async function POST(
       .where(eq(projects.id, projectId))
       .run();
 
-    // Spawn agent via process manager
-    markSessionRunning(sessionId, now);
-    processManager.start(sessionId, {
-      mode: "code",
-      prompt: enrichedPrompt,
-      cwd: worktreePath,
-      allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-      model: resolvedBuildAgent.model,
-      cliSessionId: soloCliSessionId,
-    }, resolvedBuildAgent.provider);
+    // Launch closure body: spawns the agent, waits for completion, and
+    // updates the DB. Submitted to the per-project scheduler below — a batch
+    // of N epics enqueues N sessions but only maxConcurrent CLIs run at once.
+    const runBuildSession = async () => {
+      markSessionRunning(sessionId);
+      processManager.start(sessionId, {
+        mode: "code",
+        prompt: enrichedPrompt,
+        cwd: worktreePath,
+        allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
+        model: resolvedBuildAgent.model,
+        cliSessionId: soloCliSessionId,
+      }, resolvedBuildAgent.provider);
 
-    // Background: wait for completion and update DB
-    (async () => {
-      let info = processManager.getStatus(sessionId);
-      while (info && info.status === "running") {
-        await new Promise((r) => setTimeout(r, 2000));
-        info = processManager.getStatus(sessionId);
-      }
+      const info = await waitForProcessCompletion(sessionId);
 
       const completedAt = new Date().toISOString();
       const result = info?.result;
@@ -491,12 +560,16 @@ export async function POST(
         // ignore
       }
 
+      const outcome = classifySessionOutcome(result, sessionId);
+
       try {
         markSessionTerminal(
           sessionId,
           {
             success: !!result?.success,
             error: result?.error || null,
+            outcome,
+            usage: extractSessionUsage(result),
           },
           completedAt
         );
@@ -508,7 +581,7 @@ export async function POST(
 
       // Move epic + US to review if successful.
       // If the agent asked a follow-up question, keep work in progress.
-      if (result?.success && !result?.endedWithQuestion) {
+      if (result?.success && outcome !== "asked_question") {
         db.update(userStories)
           .set({ status: "review" })
           .where(
@@ -523,6 +596,15 @@ export async function POST(
           .set({ status: "review", updatedAt: completedAt })
           .where(eq(epics.id, epicId))
           .run();
+      } else if (result?.success) {
+        // asked_question: hold the epic in in_progress, notify with a deep
+        // link to the epic, and log the decision to the activity feed.
+        handleAskedQuestionOutcome({
+          projectId,
+          epicIds: [epicId],
+          sessionId,
+          ticketStatus: "in_progress",
+        });
       }
 
       // Post output as epic comment
@@ -538,9 +620,224 @@ export async function POST(
           createdAt: completedAt,
         })
         .run();
-    })();
+
+      return {
+        success: !!result?.success,
+        outcome,
+        error: result?.error ?? null,
+      };
+    };
+
+    // Settlement signal for the wave engine (and any future caller that
+    // needs to await terminal state). Resolved — never rejected — so
+    // `Promise.all` over a wave cannot bail early.
+    let settleLaunch!: (result: WaveTicketResult) => void;
+    const settled = new Promise<WaveTicketResult>((resolve) => {
+      settleLaunch = resolve;
+    });
+
+    agentScheduler.submit(projectId, sessionId, async () => {
+      try {
+        settleLaunch({ epicId, sessionId, ...(await runBuildSession()) });
+      } catch (error) {
+        // The scheduler's safety net finalizes the session row; the wave
+        // engine only needs to know this ticket settled as failed.
+        settleLaunch({
+          epicId,
+          sessionId,
+          success: false,
+          outcome: "error",
+          error:
+            error instanceof Error ? error.message : "Agent launch failed",
+        });
+        throw error;
+      }
+    });
 
     sessionsCreated.push(sessionId);
+    return { sessionId, settled };
+  }
+
+  // -----------------------------------------------------------------------
+  // DAG MODE — dependency-ordered waves over the full closure.
+  // Wave N launches through the scheduler (budget still throttles CLIs),
+  // the engine waits for every session to settle, then wave N+1 starts.
+  // Blocked epics (failed session or asked_question) skip their transitive
+  // dependents: no session, an activity-log entry, and a wave notification.
+  // -----------------------------------------------------------------------
+  if (mode === "dag") {
+    try {
+      // A done/released epic explicitly named in the selection is dropped
+      // here: it is already delivered, so it gets no wave, no session, and
+      // (being absent from the plan) never blocks a dependent — a dependent
+      // whose only prerequisites are done therefore lands in wave 1.
+      const buildableEpicIds = filterBuildableTickets(projectId, targetEpicIds);
+      if (buildableEpicIds.length === 0) {
+        return NextResponse.json(
+          {
+            error:
+              "No buildable epics in the selection — every ticket is already done or released",
+          },
+          { status: 400 }
+        );
+      }
+
+      const plan = buildExecutionPlan(projectId, buildableEpicIds);
+      const graph = loadProjectGraph(projectId);
+      const batchId = createId();
+      const totalWaves = plan.layers.length;
+
+      dagBatchRegistry.start({
+        batchId,
+        projectId,
+        failurePolicy,
+        totalWaves,
+        totalEpics: buildableEpicIds.length,
+      });
+
+      const skipReason = (skip: WaveSkippedTicket): string => {
+        if (skip.kind === "stopped") {
+          return `skipped: batch stopped after wave ${skip.wave} failure`;
+        }
+        const blocker = skip.blockedById
+          ? db
+              .select({ readableId: epics.readableId, title: epics.title })
+              .from(epics)
+              .where(eq(epics.id, skip.blockedById))
+              .get()
+          : null;
+        const ref =
+          blocker?.readableId || blocker?.title || skip.blockedById || "unknown";
+        return skip.kind === "failed"
+          ? `skipped: dependency ${ref} failed`
+          : `skipped: dependency ${ref} asked a question`;
+      };
+
+      // Resolves once the first wave's launches are submitted, so the HTTP
+      // response can report the initial sessions while later waves keep
+      // running in the background.
+      let resolveFirstWave!: (sessionIds: string[]) => void;
+      let firstWaveResolved = false;
+      const firstWaveLaunched = new Promise<string[]>((resolve) => {
+        resolveFirstWave = resolve;
+      });
+
+      const engineRun = runExecutionWaves({
+        plan,
+        graph,
+        failurePolicy,
+        launch: async (epicId) => (await launchEpic(epicId)) ?? null,
+        callbacks: {
+          onWaveStart: (wave) => {
+            dagBatchRegistry.setWave(batchId, wave);
+            dagBatchRegistry.setCounts(batchId, countPlanStatuses(plan));
+          },
+          onWaveLaunched: (_wave, sessionIds) => {
+            if (!firstWaveResolved) {
+              firstWaveResolved = true;
+              resolveFirstWave(sessionIds);
+            }
+          },
+          onWaveSettled: () => {
+            dagBatchRegistry.setCounts(batchId, countPlanStatuses(plan));
+          },
+          onSkip: (skip) => {
+            // The skipped ticket never moves — log the decision so the board
+            // history answers "why didn't this build?".
+            try {
+              const held = db
+                .select({ status: epics.status })
+                .from(epics)
+                .where(eq(epics.id, skip.epicId))
+                .get();
+              const heldStatus = held?.status ?? "backlog";
+              logTransition({
+                projectId,
+                epicId: skip.epicId,
+                fromStatus: heldStatus,
+                toStatus: heldStatus,
+                actor: "system",
+                reason: skipReason(skip),
+                sessionId: skip.blockedBySessionId ?? undefined,
+              });
+            } catch (error) {
+              console.warn(
+                `[build/dag] Failed to log skip for epic ${skip.epicId}`,
+                error
+              );
+            }
+          },
+          onWaveBlocked: (wave, blocked, waveSkipped) => {
+            // Dedupe: a wave blocked *solely* by questions that skipped
+            // nothing adds no information — handleAskedQuestionOutcome
+            // already raised the per-session "Agent asked a question"
+            // notification for each blocker. A failure, or any actually
+            // skipped dependent, still deserves the wave summary.
+            const onlyUnblockingQuestions =
+              blocked.every((b: WaveTicketResult) => b.success) &&
+              waveSkipped.length === 0;
+            if (onlyUnblockingQuestions) return;
+
+            try {
+              createDagWaveOutcomeNotification({
+                projectId,
+                wave,
+                totalWaves,
+                blocked: blocked.map((b: WaveTicketResult) => ({
+                  epicId: b.epicId,
+                  kind: b.success ? ("asked_question" as const) : ("failed" as const),
+                })),
+                skippedCount: waveSkipped.length,
+                stopped: failurePolicy === "stop",
+              });
+            } catch (error) {
+              console.warn(
+                "[build/dag] Failed to create wave notification",
+                error
+              );
+            }
+          },
+          onFinish: () => {
+            dagBatchRegistry.setCounts(batchId, countPlanStatuses(plan));
+            dagBatchRegistry.finish(batchId);
+          },
+        },
+      });
+
+      // The engine outlives this request — waves 2+ launch after the
+      // response. Launch failures become wave results, so a rejection here
+      // is an engine bug, not a build failure.
+      const engineSafe = engineRun.catch((error) => {
+        console.error("[build/dag] Wave engine crashed", error);
+        dagBatchRegistry.finish(batchId);
+        return null;
+      });
+
+      const firstWaveSessions = await Promise.race([
+        firstWaveLaunched,
+        engineSafe.then(() => [] as string[]),
+      ]);
+
+      tryExportArjiJson(projectId);
+      return NextResponse.json({
+        data: {
+          sessions: firstWaveSessions,
+          count: firstWaveSessions.length,
+          orchestrationMode: "dag",
+          batchId,
+          waves: totalWaves,
+          totalEpics: buildableEpicIds.length,
+          failurePolicy,
+        },
+      });
+    } catch (e) {
+      // Synchronous planning failures only — per-epic launch errors inside
+      // waves are handled by the engine.
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "Wave build launch failed" },
+        { status: 500 }
+      );
+    }
   }
 
   try {
