@@ -1,65 +1,118 @@
 "use client";
 
 import Link from "next/link";
-import { Card } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
+import { cn } from "@/lib/utils";
+import { timeAgo } from "@/lib/utils/format-date";
 import type { DashboardProject } from "@/lib/types/dashboard";
 
 interface ProjectCardProps {
   project: DashboardProject;
 }
 
-export function ProjectCard({ project }: ProjectCardProps) {
-  const progress =
-    project.epicCount > 0
-      ? Math.round((project.epicsDone / project.epicCount) * 100)
-      : 0;
-
-  function relativeTime(dateStr: string) {
-    const diff = Date.now() - new Date(dateStr).getTime();
-    const minutes = Math.floor(diff / 60000);
-    if (minutes < 1) return "just now";
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    const days = Math.floor(hours / 24);
-    return `${days}d ago`;
+/** Two-letter chip: initials of the first two words, else first two letters. */
+function projectInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "??";
+  if (words.length === 1) {
+    return (words[0].slice(0, 2) || "?").replace(/^./, (c) => c.toUpperCase());
   }
+  return `${words[0][0]}${words[1][0]}`.toUpperCase();
+}
+
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+export function ProjectCard({ project }: ProjectCardProps) {
+  const inProgress = project.epicsInProgress ?? 0;
+  const review = project.epicsReview ?? 0;
+  const released = project.epicsReleased ?? 0;
+
+  // Distribution bar: in-flight work as a share of everything that has a
+  // delivery state. Pure CSS widths, no library, no invented numbers.
+  const tracked = inProgress + review + released;
+  const inProgressPct = tracked > 0 ? (inProgress / tracked) * 100 : 0;
+  const reviewPct = tracked > 0 ? (review / tracked) * 100 : 0;
+
+  const counters: Array<{ value: number; label: string }> = [
+    { value: inProgress, label: "in progress" },
+    { value: review, label: "in review" },
+    { value: released, label: "released" },
+  ];
 
   return (
-    <Link href={`/projects/${project.id}`}>
-      <Card className="p-4 hover:bg-accent/50 transition-colors cursor-pointer h-full">
-        <h3 className="font-semibold mb-1 truncate">{project.name}</h3>
-        {project.description && (
-          <p className="text-xs text-muted-foreground mb-3 line-clamp-2">
-            {project.description}
-          </p>
+    <Link
+      href={`/projects/${project.id}`}
+      data-testid={`project-card-${project.id}`}
+      className="flex w-[334px] max-w-full flex-col gap-[14px] rounded-[13px] border border-border bg-card p-[18px] shadow-[0_1px_2px_rgba(36,33,29,.04)] transition-colors hover:border-ring/40"
+    >
+      <div className="flex items-center gap-[11px]">
+        <span className="flex h-[30px] w-[30px] flex-none items-center justify-center rounded-[9px] bg-band text-[12.5px] font-semibold text-muted-foreground">
+          {projectInitials(project.name)}
+        </span>
+        <span className="truncate text-[15px] font-semibold">
+          {project.name}
+        </span>
+        {project.activeAgents > 0 ? (
+          <span className="ml-auto inline-flex flex-none items-center gap-[7px] text-[12px] text-agent">
+            <span className="breathing-dot h-[7px] w-[7px]" aria-hidden />
+            {plural(project.activeAgents, "agent")}
+          </span>
+        ) : (
+          <span className="ml-auto flex-none text-[12px] text-meta">idle</span>
         )}
-        <div className="mt-auto space-y-2">
-          <div className="flex items-center gap-2">
-            <Progress value={progress} className="flex-1 h-1.5" />
-            <span className="text-xs text-muted-foreground whitespace-nowrap">
-              {project.epicsDone}/{project.epicCount}
+      </div>
+
+      <div className="flex gap-[14px]">
+        {counters.map((counter) => (
+          <div key={counter.label} className="flex flex-col gap-[2px]">
+            <span className="text-[17px] font-semibold leading-none">
+              {counter.value}
+            </span>
+            <span className="text-[11.5px] text-muted-foreground">
+              {counter.label}
             </span>
           </div>
-          <div className="flex items-center justify-between text-xs text-muted-foreground">
-            <div className="flex items-center gap-1.5">
-              {project.activeAgents > 0 ? (
-                <>
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
-                  </span>
-                  <span>{project.activeAgents} agent{project.activeAgents > 1 ? "s" : ""}</span>
-                </>
-              ) : (
-                <span>{project.status}</span>
-              )}
-            </div>
-            <span>{relativeTime(project.updatedAt)}</span>
-          </div>
-        </div>
-      </Card>
+        ))}
+      </div>
+
+      <div className="flex h-[3px] overflow-hidden rounded-[2px] bg-border-soft">
+        <span
+          className="bg-agent"
+          style={{ width: `${inProgressPct}%` }}
+          aria-hidden
+        />
+        <span
+          className="bg-primary"
+          style={{ width: `${reviewPct}%` }}
+          aria-hidden
+        />
+      </div>
+
+      <span className="font-mono text-[11px] text-meta">
+        {project.lastSessionAt
+          ? `last session ${timeAgo(project.lastSessionAt)}`
+          : "no sessions yet"}
+      </span>
+    </Link>
+  );
+}
+
+/** Dashed call-to-action tile that closes the project grid. */
+export function NewProjectCard() {
+  return (
+    <Link
+      href="/projects/new"
+      data-testid="project-card-new"
+      className={cn(
+        "flex w-[334px] max-w-full flex-col justify-center gap-[8px] rounded-[13px] border border-dashed border-border p-[18px]",
+        "transition-colors hover:border-primary/60"
+      )}
+    >
+      <span className="text-[14px] font-medium text-primary">New Project</span>
+      <span className="text-[12.5px] text-muted-foreground">
+        From a local repo or GitHub.
+      </span>
     </Link>
   );
 }

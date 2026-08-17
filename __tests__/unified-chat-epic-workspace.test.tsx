@@ -958,8 +958,11 @@ describe("Story 5: Running indicators on chat tabs", () => {
 
     fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
 
-    // The label should still be visible next to the indicator
-    expect(screen.getByText("My brainstorm session")).toBeInTheDocument();
+    // The label should still be visible next to the indicator. Long labels are
+    // truncated in the tab strip, with the full text kept in the title attr.
+    const tab = screen.getByTestId("conversation-tab-conv1");
+    expect(tab).toHaveTextContent("My brainstorm sessio...");
+    expect(tab).toHaveAttribute("title", "My brainstorm session");
     expect(screen.getByTestId("active-indicator-conv1")).toBeInTheDocument();
   });
 

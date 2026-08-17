@@ -14,11 +14,11 @@ export function InboxNavLink() {
   return (
     <Link
       href="/inbox"
-      className="relative flex items-center justify-center w-10 h-10 rounded-lg hover:bg-sidebar-accent text-sidebar-foreground transition-colors"
+      className="relative flex items-center justify-center w-[34px] h-[34px] rounded-[9px] hover:bg-sidebar-accent text-muted-foreground hover:text-foreground transition-colors"
       title="Inbox"
       data-testid="sidebar-inbox-link"
     >
-      <Inbox className="h-5 w-5" />
+      <Inbox className="w-[17px] h-[17px]" />
       {unreadCount > 0 && (
         <span
           className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold text-primary-foreground bg-primary rounded-full"

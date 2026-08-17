@@ -402,6 +402,8 @@ describe("EpicDetail user stories section", () => {
 
   it("adds a trimmed user story on Enter and clears the input", () => {
     renderSubject();
+    // The composer is revealed by the "Add a story" link in the 3a panel.
+    fireEvent.click(screen.getByRole("button", { name: "Add a story" }));
     const input = screen.getByPlaceholderText("Add user story...");
     fireEvent.change(input, { target: { value: "  New story  " } });
     fireEvent.keyDown(input, { key: "Enter" });

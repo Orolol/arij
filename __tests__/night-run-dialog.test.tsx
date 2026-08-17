@@ -225,6 +225,41 @@ describe("NightRunDialog — scope preview", () => {
     expect(warning).toHaveTextContent(/Review for your sign-off/i);
   });
 
+  it("lists the scope ids under the headline", async () => {
+    mockFetch();
+    renderDialog();
+
+    await waitFor(() =>
+      expect(screen.getByText("e-todo-1, e-todo-2")).toBeInTheDocument()
+    );
+  });
+
+  it("shows the real order and parallelism the run will use", async () => {
+    mockFetch();
+    renderDialog();
+
+    // Night runs always schedule as dependency waves.
+    await waitFor(() =>
+      expect(screen.getByText("Waves (DAG)")).toBeInTheDocument()
+    );
+    // Parallel agents falls back to the scheduler default when unset.
+    expect(screen.getByText("Parallel agents")).toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+  });
+
+  it("reads the parallelism budget from the project settings override", async () => {
+    mockFetch({
+      settings: {
+        [NIGHT_CIRCUIT_BREAKER_SETTING_KEY]: 4,
+        [NIGHT_COST_CAP_SETTING_KEY]: 12,
+        "agent_max_concurrent:proj-1": 6,
+      },
+    });
+    renderDialog();
+
+    await waitFor(() => expect(screen.getByText("6")).toBeInTheDocument());
+  });
+
   it("warns that the cost cap only counts Claude-reported spend", async () => {
     mockFetch();
     renderDialog();

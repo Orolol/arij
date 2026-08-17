@@ -13,9 +13,22 @@ vi.mock("@/lib/db", async () => {
   return dbModuleMock();
 });
 
-const mockGetTicketDependencies = vi.hoisted(() => vi.fn(() => []));
-const mockGetTicketDependents = vi.hoisted(() => vi.fn(() => []));
-const mockSetTicketDependencies = vi.hoisted(() => vi.fn(() => []));
+/** The dependency-edge fields the route actually reads back out. */
+type DependencyEdgeStub = {
+  id: string;
+  ticketId: string;
+  dependsOnTicketId: string;
+};
+
+const mockGetTicketDependencies = vi.hoisted(() =>
+  vi.fn((): DependencyEdgeStub[] => [])
+);
+const mockGetTicketDependents = vi.hoisted(() =>
+  vi.fn((): DependencyEdgeStub[] => [])
+);
+const mockSetTicketDependencies = vi.hoisted(() =>
+  vi.fn((): DependencyEdgeStub[] => [])
+);
 
 vi.mock("@/lib/dependencies/validation", () => ({
   getTicketDependencies: mockGetTicketDependencies,

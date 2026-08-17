@@ -100,7 +100,7 @@ vi.mock("@/lib/agent-config/agent-resolution", () => ({
   })),
 }));
 
-const mockApplyTransition = vi.fn(() => ({ valid: true }));
+const mockApplyTransition = vi.fn((..._args: unknown[]) => ({ valid: true }));
 vi.mock("@/lib/workflow/transition-service", () => ({
   applyTransition: (...args: unknown[]) => mockApplyTransition(...args),
 }));

@@ -33,6 +33,10 @@ import { DeepSeekProvider } from "@/lib/providers/deepseek";
 import { KimiProvider } from "@/lib/providers/kimi";
 import { ZaiProvider } from "@/lib/providers/zai";
 import type { ProviderSpawnOptions } from "@/lib/providers/types";
+// Typed as the base class on purpose: the concrete providers narrow
+// extractResult/parseSessionId to fewer parameters, but the contract the
+// runtime calls through (BaseCliProvider) passes stdout/stderr/fallback.
+import type { BaseCliProvider } from "@/lib/providers/base-provider";
 
 const baseOptions: ProviderSpawnOptions = {
   sessionId: "test-session-1",
@@ -94,7 +98,7 @@ describe("Provider Factory - New Providers", () => {
 // ---------------------------------------------------------------------------
 
 describe("MistralVibeProvider", () => {
-  const provider = new MistralVibeProvider();
+  const provider: BaseCliProvider = new MistralVibeProvider();
 
   it("has type 'mistral-vibe'", () => {
     expect(provider.type).toBe("mistral-vibe");
@@ -168,7 +172,7 @@ describe("MistralVibeProvider", () => {
 // ---------------------------------------------------------------------------
 
 describe("QwenCodeProvider", () => {
-  const provider = new QwenCodeProvider();
+  const provider: BaseCliProvider = new QwenCodeProvider();
 
   it("has type 'qwen-code'", () => {
     expect(provider.type).toBe("qwen-code");
@@ -217,7 +221,7 @@ describe("QwenCodeProvider", () => {
 // ---------------------------------------------------------------------------
 
 describe("OpenCodeProvider", () => {
-  const provider = new OpenCodeProvider();
+  const provider: BaseCliProvider = new OpenCodeProvider();
 
   it("has type 'opencode'", () => {
     expect(provider.type).toBe("opencode");
@@ -264,7 +268,7 @@ describe("OpenCodeProvider", () => {
 // ---------------------------------------------------------------------------
 
 describe("DeepSeekProvider", () => {
-  const provider = new DeepSeekProvider();
+  const provider: BaseCliProvider = new DeepSeekProvider();
 
   it("has type 'deepseek'", () => {
     expect(provider.type).toBe("deepseek");
@@ -303,7 +307,7 @@ describe("DeepSeekProvider", () => {
 // ---------------------------------------------------------------------------
 
 describe("KimiProvider", () => {
-  const provider = new KimiProvider();
+  const provider: BaseCliProvider = new KimiProvider();
 
   it("has type 'kimi'", () => {
     expect(provider.type).toBe("kimi");
@@ -360,7 +364,7 @@ describe("KimiProvider", () => {
 // ---------------------------------------------------------------------------
 
 describe("ZaiProvider", () => {
-  const provider = new ZaiProvider();
+  const provider: BaseCliProvider = new ZaiProvider();
 
   it("has type 'zai'", () => {
     expect(provider.type).toBe("zai");

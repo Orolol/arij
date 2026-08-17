@@ -12,19 +12,20 @@ const OUTCOME_CONFIG: Record<
 > = {
   answered: {
     label: "Answered",
-    className: "text-green-500 border-green-500/30 bg-green-500/10",
+    className: "text-agent border-agent-border bg-agent-bg",
   },
   asked_question: {
     label: "Asked a question",
-    className: "text-amber-500 border-amber-500/30 bg-amber-500/10",
+    className:
+      "text-priority-yellow border-priority-yellow/30 bg-priority-yellow/10",
   },
   silent: {
     label: "Silent",
-    className: "text-muted-foreground border-muted-foreground/30 bg-muted/50",
+    className: "text-meta border-border bg-band",
   },
   error: {
     label: "Error",
-    className: "text-red-500 border-red-500/30 bg-red-500/10",
+    className: "text-destructive border-destructive/30 bg-destructive/10",
   },
 };
 
@@ -47,7 +48,7 @@ export function SessionOutcomeBadge({
   return (
     <Badge
       variant="outline"
-      className={`text-[10px] ${config.className}`}
+      className={`rounded-full px-[8px] py-[1px] text-[11px] font-normal ${config.className}`}
       data-testid={`session-outcome-${outcome}`}
     >
       {config.label}

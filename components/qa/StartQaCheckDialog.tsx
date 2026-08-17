@@ -187,7 +187,7 @@ export function StartQaCheckDialog({
         }
       }}
     >
-      <DialogContent className="sm:max-w-[680px]">
+      <DialogContent className="sm:max-w-[680px] rounded-[14px] shadow-[0_18px_40px_rgba(58,48,44,.14)]">
         <DialogHeader>
           <DialogTitle>{config.title}</DialogTitle>
           <DialogDescription>{config.description}</DialogDescription>
@@ -195,12 +195,12 @@ export function StartQaCheckDialog({
 
         <div className="space-y-4 py-1">
           <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">Check Type</label>
+            <label className="text-[12.5px] text-muted-foreground">Check Type</label>
             <Select
               value={checkType}
               onValueChange={(value) => setCheckType(value as CheckType)}
             >
-              <SelectTrigger className="h-8 text-xs">
+              <SelectTrigger className="h-[34px] rounded-[8px] text-[13px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -211,9 +211,9 @@ export function StartQaCheckDialog({
           </div>
 
           {checkType === "e2e_test" && (
-            <div className="flex items-start gap-2 rounded-md border border-yellow-500/50 bg-yellow-500/10 p-3">
-              <AlertTriangle className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
-              <p className="text-xs text-yellow-700 dark:text-yellow-400">
+            <div className="flex items-start gap-2 rounded-[10px] border border-priority-yellow/40 bg-priority-yellow/10 p-3">
+              <AlertTriangle className="h-4 w-4 text-priority-yellow mt-0.5 shrink-0" />
+              <p className="text-[12.5px] leading-[1.55] text-priority-yellow">
                 E2E testing requires an agent with access to browser automation and testing tools
                 (e.g. Playwright, Puppeteer). Ensure your selected agent has the appropriate tool
                 permissions.
@@ -222,12 +222,12 @@ export function StartQaCheckDialog({
           )}
 
           <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">Named Agent (optional)</label>
+            <label className="text-[12.5px] text-muted-foreground">Named Agent (optional)</label>
             <div className="flex items-center gap-2">
               <NamedAgentSelect
                 value={namedAgentId}
                 onChange={setNamedAgentId}
-                className="w-56 h-8 text-xs"
+                className="w-56 h-[34px] rounded-[8px] text-[13px]"
               />
               {namedAgentId && (
                 <Button
@@ -250,7 +250,7 @@ export function StartQaCheckDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">Saved Prompt</label>
+            <label className="text-[12.5px] text-muted-foreground">Saved Prompt</label>
             <Select
               value={customPromptId ?? "__none__"}
               onValueChange={handlePromptSelect}
@@ -273,13 +273,13 @@ export function StartQaCheckDialog({
           </div>
 
           <div className="space-y-1.5">
-            <label className="text-xs text-muted-foreground">Custom Prompt (optional)</label>
+            <label className="text-[12.5px] text-muted-foreground">Custom Prompt (optional)</label>
             <Textarea
               value={customPrompt}
               onChange={(event) => setCustomPrompt(event.target.value)}
               placeholder="Add custom QA instructions..."
               rows={8}
-              className="text-sm"
+              className="rounded-[10px] text-[13.5px] leading-[1.6]"
             />
           </div>
 
@@ -288,7 +288,7 @@ export function StartQaCheckDialog({
               value={savePromptName}
               onChange={(event) => setSavePromptName(event.target.value)}
               placeholder="Prompt name for reuse"
-              className="h-8 text-xs"
+              className="h-[34px] rounded-[8px] text-[13px]"
             />
             <Button
               type="button"

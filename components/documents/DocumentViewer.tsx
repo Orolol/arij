@@ -13,9 +13,9 @@ export function DocumentViewer({
 }: DocumentViewerProps) {
   if (kind === "image") {
     return (
-      <div className="border border-border rounded-lg p-4 max-h-[600px] overflow-auto">
-        <p className="text-sm font-medium mb-2">Image Document</p>
-        <p className="text-xs text-muted-foreground break-all">
+      <div className="max-h-[600px] overflow-auto rounded-[12px] border border-border bg-card p-[18px]">
+        <p className="text-[13px] font-medium">Image Document</p>
+        <p className="mt-[6px] break-all font-mono text-[11.5px] text-meta">
           Filesystem path: {imagePath || "(missing path)"}
         </p>
       </div>
@@ -23,8 +23,8 @@ export function DocumentViewer({
   }
 
   return (
-    <div className="border border-border rounded-lg p-4 max-h-[600px] overflow-auto">
-      <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap">
+    <div className="max-h-[600px] overflow-auto rounded-[12px] border border-border bg-card p-[18px]">
+      <div className="whitespace-pre-wrap text-[13.5px] leading-[1.7] text-foreground">
         {markdownContent || ""}
       </div>
     </div>

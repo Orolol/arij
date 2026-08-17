@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { MarkdownContent } from "@/components/chat/MarkdownContent";
+import { cn } from "@/lib/utils";
 
 interface InlineEditProps {
   value: string;
@@ -57,12 +58,15 @@ export function InlineEdit({
     return (
       <div
         onClick={() => setEditing(true)}
-        className={`cursor-pointer hover:bg-accent/50 rounded px-1 -mx-1 ${className}`}
+        className={cn(
+          "-mx-2 cursor-pointer rounded-[7px] px-2 py-[2px] transition-colors hover:bg-band",
+          className,
+        )}
       >
         {value ? (
           markdown ? <MarkdownContent content={value} /> : value
         ) : (
-          <span className="text-muted-foreground italic">Click to edit</span>
+          <span className="italic text-muted-foreground">Click to edit</span>
         )}
       </div>
     );
@@ -77,7 +81,7 @@ export function InlineEdit({
         onBlur={handleSave}
         onKeyDown={handleKeyDown}
         rows={3}
-        className={`text-sm ${className}`}
+        className={cn("rounded-[8px]", className)}
       />
     );
   }
@@ -89,7 +93,7 @@ export function InlineEdit({
       onChange={(e) => setEditValue(e.target.value)}
       onBlur={handleSave}
       onKeyDown={handleKeyDown}
-      className={`text-sm ${className}`}
+      className={cn("rounded-[8px]", className)}
     />
   );
 }

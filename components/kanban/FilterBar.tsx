@@ -1,11 +1,11 @@
 "use client";
 
-import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   PRIORITY_LABELS,
   type KanbanEpic,
 } from "@/lib/types/kanban";
-import { Bot, Bug, Focus, Hammer, Lightbulb, TriangleAlert, X } from "lucide-react";
+import { Focus, X } from "lucide-react";
 import type { ReactNode } from "react";
 
 /** Client-side kanban card filters. Empty arrays / false flags mean "no filter". */
@@ -95,25 +95,41 @@ interface FilterChipProps {
   active: boolean;
   onClick: () => void;
   testId: string;
+  /** "bug" tints the inactive pill with the bug colour, as in the mockups. */
+  tone?: "default" | "bug";
   children: ReactNode;
 }
 
-function FilterChip({ active, onClick, testId, children }: FilterChipProps) {
+function FilterChip({
+  active,
+  onClick,
+  testId,
+  tone = "default",
+  children,
+}: FilterChipProps) {
   return (
     <button
       type="button"
       data-testid={testId}
       aria-pressed={active}
       onClick={onClick}
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors ${
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1 rounded-full px-[11px] py-[3px] text-[12.5px] transition-colors motion-reduce:transition-none",
         active
-          ? "border-primary/60 bg-primary/15 text-primary"
-          : "border-border text-muted-foreground hover:bg-accent/50"
-      }`}
+          ? "bg-foreground text-background"
+          : cn(
+              "border border-border hover:bg-band",
+              tone === "bug" ? "text-destructive" : "text-muted-foreground"
+            )
+      )}
     >
       {children}
     </button>
   );
+}
+
+function ChipDivider() {
+  return <span className="mx-[5px] h-4 w-px shrink-0 bg-border" aria-hidden />;
 }
 
 interface FilterBarProps {
@@ -161,27 +177,34 @@ export function FilterBar({
 
   return (
     <div
-      className="flex items-center gap-1.5 flex-wrap px-4 pt-3"
+      className="flex h-[44px] shrink-0 items-center gap-[7px] overflow-x-auto border-b border-border px-[22px]"
       data-testid="kanban-filter-bar"
     >
+      <FilterChip
+        active={activeCount === 0}
+        onClick={() => onFiltersChange(EMPTY_FILTERS)}
+        testId="filter-all"
+      >
+        All
+      </FilterChip>
+
       <FilterChip
         active={filters.types.includes("feature")}
         onClick={() => toggleType("feature")}
         testId="filter-type-feature"
       >
-        <Lightbulb className="h-3 w-3" />
         Feature
       </FilterChip>
       <FilterChip
         active={filters.types.includes("bug")}
         onClick={() => toggleType("bug")}
         testId="filter-type-bug"
+        tone="bug"
       >
-        <Bug className="h-3 w-3" />
         Bug
       </FilterChip>
 
-      <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+      <ChipDivider />
 
       {Object.entries(PRIORITY_LABELS).map(([key, label]) => {
         const priority = Number(key);
@@ -197,14 +220,13 @@ export function FilterBar({
         );
       })}
 
-      <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+      <ChipDivider />
 
       <FilterChip
         active={filters.agentRunning}
         onClick={() => toggleFlag("agentRunning")}
         testId="filter-agent-running"
       >
-        <Hammer className="h-3 w-3" />
         Agent running
       </FilterChip>
       <FilterChip
@@ -212,7 +234,6 @@ export function FilterBar({
         onClick={() => toggleFlag("unreadAi")}
         testId="filter-unread-ai"
       >
-        <Bot className="h-3 w-3" />
         Unread AI
       </FilterChip>
       <FilterChip
@@ -220,23 +241,23 @@ export function FilterBar({
         onClick={() => toggleFlag("failedSession")}
         testId="filter-failed-session"
       >
-        <TriangleAlert className="h-3 w-3" />
         Failed
       </FilterChip>
 
       {activeCount > 0 && (
         <>
           <span
-            className="text-xs text-muted-foreground ml-1"
+            className="ml-[5px] shrink-0 text-[12px] text-meta"
             data-testid="filter-active-count"
             title="Drag and drop is disabled while filters are active"
           >
-            {activeCount} filter{activeCount > 1 ? "s" : ""} active
+            {activeCount} filter{activeCount > 1 ? "s" : ""} active {"·"} drag
+            disabled
           </span>
           <button
             type="button"
             onClick={() => onFiltersChange(EMPTY_FILTERS)}
-            className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
+            className="inline-flex shrink-0 items-center gap-[4px] text-[12px] text-muted-foreground transition-colors hover:text-foreground motion-reduce:transition-none"
             data-testid="filter-clear-all"
           >
             <X className="h-3 w-3" />
@@ -245,17 +266,21 @@ export function FilterBar({
         </>
       )}
 
-      <Button
-        size="sm"
-        variant={focusMode ? "secondary" : "ghost"}
+      <button
+        type="button"
         onClick={() => onFocusModeChange(!focusMode)}
-        className="h-6 text-xs ml-auto"
         aria-pressed={focusMode}
         data-testid="focus-mode-toggle"
+        className={cn(
+          "ml-auto inline-flex h-[26px] shrink-0 items-center gap-[6px] rounded-full px-[11px] text-[12.5px] transition-colors motion-reduce:transition-none",
+          focusMode
+            ? "bg-foreground text-background"
+            : "text-muted-foreground hover:bg-band"
+        )}
       >
-        <Focus className="h-3 w-3 mr-1" />
+        <Focus className="h-[13px] w-[13px]" />
         Focus
-      </Button>
+      </button>
     </div>
   );
 }

@@ -5,23 +5,28 @@ import { useParams } from "next/navigation";
 import { Activity, Plus, RefreshCw } from "lucide-react";
 import { ReportDetail } from "@/components/qa/ReportDetail";
 import { StartQaCheckDialog } from "@/components/qa/StartQaCheckDialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
 import { useQaReports } from "@/hooks/useQaReports";
-import { formatDateTime } from "@/lib/utils/format-date";
+import { cn } from "@/lib/utils";
+import { timeAgo } from "@/lib/utils/format-date";
 
 type FilterCheckType = "tech_check" | "e2e_test" | null;
 
-function statusVariant(status: string): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "completed") return "default";
-  if (status === "failed") return "destructive";
-  if (status === "cancelled") return "outline";
-  return "secondary";
+const CHECK_TYPE_FILTERS: { value: FilterCheckType; label: string }[] = [
+  { value: null, label: "All" },
+  { value: "tech_check", label: "Tech Check" },
+  { value: "e2e_test", label: "E2E Test" },
+];
+
+function statusTone(status: string): string {
+  if (status === "completed") return "text-agent";
+  if (status === "failed") return "text-destructive";
+  if (status === "running") return "text-primary";
+  return "text-meta";
 }
 
 function checkTypeBadgeLabel(checkType: string): string {
-  return checkType === "e2e_test" ? "E2E" : "Tech";
+  return checkType === "e2e_test" ? "E2E" : "TECH";
 }
 
 export default function QAPage() {
@@ -70,130 +75,127 @@ export default function QAPage() {
   }, [reports]);
 
   return (
-    <div className="p-6 h-full flex flex-col">
-      <div className="flex items-center justify-between mb-4 gap-3">
-        <div>
-          <h2 className="text-xl font-bold">QA</h2>
-          <p className="text-xs text-muted-foreground mt-1">
-            Run tech checks and E2E tests, review report history, and create epics from findings.
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex flex-none items-start gap-[16px] px-[26px] pb-[18px] pt-[24px]">
+        <div className="flex flex-col gap-[5px]">
+          <h2 className="text-[19px] font-semibold">QA</h2>
+          <p className="text-[13px] text-muted-foreground">
+            Run tech checks and E2E tests, review report history, and create
+            epics from findings.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="ml-auto flex items-center gap-[9px]">
           <Button
             variant="outline"
-            size="sm"
-            className="h-8"
+            className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
             onClick={() => void refresh()}
           >
-            <RefreshCw className="h-3.5 w-3.5 mr-1" />
+            <RefreshCw className="h-[14px] w-[14px]" />
             Refresh
           </Button>
-          <Button size="sm" className="h-8" onClick={() => setStartDialogOpen(true)}>
-            <Plus className="h-3.5 w-3.5 mr-1" />
+          <Button
+            className="h-[31px] rounded-[8px] px-[13px] text-[13px]"
+            onClick={() => setStartDialogOpen(true)}
+          >
+            <Plus className="h-[14px] w-[14px]" />
             New Check
           </Button>
         </div>
       </div>
 
-      <div className="flex items-center gap-2 mb-4 text-xs text-muted-foreground">
-        <Badge variant="secondary">{stats.running} running</Badge>
-        <Badge variant="outline">{stats.completed} completed</Badge>
-        <Badge variant="outline">{stats.failed} failed</Badge>
-        <span className="mx-1 text-border">|</span>
-        <Button
-          variant={filterCheckType === null ? "default" : "outline"}
-          size="sm"
-          className="h-6 text-[11px] px-2"
-          onClick={() => setFilterCheckType(null)}
-        >
-          All
-        </Button>
-        <Button
-          variant={filterCheckType === "tech_check" ? "default" : "outline"}
-          size="sm"
-          className="h-6 text-[11px] px-2"
-          onClick={() => setFilterCheckType("tech_check")}
-        >
-          Tech Check
-        </Button>
-        <Button
-          variant={filterCheckType === "e2e_test" ? "default" : "outline"}
-          size="sm"
-          className="h-6 text-[11px] px-2"
-          onClick={() => setFilterCheckType("e2e_test")}
-        >
-          E2E Test
-        </Button>
+      <div className="flex flex-none flex-wrap items-center gap-[8px] px-[26px] pb-[16px]">
+        <span className="rounded-full border border-border px-[11px] py-[3px] text-[12.5px] text-agent">
+          {stats.running} running
+        </span>
+        <span className="rounded-full border border-border px-[11px] py-[3px] text-[12.5px] text-muted-foreground">
+          {stats.completed} completed
+        </span>
+        <span className="rounded-full border border-border px-[11px] py-[3px] text-[12.5px] text-destructive">
+          {stats.failed} failed
+        </span>
+        <span className="mx-[6px] h-4 w-px bg-border" />
+        {CHECK_TYPE_FILTERS.map((option) => (
+          <button
+            key={option.label}
+            type="button"
+            onClick={() => setFilterCheckType(option.value)}
+            className={cn(
+              "rounded-full px-[11px] py-[3px] text-[12.5px] transition-colors",
+              filterCheckType === option.value
+                ? "bg-foreground text-background"
+                : "border border-border text-muted-foreground hover:bg-band"
+            )}
+          >
+            {option.label}
+          </button>
+        ))}
+        {actionMessage && (
+          <span className="ml-auto text-[12.5px] text-agent">
+            {actionMessage}
+          </span>
+        )}
       </div>
 
-      {actionMessage && (
-        <Card className="mb-4 p-3 text-xs text-green-600 dark:text-green-400">
-          {actionMessage}
-        </Card>
-      )}
+      <div className="flex min-h-0 flex-1 gap-[22px] px-[26px] pb-[26px]">
+        <div className="flex w-[340px] flex-none flex-col gap-[10px] overflow-y-auto">
+          <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+            History
+          </span>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-4 flex-1 min-h-0">
-        <Card className="h-full flex flex-col">
-          <div className="border-b border-border px-4 py-3">
-            <h3 className="text-sm font-semibold">Report History</h3>
-          </div>
-          <div className="flex-1 overflow-auto p-3 space-y-2">
-            {loading && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <Activity className="h-3.5 w-3.5 animate-pulse" />
-                Loading reports...
+          {loading && (
+            <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
+              <Activity className="h-3.5 w-3.5 animate-pulse" />
+              Loading reports...
+            </div>
+          )}
+          {!loading && error && (
+            <p className="text-[12.5px] text-destructive">{error}</p>
+          )}
+          {!loading && !error && filteredReports.length === 0 && (
+            <p className="text-[12.5px] text-muted-foreground">
+              No QA reports yet. Start a tech check or E2E test to generate a
+              report.
+            </p>
+          )}
+
+          {filteredReports.map((report) => (
+            <button
+              key={report.id}
+              type="button"
+              onClick={() => setSelectedReportId(report.id)}
+              className={cn(
+                "flex flex-col gap-[8px] rounded-[11px] border px-[16px] py-[14px] text-left transition-colors",
+                selectedReportId === report.id
+                  ? "border-primary bg-card"
+                  : "border-border hover:bg-band"
+              )}
+            >
+              <div className="flex items-center gap-[8px]">
+                <span className="rounded-full bg-band px-[8px] py-[2px] font-mono text-[11.5px] text-muted-foreground">
+                  {checkTypeBadgeLabel(report.checkType)}
+                </span>
+                <span className={cn("text-[12.5px]", statusTone(report.status))}>
+                  {report.status}
+                </span>
+                <span className="ml-auto font-mono text-[11px] text-meta">
+                  {timeAgo(report.createdAt)}
+                </span>
               </div>
-            )}
-            {!loading && error && (
-              <p className="text-xs text-destructive">{error}</p>
-            )}
-            {!loading && !error && filteredReports.length === 0 && (
-              <p className="text-xs text-muted-foreground">
-                No QA reports yet. Start a tech check or E2E test to generate a report.
-              </p>
-            )}
+              <span className="line-clamp-2 text-[13.5px] font-medium leading-[1.35]">
+                {report.summary || `#${report.id.slice(0, 8)}`}
+              </span>
+            </button>
+          ))}
+        </div>
 
-            {filteredReports.map((report) => (
-              <button
-                key={report.id}
-                type="button"
-                onClick={() => setSelectedReportId(report.id)}
-                className={`w-full rounded-md border p-3 text-left transition-colors ${
-                  selectedReportId === report.id
-                    ? "border-primary bg-accent"
-                    : "border-border hover:bg-accent/50"
-                }`}
-              >
-                <div className="flex items-center justify-between gap-2 mb-1">
-                  <div className="flex items-center gap-1.5">
-                    <span className="text-xs font-medium">#{report.id.slice(0, 8)}</span>
-                    <Badge variant="outline" className="text-[10px] px-1.5 py-0">
-                      {checkTypeBadgeLabel(report.checkType)}
-                    </Badge>
-                  </div>
-                  <Badge variant={statusVariant(report.status)} className="text-[10px]">
-                    {report.status}
-                  </Badge>
-                </div>
-                <p className="text-[11px] text-muted-foreground">
-                  {formatDateTime(report.createdAt)}
-                </p>
-                {report.summary && (
-                  <p className="mt-1 text-xs line-clamp-3 text-muted-foreground">
-                    {report.summary}
-                  </p>
-                )}
-              </button>
-            ))}
-          </div>
-        </Card>
-
-        <ReportDetail
-          projectId={projectId}
-          reportId={selectedReportId}
-          onReportUpdated={refresh}
-          onCreateEpics={handleCreateEpics}
-        />
+        <div className="min-w-0 flex-1">
+          <ReportDetail
+            projectId={projectId}
+            reportId={selectedReportId}
+            onReportUpdated={refresh}
+            onCreateEpics={handleCreateEpics}
+          />
+        </div>
       </div>
 
       <StartQaCheckDialog

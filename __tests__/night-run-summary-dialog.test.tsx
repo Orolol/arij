@@ -111,6 +111,40 @@ describe("NightRunSummaryDialog", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("breaks the outcome into the four morning tiles", async () => {
+    mockDetail(
+      detail({ counts: counts({ done: 5, asked: 1, failed: 2, skipped: 1 }) })
+    );
+    renderSummary();
+
+    // Labels come from NIGHT_RUN_STATUS_LABELS, one tile each.
+    await waitFor(() =>
+      expect(screen.getByText("in review")).toBeInTheDocument()
+    );
+    expect(screen.getByText("paused")).toBeInTheDocument();
+    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText("skipped")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+  });
+
+  it("offers the morning follow-ups: sessions and the board", async () => {
+    mockDetail(detail());
+    renderSummary();
+
+    await waitFor(() =>
+      expect(screen.getByText("Open sessions")).toBeInTheDocument()
+    );
+    expect(screen.getByText("Open sessions").closest("a")).toHaveAttribute(
+      "href",
+      "/projects/proj-1/sessions"
+    );
+    expect(screen.getByText("Review on the board").closest("a")).toHaveAttribute(
+      "href",
+      "/projects/proj-1"
+    );
+  });
+
   it("explains a circuit-breaker trip and the wave it stopped at", async () => {
     mockDetail(
       detail({

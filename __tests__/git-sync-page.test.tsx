@@ -59,7 +59,7 @@ describe("GitSyncPage", () => {
     render(<GitSyncPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Ahead:")).toBeInTheDocument();
+      expect(screen.getByText("Ahead")).toBeInTheDocument();
     });
 
     expect(screen.getByRole("button", { name: "Pull" })).toBeInTheDocument();
@@ -117,7 +117,7 @@ describe("GitSyncPage", () => {
     expect(
       screen.getByText("Could not fetch from remote: network unreachable"),
     ).toBeInTheDocument();
-    expect(screen.getByText("Ahead:")).toBeInTheDocument();
+    expect(screen.getByText("Ahead")).toBeInTheDocument();
   });
 
   it("omits the freshness label when the API does not report a fetch", async () => {
@@ -137,7 +137,7 @@ describe("GitSyncPage", () => {
     render(<GitSyncPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("Ahead:")).toBeInTheDocument();
+      expect(screen.getByText("Ahead")).toBeInTheDocument();
     });
     expect(screen.queryByText(/^Synced /)).toBeNull();
     expect(screen.queryByText("Never synced")).toBeNull();
@@ -158,24 +158,34 @@ describe("GitSyncPage", () => {
       }),
     } as Response;
 
-    vi.spyOn(global, "fetch")
-      // 1st call: initial status fetch (branch is "")
-      .mockResolvedValueOnce(statusPayload)
-      // 2nd call: status re-fetch triggered when branch changes "" -> "main"
-      .mockResolvedValueOnce(statusPayload)
-      // 3rd call: the actual pull POST returning 409
-      .mockResolvedValueOnce({
-        ok: false,
-        status: 409,
-        json: async () => ({
-          error: "Pull resulted in merge conflicts.",
-          code: "merge_conflicts",
-          conflicted: true,
-          conflictDiffs: [
-            { filePath: "src/a.ts", diff: "@@ -1 +1 @@" },
-          ],
-        }),
-      } as Response);
+    // Routed by URL rather than by call order: the page also loads the
+    // worktrees column, so a positional mock would misfeed the pull request.
+    vi.spyOn(global, "fetch").mockImplementation((async (
+      input: RequestInfo | URL
+    ) => {
+      const url = String(input);
+      if (url.includes("/git/pull")) {
+        return {
+          ok: false,
+          status: 409,
+          json: async () => ({
+            error: "Pull resulted in merge conflicts.",
+            code: "merge_conflicts",
+            conflicted: true,
+            conflictDiffs: [{ filePath: "src/a.ts", diff: "@@ -1 +1 @@" }],
+          }),
+        } as Response;
+      }
+      if (url.includes("/worktrees")) {
+        return {
+          ok: true,
+          json: async () => ({
+            data: { worktrees: [], count: 0, orphanCount: 0 },
+          }),
+        } as Response;
+      }
+      return statusPayload;
+    }) as unknown as typeof fetch);
 
     render(<GitSyncPage />);
 
@@ -190,5 +200,169 @@ describe("GitSyncPage", () => {
       expect(screen.getByText("Manual Conflict Review")).toBeInTheDocument();
       expect(screen.getByText("src/a.ts")).toBeInTheDocument();
     });
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Agent worktrees column                                            */
+  /* ---------------------------------------------------------------- */
+
+  const STATUS_RESPONSE = {
+    ok: true,
+    json: async () => ({
+      data: {
+        branch: "main",
+        remote: "origin",
+        ahead: 0,
+        behind: 0,
+        hasRemoteBranch: true,
+      },
+    }),
+  } as Response;
+
+  /** Serves the status route plus a scripted queue of worktree responses. */
+  function mockWorktreeFetch(payloads: Array<Record<string, unknown>>) {
+    const queue = [...payloads];
+    const calls: Array<{ url: string; method: string | undefined }> = [];
+
+    vi.spyOn(global, "fetch").mockImplementation((async (
+      input: RequestInfo | URL,
+      init?: RequestInit
+    ) => {
+      const url = String(input);
+      calls.push({ url, method: init?.method });
+      if (url.includes("/worktrees")) {
+        const data = queue.length > 1 ? queue.shift() : queue[0];
+        return { ok: true, json: async () => ({ data }) } as Response;
+      }
+      return STATUS_RESPONSE;
+    }) as unknown as typeof fetch);
+
+    return calls;
+  }
+
+  it("lists agent worktrees with their state", async () => {
+    mockWorktreeFetch([
+      {
+        worktrees: [
+          {
+            path: "/repos/.arij-worktrees/a",
+            branch: "feature/epic-1-payments",
+            state: "running",
+            epicId: "epic-1",
+            epicReadableId: "E-arij-006",
+            epicTitle: "Payments",
+          },
+          {
+            path: "/repos/.arij-worktrees/b",
+            branch: "feature/epic-2-gone",
+            state: "orphan",
+            epicId: null,
+            epicReadableId: null,
+            epicTitle: null,
+          },
+        ],
+        count: 2,
+        orphanCount: 1,
+      },
+    ]);
+
+    render(<GitSyncPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("feature/epic-1-payments")).toBeInTheDocument();
+    });
+    expect(screen.getByText("E-arij-006")).toBeInTheDocument();
+    expect(screen.getByText("running")).toBeInTheDocument();
+    expect(screen.getByText("orphan")).toBeInTheDocument();
+    expect(screen.getByTestId("worktree-prune-button")).toHaveTextContent(
+      "Clean orphan worktrees (1)"
+    );
+  });
+
+  it("disables the cleanup action when nothing is orphaned", async () => {
+    mockWorktreeFetch([
+      {
+        worktrees: [
+          {
+            path: "/repos/.arij-worktrees/a",
+            branch: "feature/epic-1-payments",
+            state: "idle",
+            epicId: "epic-1",
+            epicReadableId: "E-arij-006",
+            epicTitle: "Payments",
+          },
+        ],
+        count: 1,
+        orphanCount: 0,
+      },
+    ]);
+
+    render(<GitSyncPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("idle")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("worktree-prune-button")).toBeDisabled();
+  });
+
+  it("prunes orphan worktrees and re-renders the remaining ones", async () => {
+    const user = userEvent.setup();
+    const calls = mockWorktreeFetch([
+      {
+        worktrees: [
+          {
+            path: "/repos/.arij-worktrees/a",
+            branch: "feature/epic-1-payments",
+            state: "idle",
+            epicId: "epic-1",
+            epicReadableId: "E-arij-006",
+            epicTitle: "Payments",
+          },
+          {
+            path: "/repos/.arij-worktrees/b",
+            branch: "feature/epic-2-gone",
+            state: "orphan",
+            epicId: null,
+            epicReadableId: null,
+            epicTitle: null,
+          },
+        ],
+        count: 2,
+        orphanCount: 1,
+      },
+      {
+        pruned: 1,
+        worktrees: [
+          {
+            path: "/repos/.arij-worktrees/a",
+            branch: "feature/epic-1-payments",
+            state: "idle",
+            epicId: "epic-1",
+            epicReadableId: "E-arij-006",
+            epicTitle: "Payments",
+          },
+        ],
+        count: 1,
+        orphanCount: 0,
+      },
+    ]);
+
+    render(<GitSyncPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText("feature/epic-2-gone")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("worktree-prune-button"));
+
+    await waitFor(() => {
+      expect(screen.queryByText("feature/epic-2-gone")).toBeNull();
+    });
+    expect(screen.getByText("feature/epic-1-payments")).toBeInTheDocument();
+    expect(
+      calls.some(
+        (call) => call.url.includes("/worktrees") && call.method === "POST"
+      )
+    ).toBe(true);
   });
 });

@@ -25,21 +25,21 @@ function NotificationRow({
     <button
       type="button"
       onClick={() => onNavigate(notification.targetUrl)}
-      className="w-full flex items-start gap-3 px-3 py-2.5 text-left hover:bg-muted/50 transition-colors rounded-md"
+      className="w-full flex items-start gap-3 px-3 py-2.5 text-left hover:bg-band transition-colors rounded-[8px]"
     >
       <div className="mt-0.5 shrink-0">
         {isSuccess ? (
-          <CheckCircle2 className="h-4 w-4 text-green-500" />
+          <CheckCircle2 className="h-4 w-4 text-agent" />
         ) : (
-          <XCircle className="h-4 w-4 text-red-500" />
+          <XCircle className="h-4 w-4 text-destructive" />
         )}
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-xs text-muted-foreground truncate">
+        <p className="text-[11.5px] text-meta truncate">
           {notification.projectName}
         </p>
-        <p className="text-sm leading-tight">{notification.title}</p>
-        <p className="text-xs text-muted-foreground mt-0.5">
+        <p className="text-[13px] leading-snug">{notification.title}</p>
+        <p className="text-[11px] font-mono text-meta mt-0.5">
           {timeAgo(notification.createdAt)}
         </p>
       </div>
@@ -69,10 +69,10 @@ export function NotificationBell() {
       <PopoverTrigger asChild>
         <button
           type="button"
-          className="relative flex items-center justify-center w-10 h-10 rounded-lg hover:bg-sidebar-accent text-sidebar-foreground transition-colors"
+          className="relative flex items-center justify-center w-[34px] h-[34px] rounded-[9px] hover:bg-sidebar-accent text-muted-foreground hover:text-foreground transition-colors"
           title="Notifications"
         >
-          <Bell className="h-5 w-5" />
+          <Bell className="w-[17px] h-[17px]" />
           {unreadCount > 0 && (
             <span className="absolute -top-0.5 -right-0.5 flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold text-primary-foreground bg-primary rounded-full">
               {unreadCount > 99 ? "99+" : unreadCount}

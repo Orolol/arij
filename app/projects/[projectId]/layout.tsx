@@ -1,23 +1,41 @@
 "use client";
 
 import Link from "next/link";
-import { useParams, usePathname } from "next/navigation";
-import { ArrowLeft, Kanban, FileText, Files, Activity, Tag, RefreshCw, ShieldCheck, GitPullRequestArrow, Github } from "lucide-react";
+import { useParams, usePathname, useRouter } from "next/navigation";
+import {
+  Bug,
+  ChevronDown,
+  MessageSquare,
+  Moon,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
 import { GitHubConnectBanner } from "@/components/github/GitHubConnectBanner";
 import { useEffect, useState, useCallback } from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Tooltip,
   TooltipContent,
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { CockpitBar } from "@/components/layout/CockpitBar";
+import { RepoStatusBar } from "@/components/layout/RepoStatusBar";
 
 interface ProjectSummary {
   gitRepoPath: string | null;
   githubOwnerRepo: string | null;
 }
+
+const TAB_CLASS =
+  "text-[13.5px] px-[12px] py-[6px] rounded-[7px] transition-colors";
 
 export default function ProjectLayout({
   children,
@@ -25,7 +43,8 @@ export default function ProjectLayout({
   children: React.ReactNode;
 }) {
   const params = useParams();
-  const pathname = usePathname();
+  const pathname = usePathname() ?? "";
+  const router = useRouter();
   const projectId = params.projectId as string;
   const [projectName, setProjectName] = useState("...");
   const [projectSummary, setProjectSummary] = useState<ProjectSummary>({
@@ -72,98 +91,171 @@ export default function ProjectLayout({
     }
   }, [projectId]);
 
-  const navItems = [
-    { href: `/projects/${projectId}`, label: "Kanban", icon: Kanban },
-    { href: `/projects/${projectId}/spec`, label: "Spec", icon: FileText },
-    { href: `/projects/${projectId}/documents`, label: "Docs", icon: Files },
-    {
-      href: `/projects/${projectId}/sessions`,
-      label: "Sessions",
-      icon: Activity,
-    },
-    {
-      href: `/projects/${projectId}/qa`,
-      label: "QA",
-      icon: ShieldCheck,
-    },
-    {
-      href: `/projects/${projectId}/releases`,
-      label: "Releases",
-      icon: Tag,
-    },
-    {
-      href: `/projects/${projectId}/git-sync`,
-      label: "Git Sync",
-      icon: GitPullRequestArrow,
-    },
-    {
-      href: `/projects/${projectId}/github-issues`,
-      label: "GitHub Issues",
-      icon: Github,
-    },
+  const boardHref = `/projects/${projectId}`;
+  const isBoard = pathname === boardHref;
+
+  const primaryTabs = [
+    { href: boardHref, label: "Board", exact: true },
+    { href: `/projects/${projectId}/spec`, label: "Spec", exact: false },
+    { href: `/projects/${projectId}/sessions`, label: "Sessions", exact: false },
   ];
+
+  const moreItems = [
+    { href: `/projects/${projectId}/documents`, label: "Docs" },
+    { href: `/projects/${projectId}/qa`, label: "QA" },
+    { href: `/projects/${projectId}/releases`, label: "Releases" },
+    { href: `/projects/${projectId}/git-sync`, label: "Git Sync" },
+    { href: `/projects/${projectId}/github-issues`, label: "GitHub Issues" },
+  ];
+
+  const moreIsActive = moreItems.some((item) => pathname.startsWith(item.href));
+
+  /**
+   * Header actions never reach into the board's imperative handles: they set
+   * a URL param the board page already knows how to consume, so they work
+   * identically from Spec, Sessions or any other tab.
+   */
+  const openBoardPanel = (query: string) => router.push(`${boardHref}?${query}`);
 
   return (
     <div className="flex flex-col h-full">
-      <header className="border-b border-border px-4 py-3 flex items-center gap-4 shrink-0">
-        <Link
-          href="/"
-          className="text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <ArrowLeft className="h-4 w-4" />
-        </Link>
-        <h1 className="font-semibold text-lg">{projectName}</h1>
-        <nav className="flex items-center gap-1 ml-4">
-          {navItems.map((item) => {
-            const isActive =
-              item.href === `/projects/${projectId}`
-                ? pathname === item.href
-                : pathname.startsWith(item.href);
+      <header className="h-[54px] shrink-0 flex items-center gap-[18px] px-[22px] border-b border-border">
+        <h1 className="text-[16px] font-semibold tracking-[-0.01em] truncate max-w-[240px]">
+          {projectName}
+        </h1>
+
+        <nav className="flex items-center gap-[2px]">
+          {primaryTabs.map((tab) => {
+            const isActive = tab.exact
+              ? pathname === tab.href
+              : pathname.startsWith(tab.href);
             return (
               <Link
-                key={item.href}
-                href={item.href}
+                key={tab.href}
+                href={tab.href}
                 className={cn(
-                  "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm transition-colors",
+                  TAB_CLASS,
                   isActive
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                    ? "bg-card border border-border font-medium"
+                    : "text-muted-foreground hover:text-foreground"
                 )}
               >
-                <item.icon className="h-4 w-4" />
-                {item.label}
+                {tab.label}
               </Link>
             );
           })}
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                data-testid="project-nav-more"
+                className={cn(
+                  TAB_CLASS,
+                  "inline-flex items-center gap-[5px] outline-none",
+                  moreIsActive
+                    ? "bg-card border border-border font-medium"
+                    : "text-muted-foreground hover:text-foreground"
+                )}
+              >
+                More
+                <ChevronDown className="w-[13px] h-[13px]" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="min-w-[168px]">
+              {moreItems.map((item) => (
+                <DropdownMenuItem key={item.href} asChild>
+                  <Link href={item.href} className="text-[13px]">
+                    {item.label}
+                  </Link>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </nav>
 
-        {/* Right-side actions */}
         {projectSummary.gitRepoPath && (
-          <div className="ml-auto flex items-center gap-2">
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={syncFromJson}
-                    disabled={syncing}
-                    className="gap-1.5 text-muted-foreground"
-                  >
-                    <RefreshCw
-                      className={cn("h-3.5 w-3.5", syncing && "animate-spin")}
-                    />
-                    <span className="text-xs">Sync</span>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>Import from arji.json (overrides DB)</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          </div>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={syncFromJson}
+                  disabled={syncing}
+                  aria-label="Sync from arji.json"
+                  className="flex items-center justify-center w-[26px] h-[26px] rounded-[7px] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-50"
+                >
+                  <RefreshCw
+                    className={cn(
+                      "w-[13px] h-[13px]",
+                      syncing && "animate-spin motion-reduce:animate-none"
+                    )}
+                  />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Import from arji.json (overrides DB)</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
         )}
+
+        <div className="ml-auto flex items-center gap-[8px]">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                type="button"
+                data-testid="header-new-button"
+                className="h-[31px] rounded-[8px] px-[13px] text-[13px] font-medium gap-[7px]"
+              >
+                <Plus className="w-[14px] h-[14px]" />
+                New
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="min-w-[168px]">
+              <DropdownMenuItem
+                data-testid="header-new-epic"
+                onSelect={() => openBoardPanel("panel=new-epic")}
+                className="text-[13px]"
+              >
+                <Plus className="w-[13px] h-[13px]" />
+                New Epic
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-testid="header-new-bug"
+                onSelect={() => openBoardPanel("panel=new-bug")}
+                className="text-[13px]"
+              >
+                <Bug className="w-[13px] h-[13px]" />
+                New Bug
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="night-run-button"
+            onClick={() => openBoardPanel("night=start")}
+            className="h-[31px] rounded-[8px] px-[12px] text-[13px] gap-[7px]"
+          >
+            <Moon className="w-[14px] h-[14px]" />
+            Night run
+          </Button>
+
+          <Button
+            type="button"
+            variant="outline"
+            data-testid="header-chat-button"
+            onClick={() => openBoardPanel("panel=chat")}
+            className="h-[31px] rounded-[8px] px-[12px] text-[13px] gap-[7px]"
+          >
+            <MessageSquare className="w-[14px] h-[14px]" />
+            Chat
+          </Button>
+        </div>
       </header>
+
       <GitHubConnectBanner
         projectId={projectId}
         gitRepoPath={projectSummary.gitRepoPath}
@@ -172,9 +264,20 @@ export default function ProjectLayout({
           setProjectSummary((prev) => ({ ...prev, githubOwnerRepo: ownerRepo }))
         }
       />
+
+      {isBoard && <CockpitBar projectId={projectId} />}
+
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 overflow-auto">{children}</div>
       </div>
+
+      {isBoard && (
+        <RepoStatusBar
+          projectId={projectId}
+          ownerRepo={projectSummary.githubOwnerRepo}
+          gitRepoPath={projectSummary.gitRepoPath}
+        />
+      )}
     </div>
   );
 }

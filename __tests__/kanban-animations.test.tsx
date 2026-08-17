@@ -7,7 +7,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { render, act } from "@testing-library/react";
+import { render, act, screen } from "@testing-library/react";
 import { EpicCard } from "@/components/kanban/EpicCard";
 import type { KanbanEpic } from "@/lib/types/kanban";
 
@@ -108,7 +108,7 @@ describe("EpicCard — highlight animation", () => {
 });
 
 describe("EpicCard — agent activity indicator", () => {
-  it("shows pulsing indicator when agent is active", () => {
+  it("shows the breathing dot and an indeterminate progress track when an agent is active", () => {
     const { container } = render(
       <EpicCard
         epic={makeEpic()}
@@ -126,9 +126,32 @@ describe("EpicCard — agent activity indicator", () => {
 
     const activityEl = container.querySelector('[data-testid="epic-activity-epic-1"]');
     expect(activityEl).toBeTruthy();
-    // Check for the pulsing overlay span
-    const pulseEl = activityEl!.querySelector(".animate-pulse");
-    expect(pulseEl).toBeTruthy();
+    // The ambient-activity signal: a breathing dot on the status line...
+    expect(activityEl!.querySelector(".breathing-dot")).toBeTruthy();
+    // ...and the shared 2px crawl track underneath it.
+    expect(container.querySelector(".progress-track .crawl-fill")).toBeTruthy();
+  });
+
+  it("names the running action, provider and elapsed time on the card", () => {
+    render(
+      <EpicCard
+        epic={makeEpic()}
+        view={{
+          activity: {
+            sessionId: "session-1",
+            actionType: "build",
+            agentName: "Test Agent",
+            provider: "claude-code",
+            startedAt: new Date().toISOString(),
+          },
+        }}
+      />
+    );
+
+    const line = screen.getByTestId("epic-activity-epic-1");
+    expect(line.textContent).toContain("Build");
+    expect(line.textContent).toContain("Claude Code");
+    expect(line).toHaveAttribute("aria-label", "Build active: Test Agent");
   });
 
   it("shows tooltip content with provider and agent name", () => {

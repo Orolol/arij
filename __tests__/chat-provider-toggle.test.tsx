@@ -22,7 +22,20 @@ vi.mock("@/hooks/useChat", () => ({
   }),
 }));
 
-let mockConversations = [
+/** Shape of the rows `useConversations()` hands the panel, as the tests set them. */
+type ConversationStub = {
+  id: string;
+  projectId: string;
+  type: string;
+  label: string;
+  status: string;
+  epicId: string | null;
+  provider: string;
+  namedAgentId: string | null;
+  createdAt: string;
+};
+
+let mockConversations: ConversationStub[] = [
   {
     id: "conv1",
     projectId: "proj1",

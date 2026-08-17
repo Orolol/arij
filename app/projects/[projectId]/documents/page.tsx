@@ -6,7 +6,9 @@ import { UploadZone } from "@/components/documents/UploadZone";
 import { DocumentViewer } from "@/components/documents/DocumentViewer";
 import { ProjectMemoryCard } from "@/components/documents/ProjectMemoryCard";
 import { Button } from "@/components/ui/button";
-import { Trash2 } from "lucide-react";
+import { FileText, Trash2, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { timeAgo } from "@/lib/utils/format-date";
 import { MEMORY_DOC_KIND } from "@/lib/documents/memory-constants";
 
 interface Doc {
@@ -88,65 +90,117 @@ export default function DocumentsPage() {
   }
 
   return (
-    <div className="p-6">
-      <h2 className="text-xl font-bold mb-4">Documents</h2>
-      <div className="mb-6">
-        <ProjectMemoryCard projectId={projectId} />
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex flex-none items-start gap-[16px] px-[26px] pb-[18px] pt-[24px]">
+        <div className="flex flex-col gap-[5px]">
+          <h2 className="text-[19px] font-semibold">Documents</h2>
+          <p className="text-[13px] text-muted-foreground">
+            What agents can cite: specs, audits, notes. Mentionable with @name
+            in the chat.
+          </p>
+        </div>
       </div>
-      <UploadZone projectId={projectId} onUploaded={handleUploaded} />
-      {error && <p className="text-sm text-destructive mt-3">{error}</p>}
-      <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <div className="space-y-2">
-          {documents.length === 0 && (
-            <p className="text-muted-foreground text-sm">
-              No documents uploaded yet
-            </p>
-          )}
-          {documents.map((doc) => (
-            <div
-              key={doc.id}
-              className={`w-full p-3 rounded-md border transition-colors ${
-                selectedDoc?.id === doc.id
-                  ? "border-primary bg-accent"
-                  : "border-border hover:bg-accent/50"
-              }`}
-            >
-              <button
-                onClick={() => setSelectedDoc(doc)}
-                className="w-full text-left"
+
+      <div className="flex min-h-0 flex-1 gap-[26px] overflow-y-auto px-[26px] pb-[26px]">
+        <div className="flex min-w-0 flex-1 flex-col gap-[18px]">
+          <div className="flex flex-wrap content-start gap-[16px]">
+            {documents.map((doc) => (
+              <div
+                key={doc.id}
+                className={cn(
+                  "relative flex w-[252px] max-w-full flex-col gap-[10px] rounded-[12px] border bg-card p-[16px] transition-colors",
+                  selectedDoc?.id === doc.id
+                    ? "border-primary"
+                    : "border-border hover:border-ring/40"
+                )}
               >
-                <div className="font-medium text-sm">{doc.originalFilename}</div>
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  type: {doc.kind} | mime: {doc.mimeType || "unknown"} | size: {formatSize(doc.sizeBytes)}
-                </div>
-                <div className="text-[11px] text-muted-foreground/80 mt-1">
-                  id: {doc.id}
-                </div>
-              </button>
-              <div className="mt-2 flex justify-end">
+                <button
+                  onClick={() => setSelectedDoc(doc)}
+                  className="flex flex-col gap-[10px] text-left"
+                >
+                  <FileText className="h-[17px] w-[17px] text-meta" />
+                  <span className="pr-[22px] text-[14px] font-medium leading-[1.35]">
+                    {doc.originalFilename}
+                  </span>
+                  <span className="font-mono text-[11px] text-meta">
+                    {formatSize(doc.sizeBytes)}
+                    {doc.createdAt ? ` · ${timeAgo(doc.createdAt)}` : ""}
+                  </span>
+                </button>
+                <span className="w-fit rounded-full bg-band px-[9px] py-[3px] text-[11.5px] text-muted-foreground">
+                  {doc.kind}
+                </span>
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="h-7 px-2 text-xs text-destructive"
+                  aria-label={`Delete ${doc.originalFilename}`}
+                  title={
+                    deletingId === doc.id
+                      ? "Deleting..."
+                      : `Delete ${doc.originalFilename}`
+                  }
+                  className="absolute right-[10px] top-[10px] h-[26px] w-[26px] p-0 text-meta hover:text-destructive"
                   onClick={() => handleDelete(doc)}
                   disabled={deletingId === doc.id}
                 >
-                  <Trash2 className="h-3.5 w-3.5 mr-1" />
-                  {deletingId === doc.id ? "Deleting..." : "Delete"}
+                  <Trash2 className="h-[13px] w-[13px]" />
                 </Button>
               </div>
-            </div>
-          ))}
-        </div>
-        {selectedDoc && (
-          <div>
-            <DocumentViewer
-              kind={selectedDoc.kind}
-              markdownContent={selectedDoc.markdownContent}
-              imagePath={selectedDoc.imagePath}
-            />
+            ))}
+
+            <UploadZone projectId={projectId} onUploaded={handleUploaded} />
           </div>
-        )}
+
+          {documents.length === 0 && (
+            <p className="text-[13px] text-muted-foreground">
+              No documents uploaded yet
+            </p>
+          )}
+          {error && <p className="text-[13px] text-destructive">{error}</p>}
+
+          {selectedDoc && (
+            <div className="flex flex-col gap-[10px]">
+              <div className="flex items-center gap-[10px]">
+                <span className="text-[13.5px] font-medium">
+                  {selectedDoc.originalFilename}
+                </span>
+                <span className="font-mono text-[11px] text-meta">
+                  {selectedDoc.mimeType || "unknown"}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-label="Close document preview"
+                  className="ml-auto h-[26px] w-[26px] p-0 text-meta"
+                  onClick={() => setSelectedDoc(null)}
+                >
+                  <X className="h-[14px] w-[14px]" />
+                </Button>
+              </div>
+              <DocumentViewer
+                kind={selectedDoc.kind}
+                markdownContent={selectedDoc.markdownContent}
+                imagePath={selectedDoc.imagePath}
+              />
+            </div>
+          )}
+        </div>
+
+        <aside className="hidden w-[340px] flex-none flex-col gap-[16px] lg:flex">
+          <ProjectMemoryCard projectId={projectId} />
+          <div className="flex flex-col gap-[10px] rounded-[12px] border border-border p-[16px]">
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              Mentions
+            </span>
+            <span className="text-[13.5px] leading-[1.55] text-muted-foreground">
+              Type{" "}
+              <span className="font-mono text-[12.5px] text-foreground">
+                @DOC_NAME
+              </span>{" "}
+              in a ticket or the chat: the document travels with the prompt.
+            </span>
+          </div>
+        </aside>
       </div>
     </div>
   );

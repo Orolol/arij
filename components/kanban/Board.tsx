@@ -51,9 +51,20 @@ interface BoardProps {
   onMoveError?: (error: string) => void;
   failedSessions?: Record<string, FailedSessionInfo>;
   onRetryBuild?: (epicId: string) => void;
+  /**
+   * Hide the Released digest while a side panel owns the right edge: the four
+   * working columns and the panel share the width instead (see the board
+   * page, which flips this from the chat panel's expanded state).
+   */
+  hideReleased?: boolean;
+  /** Reports how many cards survive the active filters (drives the capture bar). */
+  onVisibleCountChange?: (count: number) => void;
 }
 
-/** Focus-mode placeholder: a column reduced to its header and card count. */
+/**
+ * Focus-mode placeholder: a terminal column folded into a 34px slice, its
+ * label turned on its side. Still readable, no longer competing for space.
+ */
 function CollapsedColumn({
   label,
   count,
@@ -65,15 +76,12 @@ function CollapsedColumn({
 }) {
   return (
     <div
-      className="flex flex-col w-24 shrink-0 rounded-lg bg-muted/30"
+      className="flex w-[34px] shrink-0 items-center justify-center border-l border-border"
       data-testid={testId}
     >
-      <div className="px-3 py-2 flex items-center justify-between gap-1">
-        <h3 className="font-medium text-sm truncate">{label}</h3>
-        <span className="text-xs text-muted-foreground bg-muted rounded-full px-2 py-0.5">
-          {count}
-        </span>
-      </div>
+      <span className="[writing-mode:vertical-rl] text-[11.5px] uppercase tracking-[.09em] text-meta">
+        {label} {count}
+      </span>
     </div>
   );
 }
@@ -91,6 +99,8 @@ export function Board({
   onMoveError,
   failedSessions,
   onRetryBuild,
+  hideReleased = false,
+  onVisibleCountChange,
 }: BoardProps) {
   const { board, loading, moveEpic, refresh } = useKanban(projectId, { onMoveError });
   // Optimistic overlay on the server-side read cursors: opening a ticket
@@ -284,6 +294,21 @@ export function Board({
     failedSessions,
   ]);
 
+  // How many cards the board is actually showing right now — the capture bar
+  // reports it, so it has to follow the filters, not the raw board.
+  const visibleCount = useMemo(
+    () =>
+      DRAGGABLE_COLUMNS.reduce(
+        (total, status) => total + visibleColumns[status].length,
+        0
+      ),
+    [visibleColumns]
+  );
+
+  useEffect(() => {
+    onVisibleCountChange?.(visibleCount);
+  }, [visibleCount, onVisibleCountChange]);
+
   // The drag overlay is a preview: it deliberately shows only the live agent
   // signals, never selection rings or failed-session affordances.
   const overlayView = useMemo<EpicCardView | undefined>(() => {
@@ -376,7 +401,7 @@ export function Board({
           focusMode={focusMode}
           onFocusModeChange={setFocusMode}
         />
-        <div className="flex gap-4 flex-1 min-h-0 p-4 pt-2 overflow-x-auto">
+        <div className="flex flex-1 min-h-0 gap-[16px] overflow-x-auto p-[22px] transition-[width,opacity] duration-200 motion-reduce:transition-none">
           {DRAGGABLE_COLUMNS.map((status) =>
             focusMode && status === "done" ? (
               <CollapsedColumn
@@ -393,6 +418,7 @@ export function Board({
                 onEpicClick={handleEpicClick}
                 epicViews={epicViews}
                 dragDisabled={filtersActive}
+                filtersActive={filtersActive}
               />
             )
           )}
@@ -402,7 +428,7 @@ export function Board({
               count={board.columns.released.length}
               testId="collapsed-column-released"
             />
-          ) : (
+          ) : hideReleased ? null : (
             <ReleasedColumn
               releaseGroups={board.releaseGroups || []}
               onEpicClick={handleEpicClick}
@@ -412,7 +438,7 @@ export function Board({
       </div>
       <DragOverlay>
         {activeEpic && (
-          <div className="w-[272px]">
+          <div className="w-[240px]">
             <EpicCard epic={activeEpic} isOverlay view={overlayView} />
           </div>
         )}

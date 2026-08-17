@@ -139,7 +139,7 @@ describe("UnifiedChatPanel shared panel mode", () => {
     expect(screen.queryByTestId("unified-panel-mobile-sheet")).not.toBeInTheDocument();
   });
 
-  it("uses the target detail width behavior derived from clamp(420px, 34vw, 560px)", async () => {
+  it("renders the shared detail panel at the 440px spec width", async () => {
     render(
       <UnifiedChatPanel
         projectId="proj-1"
@@ -158,7 +158,7 @@ describe("UnifiedChatPanel shared panel mode", () => {
     });
 
     expect(screen.getByTestId("unified-panel-shared")).toHaveStyle({
-      width: "420px",
+      width: "440px",
     });
   });
 });

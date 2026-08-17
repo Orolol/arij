@@ -15,7 +15,7 @@ export function SpecEditor({ projectId, value, onChange }: SpecEditorProps) {
       value={value}
       onValueChange={onChange}
       placeholder="Write your project specification in markdown..."
-      className="min-h-[500px] font-mono text-sm"
+      className="min-h-[460px] rounded-[10px] font-mono text-[13px] leading-[1.7]"
     />
   );
 }
