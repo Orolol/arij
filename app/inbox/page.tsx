@@ -7,10 +7,11 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useInbox, type InboxItem } from "@/hooks/useInbox";
 import { timeAgo } from "@/lib/utils/format-date";
-import { COLUMN_LABELS, type KanbanStatus } from "@/lib/types/kanban";
-
-/** Statuses the build route accepts — mirror of the guard in epics/[epicId]/build. */
-const BUILDABLE_STATUSES = new Set(["backlog", "todo", "in_progress", "review"]);
+import {
+  isBuildableStatus,
+  COLUMN_LABELS,
+  type KanbanStatus,
+} from "@/lib/types/kanban";
 
 interface ProjectGroup {
   projectId: string;
@@ -59,7 +60,7 @@ function InboxRow({
   const [busy, setBusy] = useState<"reply" | "dispatch" | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const canSendToDev = BUILDABLE_STATUSES.has(item.status ?? "");
+  const canSendToDev = isBuildableStatus(item.status);
 
   async function handleReply() {
     const content = replyText.trim();

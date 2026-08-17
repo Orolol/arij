@@ -79,5 +79,20 @@ export class DagBatchRegistry {
   }
 }
 
-/** Singleton instance (class exported for isolated unit tests). */
-export const dagBatchRegistry = new DagBatchRegistry();
+/**
+ * Singleton instance (class exported for isolated unit tests).
+ * globalThis-backed like the scheduler/watchdog/terminal-hook singletons: a
+ * dev hot reload must not let the running wave engine write to a stale
+ * instance while GET /build/waves reads a fresh empty one.
+ */
+const DAG_REGISTRY_GLOBAL_KEY = Symbol.for("arij.dag-batch-registry");
+
+function getDagBatchRegistry(): DagBatchRegistry {
+  const store = globalThis as { [DAG_REGISTRY_GLOBAL_KEY]?: DagBatchRegistry };
+  if (!store[DAG_REGISTRY_GLOBAL_KEY]) {
+    store[DAG_REGISTRY_GLOBAL_KEY] = new DagBatchRegistry();
+  }
+  return store[DAG_REGISTRY_GLOBAL_KEY];
+}
+
+export const dagBatchRegistry = getDagBatchRegistry();
