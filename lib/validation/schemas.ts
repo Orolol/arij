@@ -25,6 +25,11 @@ export const importProjectSchema = z.object({
   path: z.string().min(1, "path is required"),
 });
 
+export const cloneProjectSchema = z.object({
+  url: z.string("url is required").min(1, "url is required").max(500),
+  branch: z.string().max(255).optional(),
+});
+
 // --- Epic schemas ---
 
 const userStoryInput = z.object({
