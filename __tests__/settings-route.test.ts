@@ -1,9 +1,14 @@
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   dbMockState,
   resetDbMockState,
   mockJsonRequest,
 } from "@/__tests__/helpers/db-mock";
+import {
+  PROJECTS_ROOT_SETTING_KEY,
+  parseProjectsRoot,
+} from "@/lib/projects/workspace-constants";
 
 // Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
 // column identity, so no fake column maps.
@@ -75,5 +80,59 @@ describe("Settings route", () => {
         value: JSON.stringify("ghp_123"),
       })
     );
+  });
+
+  it("GET exposes the resolved default projects root the client cannot compute", async () => {
+    dbMockState.allRows = [];
+
+    const { GET } = await import("@/app/api/settings/route");
+    const json = await (await GET()).json();
+
+    expect(json.defaults.projects_root).toBe(
+      path.join(process.cwd(), "projects")
+    );
+    // Never mixed into `data`: a round-trip would write the default back as a
+    // stored override.
+    expect(json.data.projects_root).toBeUndefined();
+  });
+
+  it("PATCH rejects a non-string projects_root", async () => {
+    const { PATCH } = await import("@/app/api/settings/route");
+
+    const res = await PATCH(mockJsonRequest({ projects_root: { path: "/srv" } }));
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toBe("Projects directory must be saved as a string value.");
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("PATCH persists a projects_root override", async () => {
+    dbMockState.getQueue = [null];
+    const { PATCH } = await import("@/app/api/settings/route");
+
+    const res = await PATCH(mockJsonRequest({ projects_root: "/srv/clones" }));
+
+    expect(res.status).toBe(200);
+    expect(dbMockState.insertCalls).toContainEqual(
+      expect.objectContaining({
+        key: PROJECTS_ROOT_SETTING_KEY,
+        value: JSON.stringify("/srv/clones"),
+      })
+    );
+  });
+
+  it("PATCH accepts a blank projects_root, which clears the override", async () => {
+    dbMockState.getQueue = [{ key: PROJECTS_ROOT_SETTING_KEY, value: '"/srv/clones"' }];
+    const { PATCH } = await import("@/app/api/settings/route");
+
+    const res = await PATCH(mockJsonRequest({ projects_root: "" }));
+
+    expect(res.status).toBe(200);
+    expect(dbMockState.updateCalls).toContainEqual(
+      expect.objectContaining({ value: JSON.stringify("") })
+    );
+    // A stored "" parses back to "no override" -> the default root.
+    expect(parseProjectsRoot("")).toBeNull();
   });
 });

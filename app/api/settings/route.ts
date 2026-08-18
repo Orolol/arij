@@ -3,6 +3,8 @@ import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { GITHUB_PAT_SETTING_KEY } from "@/lib/github/client";
+import { PROJECTS_ROOT_SETTING_KEY } from "@/lib/projects/workspace-constants";
+import { defaultProjectsRoot } from "@/lib/projects/workspace";
 
 function parseValue(raw: string): unknown {
   try {
@@ -46,7 +48,13 @@ export async function GET() {
     data[row.key] = parseValue(row.value);
   }
 
-  return NextResponse.json({ data });
+  // Server-computed fallbacks the client cannot derive (no process.cwd() in
+  // the browser). Kept out of `data` so a round-trip never writes them back
+  // as if they were stored settings.
+  return NextResponse.json({
+    data,
+    defaults: { [PROJECTS_ROOT_SETTING_KEY]: defaultProjectsRoot() },
+  });
 }
 
 export async function PATCH(request: NextRequest) {
@@ -64,6 +72,15 @@ export async function PATCH(request: NextRequest) {
     if (key === GITHUB_PAT_SETTING_KEY && typeof value !== "string") {
       return NextResponse.json(
         { error: "GitHub token must be saved as a string value." },
+        { status: 400 }
+      );
+    }
+
+    // A non-string root would resolve to garbage in path.resolve() and send
+    // clones somewhere unexpected. Blank IS valid: it clears the override.
+    if (key === PROJECTS_ROOT_SETTING_KEY && typeof value !== "string") {
+      return NextResponse.json(
+        { error: "Projects directory must be saved as a string value." },
         { status: 400 }
       );
     }

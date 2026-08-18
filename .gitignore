@@ -47,3 +47,9 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# app-managed clone root (lib/projects/workspace.ts). Holds repositories Arij
+# cloned plus the .arij-worktrees they get worktrees in, so dogfooding Arij on
+# its own checkout never pollutes this repo. Anchored: app/projects and
+# lib/projects stay tracked.
+/projects

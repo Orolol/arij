@@ -54,6 +54,11 @@ const POST_BASELINE_COLUMN_MIGRATIONS: Array<{
   { folderMillis: 1786712100000, table: "agent_sessions", column: "total_cost_usd" },
   // 0026_agent_session_batch_run
   { folderMillis: 1786712300000, table: "agent_sessions", column: "batch_run_id" },
+  // 0027_project_clone_source (single transactional migration: the three
+  // columns are always present or absent together on real databases)
+  { folderMillis: 1786712400000, table: "projects", column: "clone_source" },
+  { folderMillis: 1786712400000, table: "projects", column: "git_remote_url" },
+  { folderMillis: 1786712400000, table: "projects", column: "default_branch" },
 ];
 
 /** Default on-disk location of the drizzle migration files. */
