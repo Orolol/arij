@@ -5,8 +5,10 @@ import {
   mockRouteContext,
 } from "@/__tests__/helpers/db-mock";
 
+// Takes the tagged-template args so `mockSql.mock.calls` stays inspectable —
+// the query-shape assertions below read the raw template strings.
 const mockSql = vi.hoisted(() =>
-  vi.fn(() => ({
+  vi.fn((..._args: unknown[]) => ({
     as: vi.fn(() => ({})),
   }))
 );

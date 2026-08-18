@@ -1,19 +1,34 @@
 "use client";
 
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 import { PRIORITY_COLORS, PRIORITY_LABELS } from "@/lib/types/kanban";
 
 interface PriorityBadgeProps {
   priority: number;
+  /** Extra classes; call sites keep their own sizing when they need it. */
+  className?: string;
 }
 
-/** Colored priority badge ("Low" / "Medium" / "High" / "Urgent"). */
-export function PriorityBadge({ priority }: PriorityBadgeProps) {
+/**
+ * Colored priority badge ("Medium" / "High" / "Critical").
+ *
+ * Low (0) is the default weight every ticket is created with, so rendering it
+ * is pure noise on a dense board: below priority 1 the badge is nothing.
+ */
+export function PriorityBadge({ priority, className }: PriorityBadgeProps) {
+  if (!Number.isFinite(priority) || priority <= 0) return null;
+
   return (
     <Badge
-      className={`text-xs ${PRIORITY_COLORS[priority] || PRIORITY_COLORS[0]}`}
+      data-testid={`priority-badge-${priority}`}
+      className={cn(
+        "rounded-full border-0 px-[8px] py-0 text-[10.5px] font-medium leading-[16px]",
+        PRIORITY_COLORS[priority] || PRIORITY_COLORS[1],
+        className
+      )}
     >
-      {PRIORITY_LABELS[priority] || "Low"}
+      {PRIORITY_LABELS[priority] || PRIORITY_LABELS[1]}
     </Badge>
   );
 }

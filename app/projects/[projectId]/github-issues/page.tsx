@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Badge } from "@/components/ui/badge";
-import { Loader2, Download, RefreshCw } from "lucide-react";
+import { Download, Github, Loader2, RefreshCw } from "lucide-react";
+import { useGitHubConfig } from "@/hooks/useGitHubConfig";
+import { cn } from "@/lib/utils";
 
 interface GitHubIssueRow {
   id: string;
@@ -26,6 +26,8 @@ interface Toast {
   message: string;
 }
 
+const GRID = "grid-cols-[64px_1fr_180px_110px_120px]";
+
 export default function GitHubIssuesPage() {
   const params = useParams();
   const projectId = params.projectId as string;
@@ -42,6 +44,7 @@ export default function GitHubIssuesPage() {
   const [bugLabels, setBugLabels] = useState("");
   const [savingMapping, setSavingMapping] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const { ownerRepo } = useGitHubConfig(projectId);
 
   const showToast = useCallback((type: "success" | "error", message: string) => {
     const id = crypto.randomUUID();
@@ -64,7 +67,7 @@ export default function GitHubIssuesPage() {
       if (!res.ok) {
         setError(json.error || "Failed to load issues");
       } else {
-        setIssues(json.data || []);
+        setIssues(Array.isArray(json.data) ? json.data : []);
       }
     } catch {
       setError("Failed to load issues");
@@ -150,133 +153,232 @@ export default function GitHubIssuesPage() {
   }
 
   const visible = useMemo(() => issues, [issues]);
+  const notImported = visible.filter((issue) => !issue.importedEpicId).length;
 
   return (
-    <div className="p-6 max-w-5xl space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-xl font-bold">GitHub Issue Triage</h2>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={syncNow} disabled={syncing}>
-            {syncing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-1" />}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex flex-none items-start gap-[16px] px-[26px] pb-[18px] pt-[24px]">
+        <div className="flex flex-col gap-[5px]">
+          <h2 className="text-[19px] font-semibold">GitHub Issue Triage</h2>
+          <p className="text-[13px] text-muted-foreground">
+            Import issues as epics or bugs, based on their labels.
+          </p>
+        </div>
+        <div className="ml-auto flex items-center gap-[9px]">
+          <Button
+            variant="outline"
+            className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
+            onClick={syncNow}
+            disabled={syncing}
+          >
+            {syncing ? (
+              <Loader2 className="h-[14px] w-[14px] animate-spin" />
+            ) : (
+              <RefreshCw className="h-[14px] w-[14px]" />
+            )}
             Sync
           </Button>
-          <Button onClick={importSelected} disabled={importing || selected.size === 0}>
-            {importing ? <Loader2 className="h-4 w-4 mr-1 animate-spin" /> : <Download className="h-4 w-4 mr-1" />}
+          <Button
+            className="h-[31px] rounded-[8px] px-[13px] text-[13px]"
+            onClick={importSelected}
+            disabled={importing || selected.size === 0}
+          >
+            {importing ? (
+              <Loader2 className="h-[14px] w-[14px] animate-spin" />
+            ) : (
+              <Download className="h-[14px] w-[14px]" />
+            )}
             Import Selected ({selected.size})
           </Button>
         </div>
       </div>
 
-      <Card className="p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div>
-          <label className="text-xs text-muted-foreground">Filter by label</label>
-          <Input value={labelFilter} onChange={(e) => setLabelFilter(e.target.value)} placeholder="bug" />
-        </div>
-        <div>
-          <label className="text-xs text-muted-foreground">Filter by milestone</label>
-          <Input value={milestoneFilter} onChange={(e) => setMilestoneFilter(e.target.value)} placeholder="v1.0" />
-        </div>
-      </Card>
+      <div className="flex flex-none flex-wrap items-center gap-[10px] px-[26px] pb-[16px]">
+        <span className="inline-flex items-center gap-[8px] text-[12.5px] text-muted-foreground">
+          <Github className="h-[14px] w-[14px]" />
+          {ownerRepo || "Not connected"}
+        </span>
+        <span className="h-4 w-px bg-border" />
+        <Input
+          value={labelFilter}
+          onChange={(e) => setLabelFilter(e.target.value)}
+          placeholder="Filter by label"
+          aria-label="Filter by label"
+          className="h-[26px] w-[160px] rounded-full px-[11px] text-[12.5px]"
+        />
+        <Input
+          value={milestoneFilter}
+          onChange={(e) => setMilestoneFilter(e.target.value)}
+          placeholder="Filter by milestone"
+          aria-label="Filter by milestone"
+          className="h-[26px] w-[160px] rounded-full px-[11px] font-mono text-[12px]"
+        />
+        <span className="ml-auto text-[12.5px] text-muted-foreground">
+          {visible.length} issue{visible.length === 1 ? "" : "s"} · {notImported}{" "}
+          not imported
+        </span>
+      </div>
 
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      {loading ? (
-        <p className="text-sm text-muted-foreground">Loading issues...</p>
-      ) : (
-        <Card className="p-4 space-y-3">
-          {visible.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No open issues found.</p>
-          ) : (
-            visible.map((issue) => {
-              const checked = selected.has(issue.issueNumber);
-              return (
-                <label key={issue.id} className="flex items-start gap-3 p-2 rounded hover:bg-accent/50">
-                  <Checkbox
-                    checked={checked}
-                    onCheckedChange={(value) => {
-                      setSelected((prev) => {
-                        const next = new Set(prev);
-                        if (value) next.add(issue.issueNumber);
-                        else next.delete(issue.issueNumber);
-                        return next;
-                      });
-                    }}
-                    disabled={Boolean(issue.importedEpicId)}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <a href={issue.githubUrl} className="font-medium hover:underline" target="_blank" rel="noreferrer">
-                        #{issue.issueNumber} {issue.title}
-                      </a>
-                      {issue.importedEpicId ? (
-                        <Badge className="bg-green-600 text-white">Imported</Badge>
-                      ) : (
-                        <Badge variant="outline">Not Imported</Badge>
-                      )}
-                      {issue.createdAtGitHub && (
-                        <span className="text-xs text-muted-foreground">
-                          {new Date(issue.createdAtGitHub).toLocaleDateString()}
-                        </span>
-                      )}
-                    </div>
-                    <div className="mt-1 flex flex-wrap gap-1">
+      <div className="flex min-h-0 flex-1 gap-[22px] px-[26px] pb-[26px]">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[12px] border border-border bg-card">
+          <div
+            className={cn(
+              "grid flex-none gap-[14px] border-b border-border px-[22px] py-[12px]",
+              GRID
+            )}
+          >
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              #
+            </span>
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              Title
+            </span>
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              Labels
+            </span>
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              Milestone
+            </span>
+            <span />
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {error && (
+              <p className="px-[22px] py-[14px] text-[13px] text-destructive">
+                {error}
+              </p>
+            )}
+            {loading ? (
+              <p className="px-[22px] py-[14px] text-[13px] text-muted-foreground">
+                Loading issues...
+              </p>
+            ) : visible.length === 0 ? (
+              <p className="px-[22px] py-[14px] text-[13px] text-muted-foreground">
+                No open issues found.
+              </p>
+            ) : (
+              visible.map((issue) => {
+                const checked = selected.has(issue.issueNumber);
+                const imported = Boolean(issue.importedEpicId);
+                return (
+                  <div
+                    key={issue.id}
+                    className={cn(
+                      "grid items-center gap-[14px] border-b border-border-soft px-[22px] py-[14px] transition-colors hover:bg-band",
+                      GRID
+                    )}
+                  >
+                    <span className="flex min-w-0 items-center gap-[6px]">
+                      <Checkbox
+                        checked={checked}
+                        aria-label={`Select issue #${issue.issueNumber}`}
+                        onCheckedChange={(value) => {
+                          setSelected((prev) => {
+                            const next = new Set(prev);
+                            if (value) next.add(issue.issueNumber);
+                            else next.delete(issue.issueNumber);
+                            return next;
+                          });
+                        }}
+                        disabled={imported}
+                      />
+                      <span className="truncate font-mono text-[11.5px] text-meta">
+                        #{issue.issueNumber}
+                      </span>
+                    </span>
+                    <a
+                      href={issue.githubUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="truncate text-[13.5px] leading-[1.4] hover:underline"
+                    >
+                      {issue.title}
+                    </a>
+                    <span className="flex flex-wrap gap-[6px]">
                       {issue.labels.map((label) => (
-                        <Badge key={label} variant="secondary" className="text-[10px]">
+                        <span
+                          key={label}
+                          className="rounded-full bg-band px-[8px] py-[2px] text-[11px] text-muted-foreground"
+                        >
                           {label}
-                        </Badge>
+                        </span>
                       ))}
-                      {issue.milestone && (
-                        <Badge variant="outline" className="text-[10px]">
-                          {issue.milestone}
-                        </Badge>
+                    </span>
+                    <span className="truncate font-mono text-[11.5px] text-meta">
+                      {issue.milestone || ""}
+                    </span>
+                    <span
+                      className={cn(
+                        "justify-self-end text-[12px]",
+                        imported ? "text-agent" : "text-primary"
                       )}
-                    </div>
+                    >
+                      {imported ? "imported" : "to import"}
+                    </span>
                   </div>
-                </label>
-              );
-            })
-          )}
-        </Card>
-      )}
-
-      <Card className="p-4 space-y-3">
-        <h3 className="text-sm font-semibold">Label Mapping Configuration</h3>
-        <p className="text-xs text-muted-foreground">
-          Configure which GitHub labels map to Feature (Epic) or Bug ticket types.
-        </p>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs text-muted-foreground">Feature labels (comma-separated)</label>
-            <Input
-              value={featureLabels}
-              onChange={(e) => setFeatureLabels(e.target.value)}
-              placeholder="feature, enhancement, epic"
-            />
-          </div>
-          <div>
-            <label className="text-xs text-muted-foreground">Bug labels (comma-separated)</label>
-            <Input
-              value={bugLabels}
-              onChange={(e) => setBugLabels(e.target.value)}
-              placeholder="bug, defect, error"
-            />
+                );
+              })
+            )}
           </div>
         </div>
-        <Button variant="outline" size="sm" onClick={saveMappingConfig} disabled={savingMapping}>
-          {savingMapping ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : null}
-          Save Mapping
-        </Button>
-      </Card>
+
+        <aside className="hidden w-[330px] flex-none flex-col gap-[16px] lg:flex">
+          <div className="flex flex-col gap-[12px] rounded-[12px] border border-border p-[18px]">
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              Label mapping
+            </span>
+            <div className="flex flex-col gap-[6px]">
+              <label className="text-[12.5px] text-muted-foreground">
+                Feature labels (comma-separated)
+              </label>
+              <Input
+                value={featureLabels}
+                onChange={(e) => setFeatureLabels(e.target.value)}
+                placeholder="feature, enhancement, epic"
+                className="h-[34px] rounded-[8px] font-mono text-[12.5px]"
+              />
+            </div>
+            <div className="flex flex-col gap-[6px]">
+              <label className="text-[12.5px] text-muted-foreground">
+                Bug labels (comma-separated)
+              </label>
+              <Input
+                value={bugLabels}
+                onChange={(e) => setBugLabels(e.target.value)}
+                placeholder="bug, defect, error"
+                className="h-[34px] rounded-[8px] font-mono text-[12.5px]"
+              />
+            </div>
+            <p className="text-[12.5px] leading-[1.5] text-muted-foreground">
+              Configure which GitHub labels map to Feature (Epic) or Bug ticket
+              types.
+            </p>
+            <Button
+              variant="outline"
+              className="h-[31px] w-fit rounded-[8px] px-[12px] text-[13px]"
+              onClick={saveMappingConfig}
+              disabled={savingMapping}
+            >
+              {savingMapping ? (
+                <Loader2 className="h-[13px] w-[13px] animate-spin" />
+              ) : null}
+              Save Mapping
+            </Button>
+          </div>
+        </aside>
+      </div>
 
       {toasts.length > 0 && (
         <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
           {toasts.map((toast) => (
             <div
               key={toast.id}
-              className={`px-4 py-2 rounded-lg shadow-lg text-sm font-medium transition-all animate-in fade-in slide-in-from-bottom-2 ${
+              className={cn(
+                "animate-in fade-in slide-in-from-bottom-2 rounded-[10px] px-4 py-2 text-[13px] font-medium shadow-[0_8px_20px_rgba(58,48,44,.16)] transition-all",
                 toast.type === "success"
-                  ? "bg-green-600 text-white"
-                  : "bg-destructive text-destructive-foreground"
-              }`}
+                  ? "bg-agent text-background"
+                  : "bg-destructive text-background"
+              )}
             >
               {toast.message}
             </div>

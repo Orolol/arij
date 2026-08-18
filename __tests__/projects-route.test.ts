@@ -59,6 +59,7 @@ vi.mock("@/lib/db/schema", () => ({
     id: "agent_sessions.id",
     projectId: "agent_sessions.projectId",
     status: "agent_sessions.status",
+    createdAt: "agent_sessions.createdAt",
   },
 }));
 
@@ -84,7 +85,11 @@ describe("GET /api/projects", () => {
         name: "Project One",
         epicCount: 3,
         epicsDone: 1,
+        epicsInProgress: 1,
+        epicsReview: 1,
+        epicsReleased: 0,
         activeAgents: 2,
+        lastSessionAt: "2026-08-17T09:00:00Z",
       },
     ];
 
@@ -94,8 +99,9 @@ describe("GET /api/projects", () => {
 
     expect(response.status).toBe(200);
     expect(json.data).toEqual(state.rows);
-    expect(dbChain.leftJoin).toHaveBeenCalledTimes(2);
-    expect(dbChain.groupBy).toHaveBeenCalledTimes(2);
+    // epic counts + running agents + last session time
+    expect(dbChain.leftJoin).toHaveBeenCalledTimes(3);
+    expect(dbChain.groupBy).toHaveBeenCalledTimes(3);
     expect(mockCount).toHaveBeenCalledTimes(2);
     expect(debugSpy).toHaveBeenCalledWith(
       "[projects/GET] query profile",
@@ -105,5 +111,45 @@ describe("GET /api/projects", () => {
       }),
     );
     debugSpy.mockRestore();
+  });
+
+  it("projects the dashboard aggregate columns the project cards need", async () => {
+    vi.spyOn(console, "debug").mockImplementation(() => {});
+
+    const { GET } = await import("@/app/api/projects/route");
+    await GET();
+
+    const projections = dbChain.select.mock.calls.map(
+      (call) => Object.keys((call[0] ?? {}) as Record<string, unknown>),
+    );
+
+    // Per-project status counts and the last session timestamp are what the
+    // redesigned project card renders — they must be part of the payload.
+    expect(
+      projections.some((keys) =>
+        ["epicsInProgress", "epicsReview", "epicsReleased"].every((key) =>
+          keys.includes(key),
+        ),
+      ),
+    ).toBe(true);
+    expect(projections.some((keys) => keys.includes("lastSessionAt"))).toBe(true);
+
+    // The outer row projection is the one joining every aggregate together.
+    const rowProjection = projections.find(
+      (keys) => keys.includes("activeAgents") && keys.includes("lastSessionAt"),
+    );
+    expect(rowProjection).toEqual(
+      expect.arrayContaining([
+        "id",
+        "name",
+        "epicCount",
+        "epicsDone",
+        "epicsInProgress",
+        "epicsReview",
+        "epicsReleased",
+        "activeAgents",
+        "lastSessionAt",
+      ]),
+    );
   });
 });

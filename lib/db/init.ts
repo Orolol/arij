@@ -52,6 +52,8 @@ const POST_BASELINE_COLUMN_MIGRATIONS: Array<{
   { folderMillis: 1786712100000, table: "agent_sessions", column: "input_tokens" },
   { folderMillis: 1786712100000, table: "agent_sessions", column: "output_tokens" },
   { folderMillis: 1786712100000, table: "agent_sessions", column: "total_cost_usd" },
+  // 0026_agent_session_batch_run
+  { folderMillis: 1786712300000, table: "agent_sessions", column: "batch_run_id" },
 ];
 
 /** Default on-disk location of the drizzle migration files. */

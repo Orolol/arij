@@ -7,7 +7,8 @@ interface EpicForPr {
 
 interface StoryForPr {
   title: string;
-  status: string;
+  /** Nullable like the column it comes from: anything but "done" renders unchecked. */
+  status: string | null;
 }
 
 /**

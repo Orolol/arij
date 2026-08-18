@@ -180,6 +180,26 @@ describe("EpicDetail mark-read on mount", () => {
     });
   });
 
+  it("counts the comments on the Activity tab, and hides the counter at zero", async () => {
+    const empty = renderSubject();
+    expect(empty.queryByTestId("epic-activity-comment-count")).toBeNull();
+    empty.unmount();
+
+    mockUseTicketComments.mockReturnValue({
+      comments: [
+        { id: "c1", body: "one", authorType: "user" },
+        { id: "c2", body: "two", authorType: "agent" },
+      ],
+      loading: false,
+      addComment: vi.fn(),
+    });
+
+    const withComments = renderSubject();
+    expect(
+      withComments.getByTestId("epic-activity-comment-count")
+    ).toHaveTextContent("2");
+  });
+
   it("survives a failing mark-read call", async () => {
     fetchSpy.mockRejectedValue(new Error("network down"));
 

@@ -114,14 +114,14 @@ export function BugCreateDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[480px]">
+      <DialogContent className="rounded-[14px] shadow-[0_18px_40px_rgba(58,48,44,.14)] sm:max-w-[480px]">
         <DialogHeader>
-          <DialogTitle>New Bug</DialogTitle>
+          <DialogTitle className="text-[16px] font-semibold">New Bug</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
           <div>
-            <label className="text-xs text-muted-foreground block mb-1">
+            <label className="mb-1 block text-[12.5px] text-muted-foreground">
               Title *
             </label>
             <Input
@@ -134,7 +134,7 @@ export function BugCreateDialog({
           </div>
 
           <div>
-            <label className="text-xs text-muted-foreground block mb-1">
+            <label className="mb-1 block text-[12.5px] text-muted-foreground">
               Description
             </label>
             <Textarea
@@ -146,11 +146,11 @@ export function BugCreateDialog({
           </div>
 
           <div>
-            <label className="text-xs text-muted-foreground block mb-1">
+            <label className="mb-1 block text-[12.5px] text-muted-foreground">
               Priority
             </label>
             <Select value={priority} onValueChange={setPriority}>
-              <SelectTrigger className="h-8 text-xs">
+              <SelectTrigger className="h-[29px] rounded-[7px] text-[12.5px]">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

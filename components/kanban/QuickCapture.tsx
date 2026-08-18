@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
-import { Loader2, Zap } from "lucide-react";
+import { Loader2 } from "lucide-react";
 
 interface QuickCaptureProps {
   projectId: string;
@@ -12,8 +12,11 @@ interface QuickCaptureProps {
 }
 
 /**
- * Compact one-line idea capture for the kanban header: type a title, press
+ * One-line idea capture for the board's capture bar: type a title, press
  * Enter, and a draft feature epic lands in the backlog — no dialog, no LLM.
+ *
+ * The field is chromeless on purpose: the 46px bar around it (owned by the
+ * board page) is the visible surface, and the placeholder is the only label.
  */
 export function QuickCapture({ projectId, onCreated, onError }: QuickCaptureProps) {
   const [title, setTitle] = useState("");
@@ -51,12 +54,7 @@ export function QuickCapture({ projectId, onCreated, onError }: QuickCaptureProp
   }
 
   return (
-    <div className="relative flex items-center">
-      {submitting ? (
-        <Loader2 className="absolute left-2 h-3 w-3 animate-spin text-muted-foreground pointer-events-none" />
-      ) : (
-        <Zap className="absolute left-2 h-3 w-3 text-muted-foreground pointer-events-none" />
-      )}
+    <div className="relative flex flex-1 items-center">
       <Input
         value={title}
         onChange={(e) => setTitle(e.target.value)}
@@ -65,10 +63,13 @@ export function QuickCapture({ projectId, onCreated, onError }: QuickCaptureProp
         }}
         placeholder="Quick capture — Enter adds to Backlog"
         disabled={submitting}
-        className="h-7 w-64 pl-7 text-xs"
+        className="h-[30px] w-full border-0 bg-transparent px-0 pr-6 text-[13px] shadow-none placeholder:text-meta focus-visible:border-0 focus-visible:ring-0 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary/40 disabled:opacity-100 dark:bg-transparent"
         aria-label="Quick capture idea"
         data-testid="quick-capture-input"
       />
+      {submitting && (
+        <Loader2 className="pointer-events-none absolute right-1 h-3 w-3 animate-spin text-muted-foreground motion-reduce:animate-none" />
+      )}
     </div>
   );
 }

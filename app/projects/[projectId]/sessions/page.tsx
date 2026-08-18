@@ -1,22 +1,25 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
 import Link from "next/link";
 import {
-  Clock,
-  CheckCircle2,
-  XCircle,
   Ban,
-  Loader2,
+  Circle,
+  CircleCheck,
+  Clock,
+  LoaderCircle,
   MessageSquare,
+  Search,
   Sparkles,
+  TriangleAlert,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 import { SessionOutcomeBadge } from "@/components/shared/SessionOutcomeBadge";
 import { formatCostUsd } from "@/lib/utils/format-usage";
+import { isNightRunId } from "@/lib/night/constants";
+import { cn } from "@/lib/utils";
 
 // --- Discriminated union types ---
 
@@ -41,6 +44,8 @@ interface AgentSession {
   inputTokens?: number | null;
   outputTokens?: number | null;
   totalCostUsd?: number | null;
+  /** Batch run tag — `night_*` for epics dispatched by a night run. */
+  batchRunId?: string | null;
   createdAt: string;
 }
 
@@ -73,32 +78,61 @@ const AGENT_TYPE_LABELS: Record<string, string> = {
   tech_check: "Tech Check",
   release_notes: "Release Notes",
   memory_distill: "Memory Distill",
+  forensic: "Forensic",
 };
 
 const STATUS_CONFIG: Record<
   string,
-  { icon: typeof Clock; color: string; label: string }
+  { icon: LucideIcon; color: string; label: string }
 > = {
-  queued: { icon: Clock, color: "text-amber-500", label: "Queued" },
-  pending: { icon: Clock, color: "text-muted-foreground", label: "Pending" },
-  running: { icon: Loader2, color: "text-yellow-500", label: "Running" },
+  queued: { icon: Clock, color: "text-priority-yellow", label: "Queued" },
+  pending: { icon: Circle, color: "text-meta", label: "Pending" },
+  running: { icon: LoaderCircle, color: "text-agent", label: "Running" },
   completed: {
-    icon: CheckCircle2,
-    color: "text-green-500",
+    icon: CircleCheck,
+    color: "text-agent",
     label: "Completed",
   },
-  failed: { icon: XCircle, color: "text-red-500", label: "Failed" },
-  cancelled: { icon: Ban, color: "text-muted-foreground", label: "Cancelled" },
+  failed: { icon: TriangleAlert, color: "text-destructive", label: "Failed" },
+  cancelled: { icon: Ban, color: "text-meta", label: "Cancelled" },
 };
+
+/** State chips (single-select) and provider chips (toggle) of the filter bar. */
+type StateFilter = "all" | "running" | "failed" | "night";
+type ProviderFilter = "claude-code" | "codex" | null;
+
+const TABLE_GRID = "grid-cols-[1.6fr_1fr_0.9fr_0.6fr_0.6fr]";
+
+function isToday(iso: string | undefined): boolean {
+  if (!iso) return false;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return false;
+  const now = new Date();
+  return (
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate()
+  );
+}
+
+function isTerminal(status: string): boolean {
+  return (
+    status === "completed" || status === "failed" || status === "cancelled"
+  );
+}
 
 export default function SessionsPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const [items, setItems] = useState<UnifiedSession[]>([]);
   const [loading, setLoading] = useState(true);
+  const [stateFilter, setStateFilter] = useState<StateFilter>("all");
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>(null);
+  const [ticketQuery, setTicketQuery] = useState("");
 
   useEffect(() => {
     loadSessions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   async function loadSessions() {
@@ -112,9 +146,7 @@ export default function SessionsPage() {
     if (!session.startedAt) return "-";
     const start = new Date(session.startedAt).getTime();
     const endAt = session.endedAt || session.completedAt;
-    const end = endAt
-      ? new Date(endAt).getTime()
-      : Date.now();
+    const end = endAt ? new Date(endAt).getTime() : Date.now();
     const seconds = Math.floor((end - start) / 1000);
     const mins = Math.floor(seconds / 60);
     const secs = seconds % 60;
@@ -122,61 +154,306 @@ export default function SessionsPage() {
     return `${secs}s`;
   }
 
-  if (loading) {
-    return (
-      <div className="p-6 text-muted-foreground">Loading sessions...</div>
+  const agentSessions = useMemo(
+    () => items.filter((i): i is AgentSession => i.kind === "agent_session"),
+    [items]
+  );
+
+  /** Synthesis band — derived from the list the page already has. */
+  const band = useMemo(() => {
+    const running = agentSessions.filter((s) => s.status === "running");
+    const queued = agentSessions.filter((s) => s.status === "queued");
+    const todayTerminal = agentSessions.filter(
+      (s) => isTerminal(s.status) && isToday(s.createdAt)
     );
+    const todayCost = todayTerminal.reduce(
+      (sum, s) => sum + (typeof s.totalCostUsd === "number" ? s.totalCostUsd : 0),
+      0
+    );
+    const completed = todayTerminal.filter(
+      (s) => s.status === "completed"
+    ).length;
+    const failed = todayTerminal.filter((s) => s.status === "failed").length;
+    return {
+      running: running.length,
+      queued: queued.length,
+      today: todayTerminal.length,
+      todayCost,
+      completed,
+      failed,
+    };
+  }, [agentSessions]);
+
+  const visible = useMemo(() => {
+    const query = ticketQuery.trim().toLowerCase();
+    return items.filter((item) => {
+      if (item.kind === "agent_session") {
+        if (stateFilter === "running" && item.status !== "running") return false;
+        if (stateFilter === "failed" && item.status !== "failed") return false;
+        if (stateFilter === "night" && !isNightRunId(item.batchRunId))
+          return false;
+        if (providerFilter && item.provider !== providerFilter) return false;
+        if (query) {
+          const haystack = [item.epicId, item.branchName, item.id]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          if (!haystack.includes(query)) return false;
+        }
+        return true;
+      }
+      // Chat conversations have no run state: only "All" and "Running"
+      // (while generating) can show them.
+      if (stateFilter === "failed" || stateFilter === "night") return false;
+      if (stateFilter === "running" && item.status !== "generating")
+        return false;
+      if (providerFilter && item.provider !== providerFilter) return false;
+      if (query) {
+        const haystack = [item.label, item.epicId]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!haystack.includes(query)) return false;
+      }
+      return true;
+    });
+  }, [items, stateFilter, providerFilter, ticketQuery]);
+
+  if (loading) {
+    return <div className="p-6 text-muted-foreground">Loading sessions...</div>;
   }
 
-  const agentSessions = items.filter((i): i is AgentSession => i.kind === "agent_session");
-  const chatSessions = items.filter((i): i is ChatSession => i.kind === "chat_session");
-
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold">Sessions</h2>
-        <div className="flex gap-2 text-xs text-muted-foreground">
-          {agentSessions.some((s) => s.status === "queued") && (
-            <span className="text-amber-500">
-              {agentSessions.filter((s) => s.status === "queued").length} queued
-            </span>
-          )}
-          <span>{agentSessions.filter((s) => s.status === "running").length} running</span>
-          <span>{agentSessions.filter((s) => s.status === "completed").length} completed</span>
-          <span>{agentSessions.filter((s) => s.status === "failed").length} failed</span>
-          {chatSessions.length > 0 && (
-            <span>{chatSessions.length} chats</span>
-          )}
-        </div>
+    <div className="flex h-full min-h-0 flex-col">
+      {/* Synthesis band */}
+      <div
+        data-testid="sessions-band"
+        className="flex h-[72px] shrink-0 border-b border-border bg-band"
+      >
+        <BandCell
+          label="RUNNING"
+          testId="sessions-band-running"
+          value={
+            band.running === 0
+              ? "None right now"
+              : `${band.running} session${band.running === 1 ? "" : "s"}`
+          }
+        />
+        <BandCell
+          label="TODAY"
+          testId="sessions-band-today"
+          value={
+            band.today === 0
+              ? "Nothing today"
+              : `${band.today} session${band.today === 1 ? "" : "s"}${
+                  band.todayCost > 0 ? ` · ${formatCostUsd(band.todayCost)}` : ""
+                }`
+          }
+        />
+        <BandCell
+          label="SUCCESS RATE"
+          testId="sessions-band-success"
+          value={
+            band.completed + band.failed === 0
+              ? "No finished sessions"
+              : `${band.completed} / ${band.completed + band.failed}`
+          }
+        />
+        <BandCell
+          label="QUEUE"
+          testId="sessions-band-queue"
+          last
+          value={band.queued === 0 ? "Nothing queued" : `${band.queued} queued`}
+          valueClassName={band.queued > 0 ? "text-priority-yellow" : undefined}
+        />
+      </div>
+
+      {/* Filter bar */}
+      <div className="flex h-[46px] shrink-0 items-center gap-[7px] border-b border-border px-[22px]">
+        <FilterChip
+          testId="sessions-filter-all"
+          active={stateFilter === "all" && providerFilter === null}
+          onClick={() => {
+            setStateFilter("all");
+            setProviderFilter(null);
+          }}
+        >
+          All
+        </FilterChip>
+        <FilterChip
+          testId="sessions-filter-running"
+          active={stateFilter === "running"}
+          onClick={() =>
+            setStateFilter((s) => (s === "running" ? "all" : "running"))
+          }
+        >
+          Running
+        </FilterChip>
+        <FilterChip
+          testId="sessions-filter-failed"
+          active={stateFilter === "failed"}
+          onClick={() =>
+            setStateFilter((s) => (s === "failed" ? "all" : "failed"))
+          }
+        >
+          Failed
+        </FilterChip>
+        <FilterChip
+          testId="sessions-filter-night"
+          active={stateFilter === "night"}
+          onClick={() =>
+            setStateFilter((s) => (s === "night" ? "all" : "night"))
+          }
+        >
+          Night run
+        </FilterChip>
+        <span className="mx-[5px] h-4 w-px bg-border" />
+        <FilterChip
+          testId="sessions-filter-claude-code"
+          active={providerFilter === "claude-code"}
+          onClick={() =>
+            setProviderFilter((p) => (p === "claude-code" ? null : "claude-code"))
+          }
+        >
+          Claude Code
+        </FilterChip>
+        <FilterChip
+          testId="sessions-filter-codex"
+          active={providerFilter === "codex"}
+          onClick={() => setProviderFilter((p) => (p === "codex" ? null : "codex"))}
+        >
+          Codex
+        </FilterChip>
+
+        <label className="ml-auto flex items-center gap-[7px] text-[12.5px] text-muted-foreground">
+          <Search className="h-[13px] w-[13px] shrink-0" />
+          <span className="sr-only">Filter by ticket</span>
+          <input
+            type="text"
+            value={ticketQuery}
+            onChange={(e) => setTicketQuery(e.target.value)}
+            placeholder="Filter by ticket"
+            className="w-[150px] bg-transparent text-[12.5px] text-foreground placeholder:text-muted-foreground focus:outline-none"
+          />
+        </label>
       </div>
 
       {items.length === 0 ? (
-        <p className="text-muted-foreground text-sm">No sessions yet</p>
+        <p className="p-6 text-sm text-muted-foreground">No sessions yet</p>
       ) : (
-        <div className="space-y-2">
-          {items.map((item) =>
-            item.kind === "agent_session" ? (
-              <AgentSessionCard
-                key={`agent-${item.id}`}
-                session={item}
-                projectId={projectId}
-                getDuration={getDuration}
-              />
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div
+            className={cn(
+              "grid shrink-0 items-center gap-[14px] border-b border-border px-[22px] py-[12px]",
+              TABLE_GRID
+            )}
+          >
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              Session
+            </span>
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              State
+            </span>
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              Duration
+            </span>
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              Cost
+            </span>
+            <span />
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {visible.length === 0 ? (
+              <p className="px-[22px] py-[18px] text-[13px] text-muted-foreground">
+                No sessions match these filters.
+              </p>
             ) : (
-              <ChatSessionCard
-                key={`chat-${item.id}`}
-                session={item}
-                projectId={projectId}
-              />
-            )
-          )}
+              visible.map((item) =>
+                item.kind === "agent_session" ? (
+                  <AgentSessionRow
+                    key={`agent-${item.id}`}
+                    session={item}
+                    projectId={projectId}
+                    getDuration={getDuration}
+                  />
+                ) : (
+                  <ChatSessionRow
+                    key={`chat-${item.id}`}
+                    session={item}
+                    projectId={projectId}
+                  />
+                )
+              )
+            )}
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function AgentSessionCard({
+function BandCell({
+  label,
+  value,
+  testId,
+  last = false,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  testId: string;
+  last?: boolean;
+  valueClassName?: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "flex flex-1 flex-col justify-center gap-[5px] px-[22px]",
+        !last && "border-r border-border"
+      )}
+    >
+      <span className="text-[11.5px] tracking-[.08em] text-meta">{label}</span>
+      <span
+        data-testid={testId}
+        className={cn("truncate text-[13.5px]", valueClassName)}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function FilterChip({
+  active,
+  onClick,
+  testId,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  testId: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={testId}
+      aria-pressed={active}
+      onClick={onClick}
+      className={cn(
+        "rounded-full px-[11px] py-[3px] text-[12.5px] transition-colors",
+        active
+          ? "bg-foreground text-background"
+          : "border border-border text-muted-foreground hover:bg-band"
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function AgentSessionRow({
   session,
   projectId,
   getDuration,
@@ -185,90 +462,78 @@ function AgentSessionCard({
   projectId: string;
   getDuration: (s: AgentSession) => string;
 }) {
-  const config =
-    STATUS_CONFIG[session.status] || STATUS_CONFIG.pending;
+  const config = STATUS_CONFIG[session.status] || STATUS_CONFIG.pending;
   const Icon = config.icon;
+  const isRunning = session.status === "running";
+
+  const providerLabel =
+    session.namedAgentName ||
+    (session.provider
+      ? (PROVIDER_LABELS[session.provider as keyof typeof PROVIDER_LABELS] ??
+        session.provider)
+      : "Agent");
+  const typeLabel = session.agentType
+    ? (AGENT_TYPE_LABELS[session.agentType] ?? session.agentType)
+    : session.mode;
+  const target = [`${session.id.slice(0, 8)}`, session.branchName || session.mode]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <Link href={`/projects/${projectId}/sessions/${session.id}`}>
-      <Card className="p-4 hover:bg-accent/50 transition-colors cursor-pointer">
-        <div className="flex items-center gap-3">
-          <Icon
-            className={`h-4 w-4 shrink-0 ${config.color} ${
-              session.status === "running" ? "animate-spin" : ""
-            }`}
-          />
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">
-                #{session.id.slice(0, 8)}
-              </span>
-              {session.agentType && (
-                <Badge variant="secondary" className="text-[10px]">
-                  {AGENT_TYPE_LABELS[session.agentType] || session.agentType}
-                </Badge>
-              )}
-              <Badge variant="outline" className="text-xs">
-                {session.mode}
-              </Badge>
-              <SessionOutcomeBadge outcome={session.outcome} />
-              {session.namedAgentName ? (
-                <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-400/30">
-                  {session.namedAgentName}
-                </Badge>
-              ) : session.provider && session.provider !== "claude-code" ? (
-                <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                  {PROVIDER_LABELS[session.provider as keyof typeof PROVIDER_LABELS] ?? session.provider}
-                </Badge>
-              ) : null}
-              {session.model && (
-                <span className="text-[10px] text-muted-foreground font-mono">
-                  {session.model}
-                </span>
-              )}
-              {session.cliSessionId && (
-                <Badge variant="outline" className="text-[10px] text-blue-400 border-blue-400/30">
-                  resumable
-                </Badge>
-              )}
-              {session.branchName && (
-                <span className="text-xs text-muted-foreground font-mono truncate">
-                  {session.branchName}
-                </span>
-              )}
-            </div>
-            {session.error && (
-              <p className="text-xs text-destructive mt-1 truncate">
-                {session.error}
-              </p>
-            )}
-          </div>
-          <div className="text-right shrink-0">
-            <div className="text-xs text-muted-foreground">
-              {getDuration(session)}
-              <span className="mx-1 text-muted-foreground/40">·</span>
-              <span title="Session cost (when reported by the provider)">
-                {formatCostUsd(session.totalCostUsd) ?? "—"}
-              </span>
-            </div>
-            {session.status === "running" &&
-              session.lastNonEmptyText && (
-                <div className="text-xs text-muted-foreground max-w-56 truncate">
-                  {session.lastNonEmptyText}
-                </div>
-              )}
-            <div className="text-xs text-muted-foreground">
-              {new Date(session.createdAt).toLocaleDateString()}{" "}
-              {new Date(session.createdAt).toLocaleTimeString()}
-            </div>
-          </div>
+    <Link
+      href={`/projects/${projectId}/sessions/${session.id}`}
+      data-testid={`session-row-${session.id}`}
+      className={cn(
+        "grid items-center gap-[14px] border-b border-border-soft px-[22px] py-[14px] transition-colors hover:bg-card",
+        TABLE_GRID
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-[10px]">
+        {isRunning ? (
+          <span className="breathing-dot h-[7px] w-[7px] shrink-0" />
+        ) : (
+          <Icon className={cn("h-[14px] w-[14px] shrink-0", config.color)} />
+        )}
+        <div className="flex min-w-0 flex-col">
+          <span className="truncate text-[13.5px] font-medium">
+            {providerLabel} · {typeLabel}
+          </span>
+          <span className="truncate font-mono text-[11px] text-meta">
+            {target}
+          </span>
         </div>
-      </Card>
+      </div>
+
+      <div className="flex min-w-0 flex-col gap-[3px]">
+        <span className={cn("truncate text-[13px]", config.color)}>
+          {config.label}
+        </span>
+        {session.error ? (
+          <span className="truncate font-mono text-[11px] text-destructive">
+            {session.error}
+          </span>
+        ) : (
+          <SessionOutcomeBadge outcome={session.outcome} />
+        )}
+      </div>
+
+      <span className="truncate font-mono text-[12px] text-muted-foreground">
+        {getDuration(session)}
+      </span>
+      <span
+        className="truncate font-mono text-[12px] text-muted-foreground"
+        title="Session cost (when reported by the provider)"
+      >
+        {formatCostUsd(session.totalCostUsd) ?? "—"}
+      </span>
+      <span className="justify-self-end text-[12.5px] text-muted-foreground">
+        Open
+      </span>
     </Link>
   );
 }
 
-function ChatSessionCard({
+function ChatSessionRow({
   session,
   projectId,
 }: {
@@ -277,53 +542,56 @@ function ChatSessionCard({
 }) {
   const isGenerating = session.status === "generating";
   const TypeIcon = session.type === "epic" ? Sparkles : MessageSquare;
+  const providerLabel =
+    session.namedAgentName ||
+    (session.provider
+      ? (PROVIDER_LABELS[session.provider as keyof typeof PROVIDER_LABELS] ??
+        session.provider)
+      : "Chat");
 
   return (
-    <Link href={`/projects/${projectId}/sessions/chat/${session.id}`}>
-      <Card className="p-4 hover:bg-accent/50 transition-colors cursor-pointer">
-        <div className="flex items-center gap-3">
-          {isGenerating ? (
-            <Loader2 className="h-4 w-4 shrink-0 text-yellow-500 animate-spin" />
-          ) : (
-            <TypeIcon className="h-4 w-4 shrink-0 text-blue-400" />
-          )}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-sm font-medium">
-                {session.label}
-              </span>
-              <Badge className="text-[10px] bg-blue-500/20 text-blue-400 border-blue-400/30">
-                Chat
-              </Badge>
-              {session.namedAgentName ? (
-                <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-400/30">
-                  {session.namedAgentName}
-                </Badge>
-              ) : session.provider && session.provider !== "claude-code" ? (
-                <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-                  {PROVIDER_LABELS[session.provider as keyof typeof PROVIDER_LABELS] ?? session.provider}
-                </Badge>
-              ) : null}
-              {session.messageCount > 0 && (
-                <span className="text-[10px] text-muted-foreground">
-                  {session.messageCount} message{session.messageCount !== 1 ? "s" : ""}
-                </span>
-              )}
-            </div>
-            {session.lastMessagePreview && (
-              <p className="text-xs text-muted-foreground mt-1 truncate">
-                {session.lastMessagePreview}
-              </p>
-            )}
-          </div>
-          <div className="text-right shrink-0">
-            <div className="text-xs text-muted-foreground">
-              {new Date(session.createdAt).toLocaleDateString()}{" "}
-              {new Date(session.createdAt).toLocaleTimeString()}
-            </div>
-          </div>
+    <Link
+      href={`/projects/${projectId}/sessions/chat/${session.id}`}
+      data-testid={`session-row-${session.id}`}
+      className={cn(
+        "grid items-center gap-[14px] border-b border-border-soft px-[22px] py-[14px] transition-colors hover:bg-card",
+        TABLE_GRID
+      )}
+    >
+      <div className="flex min-w-0 items-center gap-[10px]">
+        {isGenerating ? (
+          <span className="breathing-dot h-[7px] w-[7px] shrink-0" />
+        ) : (
+          <TypeIcon className="h-[14px] w-[14px] shrink-0 text-meta" />
+        )}
+        <div className="flex min-w-0 flex-col">
+          <span className="truncate text-[13.5px] font-medium">
+            {providerLabel} · chat
+          </span>
+          <span className="truncate font-mono text-[11px] text-meta">
+            {session.label}
+            {session.messageCount > 0
+              ? ` · ${session.messageCount} message${
+                  session.messageCount === 1 ? "" : "s"
+                }`
+              : ""}
+          </span>
         </div>
-      </Card>
+      </div>
+
+      <span
+        className={cn(
+          "truncate text-[13px]",
+          isGenerating ? "text-agent" : "text-muted-foreground"
+        )}
+      >
+        {isGenerating ? "Generating" : "Chat"}
+      </span>
+      <span className="font-mono text-[12px] text-muted-foreground">—</span>
+      <span className="font-mono text-[12px] text-muted-foreground">—</span>
+      <span className="justify-self-end text-[12.5px] text-muted-foreground">
+        Open
+      </span>
     </Link>
   );
 }

@@ -16,6 +16,7 @@ import {
   ArrowRight,
   ChevronRight,
   ChevronDown,
+  Workflow,
 } from "lucide-react";
 import type { TicketComment } from "@/hooks/useTicketComments";
 import {
@@ -24,6 +25,11 @@ import {
 } from "@/hooks/useEpicActivity";
 import { formatTime, timeAgo } from "@/lib/utils/format-date";
 import { COLUMN_LABELS } from "@/lib/types/kanban";
+import {
+  isPipelineActivityReason,
+  pipelineReasonTone,
+  type PipelineReasonTone,
+} from "@/lib/pipeline/constants";
 
 /* ------------------------------------------------------------------ */
 /* Feed construction (pure, exported for tests)                        */
@@ -35,6 +41,7 @@ export const SYSTEM_GROUP_WINDOW_MS = 60_000;
 export type FeedItem =
   | { kind: "comment"; ts: string; comment: TicketComment }
   | { kind: "transition"; ts: string; entry: EpicActivityEntry }
+  | { kind: "pipeline"; ts: string; entry: EpicActivityEntry }
   | { kind: "transition-group"; ts: string; entries: EpicActivityEntry[] };
 
 /**
@@ -42,6 +49,12 @@ export type FeedItem =
  * feed. Runs of 2+ consecutive `system` transitions whose successive
  * timestamps are within `SYSTEM_GROUP_WINDOW_MS` collapse into a single
  * `transition-group` item (timestamped at the run's newest entry).
+ *
+ * Autonomous-pipeline trace entries are `system` transitions too, but they
+ * are the narration of a running pipeline — collapsing them behind an
+ * "N automatic transitions" toggle would hide exactly the information the
+ * user opened the feed for. They are split out as their own `pipeline`
+ * items, which also breaks any surrounding grouping run.
  */
 export function buildActivityFeed(
   comments: TicketComment[],
@@ -54,7 +67,9 @@ export function buildActivityFeed(
       comment,
     })),
     ...entries.map((entry) => ({
-      kind: "transition" as const,
+      kind: isPipelineActivityReason(entry.reason)
+        ? ("pipeline" as const)
+        : ("transition" as const),
       ts: entry.createdAt ?? "",
       entry,
     })),
@@ -107,15 +122,15 @@ const ACTOR_STYLES: Record<
   { label: string; Icon: typeof User; className: string }
 > = {
   user: { label: "You", Icon: User, className: "text-foreground" },
-  agent: { label: "Agent", Icon: Bot, className: "text-blue-500" },
-  system: { label: "System", Icon: Cog, className: "text-amber-500" },
+  agent: { label: "Agent", Icon: Bot, className: "text-agent" },
+  system: { label: "System", Icon: Cog, className: "text-priority-yellow" },
 };
 
 function StatusChip({ status }: { status: string }) {
   const label =
     (COLUMN_LABELS as Record<string, string>)[status] ?? status;
   return (
-    <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium">
+    <span className="rounded-[6px] bg-band px-1.5 py-0.5 text-[11px] font-medium">
       {label}
     </span>
   );
@@ -134,7 +149,7 @@ function TransitionRow({
     <div
       data-testid="activity-transition"
       data-actor={entry.actor}
-      className="flex flex-wrap items-center gap-1.5 px-1 py-0.5 text-xs"
+      className="flex flex-wrap items-center gap-1.5 px-1 py-0.5 text-[12px]"
     >
       <Icon className={`h-3.5 w-3.5 shrink-0 ${actor.className}`} />
       <span className={`font-medium ${actor.className}`}>{actor.label}</span>
@@ -161,6 +176,51 @@ function TransitionRow({
   );
 }
 
+const PIPELINE_TONE_STYLES: Record<PipelineReasonTone, string> = {
+  progress: "text-primary",
+  success: "text-agent",
+  paused: "text-priority-yellow",
+  failure: "text-destructive",
+};
+
+/**
+ * One line of the autonomous pipeline's narration. Renders the reason text
+ * itself (the trace strings are the contract) instead of the from→to status
+ * pair, which is always a no-op transition for these entries.
+ */
+function PipelineRow({
+  entry,
+  projectId,
+}: {
+  entry: EpicActivityEntry;
+  projectId: string;
+}) {
+  const reason = entry.reason ?? "Pipeline event";
+  const tone = pipelineReasonTone(reason);
+  return (
+    <div
+      data-testid="activity-pipeline"
+      data-tone={tone}
+      className="flex flex-wrap items-center gap-1.5 border-l-2 border-agent-border px-1 py-0.5 pl-2 text-[12px]"
+    >
+      <Workflow className={`h-3.5 w-3.5 shrink-0 ${PIPELINE_TONE_STYLES[tone]}`} />
+      <span className={`font-medium ${PIPELINE_TONE_STYLES[tone]}`}>
+        {reason}
+      </span>
+      <span className="text-muted-foreground">{timeAgo(entry.createdAt)}</span>
+      {entry.sessionId && (
+        <Link
+          data-testid="activity-session-link"
+          href={`/projects/${projectId}/sessions/${entry.sessionId}`}
+          className="text-primary underline-offset-2 hover:underline"
+        >
+          View session
+        </Link>
+      )}
+    </div>
+  );
+}
+
 function TransitionGroupRow({
   entries,
   ts,
@@ -177,14 +237,14 @@ function TransitionGroupRow({
         type="button"
         data-testid="activity-transition-group"
         onClick={() => setExpanded((v) => !v)}
-        className="flex items-center gap-1.5 px-1 py-0.5 text-xs text-muted-foreground hover:text-foreground"
+        className="flex items-center gap-1.5 px-1 py-0.5 text-[12px] text-muted-foreground hover:text-foreground"
       >
         {expanded ? (
           <ChevronDown className="h-3 w-3" />
         ) : (
           <ChevronRight className="h-3 w-3" />
         )}
-        <Cog className="h-3.5 w-3.5 text-amber-500" />
+        <Cog className="h-3.5 w-3.5 text-priority-yellow" />
         <span>{entries.length} automatic transitions</span>
         <span>{timeAgo(ts)}</span>
       </button>
@@ -203,15 +263,15 @@ function CommentRow({ comment }: { comment: TicketComment }) {
   return (
     <div
       data-testid="activity-comment"
-      className={`rounded-lg p-3 ${
+      className={`rounded-[11px] p-3 ${
         comment.author === "agent"
-          ? "bg-muted/50 border border-border"
-          : "bg-primary/5 border border-primary/10"
+          ? "border border-agent-border bg-agent-bg"
+          : "border border-border-soft bg-band"
       }`}
     >
       <div className="flex items-center gap-2 mb-2">
         {comment.author === "agent" ? (
-          <Bot className="h-3.5 w-3.5 text-blue-500" />
+          <Bot className="h-3.5 w-3.5 text-agent" />
         ) : (
           <User className="h-3.5 w-3.5 text-muted-foreground" />
         )}
@@ -305,27 +365,33 @@ export function EpicActivityFeed({
   return (
     <div className="flex flex-col h-full">
       {/* Header */}
-      <div className="px-4 py-2 border-b border-border">
-        <h3 className="text-sm font-medium">
+      <div className="border-b border-border-soft px-[24px] py-[12px]">
+        <h3 className="text-[12px] uppercase tracking-[.08em] text-meta">
           Activity ({comments.length + entries.length})
         </h3>
       </div>
 
       {/* Feed */}
       <ScrollArea className="flex-1">
-        <div ref={scrollRef} className="p-4 space-y-3">
+        <div ref={scrollRef} className="space-y-3 px-[24px] py-[18px]">
           {loading && feed.length === 0 ? (
             <div className="flex items-center justify-center py-8">
               <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
             </div>
           ) : feed.length === 0 ? (
-            <p className="text-center text-sm text-muted-foreground py-8">
+            <p className="py-8 text-center text-[13px] text-muted-foreground">
               No activity yet. Start the conversation.
             </p>
           ) : (
             feed.map((item) =>
               item.kind === "comment" ? (
                 <CommentRow key={item.comment.id} comment={item.comment} />
+              ) : item.kind === "pipeline" ? (
+                <PipelineRow
+                  key={item.entry.id}
+                  entry={item.entry}
+                  projectId={projectId}
+                />
               ) : item.kind === "transition" ? (
                 <TransitionRow
                   key={item.entry.id}
@@ -346,8 +412,8 @@ export function EpicActivityFeed({
       </ScrollArea>
 
       {/* Input */}
-      <div className="p-4 border-t border-border">
-        {error && <p className="text-xs text-destructive mb-2">{error}</p>}
+      <div className="border-t border-border-soft px-[18px] py-[14px]">
+        {error && <p className="mb-2 text-[12px] text-destructive">{error}</p>}
         <div className="flex gap-2">
           <MentionTextarea
             projectId={projectId}

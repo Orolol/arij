@@ -1,10 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { SessionPicker } from "@/components/shared/SessionPicker";
@@ -15,23 +13,13 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import {
-  Plus,
-  Tag,
-  Loader2,
-  ExternalLink,
-  Upload,
-  FileEdit,
-  Bug,
-  Sparkles,
-  GitBranch,
-  Calendar,
-} from "lucide-react";
+import { ExternalLink, Loader2, Plus, Tag, Upload } from "lucide-react";
 import { MarkdownContent } from "@/components/chat/MarkdownContent";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import { useReleasePublish } from "@/hooks/useReleasePublish";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
 import { useNamedAgentsList } from "@/hooks/useNamedAgentsList";
+import { cn } from "@/lib/utils";
 
 interface Epic {
   id: string;
@@ -58,274 +46,47 @@ interface Release {
   createdAt: string;
 }
 
-function ReleaseDetailDialog({
-  release,
-  projectId,
-  open,
-  onOpenChange,
-}: {
-  release: Release;
-  projectId: string;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const [epics, setEpics] = useState<Epic[]>([]);
-  const [loadingEpics, setLoadingEpics] = useState(false);
-
-  useEffect(() => {
-    if (!open) return;
-    let epicIds: string[] = [];
-    try {
-      epicIds = release.epicIds ? JSON.parse(release.epicIds) : [];
-    } catch {
-      // Ignore malformed JSON
-    }
-    if (epicIds.length === 0) {
-      setEpics([]);
-      return;
-    }
-    setLoadingEpics(true);
-    fetch(`/api/projects/${projectId}/epics`)
-      .then((r) => r.json())
-      .then((data) => {
-        const all: Epic[] = data.data || [];
-        const idSet = new Set(epicIds);
-        setEpics(all.filter((e) => idSet.has(e.id)));
-      })
-      .catch(() => setEpics([]))
-      .finally(() => setLoadingEpics(false));
-  }, [open, release.epicIds, projectId]);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[85vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            v{release.version}
-            {release.title && (
-              <span className="text-muted-foreground font-normal">
-                — {release.title}
-              </span>
-            )}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="space-y-4 mt-2">
-          <div className="flex items-center gap-3 flex-wrap text-sm text-muted-foreground">
-            {release.gitTag && (
-              <span className="flex items-center gap-1">
-                <Tag className="h-3.5 w-3.5" />
-                {release.gitTag}
-              </span>
-            )}
-            {release.releaseBranch && (
-              <span className="flex items-center gap-1">
-                <GitBranch className="h-3.5 w-3.5" />
-                <span className="font-mono text-xs">{release.releaseBranch}</span>
-              </span>
-            )}
-            <span className="flex items-center gap-1">
-              <Calendar className="h-3.5 w-3.5" />
-              {new Date(release.createdAt).toLocaleDateString(undefined, {
-                year: "numeric",
-                month: "long",
-                day: "numeric",
-              })}
-            </span>
-          </div>
-
-          <div>
-            <h4 className="text-sm font-medium mb-2">
-              Included Tickets ({loadingEpics ? "..." : epics.length})
-            </h4>
-            {loadingEpics ? (
-              <div className="flex items-center gap-2 text-sm text-muted-foreground py-2">
-                <Loader2 className="h-3 w-3 animate-spin" />
-                Loading tickets...
-              </div>
-            ) : epics.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No tickets in this release</p>
-            ) : (
-              <div className="space-y-1">
-                {epics.map((epic) => (
-                  <div
-                    key={epic.id}
-                    className="flex items-center gap-2 p-2 rounded bg-muted/30 text-sm"
-                  >
-                    {epic.type === "bug" ? (
-                      <Bug className="h-3.5 w-3.5 text-red-400 shrink-0" />
-                    ) : (
-                      <Sparkles className="h-3.5 w-3.5 text-blue-400 shrink-0" />
-                    )}
-                    {epic.readableId && (
-                      <span className="text-xs text-muted-foreground font-mono shrink-0">
-                        {epic.readableId}
-                      </span>
-                    )}
-                    <span className="flex-1 truncate">{epic.title}</span>
-                    {epic.usCount != null && epic.usCount > 0 && (
-                      <span className="text-xs text-muted-foreground shrink-0">
-                        {epic.usDone ?? 0}/{epic.usCount} US
-                      </span>
-                    )}
-                    <Badge variant="outline" className="text-xs shrink-0">
-                      {epic.status}
-                    </Badge>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {release.changelog && (
-            <div>
-              <h4 className="text-sm font-medium mb-2">Changelog</h4>
-              <div className="text-sm text-muted-foreground bg-muted/20 rounded-lg p-4">
-                <MarkdownContent content={release.changelog} />
-              </div>
-            </div>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function ReleaseCard({
-  release,
-  projectId,
-  githubConfigured,
-  onPublished,
-}: {
-  release: Release;
-  projectId: string;
-  githubConfigured: boolean;
-  onPublished: () => void;
-}) {
-  const { publish, isPublishing, error } = useReleasePublish(projectId);
-  const [detailOpen, setDetailOpen] = useState(false);
-
-  const isDraft = release.githubReleaseId !== null && !release.pushedAt;
-  const isPublished = release.githubReleaseId !== null && release.pushedAt !== null;
-
-  async function handlePublish(e: React.MouseEvent) {
-    e.stopPropagation();
-    const success = await publish(release.id);
-    if (success) {
-      onPublished();
-    }
-  }
-
-  return (
-    <>
-      <Card
-        className="p-5 cursor-pointer hover:bg-accent/30 transition-colors"
-        onClick={() => setDetailOpen(true)}
-      >
-        <div className="flex items-start justify-between mb-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="text-lg font-bold">v{release.version}</h3>
-              {release.title && (
-                <span className="text-muted-foreground">
-                  — {release.title}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              {release.gitTag && (
-                <Badge variant="outline" className="text-xs">
-                  <Tag className="h-3 w-3 mr-1" />
-                  {release.gitTag}
-                </Badge>
-              )}
-              {release.releaseBranch && (
-                <Badge variant="outline" className="text-xs font-mono">
-                  {release.releaseBranch}
-                </Badge>
-              )}
-              {isDraft && (
-                <Badge variant="secondary" className="text-xs">
-                  <FileEdit className="h-3 w-3 mr-1" />
-                  Draft
-                </Badge>
-              )}
-              {isPublished && (
-                <Badge className="text-xs bg-green-600 text-white hover:bg-green-700">
-                  Published
-                </Badge>
-              )}
-              <span className="text-xs text-muted-foreground">
-                {new Date(release.createdAt).toLocaleDateString()}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
-            {isDraft && githubConfigured && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={handlePublish}
-                disabled={isPublishing}
-              >
-                {isPublishing ? (
-                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                ) : (
-                  <Upload className="h-3 w-3 mr-1" />
-                )}
-                Publish
-              </Button>
-            )}
-            {release.githubReleaseUrl && (
-              <a
-                href={release.githubReleaseUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                <Button size="sm" variant="ghost">
-                  <ExternalLink className="h-3 w-3 mr-1" />
-                  View on GitHub
-                </Button>
-              </a>
-            )}
-          </div>
-        </div>
-
-        {error && (
-          <p className="text-sm text-destructive mb-2">{error}</p>
-        )}
-
-        {release.changelog && (
-          <div className="prose prose-sm prose-invert max-w-none whitespace-pre-wrap text-sm text-muted-foreground line-clamp-3">
-            {release.changelog}
-          </div>
-        )}
-      </Card>
-      <ReleaseDetailDialog
-        release={release}
-        projectId={projectId}
-        open={detailOpen}
-        onOpenChange={setDetailOpen}
-      />
-    </>
-  );
-}
-
 interface Toast {
   id: string;
   type: "success" | "error";
   message: string;
 }
 
+type ReleaseState = "published" | "draft" | "local";
+
+function releaseState(release: Release): ReleaseState {
+  if (release.githubReleaseId !== null && release.pushedAt !== null) {
+    return "published";
+  }
+  if (release.githubReleaseId !== null) return "draft";
+  return "local";
+}
+
+const STATE_TONE: Record<ReleaseState, string> = {
+  published: "text-agent",
+  draft: "text-primary",
+  local: "text-meta",
+};
+
+function parseEpicIds(release: Release | null): string[] {
+  if (!release?.epicIds) return [];
+  try {
+    const parsed = JSON.parse(release.epicIds);
+    return Array.isArray(parsed) ? (parsed as string[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 export default function ReleasesPage() {
   const params = useParams();
   const projectId = params.projectId as string;
   const [releases, setReleases] = useState<Release[]>([]);
-  const [doneEpics, setDoneEpics] = useState<Epic[]>([]);
+  const [allEpics, setAllEpics] = useState<Epic[]>([]);
   const [loading, setLoading] = useState(true);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [selectedReleaseId, setSelectedReleaseId] = useState<string | null>(null);
 
   const showToast = useCallback((type: "success" | "error", message: string) => {
     const id = crypto.randomUUID();
@@ -338,6 +99,8 @@ export default function ReleasesPage() {
   // GitHub config
   const { isConfigured: hasGitHub, loading: ghLoading } =
     useGitHubConfig(projectId);
+  const { publish, isPublishing, error: publishError } =
+    useReleasePublish(projectId);
 
   // Create release form
   const [version, setVersion] = useState("");
@@ -367,18 +130,31 @@ export default function ReleasesPage() {
     const epicsData = await epicsRes.json();
 
     setReleases(releasesData.data || []);
-    setDoneEpics(
-      (epicsData.data || []).filter(
-        (e: Epic & { releaseId?: string | null }) =>
-          e.status === "done" && !e.releaseId
-      )
-    );
+    setAllEpics((epicsData.data || []) as Epic[]);
     setLoading(false);
   }, [projectId]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  const doneEpics = useMemo(
+    () => allEpics.filter((e) => e.status === "done" && !e.releaseId),
+    [allEpics]
+  );
+
+  // Derived, not stored: the newest release is shown until one is picked, and
+  // a release that disappears on reload falls back to the newest one.
+  const selectedRelease =
+    releases.find((release) => release.id === selectedReleaseId) ||
+    releases[0] ||
+    null;
+
+  const releaseEpics = useMemo(() => {
+    const ids = new Set(parseEpicIds(selectedRelease));
+    if (ids.size === 0) return [];
+    return allEpics.filter((epic) => ids.has(epic.id));
+  }, [selectedRelease, allEpics]);
 
   async function handleCreateRelease() {
     if (!version.trim() || selectedEpicIds.size === 0) return;
@@ -425,6 +201,11 @@ export default function ReleasesPage() {
     setCreating(false);
   }
 
+  async function handlePublish(release: Release) {
+    const success = await publish(release.id);
+    if (success) loadData();
+  }
+
   function toggleEpic(epicId: string) {
     setSelectedEpicIds((prev) => {
       const next = new Set(prev);
@@ -434,146 +215,296 @@ export default function ReleasesPage() {
     });
   }
 
-  if (loading) {
-    return (
-      <div className="p-6 text-muted-foreground">Loading releases...</div>
-    );
-  }
-
   return (
-    <div className="p-6 max-w-3xl">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="text-xl font-bold">Releases</h2>
-        <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-          <DialogTrigger asChild>
-            <Button size="sm">
-              <Plus className="h-4 w-4 mr-1" />
-              New Release
-            </Button>
-          </DialogTrigger>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Create Release</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4 mt-4">
-              <div>
-                <label className="text-sm font-medium block mb-1">
-                  Version *
-                </label>
-                <Input
-                  value={version}
-                  onChange={(e) => setVersion(e.target.value)}
-                  placeholder="1.0.0"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium block mb-1">Title</label>
-                <Input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="Initial Release"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium block mb-1">
-                  Include Epics ({selectedEpicIds.size} selected)
-                </label>
-                {doneEpics.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">
-                    No completed epics available for release
-                  </p>
-                ) : (
-                  <div className="space-y-1 max-h-48 overflow-auto">
-                    {doneEpics.map((epic) => (
-                      <button
-                        key={epic.id}
-                        onClick={() => toggleEpic(epic.id)}
-                        className={`w-full text-left p-2 rounded text-sm transition-colors ${
-                          selectedEpicIds.has(epic.id)
-                            ? "bg-primary/10 text-primary"
-                            : "hover:bg-accent/50"
-                        }`}
-                      >
-                        {epic.title}
-                      </button>
-                    ))}
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex flex-none items-start gap-[16px] px-[26px] pb-[18px] pt-[24px]">
+        <div className="flex flex-col gap-[5px]">
+          <h2 className="text-[19px] font-semibold">Releases</h2>
+          <p className="text-[13px] text-muted-foreground">
+            Group delivered tickets, generate the changelog, publish the GitHub
+            tag.
+          </p>
+        </div>
+        <div className="ml-auto flex items-center gap-[9px]">
+          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="h-[31px] rounded-[8px] px-[13px] text-[13px]">
+                <Plus className="h-[14px] w-[14px]" />
+                New Release
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="rounded-[14px] shadow-[0_18px_40px_rgba(58,48,44,.14)]">
+              <DialogHeader>
+                <DialogTitle>Create Release</DialogTitle>
+              </DialogHeader>
+              <div className="mt-4 space-y-4">
+                <div>
+                  <label className="mb-1 block text-[12.5px] text-muted-foreground">
+                    Version *
+                  </label>
+                  <Input
+                    value={version}
+                    onChange={(e) => setVersion(e.target.value)}
+                    placeholder="1.0.0"
+                    className="h-[34px] rounded-[8px] text-[13px]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[12.5px] text-muted-foreground">
+                    Title
+                  </label>
+                  <Input
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="Initial Release"
+                    className="h-[34px] rounded-[8px] text-[13px]"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1 block text-[12.5px] text-muted-foreground">
+                    Include Epics ({selectedEpicIds.size} selected)
+                  </label>
+                  {doneEpics.length === 0 ? (
+                    <p className="text-[13px] text-muted-foreground">
+                      No completed epics available for release
+                    </p>
+                  ) : (
+                    <div className="max-h-48 space-y-1 overflow-auto">
+                      {doneEpics.map((epic) => (
+                        <button
+                          key={epic.id}
+                          onClick={() => toggleEpic(epic.id)}
+                          className={cn(
+                            "w-full rounded-[8px] p-2 text-left text-[13px] transition-colors",
+                            selectedEpicIds.has(epic.id)
+                              ? "bg-primary/10 text-primary"
+                              : "hover:bg-band"
+                          )}
+                        >
+                          {epic.title}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-[12.5px] text-muted-foreground">
+                    Changelog Agent
+                  </label>
+                  <NamedAgentSelect
+                    value={namedAgentId}
+                    onChange={(id) => {
+                      setNamedAgentId(id);
+                      setResumeSessionId(undefined);
+                    }}
+                    className="h-[34px] w-full rounded-[8px] text-[13px]"
+                  />
+                </div>
+
+                {!ghLoading && hasGitHub && (
+                  <div className="flex items-center space-x-2">
+                    <Checkbox
+                      id="push-to-github"
+                      checked={pushToGitHub}
+                      onCheckedChange={(checked) =>
+                        setPushToGitHub(checked === true)
+                      }
+                    />
+                    <label
+                      htmlFor="push-to-github"
+                      className="cursor-pointer text-[13px] font-medium leading-none"
+                    >
+                      Push to GitHub as draft
+                    </label>
                   </div>
+                )}
+
+                <SessionPicker
+                  projectId={projectId}
+                  agentType="release_notes"
+                  namedAgentId={namedAgentId}
+                  provider={selectedAgentProvider}
+                  selectedSessionId={resumeSessionId}
+                  onSelect={setResumeSessionId}
+                />
+
+                <Button
+                  onClick={handleCreateRelease}
+                  disabled={
+                    creating || !version.trim() || selectedEpicIds.size === 0
+                  }
+                  className="h-[31px] w-full rounded-[8px] text-[13px]"
+                >
+                  {creating ? (
+                    <Loader2 className="h-[14px] w-[14px] animate-spin" />
+                  ) : (
+                    <Tag className="h-[14px] w-[14px]" />
+                  )}
+                  Create Release
+                </Button>
+              </div>
+            </DialogContent>
+          </Dialog>
+        </div>
+      </div>
+
+      {loading ? (
+        <p className="px-[26px] text-[13px] text-muted-foreground">
+          Loading releases...
+        </p>
+      ) : releases.length === 0 ? (
+        <p className="px-[26px] text-[13px] text-muted-foreground">
+          No releases yet
+        </p>
+      ) : (
+        <div className="flex min-h-0 flex-1 gap-[22px] px-[26px] pb-[26px]">
+          <div className="flex w-[320px] flex-none flex-col gap-[10px] overflow-y-auto">
+            <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+              Releases
+            </span>
+            {releases.map((release) => {
+              const state = releaseState(release);
+              const ticketCount = parseEpicIds(release).length;
+              return (
+                <button
+                  key={release.id}
+                  type="button"
+                  onClick={() => setSelectedReleaseId(release.id)}
+                  className={cn(
+                    "flex flex-col gap-[8px] rounded-[11px] border px-[16px] py-[14px] text-left transition-colors",
+                    selectedRelease?.id === release.id
+                      ? "border-primary bg-card"
+                      : "border-border hover:bg-band"
+                  )}
+                >
+                  <div className="flex items-center gap-[9px]">
+                    <Tag className="h-[14px] w-[14px] flex-none text-meta" />
+                    <span className="font-mono text-[13px] font-medium">
+                      {release.version}
+                    </span>
+                    <span
+                      className={cn("ml-auto text-[12px]", STATE_TONE[state])}
+                    >
+                      {state}
+                    </span>
+                  </div>
+                  {release.title && (
+                    <span className="text-[13.5px] leading-[1.35]">
+                      {release.title}
+                    </span>
+                  )}
+                  <span className="font-mono text-[11px] text-meta">
+                    {new Date(release.createdAt).toLocaleDateString()} ·{" "}
+                    {ticketCount} ticket{ticketCount === 1 ? "" : "s"}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {selectedRelease && (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[18px] rounded-[12px] border border-border bg-card px-[26px] py-[24px]">
+              <div className="flex flex-wrap items-baseline gap-[12px]">
+                <span className="font-mono text-[20px] font-semibold">
+                  {selectedRelease.version}
+                </span>
+                {selectedRelease.title && (
+                  <span className="text-[16px]">{selectedRelease.title}</span>
+                )}
+                <span
+                  className={cn(
+                    "ml-auto rounded-full bg-band px-[10px] py-[4px] text-[12px]",
+                    STATE_TONE[releaseState(selectedRelease)]
+                  )}
+                >
+                  {releaseState(selectedRelease)}
+                </span>
+              </div>
+
+              <div className="flex min-h-0 flex-1 flex-col gap-[12px] overflow-y-auto">
+                <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+                  Changelog
+                </span>
+                {selectedRelease.changelog ? (
+                  <div className="text-[14px] leading-[1.75]">
+                    <MarkdownContent content={selectedRelease.changelog} />
+                  </div>
+                ) : (
+                  <p className="text-[13px] text-muted-foreground">
+                    No changelog generated for this release.
+                  </p>
                 )}
               </div>
 
-              <div>
-                <label className="text-sm font-medium block mb-1">
-                  Changelog Agent
-                </label>
-                <NamedAgentSelect
-                  value={namedAgentId}
-                  onChange={(id) => {
-                    setNamedAgentId(id);
-                    setResumeSessionId(undefined);
-                  }}
-                  className="w-full h-9 text-sm"
-                />
-              </div>
-
-              {!ghLoading && hasGitHub && (
-                <div className="flex items-center space-x-2">
-                  <Checkbox
-                    id="push-to-github"
-                    checked={pushToGitHub}
-                    onCheckedChange={(checked) =>
-                      setPushToGitHub(checked === true)
-                    }
-                  />
-                  <label
-                    htmlFor="push-to-github"
-                    className="text-sm font-medium leading-none cursor-pointer"
-                  >
-                    Push to GitHub as draft
-                  </label>
+              {releaseEpics.length > 0 && (
+                <div className="flex flex-wrap gap-[8px]">
+                  {releaseEpics.map((epic) => (
+                    <span
+                      key={epic.id}
+                      title={epic.title}
+                      className="rounded-full border border-border px-[9px] py-[3px] font-mono text-[11.5px] text-muted-foreground"
+                    >
+                      {epic.readableId || epic.id.slice(0, 8)}
+                    </span>
+                  ))}
                 </div>
               )}
 
-              <SessionPicker
-                projectId={projectId}
-                agentType="release_notes"
-                namedAgentId={namedAgentId}
-                provider={selectedAgentProvider}
-                selectedSessionId={resumeSessionId}
-                onSelect={setResumeSessionId}
-              />
+              {publishError && (
+                <p className="text-[12.5px] text-destructive">{publishError}</p>
+              )}
 
-              <Button
-                onClick={handleCreateRelease}
-                disabled={
-                  creating || !version.trim() || selectedEpicIds.size === 0
-                }
-                className="w-full"
-              >
-                {creating ? (
-                  <Loader2 className="h-4 w-4 animate-spin mr-1" />
-                ) : (
-                  <Tag className="h-4 w-4 mr-1" />
+              <div className="flex flex-wrap items-center gap-[10px]">
+                {selectedRelease.gitTag && (
+                  <span className="text-[12.5px] text-muted-foreground">
+                    Tag{" "}
+                    <span className="font-mono">{selectedRelease.gitTag}</span>
+                    {selectedRelease.releaseBranch ? (
+                      <>
+                        {" "}
+                        on{" "}
+                        <span className="font-mono">
+                          {selectedRelease.releaseBranch}
+                        </span>
+                      </>
+                    ) : null}
+                  </span>
                 )}
-                Create Release
-              </Button>
+                <span className="ml-auto flex items-center gap-[10px]">
+                  {selectedRelease.githubReleaseUrl && (
+                    <a
+                      href={selectedRelease.githubReleaseUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <Button
+                        variant="outline"
+                        className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
+                      >
+                        <ExternalLink className="h-[14px] w-[14px]" />
+                        View on GitHub
+                      </Button>
+                    </a>
+                  )}
+                  {releaseState(selectedRelease) === "draft" && hasGitHub && (
+                    <Button
+                      className="h-[31px] rounded-[8px] px-[13px] text-[13px]"
+                      onClick={() => handlePublish(selectedRelease)}
+                      disabled={isPublishing}
+                    >
+                      {isPublishing ? (
+                        <Loader2 className="h-[14px] w-[14px] animate-spin" />
+                      ) : (
+                        <Upload className="h-[14px] w-[14px]" />
+                      )}
+                      Publish
+                    </Button>
+                  )}
+                </span>
+              </div>
             </div>
-          </DialogContent>
-        </Dialog>
-      </div>
-
-      {releases.length === 0 ? (
-        <p className="text-muted-foreground text-sm">No releases yet</p>
-      ) : (
-        <div className="space-y-4">
-          {releases.map((release) => (
-            <ReleaseCard
-              key={release.id}
-              release={release}
-              projectId={projectId}
-              githubConfigured={hasGitHub}
-              onPublished={loadData}
-            />
-          ))}
+          )}
         </div>
       )}
 
@@ -582,11 +513,12 @@ export default function ReleasesPage() {
           {toasts.map((toast) => (
             <div
               key={toast.id}
-              className={`px-4 py-2 rounded-lg shadow-lg text-sm font-medium transition-all animate-in fade-in slide-in-from-bottom-2 ${
+              className={cn(
+                "animate-in fade-in slide-in-from-bottom-2 rounded-[10px] px-4 py-2 text-[13px] font-medium shadow-[0_8px_20px_rgba(58,48,44,.16)] transition-all",
                 toast.type === "success"
-                  ? "bg-green-600 text-white"
-                  : "bg-destructive text-destructive-foreground"
-              }`}
+                  ? "bg-agent text-background"
+                  : "bg-destructive text-background"
+              )}
             >
               {toast.message}
             </div>

@@ -48,83 +48,143 @@
   --color-priority-blue: var(--priority-blue);
   --color-priority-yellow: var(--priority-yellow);
   --color-priority-red: var(--priority-red);
+  /* cassette pêche additions */
+  --color-band: var(--band);
+  --color-meta: var(--meta);
+  --color-border-soft: var(--border-soft);
+  --color-agent: var(--agent);
+  --color-agent-bg: var(--agent-bg);
+  --color-agent-border: var(--agent-border);
+  --color-agent-track: var(--agent-track);
 }
 
-/* Gruvbox Light */
+/* Cassette pêche — Light */
 :root {
-  --radius: 0.625rem;
-  --background: #fbf1c7;
-  --foreground: #3c3836;
-  --card: #ebdbb2;
-  --card-foreground: #3c3836;
-  --popover: #ebdbb2;
-  --popover-foreground: #3c3836;
-  --primary: #427b58;
-  --primary-foreground: #fbf1c7;
-  --secondary: #d5c4a1;
-  --secondary-foreground: #3c3836;
-  --muted: #ebdbb2;
-  --muted-foreground: #665c54;
-  --accent: #d5c4a1;
-  --accent-foreground: #3c3836;
-  --destructive: #9d0006;
-  --border: #bdae93;
-  --input: #bdae93;
-  --ring: #427b58;
-  --chart-1: #427b58;
-  --chart-2: #79740e;
-  --chart-3: #b57614;
-  --chart-4: #076678;
-  --chart-5: #af3a03;
-  --sidebar: #ebdbb2;
-  --sidebar-foreground: #3c3836;
-  --sidebar-primary: #427b58;
-  --sidebar-primary-foreground: #fbf1c7;
-  --sidebar-accent: #d5c4a1;
-  --sidebar-accent-foreground: #3c3836;
-  --sidebar-border: #bdae93;
-  --sidebar-ring: #427b58;
-  --priority-blue: #076678;
-  --priority-yellow: #b57614;
-  --priority-red: #9d0006;
+  --radius: 0.6875rem; /* 11px — card radius; use arbitrary values for 7/8/14px */
+  --background: #f7e9dc;
+  --foreground: #3a302c;
+  --card: #fffaf4;
+  --card-foreground: #3a302c;
+  --popover: #fffaf4;
+  --popover-foreground: #3a302c;
+  --primary: #ad4029;
+  --primary-foreground: #fff8f2;
+  --secondary: #f0dccb;
+  --secondary-foreground: #3a302c;
+  --muted: #f2e0d0;
+  --muted-foreground: #5f5348;
+  --accent: #f2e0d0;            /* shadcn hover surface, NOT the coral action color */
+  --accent-foreground: #3a302c;
+  --destructive: #a13a2a;
+  --border: #e3cdb8;
+  --input: #e3cdb8;
+  --ring: #ad4029;
+  --chart-1: #20685f;
+  --chart-2: #ad4029;
+  --chart-3: #8a6c46;
+  --chart-4: #56707c;
+  --chart-5: #6f6154;
+  --sidebar: #f0dccb;
+  --sidebar-foreground: #3a302c;
+  --sidebar-primary: #ad4029;
+  --sidebar-primary-foreground: #fff8f2;
+  --sidebar-accent: #e9d3bf;
+  --sidebar-accent-foreground: #3a302c;
+  --sidebar-border: #e3cdb8;
+  --sidebar-ring: #ad4029;
+  --priority-blue: #56707c;
+  --priority-yellow: #955f13;
+  --priority-red: var(--destructive);
+  /* new roles */
+  --band: #f2e0d0;
+  --meta: #6f6154;
+  --border-soft: #efdfd0;
+  --agent: #20685f;
+  --agent-bg: #e6f0ee;
+  --agent-border: #bfd9d5;
+  --agent-track: #dbe9e7;
 }
 
-/* Gruvbox Dark */
+/* Cassette pêche — Dark */
 .dark {
-  --background: #282828;
-  --foreground: #ebdbb2;
-  --card: #3c3836;
-  --card-foreground: #ebdbb2;
-  --popover: #3c3836;
-  --popover-foreground: #ebdbb2;
-  --primary: #8ec07c;
-  --primary-foreground: #282828;
-  --secondary: #504945;
-  --secondary-foreground: #ebdbb2;
-  --muted: #3c3836;
-  --muted-foreground: #a89984;
-  --accent: #504945;
-  --accent-foreground: #ebdbb2;
-  --destructive: #fb4934;
-  --border: #504945;
-  --input: #504945;
-  --ring: #8ec07c;
-  --chart-1: #8ec07c;
-  --chart-2: #b8bb26;
-  --chart-3: #fabd2f;
-  --chart-4: #83a598;
-  --chart-5: #fe8019;
-  --sidebar: #3c3836;
-  --sidebar-foreground: #ebdbb2;
-  --sidebar-primary: #8ec07c;
-  --sidebar-primary-foreground: #282828;
-  --sidebar-accent: #504945;
-  --sidebar-accent-foreground: #ebdbb2;
-  --sidebar-border: #504945;
-  --sidebar-ring: #8ec07c;
-  --priority-blue: #83a598;
-  --priority-yellow: #fabd2f;
-  --priority-red: #fb4934;
+  --background: #241d1a;
+  --foreground: #f2e4d6;
+  --card: #302623;
+  --card-foreground: #f2e4d6;
+  --popover: #302623;
+  --popover-foreground: #f2e4d6;
+  --primary: #e8825f;
+  --primary-foreground: #241d1a;
+  --secondary: #3a2e2a;
+  --secondary-foreground: #f2e4d6;
+  --muted: #2a221f;
+  --muted-foreground: #c0ad9d;
+  --accent: #3a2e2a;
+  --accent-foreground: #f2e4d6;
+  --destructive: #e88070;
+  --border: #453833;
+  --input: #453833;
+  --ring: #e8825f;
+  --chart-1: #7cc0b1;
+  --chart-2: #e8825f;
+  --chart-3: #d9a866;
+  --chart-4: #9db4c0;
+  --chart-5: #ab9787;
+  --sidebar: #2c2320;
+  --sidebar-foreground: #f2e4d6;
+  --sidebar-primary: #e8825f;
+  --sidebar-primary-foreground: #241d1a;
+  --sidebar-accent: #3a2e2a;
+  --sidebar-accent-foreground: #f2e4d6;
+  --sidebar-border: #453833;
+  --sidebar-ring: #e8825f;
+  --priority-blue: #9db4c0;
+  --priority-yellow: #d9a866;
+  --priority-red: var(--destructive);
+  --band: #2a221f;
+  --meta: #ab9787;
+  --border-soft: #3a2e2a;
+  --agent: #7cc0b1;
+  --agent-bg: #26332f;
+  --agent-border: #3f5450;
+  --agent-track: #2f3f3b;
+}
+
+/* Shared ambient-activity animations (single source; do NOT redefine elsewhere) */
+@keyframes breathe {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .45; transform: scale(.86); }
+}
+@keyframes crawl {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(280%); }
+}
+
+/* Breathing agent dot — size via w-* / h-* utilities at the call site
+   (7px on cards, 8px in the rail and the cockpit). */
+.breathing-dot {
+  border-radius: 9999px;
+  background: var(--agent);
+  animation: breathe 2.4s ease-in-out infinite;
+}
+/* Indeterminate 2px progress: <div class="progress-track"><div class="crawl-fill" /></div> */
+.progress-track {
+  position: relative;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: var(--agent-track);
+}
+.crawl-fill {
+  position: absolute;
+  top: 0; bottom: 0; left: 0;
+  width: 28%;
+  background: var(--agent);
+  animation: crawl 3.2s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .breathing-dot { animation: none; }
+  .crawl-fill { animation: none; width: 100%; }
 }
 
 @layer base {

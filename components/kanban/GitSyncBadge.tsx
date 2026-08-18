@@ -57,8 +57,8 @@ export function GitSyncBadge({
 
   if (loading) {
     return (
-      <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        <Loader2 className="h-3 w-3 animate-spin" />
+      <div className="flex items-center gap-1.5 text-[11.5px] text-meta">
+        <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
         <span>Checking sync...</span>
       </div>
     );
@@ -66,7 +66,7 @@ export function GitSyncBadge({
 
   if (error) {
     return (
-      <div className="flex items-center gap-1.5 text-xs text-destructive">
+      <div className="flex items-center gap-1.5 text-[11.5px] text-destructive">
         <AlertCircle className="h-3 w-3" />
         <span className="truncate max-w-[200px]">{error}</span>
         <Button
@@ -87,7 +87,10 @@ export function GitSyncBadge({
       {ahead > 0 && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Badge variant="outline" className="text-[10px] h-5 px-1.5 gap-0.5">
+            <Badge
+              variant="outline"
+              className="h-[22px] gap-0.5 rounded-full px-[8px] font-mono text-[11px] text-meta"
+            >
               <ArrowUp className="h-2.5 w-2.5" />
               {ahead}
             </Badge>
@@ -102,7 +105,10 @@ export function GitSyncBadge({
       {behind > 0 && (
         <Tooltip>
           <TooltipTrigger asChild>
-            <Badge variant="outline" className="text-[10px] h-5 px-1.5 gap-0.5">
+            <Badge
+              variant="outline"
+              className="h-[22px] gap-0.5 rounded-full px-[8px] font-mono text-[11px] text-meta"
+            >
               <ArrowDown className="h-2.5 w-2.5" />
               {behind}
             </Badge>
@@ -115,7 +121,7 @@ export function GitSyncBadge({
 
       {/* In-sync indicator */}
       {ahead === 0 && behind === 0 && (
-        <span className="text-[10px] text-muted-foreground">in sync</span>
+        <span className="font-mono text-[11px] text-meta">in sync</span>
       )}
 
       {/* Push button */}
@@ -129,7 +135,7 @@ export function GitSyncBadge({
             disabled={ahead === 0 || disabled || pushing}
           >
             {pushing ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
+              <Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
             ) : (
               <Upload className="h-3 w-3" />
             )}

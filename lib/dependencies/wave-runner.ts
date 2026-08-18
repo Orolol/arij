@@ -36,8 +36,11 @@ export type WaveFailurePolicy = "halt" | "stop";
 /** Why a ticket was blocked (and why its dependents were skipped). */
 export type WaveBlockKind = "failed" | "asked_question";
 
-/** Why a ticket was skipped: a blocked dependency, or the stop policy. */
-export type WaveSkipKind = WaveBlockKind | "stopped";
+/**
+ * Why a ticket was skipped: a blocked dependency, the stop policy, or a
+ * caller-requested mid-run abort (see shouldAbortRun).
+ */
+export type WaveSkipKind = WaveBlockKind | "stopped" | "aborted";
 
 /** Terminal per-ticket result for a launched session. */
 export interface WaveTicketResult {
@@ -53,11 +56,15 @@ export interface WaveTicketResult {
 export interface WaveSkippedTicket {
   epicId: string;
   kind: WaveSkipKind;
-  /** Blocking dependency (null for "stopped" skips). */
+  /** Blocking dependency (null for "stopped"/"aborted" skips). */
   blockedById: string | null;
   /** Session id of the blocking dependency, when it had one. */
   blockedBySessionId: string | null;
-  /** 1-based wave whose outcome caused this skip. */
+  /**
+   * 1-based wave whose outcome caused this skip ("aborted": the last
+   * executed wave, whose settlement tripped the abort — 0 when the run
+   * aborted before any wave launched).
+   */
   wave: number;
 }
 
@@ -97,6 +104,13 @@ export interface WaveExecutionSummary {
   wavesExecuted: number;
   /** Wave after which the run was abandoned ("stop" policy), else null. */
   stoppedAtWave: number | null;
+  /**
+   * Last executed wave when shouldAbortRun tripped, else null (also null
+   * when the option was absent). 0 when the abort fired before any launch.
+   */
+  abortedAtWave: number | null;
+  /** Reason returned by shouldAbortRun, verbatim; null when never aborted. */
+  abortReason: string | null;
 }
 
 export interface RunExecutionWavesOptions {
@@ -114,6 +128,18 @@ export interface RunExecutionWavesOptions {
    * as a failed session — dependents get skipped either way.
    */
   launch(epicId: string): Promise<WaveLaunchHandle | null>;
+  /**
+   * Mid-run abort hook (circuit breaker, cost cap): polled at the top of
+   * every wave iteration, BEFORE that wave launches anything. A non-null
+   * return aborts the run: every still-pending ticket is skipped with kind
+   * "aborted" and the returned reason verbatim, and the summary carries
+   * abortedAtWave/abortReason. In-flight waves are never interrupted — all
+   * launches of a wave are submitted before any settle, so the wave
+   * boundary is exactly "stop launching, let in-flight settle". Must not
+   * throw (same convention as the callbacks). Absent option = unchanged
+   * behavior.
+   */
+  shouldAbortRun?(): string | null;
   callbacks?: WaveRunnerCallbacks;
 }
 
@@ -197,19 +223,25 @@ export async function runExecutionWaves(
   const totalWaves = plan.layers.length;
   let wavesExecuted = 0;
   let stoppedAtWave: number | null = null;
+  /** Last wave that actually launched tickets (0 before the first launch). */
+  let lastExecutedWave = 0;
+  let abortedAtWave: number | null = null;
+  let abortReason: string | null = null;
 
   const markSkipped = (
     epicId: string,
-    skip: Omit<WaveSkippedTicket, "epicId">
+    skip: Omit<WaveSkippedTicket, "epicId">,
+    reasonOverride?: string
   ): void => {
     plan.ticketStatus.set(epicId, "skipped");
     plan.failureReasons.set(
       epicId,
-      skip.kind === "stopped"
-        ? `batch stopped after wave ${skip.wave}`
-        : `dependency ${skip.blockedById} ${
-            skip.kind === "failed" ? "failed" : "asked a question"
-          }`
+      reasonOverride ??
+        (skip.kind === "stopped"
+          ? `batch stopped after wave ${skip.wave}`
+          : `dependency ${skip.blockedById} ${
+              skip.kind === "failed" ? "failed" : "asked a question"
+            }`)
     );
     const entry: WaveSkippedTicket = { epicId, ...skip };
     skipped.push(entry);
@@ -217,6 +249,29 @@ export async function runExecutionWaves(
   };
 
   for (let i = 0; i < plan.layers.length; i++) {
+    // Abort poll (circuit breaker / cost cap): checked at the wave boundary,
+    // before this wave launches anything. Every still-pending ticket —
+    // dependent or not — is skipped with the reason verbatim.
+    const abort = options.shouldAbortRun?.() ?? null;
+    if (abort !== null) {
+      abortedAtWave = lastExecutedWave;
+      abortReason = abort;
+      for (const ticket of planTickets) {
+        if (plan.ticketStatus.get(ticket) !== "pending") continue;
+        markSkipped(
+          ticket,
+          {
+            kind: "aborted",
+            blockedById: null,
+            blockedBySessionId: null,
+            wave: lastExecutedWave,
+          },
+          abort
+        );
+      }
+      break;
+    }
+
     const wave = i + 1;
     const toLaunch = plan.layers[i].filter(
       (id) => plan.ticketStatus.get(id) === "pending"
@@ -224,6 +279,7 @@ export async function runExecutionWaves(
     if (toLaunch.length === 0) continue;
 
     wavesExecuted += 1;
+    lastExecutedWave = wave;
     callbacks.onWaveStart?.(wave, totalWaves, toLaunch);
 
     // Launches are submitted sequentially (worktree creation is cheap and
@@ -341,6 +397,8 @@ export async function runExecutionWaves(
     totalWaves,
     wavesExecuted,
     stoppedAtWave,
+    abortedAtWave,
+    abortReason,
   };
   callbacks.onFinish?.(summary);
   return summary;

@@ -210,7 +210,7 @@ export function MentionTextarea({
       />
 
       {hasSuggestionMenu && (
-        <div className="absolute z-30 mt-1 w-full rounded-md border border-border bg-popover shadow-md">
+        <div className="absolute z-30 mt-1 w-full rounded-[10px] border border-border bg-popover shadow-[0_8px_20px_rgba(58,48,44,.16)]">
           <div className="max-h-48 overflow-auto p-1">
             {filteredDocuments.map((doc, index) => (
               <button
@@ -220,8 +220,8 @@ export function MentionTextarea({
                   e.preventDefault();
                   applyMention(doc);
                 }}
-                className={`w-full rounded px-2 py-1.5 text-left text-xs transition-colors ${
-                  index === selectedIndex ? "bg-accent" : "hover:bg-accent/70"
+                className={`w-full rounded-[7px] px-2 py-1.5 text-left text-[12.5px] transition-colors ${
+                  index === selectedIndex ? "bg-band" : "hover:bg-band/70"
                 }`}
               >
                 {doc.originalFilename}

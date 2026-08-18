@@ -7,7 +7,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 import { InlineEdit } from "./InlineEdit";
 import { useEpicDetail } from "@/hooks/useEpicDetail";
 import { useTicketComments } from "@/hooks/useTicketComments";
@@ -22,7 +28,7 @@ import { TicketTypeBadge } from "@/components/shared/TicketTypeBadge";
 import { EpicActivityFeed } from "./epic-detail/EpicActivityFeed";
 import { PRIORITY_LABELS, KANBAN_COLUMNS, COLUMN_LABELS } from "@/lib/types/kanban";
 import { useEpicPr } from "@/hooks/useEpicPr";
-import { Wrench, FileCode } from "lucide-react";
+import { Wrench, FileCode, MoreHorizontal, X } from "lucide-react";
 import { useState, useEffect } from "react";
 import { isAgentAlreadyRunningError } from "@/lib/agents/client-error";
 import { PermanentDeleteDialog } from "@/components/shared/PermanentDeleteDialog";
@@ -31,8 +37,26 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { DiffViewer } from "@/components/review/DiffViewer";
 import { EpicGitSection } from "./epic-detail/EpicGitSection";
 import { EpicUserStoriesSection } from "./epic-detail/EpicUserStoriesSection";
-import { EpicDangerZone } from "./epic-detail/EpicDangerZone";
+import { WhatTheAgentDid } from "./epic-detail/WhatTheAgentDid";
 import { formatCostUsd } from "@/lib/utils/format-usage";
+import { formatElapsed } from "@/lib/utils/format-elapsed";
+import { cn } from "@/lib/utils";
+
+/** Human label for the agent-state pill: "Build", "Review", "Merge"… */
+function agentTypeLabel(agentType?: string | null): string {
+  if (!agentType) return "Agent";
+  return agentType.charAt(0).toUpperCase() + agentType.slice(1);
+}
+
+const TAB_TRIGGER_CLASS = cn(
+  "rounded-none border-0 bg-transparent px-0 pb-[10px] text-[13px] text-muted-foreground shadow-none",
+  "data-[state=active]:bg-transparent data-[state=active]:font-medium data-[state=active]:text-foreground",
+  "data-[state=active]:shadow-[inset_0_-2px_0_var(--primary)]",
+);
+
+/** Section label shared by the body blocks (uppercase 12px meta). */
+const SECTION_LABEL_CLASS =
+  "text-[12px] uppercase tracking-[.08em] text-meta";
 
 interface EpicDetailProps {
   projectId: string;
@@ -187,8 +211,13 @@ export function EpicDetail({
     refresh();
   }
 
-  async function handleSendToDev(comment?: string, namedAgentId?: string | null, resumeSessionId?: string) {
-    await sendToDev(comment, namedAgentId, resumeSessionId);
+  async function handleSendToDev(
+    comment?: string,
+    namedAgentId?: string | null,
+    resumeSessionId?: string,
+    pipeline?: boolean
+  ) {
+    await sendToDev(comment, namedAgentId, resumeSessionId, pipeline);
     refresh();
   }
 
@@ -211,12 +240,33 @@ export function EpicDetail({
 
   if (!open) return null;
 
+  // `/sessions/active` returns UnifiedActivity rows: `type` is the agent
+  // action (build | review | merge | …); `mode` is the legacy fallback.
+  const activeAgentType =
+    (activeSession as { type?: string | null; agentType?: string | null } | null)
+      ?.type ??
+    (activeSession as { agentType?: string | null } | null)?.agentType ??
+    activeSession?.mode ??
+    null;
+
+  const agentPillLabel = activeSession
+    ? [
+        agentTypeLabel(activeAgentType),
+        activeSession.startedAt ? formatElapsed(activeSession.startedAt) : null,
+      ]
+        .filter(Boolean)
+        .join(" · ")
+    : null;
+
   return (
-    <div className="h-full overflow-y-auto" data-testid="epic-detail-panel">
+    <div
+      className="flex h-full flex-col overflow-y-auto"
+      data-testid="epic-detail-panel"
+    >
       {loading || !epic ? (
         <>
-          <div className="border-b border-border px-4 py-3">
-            <h2 className="text-base font-semibold">Epic</h2>
+          <div className="border-b border-border px-[24px] py-[20px]">
+            <h2 className="text-[16px] font-semibold">Epic</h2>
           </div>
           <div className="py-8 text-center text-muted-foreground">
             Loading...
@@ -224,27 +274,81 @@ export function EpicDetail({
         </>
       ) : (
         <>
-          <div className="border-b border-border px-4 py-3 space-y-2">
-            <div className="flex items-center gap-2">
-              {epic.readableId && (
-                <span className="text-xs font-mono text-muted-foreground shrink-0">
-                  {epic.readableId}
-                </span>
-              )}
-              <InlineEdit
-                value={epic.title}
-                onSave={(v) => updateEpic({ title: v })}
-                className="text-lg font-bold"
-              />
+          {/* Header: id · agent pill · overflow · close */}
+          <div className="flex items-center gap-[10px] px-[24px] pt-[20px]">
+            {epic.readableId && (
+              <span className="shrink-0 font-mono text-[11.5px] text-meta">
+                {epic.readableId}
+              </span>
+            )}
+
+            {isRunning && agentPillLabel && (
+              <span
+                data-testid="epic-agent-pill"
+                className="inline-flex items-center gap-[7px] rounded-full bg-agent-bg px-[10px] py-[4px] text-[12px] text-agent"
+              >
+                <span className="breathing-dot h-[7px] w-[7px]" />
+                {agentPillLabel}
+              </span>
+            )}
+
+            <TicketTypeBadge type={epic.type} />
+
+            <div className="ml-auto flex items-center gap-[2px]">
+              {/* Non-modal: the delete item opens a dialog, and a modal menu
+                  would keep the body pointer-locked while it mounts. */}
+              <DropdownMenu modal={false}>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7 text-meta"
+                    aria-label="Ticket actions"
+                    data-testid="epic-overflow-menu"
+                  >
+                    <MoreHorizontal className="h-4 w-4" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem
+                    variant="destructive"
+                    data-testid="epic-delete-menu-item"
+                    onClick={() => setDeleteDialogOpen(true)}
+                    disabled={deletingEpic}
+                  >
+                    Delete epic
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-meta"
+                onClick={onClose}
+                aria-label="Close ticket panel"
+              >
+                <X className="h-4 w-4" />
+              </Button>
             </div>
-            <TicketTypeBadge
-              type={epic.type}
-              className="bg-red-500/10 text-red-400 text-xs w-fit"
-              iconClassName="h-3 w-3 mr-1"
+          </div>
+
+          <div className="mt-[13px] px-[24px]">
+            <InlineEdit
+              value={epic.title}
+              onSave={(v) => updateEpic({ title: v })}
+              className="text-[20px] font-medium leading-[1.3] [text-wrap:pretty]"
             />
+            {deleteEpicError && (
+              <p className="mt-2 text-[12px] text-destructive">
+                {deleteEpicError}
+              </p>
+            )}
             {formatCostUsd(epic.sessionsCostUsd) && (
               <p
-                className="text-[11px] text-muted-foreground/70"
+                className="mt-[6px] font-mono text-[11px] text-meta"
                 title="Cumulative cost of this ticket's agent sessions (when reported by the provider)"
               >
                 Agent cost {formatCostUsd(epic.sessionsCostUsd)}
@@ -252,8 +356,10 @@ export function EpicDetail({
             )}
           </div>
 
-          <div className="px-4 py-4 space-y-4">
-            {/* Epic Actions Bar */}
+          {/* Agent action row (Retry / Reply / Diff equivalents). AgentActionsBar
+              is shared and frozen, so the 3a control grammar (29px / 13px /
+              radius 8) is applied from here instead of editing it. */}
+          <div className="px-[24px] pt-[18px] [&_button]:h-[29px] [&_button]:rounded-[8px] [&_button]:text-[13px]">
             <AgentActionsBar
               projectId={projectId}
               target={{ kind: "epic", epic }}
@@ -281,196 +387,223 @@ export function EpicDetail({
                 });
               }}
             />
+          </div>
 
-            <Tabs defaultValue="details">
-              <TabsList className="w-full">
-                <TabsTrigger value="details" className="flex-1 text-xs">Details</TabsTrigger>
-                {epic.branchName && (
-                  <TabsTrigger value="review" className="flex-1 text-xs gap-1">
-                    <FileCode className="h-3 w-3" />
-                    Code Review
-                  </TabsTrigger>
+          <Tabs
+            defaultValue="details"
+            className="flex min-h-0 flex-1 flex-col gap-0"
+          >
+            <TabsList className="h-auto w-full justify-start gap-[20px] rounded-none border-b border-border-soft bg-transparent px-[24px] pt-[20px] pb-0">
+              <TabsTrigger value="details" className={TAB_TRIGGER_CLASS}>
+                Details
+              </TabsTrigger>
+              {epic.branchName && (
+                <TabsTrigger
+                  value="review"
+                  className={cn(TAB_TRIGGER_CLASS, "gap-1")}
+                >
+                  <FileCode className="h-3 w-3" />
+                  Code Review
+                </TabsTrigger>
+              )}
+              <TabsTrigger value="activity" className={TAB_TRIGGER_CLASS}>
+                Activity
+                {/* The mockup's separate "Comments" tab folds into Activity —
+                    its mono counter comes along so the discussion volume is
+                    visible without opening the tab. */}
+                {comments.length > 0 && (
+                  <span
+                    className="ml-[6px] font-mono text-[11px] text-meta"
+                    aria-label={`${comments.length} comments`}
+                    data-testid="epic-activity-comment-count"
+                  >
+                    {comments.length}
+                  </span>
                 )}
-                <TabsTrigger value="activity" className="flex-1 text-xs">Activity</TabsTrigger>
-              </TabsList>
+              </TabsTrigger>
+            </TabsList>
 
-              <TabsContent value="details" className="space-y-4 mt-4">
-            <div>
-              <label className="text-xs text-muted-foreground block mb-1">
-                Description
-              </label>
+            <TabsContent
+              value="details"
+              className="flex min-h-0 flex-1 flex-col gap-[18px] overflow-y-auto px-[24px] py-[22px]"
+            >
               <InlineEdit
                 value={epic.description || ""}
                 onSave={(v) => updateEpic({ description: v })}
                 multiline
                 markdown
-                className="text-sm"
+                className="text-[14px] leading-[1.65]"
               />
-            </div>
 
-            <div className="flex gap-4">
-              <div className="flex-1">
-                <label className="text-xs text-muted-foreground block mb-1">
-                  Priority
-                </label>
-                <Select
-                  value={String(epic.priority)}
-                  onValueChange={(v) => updateEpic({ priority: Number(v) } as never)}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(PRIORITY_LABELS).map(([k, v]) => (
-                      <SelectItem key={k} value={k}>
-                        {v}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="flex-1">
-                <label className="text-xs text-muted-foreground block mb-1">
-                  Status
-                </label>
-                <Select
-                  value={epic.status}
-                  onValueChange={(v) => updateEpic({ status: v })}
-                >
-                  <SelectTrigger className="h-8 text-xs">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {KANBAN_COLUMNS.map((col) => (
-                      <SelectItem key={col} value={col}>
-                        {COLUMN_LABELS[col]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-
-            {epic.type === "bug" && epic.linkedEpicId && (
-              <div className="text-xs text-muted-foreground">
-                Linked to epic: <span className="font-mono">{epic.linkedEpicId}</span>
-              </div>
-            )}
-
-            {epic.branchName && (
-              <EpicGitSection
-                projectId={projectId}
-                branchName={epic.branchName}
-                epicStatus={epic.status}
-                githubConfigured={githubConfigured}
-                isRunning={isRunning}
-                ahead={ahead}
-                behind={behind}
-                gitStatusLoading={gitStatusLoading}
-                gitStatusError={gitStatusError}
-                lastFetchedAt={lastFetchedAt}
-                lastFetchError={lastFetchError}
-                onRefreshGitStatus={refreshGitStatus}
-                onPush={pushToRemote}
-                pushing={pushing}
-                pr={pr}
-                prLoading={prLoading}
-                prError={prError}
-                onCreatePr={() => createPr()}
-                onSyncPr={syncPr}
-                merging={merging}
-                mergeError={mergeError}
-                onMerge={merge}
-                resolvingMerge={resolvingMerge}
-                onOpenResolveMerge={() => setResolveMergeOpen(true)}
-              />
-            )}
-
-            <Separator />
-
-            {/* User Stories */}
-            {epic.type !== "bug" && (
-              <EpicUserStoriesSection
-                projectId={projectId}
-                userStories={userStories}
-                newStoryTitle={newUSTitle}
-                onNewStoryTitleChange={setNewUSTitle}
-                onAddStory={handleAddUS}
-                onUpdateStory={(id, updates) => updateUserStory(id, updates)}
-                onDeleteStory={deleteUserStory}
-                onRefresh={refresh}
-                actionsLocked={dispatching || isRunning}
-              />
-            )}
-
-            <Separator />
-
-            {/* Dependencies */}
-            {epicId && (
-              <DependencyEditor
+              <WhatTheAgentDid
                 projectId={projectId}
                 epicId={epicId}
-                projectEpics={projectEpics}
+                refreshToken={activeSession?.id ?? null}
               />
-            )}
 
-            <Separator />
+              {/* Key / value rows */}
+              <div className="flex flex-col">
+                <div className="flex items-center justify-between gap-3 border-t border-border-soft py-[11px]">
+                  <span className="text-[12.5px] text-muted-foreground">
+                    Priority
+                  </span>
+                  <Select
+                    value={String(epic.priority)}
+                    onValueChange={(v) => updateEpic({ priority: Number(v) } as never)}
+                  >
+                    <SelectTrigger className="h-[29px] w-auto gap-2 rounded-[7px] border-0 bg-transparent px-2 text-[13px] shadow-none hover:bg-band">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {Object.entries(PRIORITY_LABELS).map(([k, v]) => (
+                        <SelectItem key={k} value={k}>
+                          {v}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            <EpicDangerZone
-              deleteError={deleteEpicError}
-              deleting={deletingEpic}
-              onRequestDelete={() => setDeleteDialogOpen(true)}
-            />
-              </TabsContent>
+                <div className="flex items-center justify-between gap-3 border-t border-border-soft py-[11px]">
+                  <span className="text-[12.5px] text-muted-foreground">
+                    Status
+                  </span>
+                  <Select
+                    value={epic.status}
+                    onValueChange={(v) => updateEpic({ status: v })}
+                  >
+                    <SelectTrigger className="h-[29px] w-auto gap-2 rounded-[7px] border-0 bg-transparent px-2 text-[13px] shadow-none hover:bg-band">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {KANBAN_COLUMNS.map((col) => (
+                        <SelectItem key={col} value={col}>
+                          {COLUMN_LABELS[col]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-              {/* Code Review Tab */}
-              {epic.branchName && epicId && (
-                <TabsContent value="review" className="mt-4">
-                  <DiffViewer
+                {epic.type === "bug" && epic.linkedEpicId && (
+                  <div className="flex items-center justify-between gap-3 border-t border-border-soft py-[11px]">
+                    <span className="text-[12.5px] text-muted-foreground">
+                      Linked to epic
+                    </span>
+                    <span className="font-mono text-[12px]">
+                      {epic.linkedEpicId}
+                    </span>
+                  </div>
+                )}
+
+                {epic.branchName && (
+                  <EpicGitSection
                     projectId={projectId}
-                    epicId={epicId}
+                    branchName={epic.branchName}
                     epicStatus={epic.status}
-                    onBackToDev={handleBackToDev}
-                    onApprove={handleApprove}
-                    dispatching={dispatching}
+                    githubConfigured={githubConfigured}
                     isRunning={isRunning}
+                    ahead={ahead}
+                    behind={behind}
+                    gitStatusLoading={gitStatusLoading}
+                    gitStatusError={gitStatusError}
+                    lastFetchedAt={lastFetchedAt}
+                    lastFetchError={lastFetchError}
+                    onRefreshGitStatus={refreshGitStatus}
+                    onPush={pushToRemote}
+                    pushing={pushing}
+                    pr={pr}
+                    prLoading={prLoading}
+                    prError={prError}
+                    onCreatePr={() => createPr()}
+                    onSyncPr={syncPr}
+                    merging={merging}
+                    mergeError={mergeError}
+                    onMerge={merge}
+                    resolvingMerge={resolvingMerge}
+                    onOpenResolveMerge={() => setResolveMergeOpen(true)}
                   />
-                </TabsContent>
+                )}
+              </div>
+
+              {/* User Stories */}
+              {epic.type !== "bug" && (
+                <EpicUserStoriesSection
+                  projectId={projectId}
+                  userStories={userStories}
+                  newStoryTitle={newUSTitle}
+                  onNewStoryTitleChange={setNewUSTitle}
+                  onAddStory={handleAddUS}
+                  onUpdateStory={(id, updates) => updateUserStory(id, updates)}
+                  onDeleteStory={deleteUserStory}
+                  onRefresh={refresh}
+                  actionsLocked={dispatching || isRunning}
+                />
               )}
 
-              {/* Activity Tab */}
-              <TabsContent value="activity" className="mt-4">
-                <div className="min-h-[200px]">
-                  <EpicActivityFeed
+              {/* Dependencies */}
+              {epicId && (
+                <div className="flex flex-col gap-[10px] border-t border-border-soft pt-[16px]">
+                  <span className={SECTION_LABEL_CLASS}>Dependencies</span>
+                  <DependencyEditor
                     projectId={projectId}
                     epicId={epicId}
-                    comments={comments}
-                    commentsLoading={commentsLoading}
-                    onAddComment={addComment}
-                    onSendToDev={
-                      epic && ["backlog", "todo", "in_progress", "review"].includes(epic.status)
-                        ? async () => {
-                            try {
-                              await sendToDev();
-                              refresh();
-                            } catch (error) {
-                              if (isAgentAlreadyRunningError(error)) {
-                                onAgentConflict?.({
-                                  message: error.message,
-                                  sessionUrl: error.sessionUrl || `/projects/${projectId}/sessions/${error.activeSessionId}`,
-                                });
-                              }
-                            }
-                          }
-                        : undefined
-                    }
-                    sendToDevDisabled={dispatching || isRunning}
-                    sendToDevLoading={dispatching}
+                    projectEpics={projectEpics}
                   />
                 </div>
+              )}
+            </TabsContent>
+
+            {/* Code Review Tab */}
+            {epic.branchName && epicId && (
+              <TabsContent
+                value="review"
+                className="min-h-0 flex-1 overflow-y-auto px-[24px] py-[22px]"
+              >
+                <DiffViewer
+                  projectId={projectId}
+                  epicId={epicId}
+                  epicStatus={epic.status}
+                  onBackToDev={handleBackToDev}
+                  onApprove={handleApprove}
+                  dispatching={dispatching}
+                  isRunning={isRunning}
+                />
               </TabsContent>
-            </Tabs>
-          </div>
+            )}
+
+            {/* Activity Tab */}
+            <TabsContent value="activity" className="min-h-0 flex-1">
+              <div className="h-full min-h-[200px]">
+                <EpicActivityFeed
+                  projectId={projectId}
+                  epicId={epicId}
+                  comments={comments}
+                  commentsLoading={commentsLoading}
+                  onAddComment={addComment}
+                  onSendToDev={
+                    epic && ["backlog", "todo", "in_progress", "review"].includes(epic.status)
+                      ? async () => {
+                          try {
+                            await sendToDev();
+                            refresh();
+                          } catch (error) {
+                            if (isAgentAlreadyRunningError(error)) {
+                              onAgentConflict?.({
+                                message: error.message,
+                                sessionUrl: error.sessionUrl || `/projects/${projectId}/sessions/${error.activeSessionId}`,
+                              });
+                            }
+                          }
+                        }
+                      : undefined
+                  }
+                  sendToDevDisabled={dispatching || isRunning}
+                  sendToDevLoading={dispatching}
+                />
+              </div>
+            </TabsContent>
+          </Tabs>
         </>
       )}
 

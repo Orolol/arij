@@ -11,11 +11,15 @@ class MockEventSource {
 }
 (globalThis as Record<string, unknown>).EventSource = MockEventSource;
 
-// Mock next/navigation
+// Mock next/navigation. The header actions moved to the project chrome and
+// reach this page through `?panel=`, so the search params are per-test state.
+const routerReplace = vi.fn();
+let searchParams = new URLSearchParams();
+
 vi.mock("next/navigation", () => ({
   useParams: () => ({ projectId: "proj1" }),
-  useRouter: () => ({ replace: vi.fn() }),
-  useSearchParams: () => new URLSearchParams(),
+  useRouter: () => ({ replace: routerReplace }),
+  useSearchParams: () => searchParams,
 }));
 
 // Mock hooks
@@ -131,21 +135,35 @@ describe("Kanban Build Toolbar", () => {
     vi.restoreAllMocks();
     mockPanelOpenChat.mockClear();
     mockPanelOpenNewEpic.mockClear();
+    routerReplace.mockClear();
+    searchParams = new URLSearchParams();
     global.fetch = vi.fn().mockResolvedValue({
       json: () => Promise.resolve({ data: { count: 1 } }),
     });
   });
 
-  it("chat toolbar button calls openChat on UnifiedChatPanel ref", () => {
+  it("?panel=chat calls openChat on UnifiedChatPanel ref and strips the param", async () => {
+    searchParams = new URLSearchParams("panel=chat");
     render(<KanbanPage />);
-    fireEvent.click(screen.getByRole("button", { name: "Chat" }));
-    expect(mockPanelOpenChat).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => expect(mockPanelOpenChat).toHaveBeenCalledTimes(1));
+    expect(mockPanelOpenNewEpic).not.toHaveBeenCalled();
+    expect(routerReplace).toHaveBeenCalledWith("/projects/proj1");
   });
 
-  it("new epic toolbar button calls openNewEpic on UnifiedChatPanel ref", () => {
+  it("?panel=new-epic calls openNewEpic on UnifiedChatPanel ref", async () => {
+    searchParams = new URLSearchParams("panel=new-epic");
     render(<KanbanPage />);
-    fireEvent.click(screen.getByRole("button", { name: "New Epic" }));
-    expect(mockPanelOpenNewEpic).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => expect(mockPanelOpenNewEpic).toHaveBeenCalledTimes(1));
+    expect(mockPanelOpenChat).not.toHaveBeenCalled();
+  });
+
+  it("does not touch the panel without a panel param", async () => {
+    render(<KanbanPage />);
+    await screen.findByTestId("board");
+    expect(mockPanelOpenChat).not.toHaveBeenCalled();
+    expect(mockPanelOpenNewEpic).not.toHaveBeenCalled();
   });
 
   it("does not show build toolbar when no epics selected", () => {
@@ -239,8 +257,9 @@ describe("Kanban Build Toolbar", () => {
       );
     });
 
+    // endsWith, not includes: the page also polls /build/night-runs.
     const call = mockFetch.mock.calls.find(
-      (c: unknown[]) => typeof c[0] === "string" && c[0].includes("/build")
+      (c: unknown[]) => typeof c[0] === "string" && c[0].endsWith("/build")
     );
     expect(call).toBeTruthy();
     const body = JSON.parse(call![1].body);

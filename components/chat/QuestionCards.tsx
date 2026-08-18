@@ -60,18 +60,18 @@ export function QuestionCards({ questions, onSubmit, disabled }: QuestionCardsPr
     <div className="space-y-3">
       {/* Step indicator */}
       {questions.length > 1 && (
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <div className="flex items-center justify-between text-[12px] text-muted-foreground">
           <span>Question {currentIdx + 1} of {questions.length}</span>
           <div className="flex gap-1">
             {questions.map((_, i) => (
               <div
                 key={i}
-                className={`w-1.5 h-1.5 rounded-full transition-colors ${
+                className={`h-1.5 w-1.5 rounded-full transition-colors ${
                   i === currentIdx
                     ? "bg-primary"
                     : (selections.get(i)?.size || 0) > 0
                       ? "bg-primary/50"
-                      : "bg-muted-foreground/30"
+                      : "bg-meta/40"
                 }`}
               />
             ))}
@@ -80,7 +80,7 @@ export function QuestionCards({ questions, onSubmit, disabled }: QuestionCardsPr
       )}
 
       {/* Current question */}
-      <p className="text-sm font-medium">{q.question}</p>
+      <p className="text-[13.5px] font-medium leading-[1.5]">{q.question}</p>
 
       {/* Options */}
       <div className="grid gap-2">
@@ -91,10 +91,10 @@ export function QuestionCards({ questions, onSubmit, disabled }: QuestionCardsPr
               key={optIdx}
               onClick={() => toggleOption(optIdx)}
               disabled={disabled}
-              className={`text-left p-3 rounded-lg border transition-colors ${
+              className={`rounded-[11px] border p-3 text-left transition-colors ${
                 isSelected
                   ? "border-primary bg-primary/10 ring-1 ring-primary/30"
-                  : "border-border hover:border-primary/50 hover:bg-accent/50"
+                  : "border-border hover:border-primary/50 hover:bg-band"
               } ${disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
             >
               <div className="flex items-start gap-2">
@@ -108,8 +108,8 @@ export function QuestionCards({ questions, onSubmit, disabled }: QuestionCardsPr
                   {isSelected && <Check className="h-3 w-3" />}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium">{opt.label}</div>
-                  <div className="text-xs text-muted-foreground mt-0.5">
+                  <div className="text-[13px] font-medium">{opt.label}</div>
+                  <div className="mt-0.5 text-[12px] text-muted-foreground">
                     {opt.description}
                   </div>
                 </div>

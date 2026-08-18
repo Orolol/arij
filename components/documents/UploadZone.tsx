@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import { Upload, Loader2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface UploadZoneProps {
   projectId: string;
@@ -50,26 +51,24 @@ export function UploadZone({ projectId, onUploaded }: UploadZoneProps) {
         setDragOver(false);
         if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
       }}
-      className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${
-        dragOver
-          ? "border-primary bg-primary/5"
-          : "border-border hover:border-muted-foreground"
-      }`}
+      className={cn(
+        "flex w-[252px] max-w-full flex-col justify-center gap-[8px] rounded-[12px] border border-dashed p-[16px] transition-colors",
+        dragOver ? "border-primary bg-primary/5" : "border-border"
+      )}
     >
       {uploading ? (
-        <div className="flex items-center justify-center gap-2">
-          <Loader2 className="h-5 w-5 animate-spin" />
+        <div className="flex items-center gap-2 text-[13.5px] text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
           <span>Uploading...</span>
         </div>
       ) : (
-        <label className="cursor-pointer">
-          <Upload className="h-8 w-8 mx-auto mb-2 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            Drag & drop files here, or click to select
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
+        <label className="flex cursor-pointer flex-col gap-[8px]">
+          <span className="text-[13.5px] font-medium text-primary">
+            Drag &amp; drop files here, or click to select
+          </span>
+          <span className="text-[12.5px] text-muted-foreground">
             PDF, DOCX, MD, TXT, and images
-          </p>
+          </span>
           <input
             type="file"
             className="hidden"
@@ -81,7 +80,7 @@ export function UploadZone({ projectId, onUploaded }: UploadZoneProps) {
           />
         </label>
       )}
-      {error && <p className="text-xs text-destructive mt-3">{error}</p>}
+      {error && <p className="mt-1 text-[12px] text-destructive">{error}</p>}
     </div>
   );
 }

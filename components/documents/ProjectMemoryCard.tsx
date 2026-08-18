@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Brain } from "lucide-react";
+import { Bot } from "lucide-react";
 import { PROJECT_MEMORY_MAX_CHARS } from "@/lib/documents/memory-constants";
 
 interface ProjectMemoryCardProps {
@@ -75,25 +75,25 @@ export function ProjectMemoryCard({ projectId }: ProjectMemoryCardProps) {
   }
 
   return (
-    <div className="rounded-md border border-border p-4">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
-          <Brain className="h-4 w-4 text-muted-foreground" />
-          <h3 className="font-medium text-sm">Project memory</h3>
-        </div>
+    <div className="flex flex-col gap-[12px] rounded-[12px] border border-agent-border bg-agent-bg p-[18px]">
+      <div className="flex items-center gap-[9px]">
+        <Bot className="h-4 w-4 flex-none text-agent" />
+        <h3 className="text-[14px] font-semibold">Project memory</h3>
         <span
-          className={`text-xs ${overCap ? "text-destructive" : "text-muted-foreground"}`}
+          className={`ml-auto font-mono text-[11px] ${
+            overCap ? "text-destructive" : "text-meta"
+          }`}
         >
           {content.length} / {PROJECT_MEMORY_MAX_CHARS}
         </span>
       </div>
-      <p className="text-xs text-muted-foreground mt-1">
+      <p className="text-[13.5px] leading-[1.6]">
         Conventions learned from previous sessions. Injected into every agent
         prompt for this project. Use the &quot;Distill learnings&quot; action on
         a completed session to let an agent update it.
       </p>
       {loading ? (
-        <p className="text-sm text-muted-foreground mt-3">Loading...</p>
+        <p className="text-[13px] text-muted-foreground">Loading...</p>
       ) : (
         <>
           <Textarea
@@ -104,16 +104,17 @@ export function ProjectMemoryCard({ projectId }: ProjectMemoryCardProps) {
               setMessage(null);
             }}
             placeholder="No project memory yet. Write durable conventions here, or distill them from a completed session."
-            className="mt-3 min-h-[160px] font-mono text-xs"
+            className="min-h-[160px] rounded-[10px] border-agent-border bg-card font-mono text-[12px] leading-[1.6]"
           />
-          <div className="mt-2 flex items-center justify-between gap-2">
-            <span className="text-[11px] text-muted-foreground">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-mono text-[11px] text-agent">
               {updatedAt
-                ? `Last updated ${new Date(updatedAt).toLocaleString()}`
-                : "Never updated"}
+                ? `last updated ${new Date(updatedAt).toLocaleString()}`
+                : "never updated"}
             </span>
             <Button
               size="sm"
+              className="h-[29px] rounded-[8px] text-[12.5px]"
               onClick={handleSave}
               disabled={saving || overCap || !dirty}
             >
@@ -123,13 +124,13 @@ export function ProjectMemoryCard({ projectId }: ProjectMemoryCardProps) {
         </>
       )}
       {overCap && (
-        <p className="text-xs text-destructive mt-2">
+        <p className="text-[12px] text-destructive">
           Over the {PROJECT_MEMORY_MAX_CHARS}-character cap. Trim the content to
           save.
         </p>
       )}
-      {message && <p className="text-xs text-green-500 mt-2">{message}</p>}
-      {error && <p className="text-xs text-destructive mt-2">{error}</p>}
+      {message && <p className="text-[12px] text-agent">{message}</p>}
+      {error && <p className="text-[12px] text-destructive">{error}</p>}
     </div>
   );
 }

@@ -70,22 +70,20 @@ describe("EpicCard", () => {
       expect(container.querySelector("button")).toBeNull();
     });
 
-    it("applies ring-2 ring-primary class when selected", () => {
+    it("marks the card as selected", () => {
       const { container } = render(
         <EpicCard epic={makeEpic()} view={{ selected: true }} />
       );
       const card = container.firstChild as HTMLElement;
-      expect(card.className).toContain("ring-2");
-      expect(card.className).toContain("ring-primary");
+      expect(card).toHaveAttribute("data-selected", "true");
     });
 
-    it("does not apply ring classes when not selected", () => {
+    it("is not marked selected by default", () => {
       const { container } = render(
         <EpicCard epic={makeEpic()} view={{ selected: false }} />
       );
       const card = container.firstChild as HTMLElement;
-      expect(card.className).not.toContain("ring-2");
-      expect(card.className).not.toContain("ring-primary");
+      expect(card).not.toHaveAttribute("data-selected");
     });
 
     it("calls onClick when card is clicked (selection still works)", () => {
@@ -149,83 +147,88 @@ describe("EpicCard", () => {
     });
   });
 
-  describe("epic ID display", () => {
-    it("displays the epic ID above the title in monospace text", () => {
-      render(<EpicCard epic={makeEpic({ id: "epic-xyz789" })} />);
-      const idEl = screen.getByText("epic-xyz789");
-      expect(idEl).toBeInTheDocument();
-      expect(idEl.tagName).toBe("SPAN");
-      expect(idEl.className).toContain("font-mono");
-      expect(idEl.className).toContain("text-xs");
-      expect(idEl.className).toContain("text-muted-foreground");
+  describe("metadata line", () => {
+    it("carries the readable id and the story count", () => {
+      render(
+        <EpicCard
+          epic={makeEpic({ readableId: "E-arij-006", usDone: 0, usCount: 3 })}
+        />
+      );
+      const meta = screen.getByTestId("epic-meta-epic-abc123");
+      expect(meta.textContent).toContain("E-arij-006");
+      expect(meta.textContent).toContain("0/3 US");
+    });
+
+    it("falls back to the raw id when the epic has no readable id", () => {
+      render(<EpicCard epic={makeEpic({ id: "epic-xyz789", readableId: null })} />);
+      expect(screen.getByText("epic-xyz789")).toBeInTheDocument();
+    });
+
+    it("replaces the story count with a BUG marker on bug tickets", () => {
+      render(<EpicCard epic={makeEpic({ type: "bug" })} />);
+      const meta = screen.getByTestId("epic-meta-epic-abc123");
+      expect(meta.textContent).toContain("BUG");
+      expect(meta.textContent).not.toContain("US");
+    });
+
+    it("hides the priority badge at Low and shows it above", () => {
+      const { rerender } = render(<EpicCard epic={makeEpic({ priority: 0 })} />);
+      expect(screen.queryByText("Low")).not.toBeInTheDocument();
+
+      rerender(<EpicCard epic={makeEpic({ priority: 2 })} />);
+      expect(screen.getByText("High")).toBeInTheDocument();
+    });
+
+    it("keeps the unread-AI and failure signals reachable", () => {
+      render(
+        <EpicCard
+          epic={makeEpic({ priority: 2, type: "bug" })}
+          view={{
+            unreadAi: true,
+            failedSession: {
+              sessionId: "s1",
+              error: "timeout",
+              agentType: "build",
+            },
+          }}
+        />
+      );
+      expect(
+        screen.getByTestId("epic-unread-ai-epic-abc123")
+      ).toBeInTheDocument();
+      expect(screen.getByTestId("epic-error-epic-abc123")).toBeInTheDocument();
     });
   });
 
-  describe("description preview", () => {
-    it("renders description when present", () => {
+  describe("title-first layout", () => {
+    it("renders the title first, clamped to two lines", () => {
+      const { container } = render(
+        <EpicCard
+          epic={makeEpic({
+            title: "A very long title that should be allowed to wrap to two lines",
+          })}
+        />
+      );
+      const title = screen.getByText(
+        "A very long title that should be allowed to wrap to two lines"
+      );
+      expect(title.tagName).toBe("H4");
+      expect(title.className).toContain("line-clamp-2");
+      expect(title.className).not.toContain("truncate");
+      // First child of the card: nothing sits above the title any more.
+      const card = container.firstChild as HTMLElement;
+      expect(card.firstElementChild).toBe(title);
+    });
+
+    it("drops the description preview — the card is title + metadata only", () => {
       render(
         <EpicCard
           epic={makeEpic({ description: "This is a description of the epic" })}
         />
       );
-      const desc = screen.getByText("This is a description of the epic");
-      expect(desc).toBeInTheDocument();
-      expect(desc.className).toContain("line-clamp-2");
-      expect(desc.className).toContain("text-xs");
-      expect(desc.className).toContain("text-muted-foreground");
-    });
-
-    it("does not render description when null", () => {
-      render(<EpicCard epic={makeEpic({ description: null })} />);
-      // Only the title and ID text should exist, no <p> for description
-      expect(screen.queryByText("", { selector: "p" })).not.toBeInTheDocument();
-    });
-
-    it("does not render description when empty string", () => {
-      render(<EpicCard epic={makeEpic({ description: "" })} />);
-      const paragraphs = document.querySelectorAll("p");
-      expect(paragraphs).toHaveLength(0);
-    });
-  });
-
-  describe("two-row layout: title and badges on separate rows", () => {
-    it("renders the title with line-clamp-2 instead of truncate", () => {
-      render(<EpicCard epic={makeEpic({ title: "A very long title that should be allowed to wrap to two lines" })} />);
-      const title = screen.getByText("A very long title that should be allowed to wrap to two lines");
-      expect(title.tagName).toBe("H4");
-      expect(title.className).toContain("line-clamp-2");
-      expect(title.className).not.toContain("truncate");
-    });
-
-    it("renders badges in a wrapping flex container below the title", () => {
-      const { container } = render(
-        <EpicCard
-          epic={makeEpic({ priority: 2, type: "bug" })}
-          view={{
-            unreadAi: true,
-            failedSession: { sessionId: "s1", error: "timeout", epicId: "e1" },
-          }}
-        />
-      );
-      // Find the badges row by its flex-wrap class
-      const badgesRow = container.querySelector(".flex-wrap");
-      expect(badgesRow).not.toBeNull();
-      // It should contain the priority badge, bug badge, AI update and error indicators
-      expect(badgesRow!.querySelector("[data-testid='epic-unread-ai-epic-abc123']")).not.toBeNull();
-      expect(badgesRow!.querySelector("[data-testid='epic-error-epic-abc123']")).not.toBeNull();
-      expect(badgesRow!.textContent).toContain("High");
-      expect(badgesRow!.textContent).toContain("Bug");
-    });
-
-    it("title and badges are not on the same flex row", () => {
-      const { container } = render(
-        <EpicCard epic={makeEpic()} />
-      );
-      // The old layout used justify-between on the parent to put title and badges side-by-side
-      // The new layout should NOT have justify-between on the parent wrapper
-      const card = container.firstChild as HTMLElement;
-      const firstDiv = card.querySelector("div");
-      expect(firstDiv!.className).not.toContain("justify-between");
+      expect(
+        screen.queryByText("This is a description of the epic")
+      ).not.toBeInTheDocument();
     });
   });
 });

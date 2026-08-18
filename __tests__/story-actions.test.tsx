@@ -135,8 +135,10 @@ describe("AgentActionsBar (story target)", () => {
     fireEvent.click(screen.getByText("Send to Dev"));
     fireEvent.click(screen.getByText("Dispatch Agent"));
 
-    // Called with undefined comment and null namedAgentId (default)
-    expect(onSendToDev).toHaveBeenCalledWith(undefined, null, undefined);
+    // Called with undefined comment, null namedAgentId (default) and the
+    // pipeline flag, which defaults to the effective `pipeline_enabled`
+    // setting (absent here, so false).
+    expect(onSendToDev).toHaveBeenCalledWith(undefined, null, undefined, false);
   });
 
   it("calls onSendToDev with selected namedAgentId", async () => {
@@ -148,7 +150,12 @@ describe("AgentActionsBar (story target)", () => {
     fireEvent.change(select, { target: { value: "agent-1" } });
     fireEvent.click(screen.getByText("Dispatch Agent"));
 
-    expect(onSendToDev).toHaveBeenCalledWith(undefined, "agent-1", undefined);
+    expect(onSendToDev).toHaveBeenCalledWith(
+      undefined,
+      "agent-1",
+      undefined,
+      false
+    );
   });
 
   it("calls onSendToReview with selected types and namedAgentId", async () => {

@@ -14,9 +14,9 @@ import {
   RefreshCw,
   Calendar,
   Hash,
-  Loader2,
 } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
+import { cn } from "@/lib/utils";
 
 interface ConversationMeta {
   id: string;
@@ -118,85 +118,99 @@ export default function ChatDetailPage() {
   const isGenerating = meta.status === "generating";
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="mx-auto flex max-w-[900px] flex-col gap-[16px] p-[24px]">
       {/* Back link */}
       <Link
         href={`/projects/${projectId}/sessions`}
-        className="text-sm text-muted-foreground hover:text-foreground flex items-center gap-1 mb-4"
+        className="flex items-center gap-1 text-[12.5px] text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="h-3 w-3" /> Back to sessions
       </Link>
 
-      {/* Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-3">
-          {isGenerating ? (
-            <Loader2 className="h-5 w-5 text-yellow-500 animate-spin" />
-          ) : (
-            <TypeIcon className="h-5 w-5 text-blue-400" />
-          )}
-          <h2 className="text-xl font-bold">{meta.label}</h2>
-          <Badge className="text-xs bg-blue-500/20 text-blue-400 border-blue-400/30">
-            {meta.type}
+      {/* Identity line */}
+      <div className="flex flex-wrap items-center gap-[10px]">
+        {isGenerating ? (
+          <span className="breathing-dot h-[7px] w-[7px]" />
+        ) : (
+          <TypeIcon className="h-4 w-4 text-meta" />
+        )}
+        <Badge
+          variant="outline"
+          className="rounded-full px-[8px] py-[1px] text-[11px] font-normal text-meta"
+        >
+          {meta.type}
+        </Badge>
+        {meta.status && (
+          <Badge
+            variant="outline"
+            className={cn(
+              "rounded-full px-[8px] py-[1px] text-[11px] font-normal",
+              isGenerating
+                ? "text-agent border-agent-border"
+                : meta.status === "error"
+                  ? "text-destructive border-destructive/30"
+                  : "text-meta"
+            )}
+          >
+            {meta.status}
           </Badge>
-          {meta.status && (
-            <Badge
-              variant="outline"
-              className={`text-xs ${
-                isGenerating
-                  ? "text-yellow-400 border-yellow-400/30"
-                  : meta.status === "error"
-                  ? "text-red-400 border-red-400/30"
-                  : "text-muted-foreground"
-              }`}
-            >
-              {meta.status}
-            </Badge>
-          )}
-          {meta.namedAgentName ? (
-            <Badge variant="outline" className="text-[10px] text-purple-400 border-purple-400/30">
-              {meta.namedAgentName}
-            </Badge>
-          ) : meta.provider && meta.provider !== "claude-code" ? (
-            <Badge variant="outline" className="text-[10px] uppercase tracking-wide">
-              {PROVIDER_LABELS[meta.provider as keyof typeof PROVIDER_LABELS] ?? meta.provider}
-            </Badge>
-          ) : null}
-        </div>
+        )}
+        {meta.namedAgentName ? (
+          <Badge
+            variant="outline"
+            className="rounded-full px-[8px] py-[1px] text-[11px] font-normal text-meta"
+          >
+            {meta.namedAgentName}
+          </Badge>
+        ) : meta.provider && meta.provider !== "claude-code" ? (
+          <Badge
+            variant="outline"
+            className="rounded-full px-[8px] py-[1px] text-[11px] font-normal uppercase tracking-wide text-meta"
+          >
+            {PROVIDER_LABELS[meta.provider as keyof typeof PROVIDER_LABELS] ??
+              meta.provider}
+          </Badge>
+        ) : null}
+
         <Button
           variant="outline"
           size="sm"
+          className="ml-auto h-[31px] rounded-[8px] px-[12px] text-[13px]"
           onClick={handleRefresh}
           disabled={refreshing}
         >
-          <RefreshCw className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`} />
+          <RefreshCw
+            className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`}
+          />
           Refresh
         </Button>
       </div>
 
-      {/* Metadata cards */}
-      <div className="grid grid-cols-2 gap-3 mb-6">
-        <Card className="p-3 flex items-center gap-2">
-          <Calendar className="h-4 w-4 text-muted-foreground" />
-          <div>
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Created</div>
-            <div className="text-sm">
-              {new Date(meta.createdAt).toLocaleDateString()}{" "}
-              {new Date(meta.createdAt).toLocaleTimeString()}
-            </div>
-          </div>
-        </Card>
-        <Card className="p-3 flex items-center gap-2">
-          <Hash className="h-4 w-4 text-muted-foreground" />
-          <div>
-            <div className="text-[10px] text-muted-foreground uppercase tracking-wide">Messages</div>
-            <div className="text-sm">{messages.length}</div>
-          </div>
-        </Card>
+      <h2 className="text-[18px] font-medium leading-[1.3]">{meta.label}</h2>
+
+      {/* Key/value rows */}
+      <div className="flex flex-col">
+        <div className="flex items-center justify-between gap-4 border-t border-border-soft py-[11px]">
+          <span className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
+            <Calendar className="h-[13px] w-[13px]" />
+            Created
+          </span>
+          <span className="text-[13px]">
+            {new Date(meta.createdAt).toLocaleDateString()}{" "}
+            {new Date(meta.createdAt).toLocaleTimeString()}
+          </span>
+        </div>
+        <div className="flex items-center justify-between gap-4 border-y border-border-soft py-[11px]">
+          <span className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
+            <Hash className="h-[13px] w-[13px]" />
+            Messages
+          </span>
+          <span className="font-mono text-[13px]">{messages.length}</span>
+        </div>
       </div>
 
       {/* Message history */}
-      <Card className="overflow-hidden">
+      <Card className="overflow-hidden rounded-[12px]">
         <MessageList
           messages={messages}
           loading={false}

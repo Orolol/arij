@@ -158,6 +158,9 @@ export const agentSessions = sqliteTable("agent_sessions", {
   inputTokens: integer("input_tokens"),
   outputTokens: integer("output_tokens"),
   totalCostUsd: real("total_cost_usd"),
+  // Batch/night run that dispatched this session (see lib/night); NULL for
+  // standalone dispatches.
+  batchRunId: text("batch_run_id"),
   // Legacy column, scheduled for removal — read only via resolveCliSessionId().
   claudeSessionId: text("claude_session_id"),
   cliSessionId: text("cli_session_id"),

@@ -23,12 +23,15 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { Hammer, Layers, Loader2, X, CheckCircle2, XCircle, Plus, Users, MessageSquare, Bug, Search, GitMerge, Lock, Bot } from "lucide-react";
+import { Hammer, Layers, Loader2, X, CheckCircle2, XCircle, Plus, Users, Search, GitMerge, Bot } from "lucide-react";
+import { cn } from "@/lib/utils";
 import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
+import { NightRunDialog } from "@/components/night/NightRunDialog";
+import { NightRunSummaryDialog } from "@/components/night/NightRunSummaryDialog";
 import { QuickCapture } from "@/components/kanban/QuickCapture";
 import type { KanbanEpicAgentActivity } from "@/lib/types/kanban";
 import { getActiveDetailTicketId, selectOnlyTicket } from "@/lib/kanban/selection";
-import { useProjectEvents, type ConnectionStatus } from "@/hooks/useProjectEvents";
+import { useProjectEvents } from "@/hooks/useProjectEvents";
 
 interface Toast {
   id: string;
@@ -55,8 +58,14 @@ export default function KanbanPage() {
   const [batchMerging, setBatchMerging] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [bugDialogOpen, setBugDialogOpen] = useState(false);
+  const [nightDialogOpen, setNightDialogOpen] = useState(false);
+  const [nightSummaryRunId, setNightSummaryRunId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [highlightedActivityId, setHighlightedActivityId] = useState<string | null>(null);
+  // The Released digest yields its width to the side panel while it is open
+  // (the panel reports its own expanded state — see UnifiedChatPanel).
+  const [panelOpen, setPanelOpen] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(0);
   const { activities, failedSessions } = useAgentPolling(projectId, 3000, refreshTrigger);
   const prevSessionIds = useRef<Set<string>>(new Set());
   const panelRef = useRef<UnifiedChatPanelHandle>(null);
@@ -218,6 +227,70 @@ export default function KanbanPage() {
     const query = next.toString();
     router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
   }, [batch.setSelectedTicketIds, projectId, router, searchParams]);
+
+  // Header actions live in the project chrome (a layout that outlives this
+  // page), so they reach the board through the URL rather than through a
+  // shared event bus: ?panel=chat|new-epic|new-bug, stripped once handled.
+  // Consumed once per value: opening the chat is an imperative act, and the
+  // ref keeps a re-render (or a replace() that has not landed yet) from
+  // firing it a second time or re-opening a dialog the user just closed.
+  const handledPanelParam = useRef<string | null>(null);
+  const handledNightParam = useRef<string | null>(null);
+
+  useEffect(() => {
+    const panel = searchParams.get("panel");
+    if (!panel) {
+      handledPanelParam.current = null;
+      return;
+    }
+    if (handledPanelParam.current === panel) return;
+    handledPanelParam.current = panel;
+
+    if (panel === "chat") {
+      panelRef.current?.openChat();
+    } else if (panel === "new-epic") {
+      panelRef.current?.openNewEpic();
+    } else if (panel === "new-bug") {
+      setBugDialogOpen(true);
+    }
+
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("panel");
+    const query = next.toString();
+    router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
+  }, [projectId, router, searchParams]);
+
+  // Same mechanism for the header's Night run button: ?night=start.
+  useEffect(() => {
+    const night = searchParams.get("night");
+    if (night !== "start") {
+      handledNightParam.current = null;
+      return;
+    }
+    if (handledNightParam.current === night) return;
+    handledNightParam.current = night;
+
+    setNightDialogOpen(true);
+
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("night");
+    const query = next.toString();
+    router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
+  }, [projectId, router, searchParams]);
+
+  // Deep link: /projects/<id>?nightRun=<runId> opens the morning summary
+  // (used by the "Night run finished" notification), then strips the param.
+  useEffect(() => {
+    const nightRun = searchParams.get("nightRun");
+    if (!nightRun) return;
+
+    setNightSummaryRunId(nightRun);
+
+    const next = new URLSearchParams(searchParams.toString());
+    next.delete("nightRun");
+    const query = next.toString();
+    router.replace(query ? `/projects/${projectId}?${query}` : `/projects/${projectId}`);
+  }, [projectId, router, searchParams]);
 
   // Reset team mode when selection drops below 2
   useEffect(() => {
@@ -402,6 +475,7 @@ export default function KanbanPage() {
           projectId={projectId}
           ref={panelRef}
           onEpicCreated={() => setRefreshTrigger((t) => t + 1)}
+          onExpandedChange={setPanelOpen}
           sharedPanelView={
             activeDetailTicketId
               ? {
@@ -438,50 +512,32 @@ export default function KanbanPage() {
           }
         >
           <div className="flex h-full flex-col">
-            {/* Header bar */}
-            <div className="border-b border-border px-4 py-2 flex items-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => panelRef.current?.openChat()}
-                className="h-7 text-xs"
-              >
-                <MessageSquare className="h-3 w-3 mr-1" />
-                Chat
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => panelRef.current?.openNewEpic()}
-                className="h-7 text-xs"
-              >
-                <Plus className="h-3 w-3 mr-1" />
-                New Epic
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setBugDialogOpen(true)}
-                className="h-7 text-xs text-red-400 border-red-400/30 hover:bg-red-400/10"
-              >
-                <Bug className="h-3 w-3 mr-1" />
-                New Bug
-              </Button>
-              <QuickCapture
-                projectId={projectId}
-                onCreated={() => setRefreshTrigger((t) => t + 1)}
-                onError={(message) => addToast("error", message)}
-              />
+            {/* Quick capture bar */}
+            <div
+              className="flex h-[46px] shrink-0 items-center gap-[12px] border-b border-border bg-card px-[22px]"
+              data-testid="board-capture-bar"
+            >
+              <Plus className="h-[13px] w-[13px] shrink-0 text-meta" aria-hidden />
+              <div className="flex max-w-[420px] flex-1 items-center">
+                <QuickCapture
+                  projectId={projectId}
+                  onCreated={() => setRefreshTrigger((t) => t + 1)}
+                  onError={(message) => addToast("error", message)}
+                />
+              </div>
+              <span className="ml-auto truncate text-[12.5px] text-muted-foreground">
+                {visibleCount} ticket{visibleCount === 1 ? "" : "s"} visible
+                {panelOpen && " · Released returns when the panel closes"}
+              </span>
             </div>
 
             {/* Batch action toolbar */}
             {totalSelected > 0 && (
-              <div className="border-b border-border px-4 py-2 bg-muted/30 flex items-center gap-3 flex-wrap">
-                <span className="text-sm">
+              <div className="flex min-h-[48px] shrink-0 flex-wrap items-center gap-[10px] border-b border-border bg-card px-[22px] py-[8px]">
+                <span className="text-[13px] font-medium">
                   {batch.userSelected.size} epic{batch.userSelected.size > 1 ? "s" : ""} selected
                   {autoCount > 0 && (
-                    <span className="text-amber-500 ml-1">
-                      <Lock className="h-3 w-3 inline mr-0.5" />
+                    <span className="ml-[8px] font-normal text-agent">
                       +{autoCount} required
                     </span>
                   )}
@@ -498,7 +554,7 @@ export default function KanbanPage() {
                     setBuildMode(v as "parallel" | "sequential" | "dag")
                   }
                 >
-                  <SelectTrigger className="w-32 h-7 text-xs">
+                  <SelectTrigger className="h-[29px] w-32 rounded-[7px] text-[12.5px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -515,7 +571,7 @@ export default function KanbanPage() {
                       <TooltipTrigger asChild>
                         <span
                           data-testid="dag-mode-hint"
-                          className="flex items-center gap-1 text-xs text-muted-foreground cursor-help"
+                          className="flex cursor-help items-center gap-1 text-[12.5px] text-meta"
                         >
                           <Layers className="h-3 w-3" />
                           Waves
@@ -537,9 +593,10 @@ export default function KanbanPage() {
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <label
-                          className={`flex items-center gap-1.5 text-xs cursor-pointer ${
-                            !canTeamMode ? "opacity-50 cursor-not-allowed" : ""
-                          }`}
+                          className={cn(
+                            "flex cursor-pointer items-center gap-1.5 text-[12.5px]",
+                            !canTeamMode && "cursor-not-allowed opacity-50"
+                          )}
                         >
                           <input
                             type="checkbox"
@@ -559,98 +616,109 @@ export default function KanbanPage() {
                   </TooltipProvider>
                 )}
 
-                <Button
-                  size="sm"
-                  onClick={handleBuild}
-                  disabled={building}
-                  className="h-7 text-xs"
-                >
-                  {building ? (
-                    <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                  ) : teamMode ? (
-                    <Users className="h-3 w-3 mr-1" />
-                  ) : (
-                    <Hammer className="h-3 w-3 mr-1" />
-                  )}
-                  {teamMode ? "Build as Team" : "Build all"}
-                </Button>
-
-                {/* Review all — appears when multiple selected */}
+                {/* Merge auto-fix — sits with its Merge all button on the right */}
                 {totalSelected >= 2 && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={handleBatchReview}
-                    disabled={reviewing}
-                    className="h-7 text-xs"
-                  >
-                    {reviewing ? (
-                      <Loader2 className="h-3 w-3 animate-spin mr-1" />
-                    ) : (
-                      <Search className="h-3 w-3 mr-1" />
-                    )}
-                    Review all
-                  </Button>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <label className="flex cursor-pointer items-center gap-1.5 text-[12.5px]">
+                          <input
+                            type="checkbox"
+                            checked={autoMergeAgent}
+                            onChange={(e) => setAutoMergeAgent(e.target.checked)}
+                            className="h-3.5 w-3.5 rounded border-border"
+                            data-testid="auto-merge-agent-checkbox"
+                          />
+                          <Bot className="h-3 w-3" />
+                          Auto-fix
+                        </label>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        When a merge fails, automatically launch an agent to resolve conflicts
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 )}
 
-                {/* Merge all — appears when multiple selected */}
-                {totalSelected >= 2 && (
-                  <>
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                            <input
-                              type="checkbox"
-                              checked={autoMergeAgent}
-                              onChange={(e) => setAutoMergeAgent(e.target.checked)}
-                              className="h-3.5 w-3.5 rounded border-border"
-                              data-testid="auto-merge-agent-checkbox"
-                            />
-                            <Bot className="h-3 w-3" />
-                            Auto-fix
-                          </label>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          When a merge fails, automatically launch an agent to resolve conflicts
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                <div className="ml-auto flex flex-wrap items-center gap-[8px]">
+                  <Button
+                    size="sm"
+                    onClick={handleBuild}
+                    disabled={building}
+                    className="h-[29px] rounded-[7px] text-[12.5px]"
+                  >
+                    {building ? (
+                      <Loader2 className="h-3 w-3 animate-spin mr-1 motion-reduce:animate-none" />
+                    ) : teamMode ? (
+                      <Users className="h-3 w-3 mr-1" />
+                    ) : (
+                      <Hammer className="h-3 w-3 mr-1" />
+                    )}
+                    {teamMode ? "Build as Team" : "Build all"}
+                  </Button>
+
+                  {/* Review all — appears when multiple selected */}
+                  {totalSelected >= 2 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleBatchReview}
+                      disabled={reviewing}
+                      className="h-[29px] rounded-[7px] text-[12.5px]"
+                    >
+                      {reviewing ? (
+                        <Loader2 className="h-3 w-3 animate-spin mr-1 motion-reduce:animate-none" />
+                      ) : (
+                        <Search className="h-3 w-3 mr-1" />
+                      )}
+                      Review all
+                    </Button>
+                  )}
+
+                  {/* Merge all — appears when multiple selected */}
+                  {totalSelected >= 2 && (
                     <Button
                       size="sm"
                       variant="outline"
                       onClick={handleBatchMerge}
                       disabled={batchMerging}
-                      className="h-7 text-xs"
+                      className="h-[29px] rounded-[7px] text-[12.5px]"
                     >
                       {batchMerging ? (
-                        <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                        <Loader2 className="h-3 w-3 animate-spin mr-1 motion-reduce:animate-none" />
                       ) : (
                         <GitMerge className="h-3 w-3 mr-1" />
                       )}
                       Merge all
                     </Button>
-                  </>
-                )}
+                  )}
 
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={batch.clear}
-                  className="h-7 text-xs"
-                >
-                  Clear
-                </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={batch.clear}
+                    className="h-[29px] rounded-[7px] text-[12.5px] text-meta"
+                  >
+                    Clear
+                  </Button>
+                </div>
               </div>
             )}
 
             <div className="flex-1 overflow-hidden relative">
               {sseStatus !== "connected" && (
                 <div
-                  className="absolute top-2 right-2 z-10 flex items-center gap-1.5 px-2 py-1 rounded-md bg-muted/80 text-xs text-muted-foreground"
+                  className="absolute top-[10px] right-[10px] z-10 flex items-center gap-1.5 rounded-full border border-border bg-card px-[10px] py-[3px] text-[11.5px] text-muted-foreground"
                   title={sseStatus === "connecting" ? "Connecting to real-time updates..." : "Offline — reconnecting..."}
                 >
-                  <span className={`h-2 w-2 rounded-full ${sseStatus === "connecting" ? "bg-yellow-500 animate-pulse" : "bg-red-500"}`} />
+                  <span
+                    className={cn(
+                      "h-2 w-2 rounded-full",
+                      sseStatus === "connecting"
+                        ? "bg-priority-yellow animate-pulse motion-reduce:animate-none"
+                        : "bg-destructive"
+                    )}
+                  />
                   {sseStatus === "connecting" ? "Connecting..." : "Offline"}
                 </div>
               )}
@@ -667,6 +735,8 @@ export default function KanbanPage() {
                 onMoveError={(error) => addToast("error", error)}
                 failedSessions={failedSessions}
                 onRetryBuild={handleRetryBuild}
+                hideReleased={panelOpen}
+                onVisibleCountChange={setVisibleCount}
               />
             </div>
 
@@ -685,11 +755,12 @@ export default function KanbanPage() {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg shadow-lg text-sm ${
+            className={cn(
+              "flex items-center gap-2 rounded-[11px] border px-[14px] py-[10px] text-[13px] shadow-[0_18px_40px_rgba(58,48,44,.14)]",
               toast.type === "success"
-                ? "bg-green-900/90 text-green-100"
-                : "bg-red-900/90 text-red-100"
-            }`}
+                ? "border-agent-border bg-agent-bg text-agent"
+                : "border-destructive/40 bg-card text-destructive"
+            )}
           >
             {toast.type === "success" ? (
               <CheckCircle2 className="h-4 w-4" />
@@ -719,6 +790,27 @@ export default function KanbanPage() {
         onOpenChange={setBugDialogOpen}
         onCreated={() => setRefreshTrigger((t) => t + 1)}
         namedAgentId={namedAgentId}
+      />
+
+      <NightRunDialog
+        projectId={projectId}
+        open={nightDialogOpen}
+        onOpenChange={setNightDialogOpen}
+        defaultNamedAgentId={namedAgentId}
+        onStarted={(result) => {
+          addToast("success", result.message);
+          setRefreshTrigger((t) => t + 1);
+        }}
+        onError={(message) => addToast("error", message)}
+      />
+
+      <NightRunSummaryDialog
+        projectId={projectId}
+        runId={nightSummaryRunId}
+        open={nightSummaryRunId !== null}
+        onOpenChange={(open) => {
+          if (!open) setNightSummaryRunId(null);
+        }}
       />
 
     </div>

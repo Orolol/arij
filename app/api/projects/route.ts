@@ -18,6 +18,18 @@ export async function GET() {
         sql<number>`SUM(CASE WHEN ${epics.status} = 'done' THEN 1 ELSE 0 END)`.as(
           "epics_done"
         ),
+      epicsInProgress:
+        sql<number>`SUM(CASE WHEN ${epics.status} = 'in_progress' THEN 1 ELSE 0 END)`.as(
+          "epics_in_progress"
+        ),
+      epicsReview:
+        sql<number>`SUM(CASE WHEN ${epics.status} = 'review' THEN 1 ELSE 0 END)`.as(
+          "epics_review"
+        ),
+      epicsReleased:
+        sql<number>`SUM(CASE WHEN ${epics.status} = 'released' THEN 1 ELSE 0 END)`.as(
+          "epics_released"
+        ),
     })
     .from(epics)
     .groupBy(epics.projectId)
@@ -33,6 +45,24 @@ export async function GET() {
     .groupBy(agentSessions.projectId)
     .as("active_agent_counts");
 
+  // `agent_sessions.created_at` defaults to sqlite CURRENT_TIMESTAMP
+  // ("YYYY-MM-DD HH:MM:SS", UTC) while rows written by the app carry a full
+  // ISO string. Normalise to ISO-UTC *before* MAX() so the comparison and the
+  // value handed to the client are both unambiguous.
+  const lastSessionTimes = db
+    .select({
+      projectId: agentSessions.projectId,
+      lastSessionAt: sql<string | null>`MAX(
+        CASE
+          WHEN ${agentSessions.createdAt} LIKE '%T%' THEN ${agentSessions.createdAt}
+          ELSE replace(${agentSessions.createdAt}, ' ', 'T') || 'Z'
+        END
+      )`.as("last_session_at"),
+    })
+    .from(agentSessions)
+    .groupBy(agentSessions.projectId)
+    .as("last_session_times");
+
   const result = db
     .select({
       id: projects.id,
@@ -46,11 +76,16 @@ export async function GET() {
       updatedAt: projects.updatedAt,
       epicCount: sql<number>`COALESCE(${epicCounts.epicCount}, 0)`,
       epicsDone: sql<number>`COALESCE(${epicCounts.epicsDone}, 0)`,
+      epicsInProgress: sql<number>`COALESCE(${epicCounts.epicsInProgress}, 0)`,
+      epicsReview: sql<number>`COALESCE(${epicCounts.epicsReview}, 0)`,
+      epicsReleased: sql<number>`COALESCE(${epicCounts.epicsReleased}, 0)`,
       activeAgents: sql<number>`COALESCE(${activeAgentCounts.activeAgents}, 0)`,
+      lastSessionAt: sql<string | null>`${lastSessionTimes.lastSessionAt}`,
     })
     .from(projects)
     .leftJoin(epicCounts, eq(projects.id, epicCounts.projectId))
     .leftJoin(activeAgentCounts, eq(projects.id, activeAgentCounts.projectId))
+    .leftJoin(lastSessionTimes, eq(projects.id, lastSessionTimes.projectId))
     .orderBy(projects.updatedAt)
     .all();
 

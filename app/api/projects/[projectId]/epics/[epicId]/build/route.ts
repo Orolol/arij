@@ -52,6 +52,11 @@ import {
 } from "@/lib/events/emit";
 import { logTransition } from "@/lib/workflow/log";
 import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
+import {
+  resolvePipelineEnabled,
+  startPipelineRun,
+  type PipelineStageResult,
+} from "@/lib/pipeline";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -59,6 +64,10 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
   const body = await request.json().catch(() => ({}));
   const namedAgentId: string | null = body.namedAgentId || null;
+  // Autonomous pipeline flag: an explicit boolean forces on/off; absent, the
+  // pipeline_enabled setting chain decides (default OFF).
+  const pipelineParam: boolean | undefined =
+    typeof body.pipeline === "boolean" ? body.pipeline : undefined;
 
   try {
     validateMentionsExist({
@@ -292,8 +301,10 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   // Batch-style launch: goes through the per-project scheduler. The session
   // stays 'queued' until a slot frees; the closure spawns, waits for
-  // completion, syncs statuses, and posts the agent comment.
-  agentScheduler.submit(projectId, sessionId, async () => {
+  // completion, syncs statuses, and posts the agent comment. It returns the
+  // {success, outcome, error} triple so the pipeline's settle wrapper can
+  // observe the terminal result.
+  const runBuildSession = async () => {
     markSessionRunning(sessionId);
     processManager.start(sessionId, {
       mode: "code",
@@ -391,9 +402,60 @@ export async function POST(request: NextRequest, { params }: Params) {
         createdAt: completedAt,
       })
       .run();
-  });
+
+    return {
+      success: !!result?.success,
+      outcome,
+      error: result?.error ?? null,
+    };
+  };
+
+  // Autonomous pipeline: when active, wrap the launch closure with the
+  // settle pattern (copied from the batch route's launchEpic) so the run's
+  // engine can await this build's terminal state, then start the run.
+  const pipelineActive = pipelineParam ?? resolvePipelineEnabled(projectId);
+
+  let pipeline: { runId: string } | null = null;
+  if (pipelineActive) {
+    let settleLaunch!: (result: PipelineStageResult) => void;
+    const settled = new Promise<PipelineStageResult>((resolve) => {
+      settleLaunch = resolve;
+    });
+
+    agentScheduler.submit(projectId, sessionId, async () => {
+      try {
+        settleLaunch({ sessionId, ...(await runBuildSession()) });
+      } catch (error) {
+        // The scheduler's safety net finalizes the session row; the
+        // pipeline only needs to know this stage settled as failed.
+        settleLaunch({
+          sessionId,
+          success: false,
+          outcome: "error",
+          error:
+            error instanceof Error ? error.message : "Agent launch failed",
+        });
+        throw error;
+      }
+    });
+
+    pipeline = startPipelineRun({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildSessionId: sessionId,
+      buildProvider: resolvedAgent.provider,
+      buildNamedAgentId: namedAgentId,
+      buildSettled: settled,
+    });
+  } else {
+    agentScheduler.submit(projectId, sessionId, async () => {
+      await runBuildSession();
+    });
+  }
 
   return NextResponse.json({
-    data: { sessionId, branchName, worktreePath },
+    data: { sessionId, branchName, worktreePath, pipeline },
   });
 }
