@@ -27,11 +27,14 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { CockpitBar } from "@/components/layout/CockpitBar";
+import { ProjectSourceBadge } from "@/components/layout/ProjectSourceBadge";
 import { RepoStatusBar } from "@/components/layout/RepoStatusBar";
 
 interface ProjectSummary {
   gitRepoPath: string | null;
   githubOwnerRepo: string | null;
+  cloneSource: string | null;
+  gitRemoteUrl: string | null;
 }
 
 const TAB_CLASS =
@@ -50,6 +53,8 @@ export default function ProjectLayout({
   const [projectSummary, setProjectSummary] = useState<ProjectSummary>({
     gitRepoPath: null,
     githubOwnerRepo: null,
+    cloneSource: null,
+    gitRemoteUrl: null,
   });
   const [syncing, setSyncing] = useState(false);
 
@@ -62,6 +67,8 @@ export default function ProjectLayout({
           setProjectSummary({
             gitRepoPath: d.data.gitRepoPath ?? null,
             githubOwnerRepo: d.data.githubOwnerRepo ?? null,
+            cloneSource: d.data.cloneSource ?? null,
+            gitRemoteUrl: d.data.gitRemoteUrl ?? null,
           });
         }
       })
@@ -199,6 +206,12 @@ export default function ProjectLayout({
             </Tooltip>
           </TooltipProvider>
         )}
+
+        <ProjectSourceBadge
+          gitRepoPath={projectSummary.gitRepoPath}
+          cloneSource={projectSummary.cloneSource}
+          gitRemoteUrl={projectSummary.gitRemoteUrl}
+        />
 
         <div className="ml-auto flex items-center gap-[8px]">
           <DropdownMenu>
