@@ -330,15 +330,20 @@ describe("parseGitHubRepoInput — properties", () => {
     }
   });
 
-  it("runs without network or filesystem access", () => {
+  it("runs without network, filesystem or git access", () => {
     // Guards the layering: the parser is imported by the clone route before
-    // any root is resolved, so it must stay free of I/O imports.
+    // any root is resolved, AND by the import page in the browser, so it must
+    // stay free of I/O imports — including simple-git, which cannot be bundled
+    // for the client. lib/git/remote.ts re-exports it for server callers.
     const source = fs.readFileSync(
-      path.join(process.cwd(), "lib", "git", "remote.ts"),
+      path.join(process.cwd(), "lib", "git", "remote-parse.ts"),
       "utf-8"
     );
-    expect(source).not.toContain("node:fs");
-    expect(source).not.toContain("node:https");
-    expect(source).not.toContain("@octokit");
+    // Import statements only — the header comment names simple-git to explain
+    // why the split exists, and that mention must not fail the check.
+    const imports = source.match(/^\s*(?:import|export)\s.*from\s+["'][^"']+["']/gm) ?? [];
+
+    expect(imports).toEqual([]);
+    expect(source).not.toMatch(/\brequire\s*\(/);
   });
 });

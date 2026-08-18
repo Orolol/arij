@@ -1,12 +1,31 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FolderSelector } from "@/components/import/FolderSelector";
+import { GitHubRepoSelector } from "@/components/import/GitHubRepoSelector";
+import {
+  ImportSourcePicker,
+  type ImportSource,
+} from "@/components/import/ImportSourcePicker";
 import { ImportProgress } from "@/components/import/ImportProgress";
 import { ImportPreview } from "@/components/import/ImportPreview";
+import { PROJECTS_ROOT_SETTING_KEY } from "@/lib/projects/workspace-constants";
 
-type ImportState = "select" | "analyzing" | "preview";
+type ImportState = "select" | "cloning" | "analyzing" | "preview";
+
+/**
+ * What the clone endpoint reported, carried through analysis so the project
+ * row records its provenance. Null for a local folder import: `cloneSource`
+ * must stay NULL for directories Arij did not create.
+ */
+interface CloneResult {
+  path: string;
+  ownerRepo: string;
+  remoteUrl: string;
+  defaultBranch: string;
+  reused: boolean;
+}
 
 interface DebugInfo {
   duration?: number;
@@ -48,11 +67,79 @@ interface ImportData {
 export default function ImportProjectPage() {
   const router = useRouter();
   const [state, setState] = useState<ImportState>("select");
+  const [source, setSource] = useState<ImportSource>("local");
+  const [repoUrl, setRepoUrl] = useState("");
   const [folderPath, setFolderPath] = useState("");
+  const [clone, setClone] = useState<CloneResult | null>(null);
+  const [cloneTarget, setCloneTarget] = useState<string | null>(null);
+  const [projectsRoot, setProjectsRoot] = useState<string | null>(null);
   const [importData, setImportData] = useState<ImportData | null>(null);
   const [fromExistingFile, setFromExistingFile] = useState(false);
   const [error, setError] = useState("");
   const [debug, setDebug] = useState<DebugInfo | null>(null);
+
+  // Where clones land. Purely informational — the server resolves the root
+  // itself — so a failed read just hides the hint.
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("/api/settings")
+      .then((res) => res.json())
+      .then((body) => {
+        if (cancelled) return;
+        const configured = body?.data?.[PROJECTS_ROOT_SETTING_KEY];
+        const fallback = body?.defaults?.[PROJECTS_ROOT_SETTING_KEY];
+        const root = typeof configured === "string" && configured.trim()
+          ? configured.trim()
+          : typeof fallback === "string"
+            ? fallback
+            : null;
+        setProjectsRoot(root);
+      })
+      .catch(() => {});
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  /**
+   * Clone first, then run the untouched analysis pipeline against the clone.
+   * Two endpoints, two progress steps — a multi-minute clone reported as
+   * "Analyzing" would look like a hang.
+   */
+  async function handleClone(url: string) {
+    setError("");
+    setDebug(null);
+    setClone(null);
+    setCloneTarget(url);
+    setState("cloning");
+
+    let cloned: CloneResult;
+    try {
+      const res = await fetch("/api/projects/clone", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setError(data.error || "Failed to clone repository");
+        setState("select");
+        return;
+      }
+      cloned = data.data as CloneResult;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to clone repository");
+      setState("select");
+      return;
+    }
+
+    setClone(cloned);
+    setCloneTarget(cloned.ownerRepo);
+    await handleAnalyze(cloned.path);
+  }
 
   async function handleAnalyze(path: string) {
     setFolderPath(path);
@@ -93,6 +180,16 @@ export default function ImportProjectPage() {
         name: data.project.name,
         description: data.project.description,
         gitRepoPath: folderPath,
+        // Provenance, only for a directory Arij created. githubOwnerRepo makes
+        // push / PR / release work with no manual "Connect GitHub" step.
+        ...(clone
+          ? {
+              githubOwnerRepo: clone.ownerRepo,
+              cloneSource: "github",
+              gitRemoteUrl: clone.remoteUrl,
+              defaultBranch: clone.defaultBranch,
+            }
+          : {}),
       }),
     });
 
@@ -210,8 +307,38 @@ export default function ImportProjectPage() {
         </div>
       )}
 
-      {state === "select" && <FolderSelector onAnalyze={handleAnalyze} />}
-      {state === "analyzing" && <ImportProgress />}
+      {state === "select" && (
+        <>
+          <ImportSourcePicker
+            value={source}
+            onChange={(next) => {
+              setSource(next);
+              setError("");
+              setDebug(null);
+            }}
+          />
+          {source === "local" ? (
+            <FolderSelector onAnalyze={handleAnalyze} />
+          ) : (
+            <GitHubRepoSelector
+              value={repoUrl}
+              onChange={setRepoUrl}
+              onClone={handleClone}
+              projectsRoot={projectsRoot}
+            />
+          )}
+        </>
+      )}
+      {state === "cloning" && (
+        <ImportProgress step="cloning" target={cloneTarget} />
+      )}
+      {state === "analyzing" && <ImportProgress step="analyzing" />}
+      {state === "preview" && clone?.reused && (
+        <div className="bg-blue-500/10 text-blue-400 border border-blue-500/20 p-3 rounded-md mb-4 text-sm">
+          Reused the existing clone of {clone.ownerRepo} — fetched, not
+          re-downloaded.
+        </div>
+      )}
       {state === "preview" && fromExistingFile && (
         <div className="bg-blue-500/10 text-blue-400 border border-blue-500/20 p-3 rounded-md mb-4 text-sm">
           Imported from existing arij.json — Claude analysis was skipped.

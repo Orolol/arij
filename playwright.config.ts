@@ -18,7 +18,15 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        // CI uses Playwright's bundled chromium. Set E2E_BROWSER_CHANNEL=chrome
+        // to run against a locally installed browser instead — needed on Linux
+        // distributions newer than the bundled build supports.
+        ...(process.env.E2E_BROWSER_CHANNEL
+          ? { channel: process.env.E2E_BROWSER_CHANNEL }
+          : {}),
+      },
     },
   ],
   webServer: {
