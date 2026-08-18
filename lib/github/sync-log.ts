@@ -12,7 +12,10 @@ export type GitSyncOperation =
   | "pr_sync"
   | "release"
   | "tag_push"
-  | "issues_sync";
+  | "issues_sync"
+  // App-managed clone lifecycle (lib/git/clone.ts, lib/projects/clone-cleanup.ts).
+  | "clone"
+  | "clone_removed";
 
 export type GitSyncStatus = "success" | "failed" | "failure";
 

@@ -246,6 +246,9 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN output_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN total_cost_usd");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN batch_run_id");
+      conn.exec("ALTER TABLE projects DROP COLUMN clone_source");
+      conn.exec("ALTER TABLE projects DROP COLUMN git_remote_url");
+      conn.exec("ALTER TABLE projects DROP COLUMN default_branch");
     });
 
     withDb(file, (conn) => {
@@ -257,6 +260,9 @@ describe("initDb", () => {
       expect(columnNames(conn, "agent_sessions")).toContain("output_tokens");
       expect(columnNames(conn, "agent_sessions")).toContain("total_cost_usd");
       expect(columnNames(conn, "agent_sessions")).toContain("batch_run_id");
+      expect(columnNames(conn, "projects")).toContain("clone_source");
+      expect(columnNames(conn, "projects")).toContain("git_remote_url");
+      expect(columnNames(conn, "projects")).toContain("default_branch");
       expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
       expectFullSchema(conn);
     });
@@ -266,8 +272,8 @@ describe("initDb", () => {
     const file = tempDbPath();
 
     // Simulate a bookkeeping-less database whose schema stops at 0023:
-    // outcome exists; the 0024 usage columns, the 0025 table, and the 0026
-    // batch_run_id column do not.
+    // outcome exists; the 0024 usage columns, the 0025 table, the 0026
+    // batch_run_id column and the 0027 clone columns do not.
     withDb(file, (conn) => {
       initDb(conn);
       conn.exec('DROP TABLE "__drizzle_migrations"');
@@ -275,18 +281,24 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN output_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN total_cost_usd");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN batch_run_id");
+      conn.exec("ALTER TABLE projects DROP COLUMN clone_source");
+      conn.exec("ALTER TABLE projects DROP COLUMN git_remote_url");
+      conn.exec("ALTER TABLE projects DROP COLUMN default_branch");
       conn.exec("DROP TABLE ticket_read_cursors");
     });
 
     withDb(file, (conn) => {
       // 0023's ALTER must be stamped (outcome exists — re-running would
-      // throw) while 0024/0025/0026 actually run.
+      // throw) while 0024/0025/0026/0027 actually run.
       expect(() => initDb(conn)).not.toThrow();
 
       expect(columnNames(conn, "agent_sessions")).toContain("input_tokens");
       expect(columnNames(conn, "agent_sessions")).toContain("output_tokens");
       expect(columnNames(conn, "agent_sessions")).toContain("total_cost_usd");
       expect(columnNames(conn, "agent_sessions")).toContain("batch_run_id");
+      expect(columnNames(conn, "projects")).toContain("clone_source");
+      expect(columnNames(conn, "projects")).toContain("git_remote_url");
+      expect(columnNames(conn, "projects")).toContain("default_branch");
       expect(tableNames(conn)).toContain("ticket_read_cursors");
       expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
       expectFullSchema(conn);

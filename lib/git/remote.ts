@@ -1,4 +1,5 @@
 import simpleGit, { type SimpleGit } from "simple-git";
+import { isSafeRepoNameSegment } from "@/lib/projects/workspace-constants";
 
 export interface ParsedGitHubRemote {
   owner: string;
@@ -74,6 +75,87 @@ export function parseGitHubOwnerRepoFromRemoteUrl(
   }
 
   return null;
+}
+
+export interface ParsedGitHubRepoInput extends ParsedGitHubRemote {
+  /** Clean, credential-free HTTPS URL to clone from. */
+  cloneUrl: string;
+}
+
+/**
+ * Accepts anything a user might paste into the Import field and reduces it to
+ * `{ owner, repo }` plus the canonical HTTPS clone URL.
+ *
+ * On top of the remote formats `parseGitHubOwnerRepoFromRemoteUrl` handles
+ * (`git@`, `ssh://`, `https://`, `git://`) this also takes:
+ *   - the shorthand `owner/repo`
+ *   - browser URLs carrying a suffix: `/tree/main`, `/pull/12`, `?tab=readme`,
+ *     `#readme`
+ *
+ * Owner and repo are re-validated against `isSafeRepoNameSegment` afterwards,
+ * so a crafted input can never produce a path segment that escapes the clone
+ * root. Returns null when the input is not a recognisable GitHub repository.
+ */
+export function parseGitHubRepoInput(
+  input: string
+): ParsedGitHubRepoInput | null {
+  const raw = (input ?? "").trim();
+  if (!raw || raw.includes("\0")) return null;
+
+  // Query string and fragment are never part of the repository identity.
+  const withoutSuffix = raw.split("#")[0].split("?")[0].trim();
+  if (!withoutSuffix) return null;
+
+  const parsed =
+    parseGitHubOwnerRepoFromRemoteUrl(withoutSuffix) ??
+    parseTruncatedGitHubUrl(withoutSuffix) ??
+    parseOwnerRepoShorthand(withoutSuffix);
+
+  if (!parsed) return null;
+
+  if (
+    !isSafeRepoNameSegment(parsed.owner) ||
+    !isSafeRepoNameSegment(parsed.repo)
+  ) {
+    return null;
+  }
+
+  return {
+    ...parsed,
+    cloneUrl: `https://github.com/${parsed.owner}/${parsed.repo}.git`,
+  };
+}
+
+/**
+ * `https://github.com/owner/repo/tree/main` and friends: keep the first two
+ * path segments and re-parse as a plain repository URL.
+ */
+function parseTruncatedGitHubUrl(value: string): ParsedGitHubRemote | null {
+  const match = value.match(
+    /^(?:https?:\/\/)?(?:www\.)?github\.com\/(?<rest>.+)$/i
+  );
+  const rest = match?.groups?.rest;
+  if (!rest) return null;
+
+  const segments = rest.split("/").filter(Boolean);
+  if (segments.length < 2) return null;
+
+  const [owner, repoSegment] = segments;
+  const repo = repoSegment.replace(/\.git$/i, "");
+  if (!owner || !repo) return null;
+
+  return { owner, repo, ownerRepo: `${owner}/${repo}` };
+}
+
+/** The bare `owner/repo` shorthand. */
+function parseOwnerRepoShorthand(value: string): ParsedGitHubRemote | null {
+  const match = value.match(
+    /^(?<owner>[A-Za-z0-9._-]+)\/(?<repo>[A-Za-z0-9._-]+?)(?:\.git)?$/
+  );
+  if (!match?.groups) return null;
+
+  const { owner, repo } = match.groups;
+  return { owner, repo, ownerRepo: `${owner}/${repo}` };
 }
 
 function getGit(repoPath: string): SimpleGit {

@@ -71,6 +71,8 @@ export async function GET() {
       status: projects.status,
       gitRepoPath: projects.gitRepoPath,
       githubOwnerRepo: projects.githubOwnerRepo,
+      cloneSource: projects.cloneSource,
+      gitRemoteUrl: projects.gitRemoteUrl,
       imported: projects.imported,
       createdAt: projects.createdAt,
       updatedAt: projects.updatedAt,
@@ -101,7 +103,15 @@ export async function POST(request: NextRequest) {
   const validated = await validateBody(createProjectSchema, request);
   if (isValidationError(validated)) return validated;
 
-  const { name, description, gitRepoPath, githubOwnerRepo } = validated.data;
+  const {
+    name,
+    description,
+    gitRepoPath,
+    githubOwnerRepo,
+    cloneSource,
+    gitRemoteUrl,
+    defaultBranch,
+  } = validated.data;
 
   // Validate gitRepoPath if provided
   if (gitRepoPath) {
@@ -124,6 +134,9 @@ export async function POST(request: NextRequest) {
       description: description || null,
       gitRepoPath: gitRepoPath || null,
       githubOwnerRepo: githubOwnerRepo || null,
+      cloneSource: cloneSource || null,
+      gitRemoteUrl: gitRemoteUrl || null,
+      defaultBranch: defaultBranch || null,
       status: "ideation",
       createdAt: now,
       updatedAt: now,
