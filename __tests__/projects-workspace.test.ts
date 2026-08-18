@@ -2,34 +2,48 @@
  * The app-managed clone root: lib/projects/workspace-constants.ts (client-safe
  * key/default/parser) and lib/projects/workspace.ts (settings resolution,
  * mkdir, destination building and the escape guard).
+ *
+ * Backed by `createTestDb()` rather than a query-chain mock: the settings read
+ * is the whole point of `resolveProjectsRoot()`, and only a real database with
+ * the real migration chain proves it reads the right key with the right
+ * decoding. Nothing here touches the developer's `data/arij.db`, the network,
+ * or any directory outside the OS temp dir.
  */
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { dbMockState, resetDbMockState } from "@/__tests__/helpers/db-mock";
+import { eq } from "drizzle-orm";
+import { settings } from "@/lib/db/schema";
 import {
   DEFAULT_PROJECTS_DIRNAME,
   PROJECTS_ROOT_SETTING_KEY,
   parseProjectsRoot,
 } from "@/lib/projects/workspace-constants";
 
-// Real drizzle-orm + real @/lib/db/schema; the shared chain mock ignores
-// column identity, so no fake column maps.
+// One in-memory database, built from the real migrations, standing in for the
+// app's singleton. `resolveProjectsRoot()` reads `db` at call time, so rows
+// written below are visible to it immediately.
 vi.mock("@/lib/db", async () => {
-  const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
-  return dbModuleMock();
+  const { createTestDb } = await import("@/lib/db/test-utils");
+  return { db: createTestDb().db };
 });
 
+import { db } from "@/lib/db";
+
 /**
- * Queues the settings row resolveProjectsRoot() reads. Each resolver call
- * consumes one entry, so the queue is padded for tests that resolve repeatedly.
+ * Writes the `projects_root` settings row exactly as the PATCH route does —
+ * JSON-encoded — so the resolver is exercised against the real stored shape.
+ * `undefined` clears the row, i.e. "no override configured".
  */
-function storeRoot(value: unknown): void {
-  dbMockState.getQueue = Array.from({ length: 32 }, () =>
-    value === undefined ? null : { value }
-  );
+function storeRoot(value: string | undefined): void {
+  db.delete(settings).where(eq(settings.key, PROJECTS_ROOT_SETTING_KEY)).run();
+  if (value === undefined) return;
+
+  db.insert(settings)
+    .values({ key: PROJECTS_ROOT_SETTING_KEY, value: JSON.stringify(value) })
+    .run();
 }
 
 const tempDirs: string[] = [];
@@ -42,12 +56,10 @@ function tempDir(): string {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  resetDbMockState();
+  storeRoot(undefined);
 });
 
 afterEach(() => {
-  // No restoreAllMocks(): it would strip the shared db chain mock's
-  // implementations, and the module factory only runs once per file.
   while (tempDirs.length > 0) {
     fs.rmSync(tempDirs.pop() as string, { recursive: true, force: true });
   }
@@ -104,21 +116,21 @@ describe("resolveProjectsRoot", () => {
   });
 
   it("falls back to <cwd>/projects when the stored override is blank", async () => {
-    storeRoot(JSON.stringify("   "));
+    storeRoot("   ");
     const { resolveProjectsRoot } = await import("@/lib/projects/workspace");
 
     expect(resolveProjectsRoot()).toBe(path.join(process.cwd(), "projects"));
   });
 
   it("returns the configured absolute override", async () => {
-    storeRoot(JSON.stringify("/srv/arij-clones"));
+    storeRoot("/srv/arij-clones");
     const { resolveProjectsRoot } = await import("@/lib/projects/workspace");
 
     expect(resolveProjectsRoot()).toBe("/srv/arij-clones");
   });
 
   it("resolves a relative override against process.cwd()", async () => {
-    storeRoot(JSON.stringify("../shared-clones"));
+    storeRoot("../shared-clones");
     const { resolveProjectsRoot } = await import("@/lib/projects/workspace");
 
     const resolved = resolveProjectsRoot();
@@ -136,7 +148,7 @@ describe("resolveProjectsRoot", () => {
 describe("ensureProjectsRoot", () => {
   it("creates the root recursively", async () => {
     const root = path.join(tempDir(), "nested", "clones");
-    storeRoot(JSON.stringify(root));
+    storeRoot(root);
     const { ensureProjectsRoot } = await import("@/lib/projects/workspace");
 
     expect(ensureProjectsRoot()).toBe(root);
@@ -146,7 +158,7 @@ describe("ensureProjectsRoot", () => {
   it("is a no-op when the root already exists", async () => {
     const root = tempDir();
     fs.writeFileSync(path.join(root, "marker"), "keep me");
-    storeRoot(JSON.stringify(root));
+    storeRoot(root);
     const { ensureProjectsRoot } = await import("@/lib/projects/workspace");
 
     // Two calls, and nothing already inside is disturbed.
@@ -158,7 +170,7 @@ describe("ensureProjectsRoot", () => {
 
 describe("cloneDestinationFor", () => {
   it("builds <root>/<owner>-<repo>", async () => {
-    storeRoot(JSON.stringify("/srv/clones"));
+    storeRoot("/srv/clones");
     const { cloneDestinationFor } = await import("@/lib/projects/workspace");
 
     expect(cloneDestinationFor("Orolol", "arij")).toBe("/srv/clones/Orolol-arij");
@@ -174,7 +186,7 @@ describe("cloneDestinationFor", () => {
   });
 
   it("is deterministic across owners of the same repo name", async () => {
-    storeRoot(JSON.stringify("/srv/clones"));
+    storeRoot("/srv/clones");
     const { cloneDestinationFor } = await import("@/lib/projects/workspace");
 
     expect(cloneDestinationFor("alice", "app")).not.toBe(
@@ -183,7 +195,7 @@ describe("cloneDestinationFor", () => {
   });
 
   it("rejects traversal components in owner or repo", async () => {
-    storeRoot(JSON.stringify("/srv/clones"));
+    storeRoot("/srv/clones");
     const { cloneDestinationFor } = await import("@/lib/projects/workspace");
 
     for (const [owner, repo] of [
@@ -235,11 +247,95 @@ describe("assertInsideRoot", () => {
   });
 
   it("defaults the root to the configured one", async () => {
-    storeRoot(JSON.stringify("/srv/clones"));
+    storeRoot("/srv/clones");
     const { assertInsideRoot } = await import("@/lib/projects/workspace");
 
     expect(assertInsideRoot("/srv/clones/owner-repo")).toBe(
       "/srv/clones/owner-repo"
+    );
+  });
+
+  it("keeps the underlying containment failure as the error cause", async () => {
+    // The check itself lives in the db-free workspace-path module; losing the
+    // cause would make a production failure unattributable.
+    const { assertInsideRoot } = await import("@/lib/projects/workspace");
+    const { WorkspacePathError } = await import(
+      "@/lib/projects/workspace-path"
+    );
+
+    try {
+      assertInsideRoot("/etc/passwd", "/srv/clones");
+      expect.unreachable("should have thrown");
+    } catch (error) {
+      expect((error as Error).cause).toBeInstanceOf(WorkspacePathError);
+    }
+  });
+});
+
+/**
+ * Behaviour the query-chain mock structurally cannot check: it returns the
+ * queued row whatever the query asked for, so a resolver reading the wrong
+ * settings key would still pass. Against a real database, it cannot.
+ */
+describe("resolveProjectsRoot — against a real settings table", () => {
+  it("reads the projects_root key and no other", async () => {
+    db.delete(settings).run();
+    db.insert(settings)
+      .values([
+        { key: "github_pat", value: JSON.stringify("ghp_not_a_path") },
+        { key: "projects_root", value: JSON.stringify("/srv/the-right-one") },
+        { key: "clone_timeout_ms", value: JSON.stringify(60000) },
+      ])
+      .run();
+
+    const { resolveProjectsRoot } = await import("@/lib/projects/workspace");
+
+    expect(resolveProjectsRoot()).toBe("/srv/the-right-one");
+  });
+
+  it("ignores an unrelated key that merely looks similar", async () => {
+    db.delete(settings).run();
+    db.insert(settings)
+      .values({ key: "projects_root_backup", value: JSON.stringify("/srv/nope") })
+      .run();
+
+    const { resolveProjectsRoot } = await import("@/lib/projects/workspace");
+
+    expect(resolveProjectsRoot()).toBe(path.join(process.cwd(), "projects"));
+  });
+
+  it("survives a row written raw rather than JSON-encoded", async () => {
+    // Hand-edited databases and older writers both produce this shape.
+    db.delete(settings).run();
+    db.insert(settings)
+      .values({ key: PROJECTS_ROOT_SETTING_KEY, value: "/srv/raw-value" })
+      .run();
+
+    const { resolveProjectsRoot } = await import("@/lib/projects/workspace");
+
+    expect(resolveProjectsRoot()).toBe("/srv/raw-value");
+  });
+
+  it("picks up a change written after the module was first imported", async () => {
+    const { resolveProjectsRoot } = await import("@/lib/projects/workspace");
+
+    storeRoot("/srv/first");
+    expect(resolveProjectsRoot()).toBe("/srv/first");
+
+    // No caching: the Settings page must take effect on the next clone.
+    storeRoot("/srv/second");
+    expect(resolveProjectsRoot()).toBe("/srv/second");
+  });
+
+  it("puts worktrees beside the clone, inside the same root", async () => {
+    // createWorktree() uses path.join(repoPath, "..", ".arij-worktrees"), so
+    // this is the property that keeps a single /projects gitignore rule enough.
+    storeRoot("/srv/clones");
+    const { cloneDestinationFor } = await import("@/lib/projects/workspace");
+
+    const dest = cloneDestinationFor("Orolol", "arij");
+    expect(path.join(dest, "..", ".arij-worktrees")).toBe(
+      "/srv/clones/.arij-worktrees"
     );
   });
 });

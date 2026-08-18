@@ -8,6 +8,7 @@ import {
   PROJECTS_ROOT_SETTING_KEY,
   parseProjectsRoot,
 } from "./workspace-constants";
+import { assertInsideRoot as assertPathInsideRoot } from "./workspace-path";
 
 /**
  * Server-side resolution of the app-managed clone root.
@@ -60,22 +61,24 @@ export function ensureProjectsRoot(): string {
  * `../../etc` must never resolve outside the root. The root itself is rejected
  * too — cloning into it would nest every later clone inside the first one.
  *
+ * The containment check itself lives in the db-free ./workspace-path module so
+ * it can be reasoned about (and tested) without a settings lookup; this wrapper
+ * only supplies the configured root and the caller-facing message.
+ *
  * Returns the resolved absolute destination.
  */
 export function assertInsideRoot(
   destination: string,
   root: string = resolveProjectsRoot()
 ): string {
-  const resolvedRoot = path.resolve(root);
-  const resolved = path.resolve(resolvedRoot, destination);
-
-  if (resolved === resolvedRoot || !resolved.startsWith(resolvedRoot + path.sep)) {
+  try {
+    return assertPathInsideRoot(root, destination);
+  } catch (cause) {
     throw new Error(
-      `Refusing to use a path outside the projects root: ${destination}`
+      `Refusing to use a path outside the projects root: ${destination}`,
+      { cause }
     );
   }
-
-  return resolved;
 }
 
 /** Owner and repository segments Arij accepts in a clone destination. */
