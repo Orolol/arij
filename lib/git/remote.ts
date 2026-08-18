@@ -76,6 +76,89 @@ export function parseGitHubOwnerRepoFromRemoteUrl(
   return null;
 }
 
+/** Owner/repo plus the clean HTTPS URL Arij clones from. */
+export interface ParsedGitHubRepoInput extends ParsedGitHubRemote {
+  /** `https://github.com/<owner>/<repo>.git` — never carries credentials. */
+  cloneUrl: string;
+}
+
+/** Characters GitHub allows in an owner or repository name. */
+const GITHUB_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
+
+function isSafeSegment(value: string): boolean {
+  if (!GITHUB_NAME_PATTERN.test(value)) return false;
+  // `.` / `..` pass the character class but would escape the clone root.
+  return value !== "." && value !== "..";
+}
+
+/**
+ * Parses anything a user may paste into the import field:
+ *
+ *   - every remote form `parseGitHubOwnerRepoFromRemoteUrl()` handles
+ *     (`git@`, `ssh://`, `https://`, `git://`)
+ *   - the `owner/repo` shorthand
+ *   - browser URLs carrying a suffix (`/tree/main`, `/pull/12`, `?tab=readme`)
+ *
+ * Owner and repo are re-validated against GitHub's character set and rejected
+ * when they are `.` or `..`, so a crafted input can never escape the clone
+ * root. Returns null for anything that is not a GitHub repository reference.
+ */
+export function parseGitHubRepoInput(
+  input: string
+): ParsedGitHubRepoInput | null {
+  const value = normalizeRemoteUrl(input);
+  if (!value || value.includes("\0")) return null;
+
+  // Tried in order, and a candidate that fails validation falls through to
+  // the next: `https://github.com/o/r?tab=readme` parses as a remote URL with
+  // the query glued to the repo name, and only the browser form gets it right.
+  const candidates = [
+    parseGitHubOwnerRepoFromRemoteUrl(value),
+    parseGitHubBrowserUrl(value),
+    parseOwnerRepoShorthand(value),
+  ];
+
+  for (const parsed of candidates) {
+    if (!parsed) continue;
+
+    const repo = parsed.repo.replace(/\.git$/i, "");
+    if (!isSafeSegment(parsed.owner) || !isSafeSegment(repo)) continue;
+
+    return {
+      owner: parsed.owner,
+      repo,
+      ownerRepo: `${parsed.owner}/${repo}`,
+      cloneUrl: `https://github.com/${parsed.owner}/${repo}.git`,
+    };
+  }
+
+  return null;
+}
+
+/** `https://github.com/owner/repo/tree/main`, `.../pull/12`, `...?tab=readme`. */
+function parseGitHubBrowserUrl(value: string): ParsedGitHubRemote | null {
+  const match = value.match(
+    /^(?:https?:\/\/)?(?:www\.)?github\.com\/(?<owner>[^/?#]+)\/(?<repo>[^/?#]+)(?:[/?#].*)?$/i
+  );
+  if (!match?.groups?.owner || !match.groups.repo) return null;
+
+  const owner = match.groups.owner;
+  const repo = match.groups.repo.replace(/\.git$/i, "");
+  return { owner, repo, ownerRepo: `${owner}/${repo}` };
+}
+
+/** Bare `owner/repo` shorthand — no host, no scheme. */
+function parseOwnerRepoShorthand(value: string): ParsedGitHubRemote | null {
+  const match = value.match(
+    /^(?<owner>[^/\s:@]+)\/(?<repo>[^/\s:@]+?)(?:\.git)?\/?$/
+  );
+  if (!match?.groups?.owner || !match.groups.repo) return null;
+
+  const owner = match.groups.owner;
+  const repo = match.groups.repo;
+  return { owner, repo, ownerRepo: `${owner}/${repo}` };
+}
+
 function getGit(repoPath: string): SimpleGit {
   return simpleGit(repoPath);
 }

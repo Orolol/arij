@@ -25,6 +25,13 @@ export const importProjectSchema = z.object({
   path: z.string().min(1, "path is required"),
 });
 
+export const cloneProjectSchema = z.object({
+  /** GitHub URL, `git@` remote, or the `owner/repo` shorthand. */
+  url: z.string().min(1, "url is required").max(500),
+  /** Optional branch to check out instead of the remote's default. */
+  branch: z.string().max(255).nullish(),
+});
+
 // --- Epic schemas ---
 
 const userStoryInput = z.object({
