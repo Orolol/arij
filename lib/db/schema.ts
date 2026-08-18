@@ -16,6 +16,9 @@ export const projects = sqliteTable("projects", {
   status: text("status").default("ideation"), // ideation | specifying | building | done | archived
   gitRepoPath: text("git_repo_path"),
   githubOwnerRepo: text("github_owner_repo"),
+  cloneSource: text("clone_source"), // "github" when Arij created the directory, NULL for user-supplied paths
+  gitRemoteUrl: text("git_remote_url"),
+  defaultBranch: text("default_branch"),
   spec: text("spec"),
   imported: integer("imported").default(0),
   ticketCounter: integer("ticket_counter").default(0), // shared sequence across epics+bugs

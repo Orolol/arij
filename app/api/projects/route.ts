@@ -101,9 +101,20 @@ export async function POST(request: NextRequest) {
   const validated = await validateBody(createProjectSchema, request);
   if (isValidationError(validated)) return validated;
 
-  const { name, description, gitRepoPath, githubOwnerRepo } = validated.data;
+  const {
+    name,
+    description,
+    gitRepoPath,
+    githubOwnerRepo,
+    cloneSource,
+    gitRemoteUrl,
+    defaultBranch,
+  } = validated.data;
 
-  // Validate gitRepoPath if provided
+  // Validate gitRepoPath if provided. The *normalised* path is what gets
+  // stored: every downstream consumer (worktrees, git manager, arji.json sync)
+  // resolves against it, so a relative or untidy input must not survive here.
+  let normalizedRepoPath: string | null = null;
   if (gitRepoPath) {
     const pathResult = await validatePath(gitRepoPath);
     if (!pathResult.valid) {
@@ -112,6 +123,7 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    normalizedRepoPath = pathResult.normalizedPath;
   }
 
   const id = createId();
@@ -122,8 +134,11 @@ export async function POST(request: NextRequest) {
       id,
       name,
       description: description || null,
-      gitRepoPath: gitRepoPath || null,
+      gitRepoPath: normalizedRepoPath,
       githubOwnerRepo: githubOwnerRepo || null,
+      cloneSource: cloneSource || null,
+      gitRemoteUrl: gitRemoteUrl || null,
+      defaultBranch: defaultBranch || null,
       status: "ideation",
       createdAt: now,
       updatedAt: now,

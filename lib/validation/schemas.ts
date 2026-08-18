@@ -8,6 +8,12 @@ export const createProjectSchema = z.object({
   description: z.string().max(5000).nullish(),
   gitRepoPath: z.string().max(1000).nullish(),
   githubOwnerRepo: z.string().max(200).nullish(),
+  // Clone provenance, set by the GitHub import flow. "github" is the only
+  // source Arij can create today; a NULL means the user supplied the path, so
+  // the directory is not Arij's to delete.
+  cloneSource: z.enum(["github"]).nullish(),
+  gitRemoteUrl: z.string().max(1000).nullish(),
+  defaultBranch: z.string().max(255).nullish(),
 });
 
 export const updateProjectSchema = z.object({

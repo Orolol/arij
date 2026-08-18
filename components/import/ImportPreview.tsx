@@ -32,11 +32,19 @@ interface ImportData {
 
 interface ImportPreviewProps {
   data: ImportData;
+  /** Blocks a second submit while the import chain is running, or after it
+   *  created a project row that a retry would duplicate. */
+  busy?: boolean;
   onValidate: (data: ImportData) => void;
   onCancel: () => void;
 }
 
-export function ImportPreview({ data, onValidate, onCancel }: ImportPreviewProps) {
+export function ImportPreview({
+  data,
+  busy = false,
+  onValidate,
+  onCancel,
+}: ImportPreviewProps) {
   const [editData, setEditData] = useState<ImportData>(structuredClone(data));
 
   function updateEpic(index: number, field: string, value: string) {
@@ -149,8 +157,8 @@ export function ImportPreview({ data, onValidate, onCancel }: ImportPreviewProps
       </div>
 
       <div className="flex gap-2">
-        <Button onClick={() => onValidate(editData)}>
-          Validate & Import
+        <Button onClick={() => onValidate(editData)} disabled={busy}>
+          {busy ? "Importing..." : "Validate & Import"}
         </Button>
         <Button variant="outline" onClick={onCancel}>
           Cancel
