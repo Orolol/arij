@@ -71,8 +71,15 @@ describe("0027_project_clone_source — migration file", () => {
 
     expect(entry).toBeDefined();
     expect(entry?.idx).toBe(26);
-    // Journal order drives apply order: 0027 must be the last entry.
-    expect(journal.entries[journal.entries.length - 1].tag).toBe(MIGRATION_TAG);
+
+    // Journal order drives apply order, and drizzle only applies a migration
+    // whose `when` is greater than the last recorded one — so idx order and
+    // `when` order must agree. 0028_git_sync_log_nullable_project ships with
+    // the same feature and must therefore sort strictly after this one.
+    const whens = journal.entries.map((e) => e.when);
+    expect(whens).toEqual([...whens].sort((a, b) => a - b));
+    expect(journal.entries[27]?.tag).toBe("0028_git_sync_log_nullable_project");
+    expect(journal.entries[27]?.when).toBeGreaterThan(entry!.when);
   });
 
   it("leaves the drizzle-kit snapshots untouched (generate must not be run)", () => {
@@ -176,9 +183,12 @@ describe("0027_project_clone_source — applied schema", () => {
       for (const column of NEW_COLUMNS) {
         conn.exec(`ALTER TABLE projects DROP COLUMN ${column}`);
       }
+      // Un-stamp 0027 *and everything after it*: drizzle resumes from the
+      // highest recorded `created_at`, so leaving a later migration stamped
+      // would make it skip 0027 entirely.
       const entry = journal.entries.find((e) => e.tag === MIGRATION_TAG);
       conn
-        .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at = ?')
+        .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at >= ?')
         .run(entry?.when);
 
       conn
