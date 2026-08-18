@@ -97,6 +97,88 @@ describe("clone command", () => {
       expect.objectContaining({ GIT_TERMINAL_PROMPT: "0" })
     );
   });
+
+  it("passes the token only when there is one to pass", async () => {
+    await cloneRepository({ cloneUrl: CLONE_URL, dest: dest("a") });
+    expect(cloneArgs()).not.toContain("-c");
+
+    for (const token of [null, undefined, "", "   "]) {
+      gitMock.raw.mockClear();
+      await cloneRepository({ cloneUrl: CLONE_URL, dest: dest(`t-${token}`), token });
+
+      // A blank PAT is "no PAT": sending `Basic ` with an empty payload would
+      // turn a public clone into an authentication failure.
+      expect(gitMock.raw.mock.calls[0][0]).not.toContain("-c");
+    }
+  });
+});
+
+describe("clone cleanup", () => {
+  /** Mimics git: the destination appears, then the command fails. */
+  function failingClone(message: string) {
+    gitMock.raw.mockImplementation(async (args: string[]) => {
+      const target = args[args.length - 1];
+      fs.mkdirSync(path.join(target, ".git"), { recursive: true });
+      fs.writeFileSync(path.join(target, ".git", "HEAD"), "ref: refs/heads/main");
+      throw new Error(message);
+    });
+  }
+
+  it("removes the partial destination when the clone fails", async () => {
+    failingClone("fatal: the remote end hung up unexpectedly");
+
+    await expect(
+      cloneRepository({ cloneUrl: CLONE_URL, dest: dest() })
+    ).rejects.toBeInstanceOf(CloneError);
+
+    // A half-written tree left behind would be picked up as a "matching"
+    // clone on the next attempt and reused instead of re-cloned.
+    expect(fs.existsSync(dest())).toBe(false);
+  });
+
+  it("removes the partial destination when the clone times out", async () => {
+    gitMock.raw.mockImplementation(async (args: string[]) => {
+      fs.mkdirSync(args[args.length - 1], { recursive: true });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      throw new Error("aborted");
+    });
+
+    await expect(
+      cloneRepository({ cloneUrl: CLONE_URL, dest: dest(), timeoutMs: 10 })
+    ).rejects.toMatchObject({ code: "timeout" });
+
+    expect(fs.existsSync(dest())).toBe(false);
+  });
+
+  it("leaves the parent root in place after a failure", async () => {
+    failingClone("fatal: repository not found");
+
+    await expect(
+      cloneRepository({ cloneUrl: CLONE_URL, dest: dest() })
+    ).rejects.toBeInstanceOf(CloneError);
+
+    // Only the clone's own directory is ours to delete.
+    expect(fs.existsSync(root)).toBe(true);
+  });
+
+  it("never deletes a directory it did not create", async () => {
+    // A pre-existing destination goes down the reuse path, which either
+    // fetches or conflicts — it must never be cleaned up as "partial".
+    const occupied = dest("occupied");
+    fs.mkdirSync(occupied, { recursive: true });
+    fs.writeFileSync(path.join(occupied, "IMPORTANT.txt"), "user data");
+    gitMock.checkIsRepo = vi.fn().mockResolvedValue(false);
+
+    await expect(
+      cloneRepository({ cloneUrl: CLONE_URL, dest: occupied })
+    ).rejects.toMatchObject({ code: "conflict" });
+
+    expect(fs.readFileSync(path.join(occupied, "IMPORTANT.txt"), "utf-8")).toBe(
+      "user data"
+    );
+    // And git was never asked to clone into it.
+    expect(gitMock.raw).not.toHaveBeenCalled();
+  });
 });
 
 describe("clone failure classification", () => {

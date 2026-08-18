@@ -101,9 +101,18 @@ export async function POST(request: NextRequest) {
   const validated = await validateBody(createProjectSchema, request);
   if (isValidationError(validated)) return validated;
 
-  const { name, description, gitRepoPath, githubOwnerRepo } = validated.data;
+  const {
+    name,
+    description,
+    gitRepoPath,
+    githubOwnerRepo,
+    cloneSource,
+    gitRemoteUrl,
+    defaultBranch,
+  } = validated.data;
 
   // Validate gitRepoPath if provided
+  let storedRepoPath: string | null = null;
   if (gitRepoPath) {
     const pathResult = await validatePath(gitRepoPath);
     if (!pathResult.valid) {
@@ -112,6 +121,11 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+    // Store the resolved path, not what the caller typed: every later git
+    // operation joins onto it (worktrees at `<path>/../.arij-worktrees`), and
+    // a trailing slash or a `./` segment would otherwise produce a different
+    // string for the same directory and defeat path-equality checks.
+    storedRepoPath = pathResult.normalizedPath;
   }
 
   const id = createId();
@@ -122,8 +136,13 @@ export async function POST(request: NextRequest) {
       id,
       name,
       description: description || null,
-      gitRepoPath: gitRepoPath || null,
+      gitRepoPath: storedRepoPath,
       githubOwnerRepo: githubOwnerRepo || null,
+      // Clone provenance (0027): NULL for a user-supplied path, so Arij never
+      // treats a directory it did not create as its own.
+      cloneSource: cloneSource || null,
+      gitRemoteUrl: gitRemoteUrl || null,
+      defaultBranch: defaultBranch || null,
       status: "ideation",
       createdAt: now,
       updatedAt: now,

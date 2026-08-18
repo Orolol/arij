@@ -341,6 +341,46 @@ describe("POST /api/projects/clone — failures", () => {
     consoleError.mockRestore();
   });
 
+  it("returns 409 when the destination holds a different repository", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockCloneRepository.mockRejectedValue(
+      new CloneError(
+        "conflict",
+        "/workspace/projects/octocat-hello-world already holds a different repository (https://github.com/someone-else/other.git). Move or remove it, then retry.",
+        { path: "/workspace/projects/octocat-hello-world" }
+      )
+    );
+
+    const response = await POST(cloneRequest({ url: "octocat/hello-world" }));
+    const body = await response.json();
+
+    // 409, not 500: nothing is broken — the user has to decide what happens to
+    // the directory that is in the way. Never silently overwritten.
+    expect(response.status).toBe(409);
+    expect(body.code).toBe("conflict");
+    expect(body.error).toMatch(/different repository/);
+    expect(body.error).toMatch(/Move or remove it/);
+    consoleError.mockRestore();
+  });
+
+  it("returns 409 when the destination exists but is not a git repository", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockCloneRepository.mockRejectedValue(
+      new CloneError(
+        "conflict",
+        "/workspace/projects/octocat-hello-world already exists and is not a git repository. Move or remove it, then retry."
+      )
+    );
+
+    const response = await POST(cloneRequest({ url: "octocat/hello-world" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(409);
+    expect(body.code).toBe("conflict");
+    expect(body.error).toMatch(/not a git repository/);
+    consoleError.mockRestore();
+  });
+
   it("logs the failure to git_sync_log with the reason", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     mockCloneRepository.mockRejectedValue(

@@ -8,6 +8,16 @@ export const createProjectSchema = z.object({
   description: z.string().max(5000).nullish(),
   gitRepoPath: z.string().max(1000).nullish(),
   githubOwnerRepo: z.string().max(200).nullish(),
+  /**
+   * Provenance of `gitRepoPath`. Only "github" — set by the clone flow — marks
+   * a directory Arij created and may therefore offer to delete; a user-supplied
+   * path must stay NULL, so the field is deliberately not free-form.
+   */
+  cloneSource: z.enum(["github"]).nullish(),
+  /** Clean clone URL. Never tokenised: parseGitHubRepoInput() refuses userinfo. */
+  gitRemoteUrl: z.string().max(500).nullish(),
+  /** Branch reported by the clone, used instead of the main/master guess. */
+  defaultBranch: z.string().max(255).nullish(),
 });
 
 export const updateProjectSchema = z.object({
