@@ -424,6 +424,23 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       updatedAt: "updated_at",
     },
   },
+  providerUsageSnapshots: {
+    sqlName: "provider_usage_snapshots",
+    columns: {
+      provider: "provider",
+      capturedAt: "captured_at",
+      planType: "plan_type",
+      primaryUsedPercent: "primary_used_percent",
+      primaryWindowMinutes: "primary_window_minutes",
+      primaryResetsAt: "primary_resets_at",
+      secondaryUsedPercent: "secondary_used_percent",
+      secondaryWindowMinutes: "secondary_window_minutes",
+      secondaryResetsAt: "secondary_resets_at",
+      sourceFile: "source_file",
+      rawJson: "raw_json",
+      updatedAt: "updated_at",
+    },
+  },
 };
 
 /** Every SQLiteTable exported from the schema module, keyed by export name. */
@@ -569,6 +586,10 @@ const NOT_NULL: [string, string][] = [
   ["notificationReadCursor", "readAt"],
   ["ticketReadCursors", "lastReadAt"],
   ["ticketReadCursors", "updatedAt"],
+  // A snapshot without its provider event timestamp or its raw payload could
+  // not be aged or re-parsed — both are load-bearing for honest staleness.
+  ["providerUsageSnapshots", "capturedAt"],
+  ["providerUsageSnapshots", "rawJson"],
 ];
 
 describe("db schema: NOT NULL columns", () => {

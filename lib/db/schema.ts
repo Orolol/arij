@@ -572,3 +572,28 @@ export const ticketReadCursors = sqliteTable("ticket_read_cursors", {
 
 export type TicketReadCursor = typeof ticketReadCursors.$inferSelect;
 export type NewTicketReadCursor = typeof ticketReadCursors.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Provider usage snapshots
+// ---------------------------------------------------------------------------
+
+// Latest provider-reported rate-limit snapshot per provider (see migration
+// 0027). captured_at = provider event time (ISO UTC); resets_at = unix
+// SECONDS as emitted; raw_json = the full rate_limits object.
+export const providerUsageSnapshots = sqliteTable("provider_usage_snapshots", {
+  provider: text("provider").primaryKey(),
+  capturedAt: text("captured_at").notNull(),
+  planType: text("plan_type"),
+  primaryUsedPercent: real("primary_used_percent"),
+  primaryWindowMinutes: integer("primary_window_minutes"),
+  primaryResetsAt: integer("primary_resets_at"),
+  secondaryUsedPercent: real("secondary_used_percent"),
+  secondaryWindowMinutes: integer("secondary_window_minutes"),
+  secondaryResetsAt: integer("secondary_resets_at"),
+  sourceFile: text("source_file"),
+  rawJson: text("raw_json").notNull(),
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export type ProviderUsageSnapshot = typeof providerUsageSnapshots.$inferSelect;
+export type NewProviderUsageSnapshot = typeof providerUsageSnapshots.$inferInsert;

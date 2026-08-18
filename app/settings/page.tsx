@@ -72,6 +72,13 @@ export default function SettingsPage() {
   const [nightCostCap, setNightCostCap] = useState("");
   const [savingNight, setSavingNight] = useState(false);
   const [nightMessage, setNightMessage] = useState<string | null>(null);
+  // Optional weekly Claude budget, in USD, for the Usage page gauge. Raw
+  // string: empty means "no budget", which no number state can express.
+  const [usageBudget, setUsageBudget] = useState("");
+  const [savingUsageBudget, setSavingUsageBudget] = useState(false);
+  const [usageBudgetMessage, setUsageBudgetMessage] = useState<string | null>(
+    null
+  );
 
   useEffect(() => {
     fetch("/api/settings/webhooks")
@@ -121,6 +128,14 @@ export default function SettingsPage() {
         setNightCircuitBreaker(breaker == null ? "" : String(breaker));
         const cap = parseNightCostCap(d.data?.[NIGHT_COST_CAP_SETTING_KEY]);
         setNightCostCap(cap == null ? "" : String(cap));
+        // Usage budget: only a positive number is a budget. Anything else
+        // (absent, null, 0, garbage) means "no budget", shown as empty.
+        const budget = d.data?.["usage_budget_usd_7d_claude"];
+        setUsageBudget(
+          typeof budget === "number" && Number.isFinite(budget) && budget > 0
+            ? String(budget)
+            : ""
+        );
       })
       .catch(() => {});
   }, []);
@@ -237,6 +252,46 @@ export default function SettingsPage() {
       setNightMessage("Failed to save the night run defaults.");
     } finally {
       setSavingNight(false);
+    }
+  }
+
+  /**
+   * Saves the optional weekly Claude budget. An empty input clears it
+   * (stored as null): no budget means the Usage page shows no budget gauge
+   * rather than a zero one.
+   */
+  async function handleSaveUsageBudget() {
+    setSavingUsageBudget(true);
+    setUsageBudgetMessage(null);
+
+    const raw = usageBudget.trim();
+    let budget: number | null = null;
+    if (raw !== "") {
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        setUsageBudgetMessage("Budget must be a positive dollar amount.");
+        setSavingUsageBudget(false);
+        return;
+      }
+      budget = parsed;
+    }
+
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usage_budget_usd_7d_claude: budget }),
+      });
+      if (!response.ok) {
+        setUsageBudgetMessage("Failed to save the usage budget.");
+        return;
+      }
+      setUsageBudget(budget === null ? "" : String(budget));
+      setUsageBudgetMessage("Saved");
+    } catch {
+      setUsageBudgetMessage("Failed to save the usage budget.");
+    } finally {
+      setSavingUsageBudget(false);
     }
   }
 
@@ -704,6 +759,60 @@ export default function SettingsPage() {
         {nightMessage && (
           <p className="text-xs text-muted-foreground" data-testid="night-settings-message">
             {nightMessage}
+          </p>
+        )}
+      </section>
+
+      <section
+        className="space-y-3 rounded-md border border-border p-4"
+        data-testid="usage-settings"
+      >
+        <div>
+          <h2 className="text-lg font-semibold">Usage</h2>
+        </div>
+
+        <div className="space-y-1">
+          <label
+            htmlFor="usage-budget-setting"
+            className="block text-sm font-medium"
+          >
+            Claude weekly budget (USD)
+          </label>
+          <Input
+            id="usage-budget-setting"
+            data-testid="usage-budget-setting"
+            type="number"
+            min={0}
+            step="1"
+            value={usageBudget}
+            disabled={savingUsageBudget}
+            placeholder="No budget"
+            onChange={(e) => setUsageBudget(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Optional. Shown as a budget gauge on the Usage page — Arij-metered
+            sessions only, not an account quota. Leave empty for no budget.
+          </p>
+        </div>
+
+        {/* Visible label stays "Save"; the accessible name is scoped so the
+            webhook section's own "Save" buttons stay unambiguous. */}
+        <Button
+          type="button"
+          onClick={handleSaveUsageBudget}
+          disabled={savingUsageBudget}
+          aria-label="Save usage budget"
+          data-testid="usage-settings-save"
+        >
+          {savingUsageBudget ? "Saving..." : "Save"}
+        </Button>
+
+        {usageBudgetMessage && (
+          <p
+            className="text-xs text-muted-foreground"
+            data-testid="usage-settings-message"
+          >
+            {usageBudgetMessage}
           </p>
         )}
       </section>

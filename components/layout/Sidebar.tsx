@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { LayoutDashboard, Plus, Settings } from "lucide-react";
+import { Gauge, LayoutDashboard, Plus, Settings } from "lucide-react";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { AgentConfigButton } from "@/components/agent-config/AgentConfigButton";
 import { useProjects } from "@/hooks/useProjects";
@@ -27,8 +27,8 @@ export function projectInitials(name: string): string {
 /**
  * Global project rail: one 30px tile per project, a breathing dot when that
  * project has agents running, then the create shortcut and the bottom
- * utility cluster (dashboard, agent config, notifications, theme, inbox,
- * settings).
+ * utility cluster (dashboard, usage, agent config, notifications, theme,
+ * inbox, settings).
  */
 export function Sidebar() {
   const pathname = usePathname() ?? "";
@@ -91,6 +91,14 @@ export function Sidebar() {
         title="All projects"
       >
         <LayoutDashboard className="w-[17px] h-[17px]" />
+      </Link>
+      <Link
+        href="/usage"
+        className="flex items-center justify-center w-[34px] h-[34px] rounded-[9px] text-muted-foreground hover:text-foreground hover:bg-sidebar-accent transition-colors"
+        title="Usage"
+        data-testid="rail-usage-link"
+      >
+        <Gauge className="w-[17px] h-[17px]" />
       </Link>
       <AgentConfigButton />
       <NotificationBell />
