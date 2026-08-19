@@ -41,10 +41,14 @@ const diffResult = {
 /**
  * GET /api/projects/[projectId]/epics/[epicId]/diff — base branch.
  *
- * A hard-coded "main" fails `merge-base` on a develop-default clone and
- * silently produces an empty diff with 0 ahead/behind — the review screen
- * would then claim the branch "has not diverged" over an epic with real
- * commits. The route must diff against the branch the worktree was cut from.
+ * The diff must target the branch the worktree was actually cut from, via
+ * the very same resolution createWorktree uses (stored default,
+ * existence-checked, then main → master → origin/HEAD → current). Both a
+ * hard-coded "main" (fails merge-base on a develop-default clone) and the
+ * stored value fed raw (a stale default branch that no longer exists
+ * locally) silently produced an empty diff with 0 ahead/behind — the review
+ * screen would then claim the branch "has not diverged" over an epic with
+ * real commits.
  */
 describe("GET /api/projects/[projectId]/epics/[epicId]/diff — base branch", () => {
   beforeEach(() => {
@@ -86,23 +90,45 @@ describe("GET /api/projects/[projectId]/epics/[epicId]/diff — base branch", ()
   }
 
   it("diffs against the project's stored default branch", async () => {
+    // The stored default exists locally, so the resolver (which checks
+    // existence) answers with it.
+    mockResolveDefaultBranch.mockResolvedValue("develop");
+
     const res = await getDiff();
     const json = await res.json();
 
     expect(res.status).toBe(200);
     expect(json.data).toEqual(diffResult);
+    // One code path: the worktree and the diff resolve their base through
+    // the same existence-checked resolver, with the stored default as the
+    // preferred candidate.
+    expect(mockResolveDefaultBranch).toHaveBeenCalledWith("/repo", "develop");
     expect(mockGetWorktreeDiff).toHaveBeenCalledWith(
       "/repo/../.arij-worktrees/feature-epic-1",
       "develop"
     );
-    // The stored value is authoritative — the repo itself is not consulted.
-    expect(mockResolveDefaultBranch).not.toHaveBeenCalled();
-    // The worktree is cut from the same stored default.
     expect(mockCreateWorktree).toHaveBeenCalledWith(
       "/repo",
       "epic-1",
       "Epic One",
       "develop"
+    );
+  });
+
+  it("degrades through the resolver when the stored default is gone locally", async () => {
+    // The row still says "develop" but the branch no longer exists in the
+    // clone (renamed after import, or the local branch set diverging from
+    // the remote's). Feeding the raw value to merge-base would report an
+    // empty diff; the resolver's existence check degrades to main instead.
+    mockResolveDefaultBranch.mockResolvedValue("main");
+
+    const res = await getDiff();
+
+    expect(res.status).toBe(200);
+    expect(mockResolveDefaultBranch).toHaveBeenCalledWith("/repo", "develop");
+    expect(mockGetWorktreeDiff).toHaveBeenCalledWith(
+      "/repo/../.arij-worktrees/feature-epic-1",
+      "main"
     );
   });
 
@@ -116,7 +142,7 @@ describe("GET /api/projects/[projectId]/epics/[epicId]/diff — base branch", ()
     const res = await getDiff();
 
     expect(res.status).toBe(200);
-    expect(mockResolveDefaultBranch).toHaveBeenCalledWith("/repo");
+    expect(mockResolveDefaultBranch).toHaveBeenCalledWith("/repo", undefined);
     expect(mockGetWorktreeDiff).toHaveBeenCalledWith(
       "/repo/../.arij-worktrees/feature-epic-1",
       "trunk"

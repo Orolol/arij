@@ -49,14 +49,18 @@ export async function GET(_request: NextRequest, { params }: Params) {
   );
 
   try {
-    // Diff against the branch the worktree was actually cut from. A
-    // hard-coded "main" fails merge-base on a develop-default clone and
-    // silently produces an empty diff with 0 ahead/behind — the review
-    // screen would then claim the branch "has not diverged" over an epic
-    // with real commits.
-    const baseBranch = project.defaultBranch
-      ? project.defaultBranch
-      : await resolveDefaultBranch(project.gitRepoPath);
+    // Diff against the branch the worktree was actually cut from. createWorktree
+    // above resolved its base through resolveDefaultBranch (stored default,
+    // existence-checked, then main → master → origin/HEAD → current); the
+    // diff must use the very same resolution. Feeding the stored value raw
+    // made a stored default branch that no longer exists locally (renamed
+    // after import, or the clone's local branch set diverging from the
+    // remote's) feed `merge-base` a non-existent ref — a silent empty diff
+    // with 0 ahead/behind over an epic with real commits.
+    const baseBranch = await resolveDefaultBranch(
+      project.gitRepoPath,
+      project.defaultBranch || undefined
+    );
     const result = await getWorktreeDiff(worktreePath, baseBranch);
     return NextResponse.json({ data: result });
   } catch (error) {
