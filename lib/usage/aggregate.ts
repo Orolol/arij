@@ -4,6 +4,8 @@ import { providerUsageSnapshots, settings } from "@/lib/db/schema";
 import {
   CLAUDE_WEEKLY_BUDGET_SETTING_KEY,
   type AgentUsageRow,
+  type ClaudeQuota,
+  type CodexLiveQuota,
   type DayUsageRow,
   type ProjectUsageRow,
   type ProviderUsageRow,
@@ -12,6 +14,7 @@ import {
   type UsageTotals,
   type WindowUsage,
 } from "@/lib/types/usage";
+import type { CachedQuota } from "@/lib/usage/quota-cache";
 
 /**
  * Aggregations behind `GET /api/usage`.
@@ -332,19 +335,44 @@ function getClaudeWeeklyBudget(): number | null {
 }
 
 /**
- * Two fundamentally different kinds of truth live in this array, and the
- * `source` discriminator is the whole point:
- *
- * - **codex** is `provider-reported`: percentages come from codex's own
- *   `rate_limits` events. Real quota, but only as fresh as the last rollout
- *   file — `capturedAt` is returned verbatim so the UI can say how old it is.
- *   No snapshot => every field null, no invented gauge.
- * - **claude-code** is `metered-via-arij`: claude exposes NO account quota in
- *   headless mode, so this is a count of what Arij itself spawned. It is a
- *   floor on the account's usage, never the account's remaining quota, and
- *   the card carries that disclaimer permanently.
+ * Live poll inputs to the assembly (feat/live-quota). Both default to the
+ * "no live data" state so every pre-existing `getUsageReport()` call — and
+ * every test written against it — keeps compiling and takes the fallback
+ * paths byte-for-byte.
  */
-function getSubscriptions(byProvider: ProviderUsageRow[]): SubscriptionStatus[] {
+export interface LiveQuotaInputs {
+  claudeLive: CachedQuota<ClaudeQuota>;
+  codexLive: CachedQuota<CodexLiveQuota>;
+}
+
+const NO_LIVE: LiveQuotaInputs = {
+  claudeLive: { data: null, capturedAtIso: null },
+  codexLive: { data: null, capturedAtIso: null },
+};
+
+/**
+ * Three kinds of truth live in this array, discriminated by the UNCHANGED
+ * `source` enum plus the `sourceDetail` refinement and the non-null
+ * `claudeLive`/`codexLive` payloads:
+ *
+ * - **live-cli**: freshly polled from the provider's own CLI (metadata read,
+ *   zero tokens; see lib/usage/claude-quota.ts / codex-appserver.ts). Real
+ *   account quota, at most QUOTA_TTL_MS old. A poller failure must be
+ *   invisible except for the card falling back to the rows below.
+ * - **rollout-snapshot** (codex): percentages from codex's own `rate_limits`
+ *   events, as fresh as the last rollout file — `capturedAt` verbatim so the
+ *   UI can say how old it is. No snapshot => every field null, no invented
+ *   gauge.
+ * - **arij-sessions** (claude): claude exposes NO account quota to the
+ *   metered path, so this is a count of what Arij itself spawned — a floor on
+ *   the account's usage, never remaining quota; the card carries that
+ *   disclaimer permanently. When claude live data IS present, metered ships
+ *   TOO (both truths in one payload — the UI demotes, never the API).
+ */
+function getSubscriptions(
+  byProvider: ProviderUsageRow[],
+  live: LiveQuotaInputs,
+): SubscriptionStatus[] {
   const result: SubscriptionStatus[] = [];
 
   const snapshot = db
@@ -356,10 +384,45 @@ function getSubscriptions(byProvider: ProviderUsageRow[]): SubscriptionStatus[] 
     (row) => row.provider === CODEX_PROVIDER,
   );
 
-  if (snapshot || hasCodexSessions) {
+  const codexLiveData = live.codexLive.data;
+  if (codexLiveData) {
+    // Primary/secondary mirror the "codex" bucket (fallback buckets[0]) so
+    // SnapshotWindow-shaped consumers stay coherent; the full multi-bucket
+    // truth rides in `codexLive`.
+    const bucket =
+      codexLiveData.buckets.find((entry) => entry.limitId === CODEX_PROVIDER) ??
+      codexLiveData.buckets[0];
     result.push({
       provider: CODEX_PROVIDER,
       source: "provider-reported",
+      sourceDetail: "live-cli",
+      plan: codexLiveData.planType,
+      capturedAt: live.codexLive.capturedAtIso,
+      primary: bucket
+        ? {
+            usedPercent: bucket.usedPercent,
+            windowMinutes: bucket.windowDurationMins,
+            resetsAt: bucket.resetsAtUnix,
+          }
+        : null,
+      secondary: bucket?.secondary
+        ? {
+            usedPercent: bucket.secondary.usedPercent,
+            windowMinutes: bucket.secondary.windowDurationMins,
+            resetsAt: bucket.secondary.resetsAtUnix,
+          }
+        : null,
+      metered: null,
+      claudeLive: null,
+      codexLive: codexLiveData,
+    });
+  } else if (snapshot || hasCodexSessions) {
+    // Live poll failed or is disabled: today's rollout-snapshot shape
+    // verbatim, plus the three new keys in their fallback state.
+    result.push({
+      provider: CODEX_PROVIDER,
+      source: "provider-reported",
+      sourceDetail: "rollout-snapshot",
       plan: snapshot?.planType ?? null,
       capturedAt: snapshot?.capturedAt ?? null,
       primary:
@@ -379,35 +442,61 @@ function getSubscriptions(byProvider: ProviderUsageRow[]): SubscriptionStatus[] 
             }
           : null,
       metered: null,
+      claudeLive: null,
+      codexLive: null,
     });
   }
 
   // Claude's card is unconditional: the page must always state what Arij
-  // itself burned, even on a database with zero sessions.
+  // itself burned, even on a database with zero sessions. The metered block
+  // ships even when live data is present — both truths in one payload.
   const budgetUsdWeek = getClaudeWeeklyBudget();
   const claudeLast5h = getWindowUsage(cutoffIso(FIVE_HOURS_MS), CLAUDE_PROVIDER);
   const claudeLast7d = getWindowUsage(cutoffIso(SEVEN_DAYS_MS), CLAUDE_PROVIDER);
   const spent = claudeLast7d.costUsd;
+  const metered = {
+    last5h: claudeLast5h,
+    last7d: claudeLast7d,
+    budgetUsdWeek,
+    // Unclamped on purpose: going over budget must read as "142%", not a
+    // gauge quietly pinned at 100.
+    budgetUsedPercent:
+      budgetUsdWeek !== null && spent !== null
+        ? Math.round((spent / budgetUsdWeek) * 100)
+        : null,
+  };
 
-  result.push({
-    provider: CLAUDE_PROVIDER,
-    source: "metered-via-arij",
-    plan: null,
-    capturedAt: null,
-    primary: null,
-    secondary: null,
-    metered: {
-      last5h: claudeLast5h,
-      last7d: claudeLast7d,
-      budgetUsdWeek,
-      // Unclamped on purpose: going over budget must read as "142%", not a
-      // gauge quietly pinned at 100.
-      budgetUsedPercent:
-        budgetUsdWeek !== null && spent !== null
-          ? Math.round((spent / budgetUsdWeek) * 100)
-          : null,
-    },
-  });
+  const claudeLiveData = live.claudeLive.data;
+  if (claudeLiveData) {
+    result.push({
+      provider: CLAUDE_PROVIDER,
+      source: "provider-reported",
+      sourceDetail: "live-cli",
+      plan: claudeLiveData.subscriptionType,
+      capturedAt: live.claudeLive.capturedAtIso,
+      // Claude windows use ISO resets_at strings; the unix-seconds
+      // SubscriptionWindowStatus path stays null ON PURPOSE — the UI reads
+      // `claudeLive` exclusively, never a converted hybrid.
+      primary: null,
+      secondary: null,
+      metered,
+      claudeLive: claudeLiveData,
+      codexLive: null,
+    });
+  } else {
+    result.push({
+      provider: CLAUDE_PROVIDER,
+      source: "metered-via-arij",
+      sourceDetail: "arij-sessions",
+      plan: null,
+      capturedAt: null,
+      primary: null,
+      secondary: null,
+      metered,
+      claudeLive: null,
+      codexLive: null,
+    });
+  }
 
   return result;
 }
@@ -416,8 +505,15 @@ function getSubscriptions(byProvider: ProviderUsageRow[]): SubscriptionStatus[] 
 // Report
 // ---------------------------------------------------------------------------
 
-/** One fat read for the whole Usage page — a handful of grouped statements. */
-export function getUsageReport(): UsageReport {
+/**
+ * One fat read for the whole Usage page — a handful of grouped statements.
+ * `live` is optional and defaults to the no-live state so existing callers
+ * and tests take the fallback paths unchanged. Codex `dailyUsage` lands ONLY
+ * inside `subscriptions[codex].codexLive` — `byDay` stays Arij-metered
+ * (exactly 30 zero-filled local days), the two histories are different
+ * populations (all devices vs this machine) and must never merge.
+ */
+export function getUsageReport(live: LiveQuotaInputs = NO_LIVE): UsageReport {
   const byProvider = getByProvider();
   const windows = {
     last5h: getWindowUsage(cutoffIso(FIVE_HOURS_MS), null),
@@ -431,7 +527,7 @@ export function getUsageReport(): UsageReport {
     byProject: getByProject(),
     byDay: getByDay(),
     windows,
-    subscriptions: getSubscriptions(byProvider),
+    subscriptions: getSubscriptions(byProvider, live),
     generatedAt: new Date().toISOString(),
   };
 }

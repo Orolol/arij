@@ -13,17 +13,24 @@ import type { UsageReport } from "@/lib/types/usage";
  * A failed refresh keeps the previously loaded report on screen and only
  * raises `error`; the page decides whether that means "error screen" (no
  * report yet) or "stale data plus a warning".
+ *
+ * `refresh({ fresh: true })` appends `?fresh=1`, which bypasses the route's
+ * 120s live-quota TTL and re-polls the provider CLIs. The mount effect and
+ * the error-screen Retry deliberately do NOT force: only the explicit
+ * Refresh button pays the (bounded) cold-poll latency.
  */
 export function useUsage() {
   const [report, setReport] = useState<UsageReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (opts?: { fresh?: boolean }) => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch("/api/usage");
+      const response = await fetch(
+        opts?.fresh ? "/api/usage?fresh=1" : "/api/usage"
+      );
       const body = await response.json().catch(() => null);
       if (!response.ok) {
         setError(
