@@ -306,8 +306,10 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     expect(resRefine.status).toBe(200);
     expect(mockPromptBuilder.buildEpicRefinementPrompt).toHaveBeenCalled();
     const refineReqBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
-    expect(refineReqBody.messages[0]).toEqual({ role: "system", content: "EPIC_PROMPT" });
-
+    expect(refineReqBody.messages).toEqual([
+      { role: "system", content: "EPIC_PROMPT" },
+      { role: "user", content: "Refine epic idea" },
+    ]);
     // Finalization prompt when finalize is true
     seedFastModeConversation({
       conversation: {
@@ -331,7 +333,10 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     expect(resFinalize.status).toBe(200);
     expect(mockPromptBuilder.buildEpicFinalizationPrompt).toHaveBeenCalled();
     const finalizeReqBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
-    expect(finalizeReqBody.messages[0]).toEqual({ role: "system", content: "EPIC_FINALIZATION_PROMPT" });
+    expect(finalizeReqBody.messages).toEqual([
+      { role: "system", content: "EPIC_FINALIZATION_PROMPT" },
+      { role: "user", content: "Generate stories" },
+    ]);
   });
 
   it("supports brainstorm conversations with OpenAI-compatible fast mode", async () => {

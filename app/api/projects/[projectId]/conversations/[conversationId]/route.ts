@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { chatConversations, namedAgents } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { resolveAgent } from "@/lib/agent-config/agent-resolution";
-import { isChatProvider, OPENAI_COMPATIBLE_PROVIDER } from "@/lib/agent-config/constants";
+import { isChatProvider } from "@/lib/agent-config/constants";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { updateConversationSchema } from "@/lib/validation/chat-schemas";

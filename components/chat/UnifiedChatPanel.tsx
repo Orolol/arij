@@ -25,6 +25,7 @@ import {
   ChatProposalCard,
   ChatWorkspaceHeader,
 } from "@/components/chat/ChatWorkspaceHeader";
+import type { ChatAgentSelection } from "@/components/chat/ChatProviderSelect";
 import { MessageList } from "@/components/chat/MessageList";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { QuestionCards } from "@/components/chat/QuestionCards";
@@ -298,10 +299,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
     async function handleSelectAgentOrProvider({
       namedAgentId,
       provider,
-    }: {
-      namedAgentId: string | null;
-      provider: string;
-    }) {
+    }: ChatAgentSelection) {
       if (!activeId || hasMessages) {
         return;
       }

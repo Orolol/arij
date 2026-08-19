@@ -153,8 +153,6 @@ describe("ChatWorkspaceHeader provider select gating", () => {
         activeProvider="claude-code"
         hasMessages={false}
         isBusy={false}
-        onAgentChange={noop}
-        onProviderChange={noop}
         onSelectAgentOrProvider={noop}
         {...props}
       />,

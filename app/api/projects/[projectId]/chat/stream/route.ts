@@ -273,7 +273,7 @@ export async function POST(
     { role: "user" as const, content: userContent },
   ];
 
-  let prompt: string;
+  let prompt = "";
   let chatSystemPrompt = "";
   const isEpicCreation = isEpicCreationConversationAgentType(conversationType);
 
@@ -307,7 +307,6 @@ export async function POST(
         );
   } else {
     chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
-    prompt = buildChatPrompt(project, [], fullHistory, chatSystemPrompt);
   }
 
   // ---------------------------------------------------------------------
@@ -334,20 +333,29 @@ export async function POST(
     }
 
     const openAiMessages: OpenAiChatMessage[] = [];
-    if (fastModeSystemPrompt.trim()) {
-      openAiMessages.push({ role: "system", content: fastModeSystemPrompt });
-    }
-    for (const message of messageHistory) {
+    if (isEpicCreation) {
+      if (fastModeSystemPrompt.trim()) {
+        openAiMessages.push({ role: "system", content: fastModeSystemPrompt });
+      }
       openAiMessages.push({
-        role: message.role,
-        content: message.content,
+        role: "user",
+        content: userContent,
+      });
+    } else {
+      if (fastModeSystemPrompt.trim()) {
+        openAiMessages.push({ role: "system", content: fastModeSystemPrompt });
+      }
+      for (const message of messageHistory) {
+        openAiMessages.push({
+          role: message.role,
+          content: message.content,
+        });
+      }
+      openAiMessages.push({
+        role: "user",
+        content: userContent,
       });
     }
-    openAiMessages.push({
-      role: "user",
-      content: userContent,
-    });
-
     const activityLabel = conversation?.label
       ? `Chat: ${conversation.label}`
       : "Chat";
@@ -445,6 +453,11 @@ export async function POST(
 
     return sseResponse(sseStream);
   }
+
+  if (!isEpicCreation) {
+    prompt = buildChatPrompt(project, [], fullHistory, chatSystemPrompt);
+  }
+
   try {
     prompt = enrichPromptWithDocumentMentions({
       projectId,

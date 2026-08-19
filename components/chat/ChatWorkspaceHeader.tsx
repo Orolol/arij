@@ -15,15 +15,12 @@ interface ChatWorkspaceHeaderProps {
   activeProvider: string;
   hasMessages: boolean;
   isBusy: boolean;
-  onSelectAgentOrProvider?: (selection: ChatAgentSelection) => void;
-  onAgentChange?: (namedAgentId: string) => void;
-  onProviderChange?: (provider: string) => void;
+  onSelectAgentOrProvider: (selection: ChatAgentSelection) => void;
 }
 
 /**
  * Right-hand meta cluster of the conversation tab row: the provider marker
- * (read by tests) and the named-agent picker. The conversation label is not
- * repeated here — the active sub-tab already carries it.
+ * (read by tests) and the unified chat provider / named-agent picker.
  */
 export function ChatWorkspaceHeader({
   activeConversation,
@@ -31,19 +28,7 @@ export function ChatWorkspaceHeader({
   hasMessages,
   isBusy,
   onSelectAgentOrProvider,
-  onAgentChange,
-  onProviderChange,
 }: ChatWorkspaceHeaderProps) {
-  function handleSelect(selection: ChatAgentSelection) {
-    if (onSelectAgentOrProvider) {
-      onSelectAgentOrProvider(selection);
-    } else if (selection.namedAgentId) {
-      onAgentChange?.(selection.namedAgentId);
-    } else if (selection.provider) {
-      onProviderChange?.(selection.provider);
-    }
-  }
-
   return (
     <div className="flex items-center gap-2">
       <span data-testid="provider-select" className="sr-only">
@@ -60,7 +45,7 @@ export function ChatWorkspaceHeader({
       <ChatProviderSelect
         activeConversation={activeConversation}
         activeProvider={activeProvider}
-        onSelect={handleSelect}
+        onSelect={onSelectAgentOrProvider}
         disabled={!activeConversation || hasMessages || isBusy}
       />
     </div>

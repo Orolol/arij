@@ -83,8 +83,7 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
         activeProvider="claude-code"
         hasMessages={false}
         isBusy={false}
-        onAgentChange={noop}
-        onProviderChange={noop}
+        onSelectAgentOrProvider={noop}
       />,
     );
 

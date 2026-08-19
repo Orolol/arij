@@ -69,17 +69,12 @@ export function ChatProviderSelect({
   // 3. Raw CLI Provider string
   let selectedValue = "";
   if (activeConversation) {
-    if (
-      activeConversation.provider === OPENAI_COMPATIBLE_PROVIDER ||
-      activeProvider === OPENAI_COMPATIBLE_PROVIDER
-    ) {
-      selectedValue = OPENAI_COMPATIBLE_PROVIDER;
-    } else if (activeConversation.namedAgentId) {
+    if (activeConversation.namedAgentId) {
       selectedValue = activeConversation.namedAgentId;
+    } else if (activeConversation.provider === OPENAI_COMPATIBLE_PROVIDER) {
+      selectedValue = OPENAI_COMPATIBLE_PROVIDER;
     } else if (activeConversation.provider) {
       selectedValue = activeConversation.provider;
-    } else if (activeProvider) {
-      selectedValue = activeProvider;
     }
   } else if (activeProvider === OPENAI_COMPATIBLE_PROVIDER) {
     selectedValue = OPENAI_COMPATIBLE_PROVIDER;
@@ -162,7 +157,7 @@ export function ChatProviderSelect({
               value={provider}
               data-testid={`chat-option-provider-${provider}`}
             >
-              {PROVIDER_LABELS[provider]}
+              {`${PROVIDER_LABELS[provider]} (CLI)`}
             </SelectItem>
           ))}
         </SelectGroup>
