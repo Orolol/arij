@@ -11,9 +11,12 @@ import type { ImportData } from "@/components/import/types";
 
 interface ImportPreviewProps {
   data: ImportData;
-  /** Blocks a second submit while the import chain is running, or after it
-   *  created a project row that a retry would duplicate. */
+  /** True while the import chain is running. */
   busy?: boolean;
+  /** A project row already exists from a (partial) import — re-submitting
+   *  would duplicate it. The button stays disabled but is labelled
+   *  "Already imported" so it does not read as a hung operation. */
+  locked?: boolean;
   /** Disables Cancel while the import chain is in flight, so leaving the
    *  preview cannot race the running chain (late redirects or state writes
    *  landing on a second import). */
@@ -25,6 +28,7 @@ interface ImportPreviewProps {
 export function ImportPreview({
   data,
   busy = false,
+  locked = false,
   cancelDisabled = false,
   onValidate,
   onCancel,
@@ -141,8 +145,12 @@ export function ImportPreview({
       </div>
 
       <div className="flex gap-2">
-        <Button onClick={() => onValidate(editData)} disabled={busy}>
-          {busy ? "Importing..." : "Validate & Import"}
+        <Button onClick={() => onValidate(editData)} disabled={busy || locked}>
+          {busy
+            ? "Importing..."
+            : locked
+              ? "Already imported"
+              : "Validate & Import"}
         </Button>
         <Button
           variant="outline"

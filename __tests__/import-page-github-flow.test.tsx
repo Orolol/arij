@@ -439,7 +439,9 @@ describe("import page — failure reporting", () => {
     expect(link).toHaveAttribute("href", "/projects/proj-1");
     expect(nav.push).not.toHaveBeenCalled();
     // And a retry cannot duplicate the project row.
-    expect(screen.getByRole("button", { name: "Importing..." })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Already imported" })
+    ).toBeDisabled();
   });
 
   it("reports a failing user story without losing the rest", async () => {
@@ -618,8 +620,11 @@ describe("import page — partial-import recovery", () => {
     expect(
       screen.getByRole("link", { name: "Open the partially created project" })
     ).toBeInTheDocument();
-    // While busy, the submit button reads "Importing..." — that is the disabled state.
-    expect(screen.getByRole("button", { name: "Importing..." })).toBeDisabled();
+    // The chain has ended and the project row exists: the submit button is
+    // disabled with a label that reads as a state, not a hung operation.
+    expect(
+      screen.getByRole("button", { name: "Already imported" })
+    ).toBeDisabled();
 
     // Cancelling clears the partial state entirely — including the created id.
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -662,8 +667,44 @@ describe("import page — partial-import recovery", () => {
     );
 
     // Chain finished: Cancel is available again; the submit button stays locked
-    // ("Importing..." label) because the project row exists.
+    // ("Already imported" label) because the project row exists and a re-run
+    // would duplicate it.
     expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Already imported" })
+    ).toBeDisabled();
+  });
+
+  it("labels the in-flight state Importing and the settled state Already imported", async () => {
+    // The two disabled states used to share the "Importing..." label, so a
+    // settled-but-locked preview looked like a stuck operation.
+    let releaseCreate: () => void = () => {};
+    const createGate = new Promise<void>((r) => {
+      releaseCreate = r;
+    });
+    installFetch({
+      create: { body: { data: { id: "proj-1" } }, gate: createGate },
+    });
+    render(<ImportProjectPage />);
+
+    await reachPreview();
+    fireEvent.click(screen.getByRole("button", { name: "Validate & Import" }));
+
+    // In flight: the button reads Importing... and is disabled.
     expect(screen.getByRole("button", { name: "Importing..." })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Already imported" })
+    ).not.toBeInTheDocument();
+
+    releaseCreate();
+    await waitFor(() =>
+      expect(nav.push).toHaveBeenCalledWith("/projects/proj-1")
+    );
+
+    // Settled: the label flips to the state it actually is.
+    expect(screen.queryByRole("button", { name: "Importing..." })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Already imported" })
+    ).toBeDisabled();
   });
 });

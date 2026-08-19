@@ -499,9 +499,13 @@ export default function ImportProjectPage() {
       {state === "preview" && importData && (
         <ImportPreview
           data={importData}
-          // Once the project row exists, re-running the import would duplicate
-          // it — the link above is the way forward instead.
-          busy={validating || createdProjectId !== null}
+          // While the chain runs, the button reads "Importing...".
+          busy={validating}
+          // Once the project row exists, re-running the import would
+          // duplicate it — the link above is the way forward instead. The
+          // label reads "Already imported" so the disabled state is
+          // legible rather than a hung operation.
+          locked={createdProjectId !== null}
           // Never let the user leave the preview while the chain is in flight:
           // a late router.push or state write would land on a second import.
           cancelDisabled={validating}
