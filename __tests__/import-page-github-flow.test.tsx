@@ -288,15 +288,47 @@ describe("import page — clone and analysis steps", () => {
     expect(screen.getByLabelText("GitHub repository URL")).toBeInTheDocument();
   });
 
-  it("reports a clone response that carries no path", async () => {
+  it("fails early when the clone response is incomplete", async () => {
     installFetch({ clone: { body: { data: { ownerRepo: "Orolol/arij" } } } });
     render(<ImportProjectPage />);
 
     await importFromGitHub();
 
     expect(
-      await screen.findByText(/the clone succeeded but returned no path/)
+      await screen.findByText(
+        "Could not clone Orolol/arij: the clone response is incomplete (missing path, remoteUrl, defaultBranch)."
+      )
     ).toBeInTheDocument();
+    // Back on the selector — the import chain never started.
+    expect(screen.getByLabelText("GitHub repository URL")).toBeInTheDocument();
+  });
+
+  it("fails before analysis when the clone response has no defaultBranch", async () => {
+    // The POST /api/projects step rejects a missing defaultBranch with a 400
+    // at the end of a multi-minute chain; the page must catch it right after
+    // the clone instead.
+    const { calls } = installFetch({
+      clone: {
+        body: {
+          data: {
+            path: "/home/user/arij/projects/Orolol-arij",
+            ownerRepo: "Orolol/arij",
+            remoteUrl: "https://github.com/Orolol/arij.git",
+          },
+        },
+      },
+    });
+    render(<ImportProjectPage />);
+
+    await importFromGitHub();
+
+    expect(
+      await screen.findByText(
+        "Could not clone Orolol/arij: the clone response is incomplete (missing defaultBranch)."
+      )
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("GitHub repository URL")).toBeInTheDocument();
+    expect(callTo(calls, "/api/projects/import")).toBeUndefined();
   });
 
   it("posts the pasted value to the clone endpoint", async () => {

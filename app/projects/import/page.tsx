@@ -314,9 +314,19 @@ export default function ImportProjectPage() {
       return;
     }
 
-    if (!result.data?.path) {
+    // The clone contract is { path, ownerRepo, remoteUrl, defaultBranch,
+    // reused }. The chain that follows takes minutes and its last step
+    // (POST /api/projects) rejects incomplete clone provenance with a 400
+    // that would only make sense if checked here, right after the clone —
+    // fail early with the repository named instead of dying late.
+    const missing = (
+      ["path", "ownerRepo", "remoteUrl", "defaultBranch"] as const
+    ).filter((field) => !result.data?.[field]);
+    if (missing.length > 0) {
       setError(
-        `Could not clone ${ownerRepo}: the clone succeeded but returned no path.`
+        `Could not clone ${ownerRepo}: the clone response is incomplete (missing ${missing.join(
+          ", "
+        )}).`
       );
       setState("select");
       return;
