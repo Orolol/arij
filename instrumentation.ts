@@ -9,16 +9,24 @@
  * (or in environments that skip instrumentation): lib/db initializes
  * lazily on first use. This hook just front-loads that work to startup.
  *
- * Also starts the silent-session watchdog (lib/agents/watchdog.ts) — its
- * globalThis-backed singleton and idempotent start() make this safe under
- * dev hot reloads, which re-run instrumentation.
+ * Also starts the two standing loops — the silent-session watchdog
+ * (lib/agents/watchdog.ts) and Full Auto Mode (lib/auto-mode/engine.ts).
+ * Both are globalThis-backed singletons with idempotent starts, so dev hot
+ * reloads (which re-run instrumentation) cannot stack a second timer. Full
+ * Auto Mode resumes purely from the `auto_mode_enabled:<projectId>` settings
+ * keys: nothing about the mode is stored in memory across a restart, and the
+ * sessions it was tracking were just cleaned up above.
  *
  * Finally registers the session terminal hook
- * (lib/agent-sessions/terminal-hooks.ts): completed sessions are offered to
- * the memory auto-distillation trigger (lib/workflow/memory-distill.ts),
- * which is a no-op unless the 'memory_auto_distill' setting is on and its
- * guards pass. The hook slot is globalThis-backed and registration simply
- * replaces it, so hot reloads are safe here too.
+ * (lib/agent-sessions/terminal-hooks.ts). That slot holds exactly ONE
+ * callback, so the two consumers are composed here rather than racing to
+ * overwrite each other:
+ *   - the memory auto-distillation trigger (lib/workflow/memory-distill.ts),
+ *     a no-op unless the 'memory_auto_distill' setting is on,
+ *   - the Full Auto Mode kick — a freed slot should be refilled now, not up
+ *     to 15s later (the interval sweep stays as the backstop).
+ * The hook slot is globalThis-backed and registration simply replaces it, so
+ * hot reloads are safe here too.
  */
 export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME === "nodejs") {
@@ -33,6 +41,11 @@ export async function register(): Promise<void> {
     const { startSessionWatchdog } = await import("@/lib/agents/watchdog");
     startSessionWatchdog();
 
+    const { startAutoMode, kickAutoModeForSession } = await import(
+      "@/lib/auto-mode/engine"
+    );
+    startAutoMode();
+
     const { setSessionTerminalHook } = await import(
       "@/lib/agent-sessions/terminal-hooks"
     );
@@ -40,6 +53,10 @@ export async function register(): Promise<void> {
       "@/lib/workflow/memory-distill"
     );
     setSessionTerminalHook((event) => {
+      // Every terminal status frees a scheduler slot, so the supervisor is
+      // kicked regardless of how the session ended.
+      kickAutoModeForSession(event.sessionId);
+
       if (event.status !== "completed") return;
       // Fire-and-forget: the trigger owns its guards and never rejects.
       void maybeAutoDistillAfterSessionTerminal(event.sessionId);

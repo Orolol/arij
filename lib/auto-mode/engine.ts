@@ -1,0 +1,691 @@
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db";
+import { agentSessions, epics } from "@/lib/db/schema";
+import { logTransition } from "@/lib/workflow/log";
+import { createPipelineStageDriver } from "@/lib/pipeline/stages";
+import {
+  AUTO_MODE_MAX_CONSECUTIVE_FAILURES,
+  AUTO_MODE_REASONS,
+  AUTO_MODE_SWEEP_INTERVAL_MS,
+  autoRunId,
+  type AutoModeConfig,
+} from "./constants";
+import {
+  listAutoModeEnabledProjectIds,
+  resolveAutoModeConfigForProject,
+} from "./config";
+import { autoModeRegistry } from "./registry";
+import {
+  loadAutoModeBoard,
+  selectBuildCandidates,
+  selectMergeCandidates,
+  selectReviewCandidates,
+  type AutoModeBoard,
+} from "./select";
+import { tryAutoMerge, type AutoMergeOutcome } from "./merge";
+
+/**
+ * Full Auto Mode — the standing build / review / merge supervisor.
+ *
+ * Arij already had two autonomous modes, but both are one-shot bursts:
+ * lib/pipeline/ takes ONE ticket through build → review → auto-fix and stops,
+ * lib/night/ makes ONE DAG pass over a batch of epics and ends. Neither
+ * watches the board. This engine is the missing link: a permanent loop, armed
+ * per project, with independent build and review budgets.
+ *
+ * It only ever DISPATCHES. The state machine already loops on its own — a
+ * build success moves the epic to `review`, a negative review verdict moves
+ * it back to `in_progress` with no agent on it (lib/pipeline/stages.ts:916),
+ * and the supervisor simply picks that up on the next sweep. Nothing here
+ * duplicates the routes' status logic; every dispatch goes through
+ * `createPipelineStageDriver(...).launchStage(...)`, which replicates the
+ * route closures byte-for-byte so the board cannot tell an auto-mode agent
+ * from a human one.
+ *
+ * Sweep order matters:
+ *   1. reconcile — drop in-flight ids whose session rows went terminal,
+ *      crediting a completed session and charging a failed one to its ticket;
+ *   2. merge     — free the Review column first; a clean merge is pure git,
+ *      so it costs no slot and never waits on a budget;
+ *   3. review    — while fewer than M reviews of our own are in flight;
+ *   4. build     — while fewer than N builds of our own are in flight.
+ *
+ * The budgets are the mode's OWN admission control, deliberately layered
+ * ABOVE the scheduler's `agent_max_concurrent`. If N+M exceeds it the excess
+ * queues (the dialog warns about exactly this); what the mode must never do
+ * is admit unbounded work, because `getRunningSessionForTarget` counts
+ * `queued` — a stuffed queue would make the whole board look busy while
+ * nothing runs.
+ */
+
+const TERMINAL_SESSION_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+/* ------------------------------------------------------------------ */
+/* Injection surface                                                   */
+/* ------------------------------------------------------------------ */
+
+export interface AutoModeDispatchInput {
+  projectId: string;
+  stage: "build" | "review";
+  scope: "epic" | "story";
+  epicId: string;
+  userStoryId: string | null;
+  buildNamedAgentId: string | null;
+  reviewNamedAgentId: string | null;
+  /** Sessions the mode already owns — the driver's race check. */
+  ownSessionIds: string[];
+}
+
+export interface AutoModeDispatchResult {
+  sessionId: string | null;
+  /** Dispatch error, when the stage never produced a session row. */
+  error: string | null;
+  /**
+   * A foreign active session appeared between selection and dispatch. Not a
+   * failure of the ticket: skip it this sweep, charge nothing.
+   */
+  conflictSessionId: string | null;
+}
+
+export interface AutoModeEngineDeps {
+  listEnabledProjectIds(): string[];
+  resolveConfig(projectId: string): AutoModeConfig;
+  loadBoard(projectId: string): AutoModeBoard;
+  dispatch(input: AutoModeDispatchInput): Promise<AutoModeDispatchResult>;
+  merge(
+    projectId: string,
+    epicId: string,
+    options: { namedAgentId: string | null }
+  ): Promise<AutoMergeOutcome>;
+  readSessionStatus(sessionId: string): string | null;
+  readEpicStatus(epicId: string): string | null;
+}
+
+/**
+ * The real dispatcher: one driver per dispatch, guarded immediately before
+ * launch. `checkGuards` is the last-moment race check — the board snapshot
+ * that produced this candidate is milliseconds old, but a human clicking
+ * Build in that window must win.
+ */
+async function defaultDispatch(
+  input: AutoModeDispatchInput
+): Promise<AutoModeDispatchResult> {
+  const driver = createPipelineStageDriver({
+    projectId: input.projectId,
+    scope: input.scope,
+    epicId: input.epicId,
+    userStoryId: input.userStoryId,
+    buildNamedAgentId: input.buildNamedAgentId,
+    reviewNamedAgentId: input.reviewNamedAgentId,
+    batchRunId: autoRunId(input.projectId),
+  });
+
+  let guard;
+  try {
+    guard = driver.checkGuards(input.ownSessionIds);
+  } catch (error) {
+    return {
+      sessionId: null,
+      conflictSessionId: null,
+      error: error instanceof Error ? error.message : "Guard probe failed",
+    };
+  }
+
+  if (guard.conflictSessionId) {
+    return {
+      sessionId: null,
+      error: null,
+      conflictSessionId: guard.conflictSessionId,
+    };
+  }
+
+  // Mirror of the review routes' status guard: reviewing a ticket a human
+  // just dragged out of Review would be dispatching work the route itself
+  // would refuse.
+  if (
+    input.stage === "review" &&
+    guard.reviewTargetStatus !== "review" &&
+    guard.reviewTargetStatus !== "done"
+  ) {
+    return {
+      sessionId: null,
+      error: null,
+      conflictSessionId: null,
+    };
+  }
+
+  const handle = await driver.launchStage({
+    stage: input.stage,
+    attempt: 1,
+    fixCycle: 0,
+    previousAttemptSessionId: null,
+    lastCodeSessionId: null,
+  });
+
+  if (!handle.sessionId) {
+    // launchStage never throws: a dispatch failure comes back as an already
+    // resolved settle carrying the message.
+    const settled = await handle.settled;
+    return {
+      sessionId: null,
+      conflictSessionId: null,
+      error: settled.error ?? "Stage dispatch failed",
+    };
+  }
+
+  return { sessionId: handle.sessionId, error: null, conflictSessionId: null };
+}
+
+export const defaultAutoModeDeps: AutoModeEngineDeps = {
+  listEnabledProjectIds: listAutoModeEnabledProjectIds,
+  resolveConfig: resolveAutoModeConfigForProject,
+  loadBoard: loadAutoModeBoard,
+  dispatch: defaultDispatch,
+  merge: (projectId, epicId, options) =>
+    tryAutoMerge(projectId, epicId, options),
+  readSessionStatus: (sessionId) =>
+    db
+      .select({ status: agentSessions.status })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, sessionId))
+      .get()?.status ?? null,
+  readEpicStatus: (epicId) =>
+    db
+      .select({ status: epics.status })
+      .from(epics)
+      .where(eq(epics.id, epicId))
+      .get()?.status ?? null,
+};
+
+/* ------------------------------------------------------------------ */
+/* Sweep result (the tests' and the route's view)                      */
+/* ------------------------------------------------------------------ */
+
+export interface AutoModeSweepResult {
+  projectId: string;
+  /** Why nothing happened, when nothing happened. */
+  skipped: "disabled" | "locked" | null;
+  merged: string[];
+  mergeConflicts: string[];
+  reviewsDispatched: string[];
+  buildsDispatched: string[];
+  parked: string[];
+  inFlight: { build: number; review: number };
+}
+
+function emptyResult(
+  projectId: string,
+  skipped: AutoModeSweepResult["skipped"]
+): AutoModeSweepResult {
+  return {
+    projectId,
+    skipped,
+    merged: [],
+    mergeConflicts: [],
+    reviewsDispatched: [],
+    buildsDispatched: [],
+    parked: [],
+    inFlight: autoModeRegistry.countInFlight(projectId),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* The sweep                                                           */
+/* ------------------------------------------------------------------ */
+
+/** Best-effort activity trace; logTransition already swallows its own errors. */
+function trace(
+  deps: AutoModeEngineDeps,
+  projectId: string,
+  epicId: string,
+  reason: string,
+  sessionId?: string | null
+): void {
+  const held = deps.readEpicStatus(epicId) ?? "backlog";
+  logTransition({
+    projectId,
+    epicId,
+    // from == to: the mode observes and dispatches, the driver moves tickets.
+    fromStatus: held,
+    toStatus: held,
+    actor: "system",
+    reason,
+    ...(sessionId ? { sessionId } : {}),
+  });
+}
+
+/**
+ * Reconciles the in-flight map against the session rows: anything terminal
+ * leaves the map, a completed session clears its ticket's failure streak and
+ * a failed one extends it. A cancelled session is the user's decision, so it
+ * counts neither way.
+ */
+function reconcileInFlight(
+  projectId: string,
+  deps: AutoModeEngineDeps,
+  parked: string[]
+): void {
+  for (const { sessionId, entry } of autoModeRegistry.listInFlight(projectId)) {
+    const status = deps.readSessionStatus(sessionId);
+    if (status !== null && !TERMINAL_SESSION_STATUSES.has(status)) continue;
+
+    autoModeRegistry.removeInFlight(projectId, sessionId);
+
+    if (status === "completed") {
+      autoModeRegistry.clearFailures(projectId, entry.ticketId);
+      continue;
+    }
+    if (status !== "failed") continue;
+
+    const failures = autoModeRegistry.recordFailure(
+      projectId,
+      entry.ticketId,
+      entry.epicId,
+      `${entry.kind} session failed`
+    );
+    if (failures >= AUTO_MODE_MAX_CONSECUTIVE_FAILURES) {
+      parked.push(entry.ticketId);
+      trace(
+        deps,
+        projectId,
+        entry.epicId,
+        AUTO_MODE_REASONS.parked(failures),
+        sessionId
+      );
+    }
+  }
+}
+
+/**
+ * A parked ticket comes back when the user touches it. "Touched" is read
+ * from the board snapshot the sweep already loaded: a user comment newer
+ * than the moment the ticket was parked. Toggling the mode off also clears
+ * every park (the registry drops all state).
+ */
+function unparkTouchedTickets(
+  projectId: string,
+  board: AutoModeBoard
+): boolean {
+  let unparked = false;
+  for (const parkedTicket of autoModeRegistry.listParked(projectId)) {
+    const commentedAt =
+      board.lastUserCommentByStory.get(parkedTicket.ticketId) ??
+      board.lastUserCommentByEpic.get(parkedTicket.ticketId);
+    if (!commentedAt) continue;
+    const normalized = commentedAt.includes("T")
+      ? commentedAt
+      : commentedAt.replace(" ", "T");
+    if (normalized > parkedTicket.at) {
+      autoModeRegistry.clearFailures(projectId, parkedTicket.ticketId);
+      unparked = true;
+    }
+  }
+  return unparked;
+}
+
+/** One sweep for one project. Never throws — a bad tick must not kill the loop. */
+export async function sweepProject(
+  projectId: string,
+  deps: AutoModeEngineDeps = defaultAutoModeDeps,
+  now: Date = new Date()
+): Promise<AutoModeSweepResult> {
+  const config = deps.resolveConfig(projectId);
+
+  if (!config.enabled) {
+    // Clears in-flight tracking, parks and the recent ring in one move.
+    autoModeRegistry.setEnabled(projectId, false);
+    return emptyResult(projectId, "disabled");
+  }
+  autoModeRegistry.setEnabled(projectId, true);
+
+  if (!autoModeRegistry.tryLock(projectId)) {
+    return emptyResult(projectId, "locked");
+  }
+
+  const result: AutoModeSweepResult = {
+    projectId,
+    skipped: null,
+    merged: [],
+    mergeConflicts: [],
+    reviewsDispatched: [],
+    buildsDispatched: [],
+    parked: [],
+    inFlight: { build: 0, review: 0 },
+  };
+
+  try {
+    reconcileInFlight(projectId, deps, result.parked);
+
+    // The snapshot already reflects the parks reconcile just recorded (it is
+    // built after them); only an un-park invalidates its exclusion set.
+    let board = deps.loadBoard(projectId);
+    if (unparkTouchedTickets(projectId, board)) {
+      board = deps.loadBoard(projectId);
+    }
+
+    // -----------------------------------------------------------------
+    // 1. Merge — cheapest first, and it frees the Review column.
+    // -----------------------------------------------------------------
+    let mergedSomething = false;
+    for (const candidate of selectMergeCandidates(projectId, board)) {
+      const outcome = await deps.merge(projectId, candidate.epicId, {
+        namedAgentId: config.buildAgent,
+      });
+
+      if (outcome.status === "merged") {
+        result.merged.push(candidate.epicId);
+        mergedSomething = true;
+        continue;
+      }
+      if (outcome.status === "conflict") {
+        // A conflict resolution is code work: charge it to the build budget.
+        autoModeRegistry.addInFlight(projectId, outcome.sessionId, {
+          kind: "build",
+          ticketId: candidate.epicId,
+          epicId: candidate.epicId,
+        });
+        result.mergeConflicts.push(candidate.epicId);
+        mergedSomething = true;
+        continue;
+      }
+      if (outcome.status === "failed") {
+        const failures = autoModeRegistry.recordFailure(
+          projectId,
+          candidate.epicId,
+          candidate.epicId,
+          outcome.error
+        );
+        trace(
+          deps,
+          projectId,
+          candidate.epicId,
+          AUTO_MODE_REASONS.dispatchFailed("merge", outcome.error)
+        );
+        if (failures >= AUTO_MODE_MAX_CONSECUTIVE_FAILURES) {
+          result.parked.push(candidate.epicId);
+          trace(
+            deps,
+            projectId,
+            candidate.epicId,
+            AUTO_MODE_REASONS.parked(failures)
+          );
+        }
+      }
+      // "skipped" is a guard refusal: logged inside tryAutoMerge, never parked.
+    }
+
+    // A merge moves epics out of `review`, so the selectors below need a
+    // fresh view of the board.
+    if (mergedSomething) board = deps.loadBoard(projectId);
+
+    // -----------------------------------------------------------------
+    // 2. Reviews, then 3. builds — each against its own budget.
+    // -----------------------------------------------------------------
+    await dispatchKind({
+      kind: "review",
+      projectId,
+      deps,
+      config,
+      budget: config.reviewConcurrency,
+      candidates: selectReviewCandidates(projectId, board).map((candidate) => ({
+        scope: "epic" as const,
+        epicId: candidate.epicId,
+        userStoryId: null,
+        ticketId: candidate.ticketId,
+      })),
+      result,
+    });
+
+    await dispatchKind({
+      kind: "build",
+      projectId,
+      deps,
+      config,
+      budget: config.buildConcurrency,
+      candidates: selectBuildCandidates(projectId, board).map((candidate) => ({
+        scope: candidate.scope,
+        epicId: candidate.epicId,
+        userStoryId: candidate.userStoryId,
+        ticketId: candidate.ticketId,
+      })),
+      result,
+    });
+  } catch (error) {
+    console.error(
+      `[auto-mode] Sweep failed for project ${projectId}:`,
+      error instanceof Error ? error.message : error
+    );
+  } finally {
+    autoModeRegistry.markSwept(projectId, now.toISOString());
+    autoModeRegistry.unlock(projectId);
+  }
+
+  result.inFlight = autoModeRegistry.countInFlight(projectId);
+  return result;
+}
+
+interface DispatchKindInput {
+  kind: "build" | "review";
+  projectId: string;
+  deps: AutoModeEngineDeps;
+  config: AutoModeConfig;
+  budget: number;
+  candidates: Array<{
+    scope: "epic" | "story";
+    epicId: string;
+    userStoryId: string | null;
+    ticketId: string;
+  }>;
+  result: AutoModeSweepResult;
+}
+
+/**
+ * Drains one kind of candidate against its budget. A budget of 0 disables
+ * this kind entirely without touching the other — "reviews only" and "builds
+ * only" are both supported configurations.
+ */
+async function dispatchKind(input: DispatchKindInput): Promise<void> {
+  const { kind, projectId, deps, config, budget, candidates, result } = input;
+  if (budget <= 0) return;
+
+  for (const candidate of candidates) {
+    const inFlight = autoModeRegistry.countInFlight(projectId)[kind];
+    if (inFlight >= budget) return;
+
+    const dispatched = await deps.dispatch({
+      projectId,
+      stage: kind,
+      scope: candidate.scope,
+      epicId: candidate.epicId,
+      userStoryId: candidate.userStoryId,
+      buildNamedAgentId: config.buildAgent,
+      reviewNamedAgentId: config.reviewAgent,
+      ownSessionIds: autoModeRegistry.ownSessionIds(projectId),
+    });
+
+    if (dispatched.conflictSessionId) {
+      trace(
+        deps,
+        projectId,
+        candidate.epicId,
+        AUTO_MODE_REASONS.skippedBusy,
+        dispatched.conflictSessionId
+      );
+      continue;
+    }
+
+    if (!dispatched.sessionId) {
+      if (!dispatched.error) continue; // a silent guard refusal, not a failure
+      const failures = autoModeRegistry.recordFailure(
+        projectId,
+        candidate.ticketId,
+        candidate.epicId,
+        dispatched.error
+      );
+      trace(
+        deps,
+        projectId,
+        candidate.epicId,
+        AUTO_MODE_REASONS.dispatchFailed(kind, dispatched.error)
+      );
+      if (failures >= AUTO_MODE_MAX_CONSECUTIVE_FAILURES) {
+        result.parked.push(candidate.ticketId);
+        trace(
+          deps,
+          projectId,
+          candidate.epicId,
+          AUTO_MODE_REASONS.parked(failures)
+        );
+      }
+      continue;
+    }
+
+    autoModeRegistry.addInFlight(projectId, dispatched.sessionId, {
+      kind,
+      ticketId: candidate.ticketId,
+      epicId: candidate.epicId,
+    });
+    autoModeRegistry.recordDispatch(projectId, {
+      kind,
+      epicId: candidate.epicId,
+      userStoryId: candidate.userStoryId,
+      sessionId: dispatched.sessionId,
+      detail: candidate.scope,
+    });
+    trace(
+      deps,
+      projectId,
+      candidate.epicId,
+      kind === "review"
+        ? AUTO_MODE_REASONS.reviewDispatched
+        : AUTO_MODE_REASONS.buildDispatched(candidate.scope),
+      dispatched.sessionId
+    );
+
+    (kind === "review"
+      ? result.reviewsDispatched
+      : result.buildsDispatched
+    ).push(dispatched.sessionId);
+  }
+}
+
+/**
+ * One pass over every project with the mode switched on. Exported pure (no
+ * timer, no globals beyond the registry) so tests can drive it directly with
+ * fake timers.
+ */
+export async function sweep(
+  now: Date = new Date(),
+  deps: AutoModeEngineDeps = defaultAutoModeDeps
+): Promise<AutoModeSweepResult[]> {
+  const results: AutoModeSweepResult[] = [];
+  let projectIds: string[];
+  try {
+    projectIds = deps.listEnabledProjectIds();
+  } catch (error) {
+    console.error("[auto-mode] Failed to list enabled projects:", error);
+    return results;
+  }
+
+  // Projects the registry still tracks as enabled but whose setting was just
+  // switched off need one final sweep to clear their state.
+  const known = new Set(projectIds);
+  for (const projectId of autoModeRegistry.listEnabledProjectIds()) {
+    if (!known.has(projectId)) projectIds.push(projectId);
+  }
+
+  for (const projectId of projectIds) {
+    results.push(await sweepProject(projectId, deps, now));
+  }
+  return results;
+}
+
+/* ------------------------------------------------------------------ */
+/* Timer lifecycle                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * globalThis-backed timer slot (watchdog pattern): dev hot reloads
+ * re-evaluate this module but must reuse the already-ticking interval
+ * instead of stacking a second supervisor on the same board.
+ */
+const AUTO_MODE_GLOBAL_KEY = Symbol.for("arij.auto-mode");
+
+interface AutoModeTimerSlot {
+  timer: ReturnType<typeof setInterval> | null;
+}
+
+type AutoModeGlobal = { [AUTO_MODE_GLOBAL_KEY]?: AutoModeTimerSlot };
+
+function timerSlot(): AutoModeTimerSlot {
+  const store = globalThis as AutoModeGlobal;
+  if (!store[AUTO_MODE_GLOBAL_KEY]) {
+    store[AUTO_MODE_GLOBAL_KEY] = { timer: null };
+  }
+  return store[AUTO_MODE_GLOBAL_KEY];
+}
+
+/** Boot entry point (instrumentation.ts). Safe to call repeatedly. */
+export function startAutoMode(): void {
+  const slot = timerSlot();
+  if (slot.timer) return;
+
+  slot.timer = setInterval(() => {
+    void sweep().catch((error) => {
+      console.error("[auto-mode] Sweep failed", error);
+    });
+  }, AUTO_MODE_SWEEP_INTERVAL_MS);
+
+  // Never keep the process alive just to supervise a board.
+  slot.timer.unref?.();
+}
+
+export function stopAutoMode(): void {
+  const slot = timerSlot();
+  if (slot.timer) {
+    clearInterval(slot.timer);
+    slot.timer = null;
+  }
+}
+
+export function isAutoModeRunning(): boolean {
+  return timerSlot().timer !== null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Kicks                                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Fire-and-forget sweep for one project. Used by the PUT route (enabling
+ * must not wait up to 15s for the next tick) and by the session terminal
+ * hook (a finished agent frees a slot; the timer stays the backstop).
+ */
+export function kickAutoMode(projectId: string): void {
+  void sweepProject(projectId).catch((error) => {
+    console.error(`[auto-mode] Kick failed for project ${projectId}:`, error);
+  });
+}
+
+/**
+ * Terminal-hook entry point: a session just reached a terminal state, so the
+ * project that owns it may have a free slot. Cheap no-op when the mode is
+ * off for that project.
+ */
+export function kickAutoModeForSession(sessionId: string): void {
+  try {
+    const row = db
+      .select({ projectId: agentSessions.projectId })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, sessionId))
+      .get();
+    if (!row?.projectId) return;
+    if (!resolveAutoModeConfigForProject(row.projectId).enabled) return;
+    kickAutoMode(row.projectId);
+  } catch (error) {
+    console.warn(
+      "[auto-mode] Terminal-hook kick failed:",
+      error instanceof Error ? error.message : error
+    );
+  }
+}
