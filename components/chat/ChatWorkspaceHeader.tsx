@@ -3,6 +3,7 @@
 import { Loader2, Sparkles } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { ChatProviderSelect } from "@/components/chat/ChatProviderSelect";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
 import type { Conversation } from "@/hooks/useConversations";
 import { resolveLegacyConversationLabel } from "@/lib/chat/parity-contract";
@@ -13,6 +14,7 @@ interface ChatWorkspaceHeaderProps {
   hasMessages: boolean;
   isBusy: boolean;
   onAgentChange: (namedAgentId: string) => void;
+  onProviderChange: (provider: string) => void;
 }
 
 /**
@@ -26,6 +28,7 @@ export function ChatWorkspaceHeader({
   hasMessages,
   isBusy,
   onAgentChange,
+  onProviderChange,
 }: ChatWorkspaceHeaderProps) {
   return (
     <div className="flex items-center gap-2">
@@ -40,6 +43,17 @@ export function ChatWorkspaceHeader({
           session linked
         </Badge>
       )}
+      <ChatProviderSelect
+        value={activeProvider}
+        onChange={onProviderChange}
+        conversationType={activeConversation?.type ?? null}
+        disabled={
+          !activeConversation ||
+          hasMessages ||
+          isBusy ||
+          Boolean(activeConversation?.namedAgentId)
+        }
+      />
       <NamedAgentSelect
         value={activeConversation?.namedAgentId ?? null}
         onChange={onAgentChange}

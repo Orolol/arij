@@ -88,6 +88,21 @@ export type AgentProvider =
   | "oh-my-pi";
 
 /**
+ * The direct-API chat provider (fast mode). Deliberately NOT an
+ * `AgentProvider`: it has no CLI to install or spawn, so it must never be
+ * picked as a build/review provider, appear in `PROVIDER_OPTIONS`, or be
+ * offered as a named-agent provider — it is a per-conversation chat mode
+ * only.
+ */
+export const OPENAI_COMPATIBLE_PROVIDER = "openai-compatible" as const;
+
+/**
+ * A provider a chat conversation can run on: any CLI agent provider, or
+ * the OpenAI-compatible direct-API fast mode.
+ */
+export type ChatModeProvider = AgentProvider | typeof OPENAI_COMPATIBLE_PROVIDER;
+
+/**
  * Stable order — `pickAlternativeReviewProvider()` walks this list to choose
  * a reviewer that differs from the builder, so new providers are appended
  * rather than inserted.
@@ -106,7 +121,7 @@ export const PROVIDER_OPTIONS: AgentProvider[] = [
   "oh-my-pi",
 ];
 
-export const PROVIDER_LABELS: Record<AgentProvider, string> = {
+export const PROVIDER_LABELS: Record<ChatModeProvider, string> = {
   "claude-code": "Claude Code",
   codex: "Codex",
   "gemini-cli": "Gemini CLI",
@@ -118,6 +133,7 @@ export const PROVIDER_LABELS: Record<AgentProvider, string> = {
   zai: "Zai",
   pi: "Pi",
   "oh-my-pi": "Oh My Pi",
+  "openai-compatible": "OpenAI-compatible",
 };
 
 /** Providers grouped by tier for UI display. */
@@ -132,4 +148,9 @@ export const PROVIDER_TIERS: { label: string; providers: AgentProvider[] }[] = [
 
 export function isAgentProvider(value: string): value is AgentProvider {
   return (PROVIDER_OPTIONS as readonly string[]).includes(value);
+}
+
+/** True for anything a chat conversation can run on (see ChatModeProvider). */
+export function isChatProvider(value: string): value is ChatModeProvider {
+  return value === OPENAI_COMPATIBLE_PROVIDER || isAgentProvider(value);
 }

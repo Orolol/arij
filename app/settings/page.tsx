@@ -24,6 +24,21 @@ import {
   parseNightCircuitBreaker,
   parseNightCostCap,
 } from "@/lib/night/constants";
+import {
+  OPENAI_API_KEY_SETTING_KEY,
+  OPENAI_BASE_URL_SETTING_KEY,
+  OPENAI_MODEL_SETTING_KEY,
+  OPENAI_REASONING_EFFORT_SETTING_KEY,
+  parseOpenAiReasoningEffort,
+  type OpenAiReasoningEffort,
+} from "@/lib/openai/constants";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface GitHubPatSetting {
   hasToken?: boolean;
@@ -45,6 +60,17 @@ export default function SettingsPage() {
   const [globalMessage, setGlobalMessage] = useState<string | null>(null);
   const [gitHubMessage, setGitHubMessage] = useState<string | null>(null);
   const [gitHubError, setGitHubError] = useState<string | null>(null);
+  const [openAiBaseUrl, setOpenAiBaseUrl] = useState("");
+  const [openAiApiKey, setOpenAiApiKey] = useState("");
+  const [openAiModel, setOpenAiModel] = useState("");
+  const [openAiReasoningEffort, setOpenAiReasoningEffort] =
+    useState<OpenAiReasoningEffort>("off");
+  const [hasSavedOpenAiKey, setHasSavedOpenAiKey] = useState(false);
+  const [savingOpenAi, setSavingOpenAi] = useState(false);
+  const [clearingOpenAiKey, setClearingOpenAiKey] = useState(false);
+  const [testingOpenAi, setTestingOpenAi] = useState(false);
+  const [openAiMessage, setOpenAiMessage] = useState<string | null>(null);
+  const [openAiError, setOpenAiError] = useState<string | null>(null);
   const [webhooks, setWebhooks] = useState<ProjectWebhook[]>([]);
   const [savingWebhookId, setSavingWebhookId] = useState<string | null>(null);
   const [webhookMessage, setWebhookMessage] = useState<string | null>(null);
@@ -101,6 +127,17 @@ export default function SettingsPage() {
         }
         const githubSetting = d.data?.github_pat as GitHubPatSetting | undefined;
         setHasSavedGitHubPat(Boolean(githubSetting?.hasToken));
+        const openAiKeySetting = d.data?.[OPENAI_API_KEY_SETTING_KEY] as
+          | GitHubPatSetting
+          | undefined;
+        setHasSavedOpenAiKey(Boolean(openAiKeySetting?.hasToken));
+        const savedBaseUrl = d.data?.[OPENAI_BASE_URL_SETTING_KEY];
+        if (typeof savedBaseUrl === "string") setOpenAiBaseUrl(savedBaseUrl);
+        const savedModel = d.data?.[OPENAI_MODEL_SETTING_KEY];
+        if (typeof savedModel === "string") setOpenAiModel(savedModel);
+        setOpenAiReasoningEffort(
+          parseOpenAiReasoningEffort(d.data?.[OPENAI_REASONING_EFFORT_SETTING_KEY]),
+        );
         const autoDistill = d.data?.memory_auto_distill;
         setMemoryAutoDistill(autoDistill === true || autoDistill === "true");
         // Default ON: only an explicitly-false value disables the MCP tools.
@@ -510,6 +547,126 @@ export default function SettingsPage() {
     }
   }
 
+  async function handleSaveOpenAi() {
+    setSavingOpenAi(true);
+    setOpenAiMessage(null);
+    setOpenAiError(null);
+
+    const baseUrl = openAiBaseUrl.trim();
+    const model = openAiModel.trim();
+    if (!baseUrl) {
+      setOpenAiError("Base URL is required.");
+      setSavingOpenAi(false);
+      return;
+    }
+    if (!model) {
+      setOpenAiError("Model is required.");
+      setSavingOpenAi(false);
+      return;
+    }
+
+    const patchBody: Record<string, unknown> = {
+      [OPENAI_BASE_URL_SETTING_KEY]: baseUrl,
+      [OPENAI_MODEL_SETTING_KEY]: model,
+      [OPENAI_REASONING_EFFORT_SETTING_KEY]: openAiReasoningEffort,
+    };
+    if (openAiApiKey.trim().length > 0) {
+      patchBody[OPENAI_API_KEY_SETTING_KEY] = openAiApiKey.trim();
+    }
+
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(patchBody),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setOpenAiError(
+          payload?.error ?? "Failed to save the OpenAI-compatible settings."
+        );
+        return;
+      }
+
+      if (openAiApiKey.trim().length > 0) {
+        setHasSavedOpenAiKey(true);
+      }
+      setOpenAiApiKey("");
+      setOpenAiMessage("OpenAI-compatible settings saved.");
+    } catch {
+      setOpenAiError(
+        "Failed to save the OpenAI-compatible settings. Check your connection and retry."
+      );
+    } finally {
+      setSavingOpenAi(false);
+    }
+  }
+  async function handleClearOpenAiKey() {
+    setClearingOpenAiKey(true);
+    setOpenAiMessage(null);
+    setOpenAiError(null);
+
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          [OPENAI_API_KEY_SETTING_KEY]: "",
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setOpenAiError(
+          payload?.error ?? "Failed to clear the saved API key."
+        );
+        return;
+      }
+
+      setHasSavedOpenAiKey(false);
+      setOpenAiApiKey("");
+      setOpenAiMessage("Saved API key cleared.");
+    } catch {
+      setOpenAiError(
+        "Failed to clear the saved API key. Check your connection and retry."
+      );
+    } finally {
+      setClearingOpenAiKey(false);
+    }
+  }
+
+  async function handleTestOpenAi() {
+    setTestingOpenAi(true);
+    setOpenAiMessage(null);
+    setOpenAiError(null);
+
+    try {
+      const response = await fetch("/api/settings/openai/test", {
+        method: "POST",
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.data?.valid) {
+        setOpenAiError(
+          payload?.error ??
+            "Connection test failed. Check the Base URL, Model, and API key."
+        );
+        return;
+      }
+
+      const model = payload?.data?.model;
+      setOpenAiMessage(
+        model
+          ? `Connection successful — model: ${model}.`
+          : "Connection successful."
+      );
+    } catch {
+      setOpenAiError(
+        "Could not reach the OpenAI-compatible endpoint. Check your network and try again."
+      );
+    } finally {
+      setTestingOpenAi(false);
+    }
+  }
+
   return (
     <div className="p-6 max-w-2xl space-y-8">
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
@@ -865,7 +1022,137 @@ export default function SettingsPage() {
         {gitHubError && <p className="text-sm text-destructive">{gitHubError}</p>}
       </section>
 
-      <section className="space-y-4 rounded-md border border-border p-4">
+      <section
+        className="space-y-4 rounded-md border border-border p-4"
+        data-testid="openai-settings"
+      >
+        <div>
+          <h2 className="text-lg font-semibold">OpenAI-compatible API</h2>
+          <p className="text-sm text-muted-foreground">
+            Answer chat messages directly from an OpenAI-compatible endpoint
+            (local or hosted) with token-by-token streaming, bypassing the CLI
+            agents.
+          </p>
+          {hasSavedOpenAiKey && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+              <span>An API key is already saved for this workspace.</span>
+              <button
+                type="button"
+                className="text-xs text-destructive hover:underline cursor-pointer bg-transparent border-0 p-0 disabled:opacity-50"
+                onClick={handleClearOpenAiKey}
+                disabled={clearingOpenAiKey || savingOpenAi}
+                data-testid="openai-clear-key-button"
+              >
+                {clearingOpenAiKey ? "Clearing..." : "Clear key"}
+              </button>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="openai-base-url" className="block text-sm font-medium">
+            Base URL
+          </label>
+          <Input
+            id="openai-base-url"
+            data-testid="openai-base-url"
+            type="url"
+            value={openAiBaseUrl}
+            onChange={(e) => setOpenAiBaseUrl(e.target.value)}
+            placeholder="http://localhost:11434/v1"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="openai-api-key" className="block text-sm font-medium">
+            API key
+          </label>
+          <Input
+            id="openai-api-key"
+            data-testid="openai-api-key"
+            type="password"
+            value={openAiApiKey}
+            onChange={(e) => setOpenAiApiKey(e.target.value)}
+            placeholder="Optional for local servers"
+          />
+          <p className="text-xs text-muted-foreground">
+            Optional. When empty, no Authorization header is sent, so keyless
+            local servers work.
+          </p>
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="openai-model" className="block text-sm font-medium">
+            Model
+          </label>
+          <Input
+            id="openai-model"
+            data-testid="openai-model"
+            value={openAiModel}
+            onChange={(e) => setOpenAiModel(e.target.value)}
+            placeholder="gpt-4o-mini"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <label
+            htmlFor="openai-reasoning-effort"
+            className="block text-sm font-medium"
+          >
+            Reasoning
+          </label>
+          <Select
+            value={openAiReasoningEffort}
+            onValueChange={(value) =>
+              setOpenAiReasoningEffort(value as OpenAiReasoningEffort)
+            }
+          >
+            <SelectTrigger
+              id="openai-reasoning-effort"
+              data-testid="openai-reasoning-effort"
+              className="w-full"
+            >
+              <SelectValue placeholder="off" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="off">Off</SelectItem>
+              <SelectItem value="low">Low</SelectItem>
+              <SelectItem value="medium">Medium</SelectItem>
+              <SelectItem value="high">High</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleTestOpenAi}
+            disabled={testingOpenAi}
+          >
+            {testingOpenAi ? "Testing..." : "Test connection"}
+          </Button>
+          <Button type="button" onClick={handleSaveOpenAi} disabled={savingOpenAi || clearingOpenAiKey}>
+            {savingOpenAi ? "Saving..." : "Save"}
+          </Button>
+        </div>
+
+        {openAiMessage && (
+          <p className="text-sm text-muted-foreground" data-testid="openai-settings-message">
+            {openAiMessage}
+          </p>
+        )}
+        {openAiError && (
+          <p className="text-sm text-destructive" data-testid="openai-settings-error">
+            {openAiError}
+          </p>
+        )}
+      </section>
+
+      <section
+        className="space-y-4 rounded-md border border-border p-4"
+        data-testid="webhooks-settings"
+      >
         <div>
           <h2 className="text-lg font-semibold">Webhooks</h2>
           <p className="text-sm text-muted-foreground">

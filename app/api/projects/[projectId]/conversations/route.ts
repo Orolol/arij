@@ -4,7 +4,7 @@ import { chatConversations, chatMessages, namedAgents, projects } from "@/lib/db
 import { eq, and, isNull } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveAgent } from "@/lib/agent-config/agent-resolution";
-import { isAgentProvider } from "@/lib/agent-config/constants";
+import { isChatProvider } from "@/lib/agent-config/constants";
 import { normalizeConversationAgentType } from "@/lib/chat/conversation-agent";
 import {
   normalizeLegacyConversationStatus,
@@ -140,7 +140,7 @@ export async function POST(
     provider = namedAgent.provider;
   }
 
-  if (!isAgentProvider(provider)) {
+  if (!isChatProvider(provider)) {
     const resolved = resolveAgent("chat", projectId);
     provider = resolved.provider;
     if (!namedAgentId) {

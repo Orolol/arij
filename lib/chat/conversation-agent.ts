@@ -2,6 +2,7 @@ export const UNSELECTED_AGENT_TYPE = "unselected";
 export const BRAINSTORM_AGENT_TYPE = "brainstorm";
 export const EPIC_CREATION_AGENT_TYPE = "epic_creation";
 export const LEGACY_EPIC_AGENT_TYPE = "epic";
+export const CHAT_AGENT_TYPE = "chat";
 export const CUSTOM_REVIEW_AGENT_PREFIX = "custom_review:";
 
 export interface BuiltinConversationAgentType {
@@ -35,5 +36,20 @@ export function isBrainstormConversationAgentType(type: string | null | undefine
 
 export function isEpicCreationConversationAgentType(type: string | null | undefined): boolean {
   return normalizeConversationAgentType(type) === EPIC_CREATION_AGENT_TYPE;
+}
+
+/**
+ * Conversation types that must run on a real coding agent. The
+ * OpenAI-compatible fast mode (direct API chat) is not offered for these:
+ * epic creation uses refinement/finalization prompts, and brainstorm is
+ * the structured spec flow with Claude-based title generation.
+ */
+export function isOpenAiIneligibleConversationAgentType(
+  type: string | null | undefined
+): boolean {
+  return (
+    isEpicCreationConversationAgentType(type) ||
+    isBrainstormConversationAgentType(type)
+  );
 }
 

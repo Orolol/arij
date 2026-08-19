@@ -76,4 +76,64 @@ describe("Settings route", () => {
       })
     );
   });
+
+  it("GET masks openai_api_key as hasToken without leaking the key", async () => {
+    dbMockState.allRows = [
+      { key: "openai_base_url", value: JSON.stringify("http://localhost:11434/v1") },
+      { key: "openai_api_key", value: JSON.stringify("sk-super-secret") },
+      { key: "openai_model", value: JSON.stringify("gpt-4o-mini") },
+      { key: "openai_reasoning_effort", value: JSON.stringify("medium") },
+    ];
+
+    const { GET } = await import("@/app/api/settings/route");
+    const res = await GET();
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.openai_api_key).toEqual({ hasToken: true });
+    expect(json.data.openai_base_url).toBe("http://localhost:11434/v1");
+    expect(json.data.openai_model).toBe("gpt-4o-mini");
+    expect(json.data.openai_reasoning_effort).toBe("medium");
+    expect(JSON.stringify(json)).not.toContain("sk-super-secret");
+  });
+
+  it("GET reports hasToken false when the OpenAI key is empty", async () => {
+    dbMockState.allRows = [
+      { key: "openai_api_key", value: JSON.stringify("") },
+    ];
+
+    const { GET } = await import("@/app/api/settings/route");
+    const res = await GET();
+    const json = await res.json();
+
+    expect(json.data.openai_api_key).toEqual({ hasToken: false });
+  });
+
+  it("PATCH persists an openai_api_key string value", async () => {
+    dbMockState.getQueue = [null]; // no existing row -> insert path
+
+    const { PATCH } = await import("@/app/api/settings/route");
+    const res = await PATCH(mockJsonRequest({ openai_api_key: "sk-123" }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.updated).toBe(true);
+    expect(dbMockState.insertCalls).toContainEqual(
+      expect.objectContaining({
+        key: "openai_api_key",
+        value: JSON.stringify("sk-123"),
+      })
+    );
+  });
+
+  it("PATCH rejects non-string openai_api_key values", async () => {
+    const { PATCH } = await import("@/app/api/settings/route");
+    const res = await PATCH(
+      mockJsonRequest({ openai_api_key: { token: "sk-bad" } })
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toBe("OpenAI API key must be saved as a string value.");
+  });
 });

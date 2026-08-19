@@ -17,9 +17,21 @@ interface MessageInputProps {
   onSend: (content: string, attachmentIds: string[]) => void;
   disabled?: boolean;
   placeholder?: string;
+  /**
+   * Disables the image-attach button, paste-to-attach, and file picker.
+   * Set when the active conversation runs on a provider that cannot take
+   * image attachments (OpenAI-compatible fast mode).
+   */
+  attachmentsDisabled?: boolean;
 }
 
-export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a question..." }: MessageInputProps) {
+export function MessageInput({
+  projectId,
+  onSend,
+  disabled,
+  placeholder = "Ask a question...",
+  attachmentsDisabled = false,
+}: MessageInputProps) {
   const [value, setValue] = useState("");
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -65,10 +77,13 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
 
   function handleSubmit() {
     const trimmed = value.trim();
-    if ((!trimmed && attachments.length === 0) || disabled || uploading) return;
-    onSend(trimmed, attachments.map((a) => a.id));
+    const effectiveAttachments = attachmentsDisabled ? [] : attachments;
+    if ((!trimmed && effectiveAttachments.length === 0) || disabled || uploading) return;
+    onSend(trimmed, effectiveAttachments.map((a) => a.id));
     setValue("");
-    setAttachments([]);
+    if (!attachmentsDisabled) {
+      setAttachments([]);
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
@@ -80,7 +95,7 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
 
   function handlePaste(e: React.ClipboardEvent) {
     const items = e.clipboardData?.items;
-    if (!items) return;
+    if (attachmentsDisabled || !items) return;
 
     const imageFiles: File[] = [];
     for (const item of items) {
@@ -108,19 +123,20 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
 
   function handleFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const files = e.target.files;
-    if (!files?.length) return;
+    if (attachmentsDisabled || !files?.length) return;
     uploadFiles(Array.from(files));
     e.target.value = "";
   }
 
-  const hasContent = value.trim().length > 0 || attachments.length > 0;
+  const effectiveAttachments = attachmentsDisabled ? [] : attachments;
+  const hasContent = value.trim().length > 0 || effectiveAttachments.length > 0;
 
   return (
     <div className="border-t border-border px-[18px] py-[14px]">
       {/* Attachment preview strip */}
-      {(attachments.length > 0 || uploading) && (
+      {(effectiveAttachments.length > 0 || uploading) && (
         <div className="mb-2 flex flex-wrap gap-2">
-          {attachments.map((att) => (
+          {effectiveAttachments.map((att) => (
             <div key={att.id} className="relative group">
               <img
                 src={att.previewUrl}
@@ -161,7 +177,7 @@ export function MessageInput({ projectId, onSend, disabled, placeholder = "Ask a
             size="icon"
             variant="outline"
             onClick={() => fileInputRef.current?.click()}
-            disabled={disabled || uploading}
+            disabled={disabled || uploading || attachmentsDisabled}
             title="Attach image"
             type="button"
             className="h-[30px] w-[30px] rounded-[8px]"

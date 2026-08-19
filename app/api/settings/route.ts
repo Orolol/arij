@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { GITHUB_PAT_SETTING_KEY } from "@/lib/github/client";
+import { OPENAI_API_KEY_SETTING_KEY } from "@/lib/openai/constants";
 
 function parseValue(raw: string): unknown {
   try {
@@ -29,6 +30,12 @@ export async function GET() {
             ? ((parsed as Record<string, unknown>).token as string).trim()
             : "";
       data[row.key] = { hasToken: token.length > 0 };
+      continue;
+    }
+
+    if (row.key === OPENAI_API_KEY_SETTING_KEY) {
+      const parsed = parseValue(row.value);
+      data[row.key] = { hasToken: typeof parsed === "string" && parsed.trim().length > 0 };
       continue;
     }
 
@@ -64,6 +71,13 @@ export async function PATCH(request: NextRequest) {
     if (key === GITHUB_PAT_SETTING_KEY && typeof value !== "string") {
       return NextResponse.json(
         { error: "GitHub token must be saved as a string value." },
+        { status: 400 }
+      );
+    }
+
+    if (key === OPENAI_API_KEY_SETTING_KEY && typeof value !== "string") {
+      return NextResponse.json(
+        { error: "OpenAI API key must be saved as a string value." },
         { status: 400 }
       );
     }

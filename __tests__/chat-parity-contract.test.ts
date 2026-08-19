@@ -36,6 +36,8 @@ describe("chat parity contract", () => {
   it("resolves labels from explicit value or legacy type fallback", () => {
     expect(resolveLegacyConversationLabel("brainstorm", "  A custom title ")).toBe("A custom title");
     expect(resolveLegacyConversationLabel("brainstorm", "")).toBe("Brainstorm");
+    expect(resolveLegacyConversationLabel("chat", "")).toBe("Chat");
+    expect(resolveLegacyConversationLabel("chat", null)).toBe("Chat");
     expect(resolveLegacyConversationLabel("epic_creation", " ")).toBe("New Epic");
     expect(resolveLegacyConversationLabel("epic", null)).toBe("New Epic");
   });
