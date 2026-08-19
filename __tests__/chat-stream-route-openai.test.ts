@@ -279,7 +279,7 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     expect(body.messages.some((m) => m.role === "system")).toBe(false);
   });
 
-  it("rejects epic_creation and brainstorm conversations with 400", async () => {
+  it("supports epic_creation and brainstorm conversations with OpenAI-compatible fast mode", async () => {
     for (const type of ["epic_creation", "brainstorm"]) {
       seedFastModeConversation({
         conversation: {
@@ -301,11 +301,8 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
         mockRouteContext({ projectId: "proj1" }),
       );
 
-      expect(response.status).toBe(400);
-      const json = (await response.json()) as { error: string };
-      expect(json.error).toContain("not available for epic-creation or brainstorm");
-      expect(fetchMock).not.toHaveBeenCalled();
-      expect(dbMockState.insertCalls).toHaveLength(0);
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalled();
     }
   });
 

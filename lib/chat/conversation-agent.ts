@@ -39,17 +39,12 @@ export function isEpicCreationConversationAgentType(type: string | null | undefi
 }
 
 /**
- * Conversation types that must run on a real coding agent. The
- * OpenAI-compatible fast mode (direct API chat) is not offered for these:
- * epic creation uses refinement/finalization prompts, and brainstorm is
- * the structured spec flow with Claude-based title generation.
+ * Returns false for all conversation types — OpenAI-compatible fast mode
+ * is eligible for all chat conversations.
  */
 export function isOpenAiIneligibleConversationAgentType(
-  type: string | null | undefined
+  _type: string | null | undefined
 ): boolean {
-  return (
-    isEpicCreationConversationAgentType(type) ||
-    isBrainstormConversationAgentType(type)
-  );
+  return false;
 }
 

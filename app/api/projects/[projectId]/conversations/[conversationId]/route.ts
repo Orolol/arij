@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { chatConversations, namedAgents } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { resolveAgent } from "@/lib/agent-config/agent-resolution";
-import { isChatProvider } from "@/lib/agent-config/constants";
+import { isChatProvider, OPENAI_COMPATIBLE_PROVIDER } from "@/lib/agent-config/constants";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { updateConversationSchema } from "@/lib/validation/chat-schemas";
@@ -101,7 +101,15 @@ export async function PATCH(
 
   const updates: Record<string, string | null> = {};
 
-  if (Object.prototype.hasOwnProperty.call(body, "namedAgentId")) {
+  if (
+    typeof body.provider === "string" &&
+    body.provider.trim() === OPENAI_COMPATIBLE_PROVIDER
+  ) {
+    updates.provider = OPENAI_COMPATIBLE_PROVIDER;
+    updates.namedAgentId = null;
+    updates.cliSessionId = null;
+    updates.claudeSessionId = null;
+  } else if (Object.prototype.hasOwnProperty.call(body, "namedAgentId")) {
     const namedAgentIdInput =
       typeof body.namedAgentId === "string" ? body.namedAgentId.trim() : "";
 
@@ -125,6 +133,14 @@ export async function PATCH(
       // Also clear the legacy column so stale legacy-row fallbacks cannot
       // resurrect a session from the previous agent.
       updates.claudeSessionId = null;
+    } else if (
+      typeof body.provider === "string" &&
+      isChatProvider(body.provider.trim())
+    ) {
+      updates.provider = body.provider.trim();
+      updates.namedAgentId = null;
+      updates.cliSessionId = null;
+      updates.claudeSessionId = null;
     } else {
       // Clearing a conversation-specific named agent falls back to configured chat default.
       const resolved = resolveAgent("chat", projectId);
@@ -135,10 +151,10 @@ export async function PATCH(
     }
   } else if (
     typeof body.provider === "string" &&
-    isChatProvider(body.provider)
+    isChatProvider(body.provider.trim())
   ) {
     // Legacy compatibility: provider patching clears named-agent linkage.
-    updates.provider = body.provider;
+    updates.provider = body.provider.trim();
     updates.namedAgentId = null;
     updates.cliSessionId = null;
     updates.claudeSessionId = null;

@@ -51,7 +51,10 @@ let mockConversations: ConversationStub[] = [
 let mockActiveId: string | null = "conv1";
 
 const mockUpdateConversation = vi.fn(
-  async (conversationId: string, updates: { namedAgentId?: string | null }) => {
+  async (
+    conversationId: string,
+    updates: { namedAgentId?: string | null; provider?: string },
+  ) => {
     const res = await fetch(`/api/projects/proj1/conversations/${conversationId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -86,27 +89,50 @@ vi.mock("@/hooks/useEpicCreate", () => ({
   }),
 }));
 
-vi.mock("@/components/shared/NamedAgentSelect", () => ({
-  NamedAgentSelect: ({
+vi.mock("@/hooks/useNamedAgentsList", () => ({
+  useNamedAgentsList: () => ({
+    agents: [
+      { id: "agent-1", name: "Agent 1", provider: "claude-code", model: "opus" },
+      { id: "agent-2", name: "Agent 2", provider: "gemini-cli", model: "flash" },
+    ],
+    loading: false,
+    refresh: vi.fn(),
+  }),
+}));
+
+vi.mock("@/components/ui/select", () => ({
+  Select: ({
     value,
-    onChange,
+    onValueChange,
+    children,
     disabled,
   }: {
-    value: string | null;
-    onChange: (v: string) => void;
-    disabled: boolean;
+    value: string | undefined;
+    onValueChange?: (v: string) => void;
+    children: React.ReactNode;
+    disabled?: boolean;
   }) => (
     <select
       data-testid="chat-agent-select"
       value={value ?? ""}
-      onChange={(event) => onChange(event.target.value)}
       disabled={disabled}
+      onChange={(e) => onValueChange?.(e.target.value)}
     >
-      <option value="">Select</option>
-      <option value="agent-1">Agent 1</option>
-      <option value="agent-2">Agent 2</option>
+      {children}
     </select>
   ),
+  SelectTrigger: () => null,
+  SelectValue: () => null,
+  SelectContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SelectGroup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SelectLabel: ({ children }: { children: React.ReactNode }) => <optgroup label={String(children)} />,
+  SelectItem: ({
+    value,
+    children,
+  }: {
+    value: string;
+    children: React.ReactNode;
+  }) => <option value={value}>{children}</option>,
 }));
 
 vi.mock("@/components/chat/MessageList", () => ({
@@ -232,7 +258,7 @@ describe("UnifiedChatPanel named-agent toggle", () => {
         "/api/projects/proj1/conversations/conv1",
         expect.objectContaining({
           method: "PATCH",
-          body: JSON.stringify({ namedAgentId: "agent-1" }),
+          body: JSON.stringify({ namedAgentId: "agent-1", provider: "claude-code" }),
         }),
       );
     });

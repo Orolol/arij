@@ -308,6 +308,28 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       await updateConversation(activeId, { provider });
     }
 
+    async function handleSelectAgentOrProvider({
+      namedAgentId,
+      provider,
+    }: {
+      namedAgentId: string | null;
+      provider: string;
+    }) {
+      if (!activeId || hasMessages) {
+        return;
+      }
+      if (provider === OPENAI_COMPATIBLE_PROVIDER) {
+        await updateConversation(activeId, {
+          provider: OPENAI_COMPATIBLE_PROVIDER,
+          namedAgentId: null,
+        });
+      } else if (namedAgentId) {
+        await updateConversation(activeId, { namedAgentId, provider });
+      } else {
+        await updateConversation(activeId, { provider });
+      }
+    }
+
     async function handleCreateEpic() {
       const epicId = await createEpic();
       if (epicId) {
@@ -340,6 +362,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
               isBusy={isCurrentConversationBusy}
               onAgentChange={handleAgentChange}
               onProviderChange={handleProviderChange}
+              onSelectAgentOrProvider={handleSelectAgentOrProvider}
             />
           }
         />

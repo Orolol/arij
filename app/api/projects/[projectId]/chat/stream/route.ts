@@ -9,10 +9,7 @@ import { buildChatPrompt, buildEpicRefinementPrompt, buildEpicFinalizationPrompt
 import { getProvider, type ProviderType } from "@/lib/providers";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import {
-  isEpicCreationConversationAgentType,
-  isOpenAiIneligibleConversationAgentType,
-} from "@/lib/chat/conversation-agent";
+import { isEpicCreationConversationAgentType } from "@/lib/chat/conversation-agent";
 import {
   getOpenAiConfigFromSettings,
   streamOpenAiChatCompletion,
@@ -131,15 +128,6 @@ export async function POST(
 
   let openAiConfig: ReturnType<typeof getOpenAiConfigFromSettings> | null = null;
   if (resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER) {
-    if (isOpenAiIneligibleConversationAgentType(conversationType)) {
-      return NextResponse.json(
-        {
-          error:
-            "OpenAI-compatible mode is not available for epic-creation or brainstorm conversations.",
-        },
-        { status: 400 }
-      );
-    }
 
     if (attachmentIds.length > 0) {
       return NextResponse.json(
