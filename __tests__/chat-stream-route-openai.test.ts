@@ -345,4 +345,36 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     const body = JSON.parse(String(init.body)) as Record<string, unknown>;
     expect(body.reasoning_effort).toBe("medium");
   });
+
+  it("rejects epic_creation and brainstorm conversations with 400", async () => {
+    for (const type of ["epic_creation", "brainstorm"]) {
+      seedFastModeConversation({
+        conversation: {
+          id: "conv1",
+          type,
+          provider: "openai-compatible",
+          label: type === "epic_creation" ? "New Epic" : "Brainstorm",
+          status: "active",
+          namedAgentId: null,
+        },
+        settings: {},
+      });
+      // Epic path reads the global prompt and existing epics before the branch.
+      dbMockState.getQueue.push({ key: "global_prompt", value: JSON.stringify("") });
+      dbMockState.allQueue.push([]);
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValue(sseResponse(["ok"]));
+
+      const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+      const response = await POST(
+        mockJsonRequest({ content: "Hello", conversationId: "conv1" }),
+        mockRouteContext({ projectId: "proj1" }),
+      );
+
+      expect(response.status).toBe(400);
+      const json = (await response.json()) as { error: string };
+      expect(json.error).toContain("not available for epic-creation or brainstorm");
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
+  });
 });
