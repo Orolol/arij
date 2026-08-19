@@ -278,6 +278,31 @@ describe("POST /api/projects", () => {
     expect(dbMockState.insertCalls).toHaveLength(0);
   });
 
+  it("returns 400, not 500, when the directory is not a git repository at all", async () => {
+    // A plain directory makes simple-git's getRemotes() reject
+    // ("fatal: not a git repository"). That is not an internal error: the
+    // directory is provably not a clone, so the claim is rejected with the
+    // same 400 as any other failed provenance check.
+    const { detectGitHubRemote } = await import("@/lib/git/remote");
+    vi.mocked(detectGitHubRemote).mockRejectedValue(
+      new Error("fatal: not a git repository")
+    );
+
+    const res = await post({
+      ...BASE,
+      gitRepoPath: "/home/user/plain-directory",
+      githubOwnerRepo: "Orolol/arij",
+      gitRemoteUrl: "https://github.com/Orolol/arij.git",
+      cloneSource: "github",
+      defaultBranch: "main",
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toContain("not a clone of the claimed GitHub repository");
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
   it("compares the claimed owner/repo case-insensitively", async () => {
     dbMockState.getQueue = [{ id: "proj-1" }];
     const { detectGitHubRemote } = await import("@/lib/git/remote");

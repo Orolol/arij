@@ -169,8 +169,16 @@ export async function POST(request: NextRequest) {
 
     // The directory on disk must be a real clone of that repository — its
     // origin is the clean URL Arij wrote, so an unrelated directory cannot
-    // pass this check.
-    const detected = await detectGitHubRemote(normalizedRepoPath);
+    // pass this check. A non-repository directory makes getRemotes() reject
+    // ("fatal: not a git repository"): treat that as "no origin" rather
+    // than letting it escape as a 500 — the directory is provably not a
+    // clone either way (a partial clone whose .git went missing included).
+    let detected: Awaited<ReturnType<typeof detectGitHubRemote>>;
+    try {
+      detected = await detectGitHubRemote(normalizedRepoPath);
+    } catch {
+      detected = null;
+    }
     if (
       !detected ||
       detected.ownerRepo.toLowerCase() !== githubOwnerRepo.toLowerCase()
@@ -183,6 +191,13 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // TODO(workspace-epic): anchor `normalizedRepoPath` to the deterministic
+    // managed destination (<projects_root>/<owner>-<repo>) once
+    // lib/projects/workspace.ts lands. Until then, a user's own clone of the
+    // same repository elsewhere would pass every check above and get marked
+    // Arij-owned. clone_source is the flag a later recursive clone cleanup
+    // acts on, so that cleanup must not ship before this anchor exists.
   }
 
   db.insert(projects)
