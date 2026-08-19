@@ -1,0 +1,768 @@
+/**
+ * End-to-end verification of the safety guards that make Full Auto Mode
+ * trustworthy when nobody is watching.
+ *
+ * Setup: the REAL engine, the REAL selectors, the REAL settings-backed config
+ * resolver, the REAL merge module (with git mocked) and the REAL database.
+ * Only the agent dispatch is simulated — by a fake that reproduces the
+ * pipeline stage driver's board effects byte-for-byte
+ * (lib/pipeline/stages.ts `finalizeCodeSession` / `finalizeReviewSession`),
+ * so the loop under test is the real one:
+ *
+ *   build ok        → epic (and its stories) → review
+ *   review negative → epic → in_progress, no agent on it
+ *   review positive → epic stays in review
+ *   asked_question  → ticket held where it is
+ *
+ * The four hazards from the design, plus restart behaviour:
+ *   1. infinite re-review        — a passing review must review ONCE, then merge
+ *   2. bulldozing a question     — asked_question is indistinguishable from
+ *                                  "bounced back from review" without the guard
+ *   3. coexistence               — a night run must never share a ticket
+ *   4. story serialisation       — one story of an epic at a time
+ *   5. restart                   — the mode resumes from settings, orphans die
+ */
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { and, eq } from "drizzle-orm";
+
+const gitMocks = vi.hoisted(() => ({ mergeWorktree: vi.fn() }));
+
+vi.mock("@/lib/db", async () => {
+  const { createTestDb } = await import("@/lib/db/test-utils");
+  const created = createTestDb();
+  return { db: created.db, sqlite: created.sqlite, ensureDbReady: vi.fn() };
+});
+
+vi.mock("@/lib/git/manager", () => ({
+  mergeWorktree: gitMocks.mergeWorktree,
+}));
+
+vi.mock("@/lib/sync/export", () => ({ tryExportArjiJson: vi.fn() }));
+
+vi.mock("@/lib/claude/process-manager", () => ({
+  processManager: {
+    start: vi.fn(),
+    getStatus: vi.fn(() => ({ status: "completed", result: { success: true } })),
+  },
+}));
+
+vi.mock("@/lib/agent-config/prompts", () => ({
+  resolveAgentPrompt: vi.fn().mockResolvedValue("system prompt"),
+}));
+
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
+  resolveAgentByNamedId: vi.fn(() => ({
+    provider: "claude-code",
+    namedAgentId: null,
+    name: null,
+    model: null,
+  })),
+}));
+
+vi.mock("@/lib/events/emit", () => ({
+  emitTicketMoved: vi.fn(),
+  emitSessionStarted: vi.fn(),
+  emitSessionCompleted: vi.fn(),
+  emitSessionFailed: vi.fn(),
+}));
+
+vi.mock("fs", () => ({
+  default: {
+    mkdirSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    existsSync: vi.fn(() => false),
+    readFileSync: vi.fn(() => {
+      throw new Error("no logs in tests");
+    }),
+  },
+}));
+
+const { db } = await import("@/lib/db");
+const {
+  projects,
+  epics,
+  userStories,
+  agentSessions,
+  ticketComments,
+  ticketActivityLog,
+  reviewComments,
+  notifications,
+  settings,
+} = await import("@/lib/db/schema");
+const { sweepProject, defaultAutoModeDeps } = await import(
+  "@/lib/auto-mode/engine"
+);
+const { autoModeRegistry } = await import("@/lib/auto-mode/registry");
+const { listAutoModeEnabledProjectIds } = await import("@/lib/auto-mode/config");
+const {
+  autoModeBuildConcurrencySettingKey,
+  autoModeEnabledSettingKey,
+  autoModeReviewConcurrencySettingKey,
+} = await import("@/lib/auto-mode/constants");
+const { handleAskedQuestionOutcome } = await import(
+  "@/lib/workflow/agent-question"
+);
+const { nightRunRegistry } = await import("@/lib/night/registry");
+const { cancelOrphanedQueuedSessions, resetBootCleanupGuard } = await import(
+  "@/lib/agent-sessions/boot-cleanup"
+);
+
+const PROJECT_ID = "proj-e2e";
+
+let clock = 0;
+/** Monotonic ISO clock — the freshness guard is temporal, so order matters. */
+function tick(): string {
+  clock += 1;
+  return new Date(Date.UTC(2026, 7, 19, 6, 0, clock)).toISOString();
+}
+
+let seq = 0;
+
+/* ------------------------------------------------------------------ */
+/* The simulated agent                                                 */
+/* ------------------------------------------------------------------ */
+
+interface Dispatched {
+  sessionId: string;
+  stage: "build" | "review";
+  scope: "epic" | "story";
+  epicId: string;
+  userStoryId: string | null;
+}
+
+const dispatched: Dispatched[] = [];
+
+/** Reproduces the driver's dispatch-side board sync. */
+async function simulateDispatch(input: {
+  projectId: string;
+  stage: "build" | "review";
+  scope: "epic" | "story";
+  epicId: string;
+  userStoryId: string | null;
+}): Promise<{
+  sessionId: string | null;
+  error: string | null;
+  conflictSessionId: string | null;
+}> {
+  seq += 1;
+  const sessionId = `sim-${input.stage}-${seq}`;
+
+  db.insert(agentSessions)
+    .values({
+      id: sessionId,
+      projectId: input.projectId,
+      epicId: input.epicId,
+      userStoryId: input.userStoryId,
+      status: "running",
+      mode: input.stage === "review" ? "plan" : "code",
+      agentType:
+        input.stage === "review"
+          ? "review_code"
+          : input.scope === "epic"
+            ? "build"
+            : "ticket_build",
+      branchName: `feature/${input.epicId}`,
+      worktreePath: `/tmp/wt/${input.epicId}`,
+      batchRunId: `auto_${input.projectId}`,
+      createdAt: tick(),
+    })
+    .run();
+
+  if (input.stage === "build") {
+    // Mirror of the driver: epic scope moves the epic to in_progress and
+    // stamps the branch; story scope moves the story and stamps the branch.
+    if (input.scope === "epic") {
+      db.update(epics)
+        .set({
+          status: "in_progress",
+          branchName: `feature/${input.epicId}`,
+          updatedAt: tick(),
+        })
+        .where(eq(epics.id, input.epicId))
+        .run();
+    } else {
+      db.update(userStories)
+        .set({ status: "in_progress" })
+        .where(eq(userStories.id, input.userStoryId!))
+        .run();
+      db.update(epics)
+        .set({ branchName: `feature/${input.epicId}`, updatedAt: tick() })
+        .where(eq(epics.id, input.epicId))
+        .run();
+    }
+  }
+
+  dispatched.push({ sessionId, ...input });
+  return { sessionId, error: null, conflictSessionId: null };
+}
+
+function finishSession(sessionId: string, outcome: string | null): void {
+  db.update(agentSessions)
+    .set({ status: "completed", outcome, endedAt: tick() })
+    .where(eq(agentSessions.id, sessionId))
+    .run();
+}
+
+/** Build succeeded: the driver moves epic/stories to review. */
+function completeBuild(sessionId: string): void {
+  const session = db
+    .select()
+    .from(agentSessions)
+    .where(eq(agentSessions.id, sessionId))
+    .get()!;
+  finishSession(sessionId, "answered");
+
+  if (session.userStoryId) {
+    db.update(userStories)
+      .set({ status: "review" })
+      .where(eq(userStories.id, session.userStoryId))
+      .run();
+    const siblings = db
+      .select()
+      .from(userStories)
+      .where(eq(userStories.epicId, session.epicId!))
+      .all();
+    if (
+      siblings.every((s) => s.status === "review" || s.status === "done")
+    ) {
+      db.update(epics)
+        .set({ status: "review", updatedAt: tick() })
+        .where(eq(epics.id, session.epicId!))
+        .run();
+    }
+    return;
+  }
+
+  db.update(userStories)
+    .set({ status: "review" })
+    .where(eq(userStories.epicId, session.epicId!))
+    .run();
+  db.update(epics)
+    .set({ status: "review", updatedAt: tick() })
+    .where(eq(epics.id, session.epicId!))
+    .run();
+}
+
+/** Review passed: the epic STAYS in review (the pipeline never auto-approves). */
+function completeReviewPass(sessionId: string): void {
+  finishSession(sessionId, "answered");
+}
+
+/** Review rejected: the driver bounces the epic back to in_progress. */
+function completeReviewChangesRequested(sessionId: string): void {
+  const session = db
+    .select()
+    .from(agentSessions)
+    .where(eq(agentSessions.id, sessionId))
+    .get()!;
+  finishSession(sessionId, "answered");
+  db.update(epics)
+    .set({ status: "in_progress", updatedAt: tick() })
+    .where(eq(epics.id, session.epicId!))
+    .run();
+  db.update(userStories)
+    .set({ status: "in_progress" })
+    .where(eq(userStories.epicId, session.epicId!))
+    .run();
+}
+
+/** The agent asked the user something: the ticket is HELD where it is. */
+function askQuestion(sessionId: string): void {
+  const session = db
+    .select()
+    .from(agentSessions)
+    .where(eq(agentSessions.id, sessionId))
+    .get()!;
+  finishSession(sessionId, "asked_question");
+  handleAskedQuestionOutcome({
+    projectId: session.projectId,
+    epicIds: [session.epicId],
+    sessionId,
+    ticketStatus: "in_progress",
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Fixtures                                                            */
+/* ------------------------------------------------------------------ */
+
+function deps(overrides = {}) {
+  return {
+    ...defaultAutoModeDeps,
+    dispatch: (input: Parameters<typeof simulateDispatch>[0]) =>
+      simulateDispatch(input),
+    ...overrides,
+  } as typeof defaultAutoModeDeps;
+}
+
+function arm(build: number, review: number): void {
+  db.insert(settings)
+    .values([
+      {
+        key: autoModeEnabledSettingKey(PROJECT_ID),
+        value: JSON.stringify(true),
+      },
+      {
+        key: autoModeBuildConcurrencySettingKey(PROJECT_ID),
+        value: JSON.stringify(build),
+      },
+      {
+        key: autoModeReviewConcurrencySettingKey(PROJECT_ID),
+        value: JSON.stringify(review),
+      },
+    ])
+    .run();
+}
+
+function addEpic(id: string, status: string, position = 0): void {
+  db.insert(epics)
+    .values({
+      id,
+      projectId: PROJECT_ID,
+      title: id,
+      status,
+      position,
+      readableId: `E-${id}`,
+      createdAt: tick(),
+      updatedAt: tick(),
+    })
+    .run();
+}
+
+function addStory(id: string, epicId: string, position: number): void {
+  db.insert(userStories)
+    .values({
+      id,
+      epicId,
+      title: id,
+      status: "todo",
+      position,
+      createdAt: tick(),
+    })
+    .run();
+}
+
+function epicStatus(id: string): string | null {
+  return (
+    db.select().from(epics).where(eq(epics.id, id)).get()?.status ?? null
+  );
+}
+
+function reviewSessionsFor(epicId: string): unknown[] {
+  return db
+    .select()
+    .from(agentSessions)
+    .where(
+      and(
+        eq(agentSessions.epicId, epicId),
+        eq(agentSessions.agentType, "review_code")
+      )
+    )
+    .all();
+}
+
+beforeEach(() => {
+  db.delete(notifications).run();
+  db.delete(ticketComments).run();
+  db.delete(ticketActivityLog).run();
+  db.delete(reviewComments).run();
+  db.delete(agentSessions).run();
+  db.delete(userStories).run();
+  db.delete(epics).run();
+  db.delete(projects).run();
+  db.delete(settings).run();
+  autoModeRegistry.resetAll();
+  dispatched.length = 0;
+  gitMocks.mergeWorktree.mockReset();
+  gitMocks.mergeWorktree.mockResolvedValue({ merged: true, commitHash: "c1" });
+
+  db.insert(projects)
+    .values({ id: PROJECT_ID, name: "E2E", gitRepoPath: "/repos/e2e" })
+    .run();
+});
+
+/* ------------------------------------------------------------------ */
+/* 1. The manual run                                                   */
+/* ------------------------------------------------------------------ */
+
+describe("manual run: 3 todo + 1 review, build 2 / review 1", () => {
+  it("dispatches exactly 2 builders and 1 reviewer and leaves the third epic waiting", async () => {
+    arm(2, 1);
+    addEpic("t1", "todo", 0);
+    addEpic("t2", "todo", 1);
+    addEpic("t3", "todo", 2);
+    addEpic("r1", "review", 3);
+    db.insert(agentSessions)
+      .values({
+        id: "prior-build",
+        projectId: PROJECT_ID,
+        epicId: "r1",
+        status: "completed",
+        agentType: "build",
+        createdAt: tick(),
+        endedAt: tick(),
+      })
+      .run();
+
+    const result = await sweepProject(PROJECT_ID, deps());
+
+    expect(result.buildsDispatched).toHaveLength(2);
+    expect(result.reviewsDispatched).toHaveLength(1);
+    expect(
+      dispatched.filter((d) => d.stage === "build").map((d) => d.epicId)
+    ).toEqual(["t1", "t2"]);
+    expect(epicStatus("t3")).toBe("todo");
+
+    // A second sweep changes nothing while the budgets are full.
+    const again = await sweepProject(PROJECT_ID, deps());
+    expect(again.buildsDispatched).toEqual([]);
+    expect(again.reviewsDispatched).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 2. The bounce loop                                                  */
+/* ------------------------------------------------------------------ */
+
+describe("bounce loop", () => {
+  it("re-picks an epic a negative review sent back to in_progress, with no manual action", async () => {
+    arm(1, 1);
+    addEpic("e1", "todo");
+
+    const first = await sweepProject(PROJECT_ID, deps());
+    completeBuild(first.buildsDispatched[0]);
+    expect(epicStatus("e1")).toBe("review");
+
+    const second = await sweepProject(PROJECT_ID, deps());
+    expect(second.reviewsDispatched).toHaveLength(1);
+    completeReviewChangesRequested(second.reviewsDispatched[0]);
+    expect(epicStatus("e1")).toBe("in_progress");
+
+    const third = await sweepProject(PROJECT_ID, deps());
+    expect(third.buildsDispatched).toHaveLength(1);
+    expect(epicStatus("e1")).toBe("in_progress");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 3. The re-review guard                                              */
+/* ------------------------------------------------------------------ */
+
+describe("re-review guard", () => {
+  it("reviews a passing epic exactly once, then merges it", async () => {
+    arm(1, 1);
+    addEpic("e1", "todo");
+
+    const s1 = await sweepProject(PROJECT_ID, deps());
+    completeBuild(s1.buildsDispatched[0]);
+
+    const s2 = await sweepProject(PROJECT_ID, deps());
+    expect(s2.reviewsDispatched).toHaveLength(1);
+    completeReviewPass(s2.reviewsDispatched[0]);
+
+    // The epic is STILL in review — a naive selector would review it forever.
+    expect(epicStatus("e1")).toBe("review");
+
+    const s3 = await sweepProject(PROJECT_ID, deps());
+    expect(s3.reviewsDispatched).toEqual([]);
+    expect(s3.merged).toEqual(["e1"]);
+    expect(reviewSessionsFor("e1")).toHaveLength(1);
+    expect(epicStatus("e1")).toBe("done");
+
+    // And nothing at all on the sweep after that.
+    const s4 = await sweepProject(PROJECT_ID, deps());
+    expect(s4.merged).toEqual([]);
+    expect(s4.reviewsDispatched).toEqual([]);
+    expect(reviewSessionsFor("e1")).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 4. The question guard                                               */
+/* ------------------------------------------------------------------ */
+
+describe("question guard", () => {
+  it("leaves an epic that asked a question untouched until the user replies", async () => {
+    arm(2, 0);
+    addEpic("e1", "todo");
+
+    const first = await sweepProject(PROJECT_ID, deps());
+    askQuestion(first.buildsDispatched[0]);
+    expect(epicStatus("e1")).toBe("in_progress");
+
+    // Indistinguishable from "bounced back from review" without the guard.
+    const second = await sweepProject(PROJECT_ID, deps());
+    expect(second.buildsDispatched).toEqual([]);
+    expect(epicStatus("e1")).toBe("in_progress");
+
+    db.insert(ticketComments)
+      .values({
+        id: "reply-1",
+        epicId: "e1",
+        author: "user",
+        content: "use postgres",
+        createdAt: tick(),
+      })
+      .run();
+
+    const third = await sweepProject(PROJECT_ID, deps());
+    expect(third.buildsDispatched).toHaveLength(1);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 5. The merge gate                                                   */
+/* ------------------------------------------------------------------ */
+
+describe("merge gate", () => {
+  it("does not merge an epic with an open review comment, and merges once resolved", async () => {
+    arm(1, 1);
+    addEpic("e1", "todo");
+
+    const s1 = await sweepProject(PROJECT_ID, deps());
+    completeBuild(s1.buildsDispatched[0]);
+    const s2 = await sweepProject(PROJECT_ID, deps());
+    db.insert(reviewComments)
+      .values({
+        id: "rc-1",
+        epicId: "e1",
+        filePath: "lib/a.ts",
+        lineNumber: 2,
+        body: "[critical] leaks a handle",
+        author: "agent",
+        status: "open",
+        createdAt: tick(),
+      })
+      .run();
+    completeReviewPass(s2.reviewsDispatched[0]);
+
+    const blocked = await sweepProject(PROJECT_ID, deps());
+    expect(blocked.merged).toEqual([]);
+    expect(epicStatus("e1")).toBe("review");
+    expect(gitMocks.mergeWorktree).not.toHaveBeenCalled();
+    // A blocked merge is a guard refusal, never a parked ticket.
+    expect(autoModeRegistry.isParked(PROJECT_ID, "e1")).toBe(false);
+
+    db.update(reviewComments)
+      .set({ status: "resolved" })
+      .where(eq(reviewComments.id, "rc-1"))
+      .run();
+
+    const merged = await sweepProject(PROJECT_ID, deps());
+    expect(merged.merged).toEqual(["e1"]);
+    expect(epicStatus("e1")).toBe("done");
+  });
+
+  it("parks the epic when the merge conflict survives the merge-fix agent", async () => {
+    arm(2, 1);
+    addEpic("e1", "todo");
+
+    const s1 = await sweepProject(PROJECT_ID, deps());
+    completeBuild(s1.buildsDispatched[0]);
+    const s2 = await sweepProject(PROJECT_ID, deps());
+    completeReviewPass(s2.reviewsDispatched[0]);
+
+    gitMocks.mergeWorktree.mockResolvedValue({
+      merged: false,
+      error: "CONFLICT (content): lib/a.ts",
+    });
+
+    const conflicted = await sweepProject(PROJECT_ID, deps());
+    expect(conflicted.mergeConflicts).toEqual(["e1"]);
+    // The merge-fix agent is charged to the build budget.
+    expect(autoModeRegistry.countInFlight(PROJECT_ID).build).toBe(1);
+
+    // Let the merge-fix launch closure and its single retry settle.
+    for (let i = 0; i < 20; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+
+    expect(gitMocks.mergeWorktree).toHaveBeenCalledTimes(2);
+    expect(autoModeRegistry.isParked(PROJECT_ID, "e1")).toBe(true);
+    expect(db.select().from(notifications).all()).toHaveLength(1);
+
+    const after = await sweepProject(PROJECT_ID, deps());
+    expect(after.merged).toEqual([]);
+    expect(after.mergeConflicts).toEqual([]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 6. Story granularity                                                */
+/* ------------------------------------------------------------------ */
+
+describe("story granularity", () => {
+  it("builds an epic's 3 stories one at a time, then reviews the epic once", async () => {
+    arm(3, 1);
+    addEpic("e1", "todo");
+    addStory("s1", "e1", 0);
+    addStory("s2", "e1", 1);
+    addStory("s3", "e1", 2);
+
+    for (const expected of ["s1", "s2", "s3"]) {
+      const sweepResult = await sweepProject(PROJECT_ID, deps());
+      // A budget of 3 does NOT mean 3 stories of one epic in parallel: the
+      // parent-epic guard serialises them.
+      expect(sweepResult.buildsDispatched).toHaveLength(1);
+      const last = dispatched[dispatched.length - 1];
+      expect(last).toMatchObject({ scope: "story", userStoryId: expected });
+      completeBuild(last.sessionId);
+    }
+
+    // All stories review/done → the epic flipped to review.
+    expect(epicStatus("e1")).toBe("review");
+
+    const reviewSweep = await sweepProject(PROJECT_ID, deps());
+    expect(reviewSweep.reviewsDispatched).toHaveLength(1);
+    expect(dispatched[dispatched.length - 1]).toMatchObject({
+      stage: "review",
+      scope: "epic",
+      epicId: "e1",
+    });
+    completeReviewPass(reviewSweep.reviewsDispatched[0]);
+    expect(reviewSessionsFor("e1")).toHaveLength(1);
+  });
+
+  it("runs many epics in parallel while serialising each epic's stories", async () => {
+    arm(4, 0);
+    addEpic("a", "todo", 0);
+    addStory("a1", "a", 0);
+    addStory("a2", "a", 1);
+    addEpic("b", "todo", 1);
+    addStory("b1", "b", 0);
+    addStory("b2", "b", 1);
+
+    const result = await sweepProject(PROJECT_ID, deps());
+    expect(result.buildsDispatched).toHaveLength(2);
+    expect(dispatched.map((d) => d.userStoryId).sort()).toEqual(["a1", "b1"]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 7. Coexistence                                                      */
+/* ------------------------------------------------------------------ */
+
+describe("coexistence with other autonomous runs", () => {
+  it("never puts a second agent on a ticket a night run owns", async () => {
+    arm(3, 0);
+    addEpic("night-epic", "todo", 0);
+    addEpic("free-epic", "todo", 1);
+
+    nightRunRegistry.register({
+      runId: "night_e2e",
+      projectId: PROJECT_ID,
+      failurePolicy: "halt",
+      breakerThreshold: 0,
+      costCapUsd: null,
+      state: "running",
+      startedAt: tick(),
+      endedAt: null,
+      currentWave: 1,
+      totalWaves: 1,
+      totalEpics: 1,
+      counts: {
+        pending: 0,
+        running: 1,
+        done: 0,
+        asked: 0,
+        failed: 0,
+        skipped: 0,
+      },
+      epics: [
+        {
+          epicId: "night-epic",
+          pipelineRunId: "run-1",
+          status: "running",
+          reason: null,
+        },
+      ],
+      stopRequested: false,
+      abortReason: null,
+      abortedAtWave: null,
+    });
+
+    try {
+      const result = await sweepProject(PROJECT_ID, deps());
+      expect(result.buildsDispatched).toHaveLength(1);
+      expect(dispatched[0].epicId).toBe("free-epic");
+    } finally {
+      nightRunRegistry.finish("night_e2e");
+    }
+  });
+
+  it("never puts a second agent on a ticket a manual dispatch already took", async () => {
+    arm(3, 0);
+    addEpic("busy", "todo", 0);
+    addEpic("free", "todo", 1);
+    // A human clicked Build a moment ago: the row is still queued.
+    db.insert(agentSessions)
+      .values({
+        id: "manual-1",
+        projectId: PROJECT_ID,
+        epicId: "busy",
+        status: "queued",
+        agentType: "build",
+        createdAt: tick(),
+      })
+      .run();
+
+    const result = await sweepProject(PROJECT_ID, deps());
+    expect(result.buildsDispatched).toHaveLength(1);
+    expect(dispatched[0].epicId).toBe("free");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 8. Restart                                                          */
+/* ------------------------------------------------------------------ */
+
+describe("restart behaviour", () => {
+  it("resumes from settings with an empty in-flight set and cancels orphans", async () => {
+    arm(2, 0);
+    addEpic("e1", "todo", 0);
+    addEpic("e2", "todo", 1);
+
+    const before = await sweepProject(PROJECT_ID, deps());
+    expect(before.buildsDispatched).toHaveLength(2);
+    // Simulate the sessions the dead process left behind.
+    db.update(agentSessions)
+      .set({ status: "queued" })
+      .where(eq(agentSessions.id, before.buildsDispatched[0]))
+      .run();
+
+    // --- process restart: in-memory state dies, settings survive ---
+    autoModeRegistry.resetAll();
+    expect(listAutoModeEnabledProjectIds()).toEqual([PROJECT_ID]);
+
+    resetBootCleanupGuard();
+    expect(cancelOrphanedQueuedSessions()).toBe(1);
+    expect(
+      db
+        .select()
+        .from(agentSessions)
+        .where(eq(agentSessions.id, before.buildsDispatched[0]))
+        .get()!.status
+    ).toBe("cancelled");
+
+    // The cancelled epic is free again; the still-running one is not.
+    const after = await sweepProject(PROJECT_ID, deps());
+    expect(after.buildsDispatched).toHaveLength(1);
+    expect(dispatched[dispatched.length - 1].epicId).toBe("e1");
+  });
+
+  it("stays off after a restart when the setting says off", async () => {
+    db.insert(settings)
+      .values({
+        key: autoModeEnabledSettingKey(PROJECT_ID),
+        value: JSON.stringify(false),
+      })
+      .run();
+    addEpic("e1", "todo");
+
+    autoModeRegistry.resetAll();
+    expect(listAutoModeEnabledProjectIds()).toEqual([]);
+    const result = await sweepProject(PROJECT_ID, deps());
+    expect(result.skipped).toBe("disabled");
+    expect(dispatched).toEqual([]);
+  });
+});
