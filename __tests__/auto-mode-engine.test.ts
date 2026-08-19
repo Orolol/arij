@@ -108,6 +108,8 @@ function addSession(input: {
   userStoryId?: string | null;
   status: string;
   agentType: string;
+  /** Defaults to "answered" for completed sessions — what a real run stores. */
+  outcome?: string | null;
   createdAt: string;
   endedAt?: string | null;
 }): string {
@@ -121,6 +123,12 @@ function addSession(input: {
       userStoryId: input.userStoryId ?? null,
       status: input.status,
       agentType: input.agentType,
+      outcome:
+        input.outcome !== undefined
+          ? input.outcome
+          : input.status === "completed"
+            ? "answered"
+            : null,
       createdAt: input.createdAt,
       endedAt: input.endedAt ?? null,
     })
@@ -143,6 +151,8 @@ interface Fakes {
   }>;
   /** Sessions the fake dispatcher created, keyed by id → status. */
   sessionStatus: Map<string, string>;
+  /** Delivery verdicts, keyed by session id. */
+  sessionOutcome: Map<string, string>;
   setConfig(patch: Partial<ReturnType<AutoModeEngineDeps["resolveConfig"]>>): void;
   failNextDispatch(times: number, error?: string): void;
   conflictNextDispatch(sessionId: string): void;
@@ -155,6 +165,7 @@ function makeFakes(): Fakes {
   const merges: string[] = [];
   const mergeOptions: Fakes["mergeOptions"] = [];
   const sessionStatus = new Map<string, string>();
+  const sessionOutcome = new Map<string, string>();
   let dispatchFailures = 0;
   let dispatchError = "dispatch exploded";
   let conflictSessionId: string | null = null;
@@ -216,6 +227,14 @@ function makeFakes(): Fakes {
         .where(eq(agentSessions.id, sessionId))
         .get()?.status ??
       null,
+    readSessionOutcome: (sessionId) =>
+      sessionOutcome.get(sessionId) ??
+      db
+        .select({ outcome: agentSessions.outcome })
+        .from(agentSessions)
+        .where(eq(agentSessions.id, sessionId))
+        .get()?.outcome ??
+      null,
     readEpicStatus: (epicId) =>
       db.select({ status: epics.status }).from(epics).where(eq(epics.id, epicId)).get()
         ?.status ?? null,
@@ -227,6 +246,7 @@ function makeFakes(): Fakes {
     merges,
     mergeOptions,
     sessionStatus,
+    sessionOutcome,
     setConfig(patch) {
       config = { ...config, ...patch };
     },
@@ -247,10 +267,17 @@ function makeFakes(): Fakes {
 }
 
 /** Marks a fake session terminal so the next sweep reconciles it. */
-function settle(fakes: Fakes, sessionId: string, status: string): void {
+function settle(
+  fakes: Fakes,
+  sessionId: string,
+  status: string,
+  outcome: string | null = status === "completed" ? "answered" : null
+): void {
   fakes.sessionStatus.set(sessionId, status);
+  if (outcome) fakes.sessionOutcome.set(sessionId, outcome);
+  else fakes.sessionOutcome.delete(sessionId);
   db.update(agentSessions)
-    .set({ status, endedAt: at(90) })
+    .set({ status, outcome, endedAt: at(90) })
     .where(eq(agentSessions.id, sessionId))
     .run();
 }
@@ -819,6 +846,145 @@ describe("sweep() across projects", () => {
       build: 0,
       review: 0,
     });
+  });
+});
+
+describe("mid-sweep disable", () => {
+  it("stops dispatching the moment the user switches the mode off", async () => {
+    const fakes = makeFakes();
+    fakes.setConfig({ buildConcurrency: 5, reviewConcurrency: 0 });
+    addEpic({ id: "t1", status: "todo", position: 0 });
+    addEpic({ id: "t2", status: "todo", position: 1 });
+    addEpic({ id: "t3", status: "todo", position: 2 });
+
+    // A sweep spends real seconds inside git and agent dispatch. "Off" has to
+    // mean off NOW, not "after the work already selected finishes".
+    const inner = fakes.deps.dispatch;
+    fakes.deps.dispatch = async (input) => {
+      const result = await inner(input);
+      fakes.setConfig({ enabled: false });
+      return result;
+    };
+
+    const result = await sweepProject(PROJECT_ID, fakes.deps);
+
+    expect(result.buildsDispatched).toHaveLength(1);
+    expect(result.skipped).toBe("disabled");
+    expect(fakes.dispatches).toHaveLength(1);
+  });
+
+  it("stops merging mid-sweep too", async () => {
+    const fakes = makeFakes();
+    fakes.setConfig({ buildConcurrency: 0, reviewConcurrency: 0 });
+    addEpic({ id: "m1", status: "review", branchName: "feat/m1", position: 0 });
+    addEpic({ id: "m2", status: "review", branchName: "feat/m2", position: 1 });
+    for (const epicId of ["m1", "m2"]) {
+      addSession({
+        epicId,
+        status: "completed",
+        agentType: "build",
+        createdAt: at(1),
+        endedAt: at(2),
+      });
+      addSession({
+        epicId,
+        status: "completed",
+        agentType: "review_code",
+        createdAt: at(3),
+        endedAt: at(4),
+      });
+    }
+
+    fakes.mergeImplementation(() => {
+      fakes.setConfig({ enabled: false });
+      return { status: "merged", commitHash: "c", sessionId: null };
+    });
+
+    const result = await sweepProject(PROJECT_ID, fakes.deps);
+    expect(fakes.merges).toHaveLength(1);
+    expect(result.skipped).toBe("disabled");
+  });
+});
+
+describe("silent reviews", () => {
+  it("retries a silent review and parks the epic after three of them", async () => {
+    const fakes = makeFakes();
+    fakes.setConfig({ buildConcurrency: 0, reviewConcurrency: 1 });
+    addEpic({ id: "r1", status: "review" });
+    addSession({
+      epicId: "r1",
+      status: "completed",
+      agentType: "build",
+      createdAt: at(1),
+      endedAt: at(2),
+    });
+
+    for (let i = 0; i < 3; i += 1) {
+      const result = await sweepProject(PROJECT_ID, fakes.deps);
+      expect(result.reviewsDispatched).toHaveLength(1);
+      // Completed, but with nothing to approve with.
+      settle(fakes, result.reviewsDispatched[0], "completed", "silent");
+    }
+
+    const final = await sweepProject(PROJECT_ID, fakes.deps);
+    expect(final.parked).toEqual(["r1"]);
+    expect(final.reviewsDispatched).toEqual([]);
+    expect(autoReasons("r1")).toContain(
+      "Auto mode parked this ticket after 3 consecutive failures"
+    );
+  });
+
+  it("does not charge an asked_question review as a failure", async () => {
+    const fakes = makeFakes();
+    fakes.setConfig({ buildConcurrency: 0, reviewConcurrency: 1 });
+    addEpic({ id: "r1", status: "review" });
+    addSession({
+      epicId: "r1",
+      status: "completed",
+      agentType: "build",
+      createdAt: at(1),
+      endedAt: at(2),
+    });
+
+    const first = await sweepProject(PROJECT_ID, fakes.deps);
+    settle(fakes, first.reviewsDispatched[0], "completed", "asked_question");
+    await sweepProject(PROJECT_ID, fakes.deps);
+
+    expect(autoModeRegistry.listParked(PROJECT_ID)).toEqual([]);
+  });
+});
+
+describe("last-moment build guard", () => {
+  it("does not dispatch onto a ticket a human just moved to done", async () => {
+    const fakes = makeFakes();
+    fakes.setConfig({ buildConcurrency: 2, reviewConcurrency: 0 });
+    addEpic({ id: "t1", status: "todo", position: 0 });
+    addEpic({ id: "t2", status: "todo", position: 1 });
+
+    // The board snapshot is milliseconds old; a human approving a ticket in
+    // that window must win, or the build closure would drag it back to
+    // in_progress.
+    fakes.deps.dispatch = async (input) => {
+      if (input.epicId === "t1") {
+        return {
+          sessionId: null,
+          error: null,
+          conflictSessionId: null,
+          skipReason: "target is no longer buildable (now done)",
+        };
+      }
+      return { sessionId: `late-${input.epicId}`, error: null, conflictSessionId: null };
+    };
+
+    const result = await sweepProject(PROJECT_ID, fakes.deps);
+
+    expect(result.buildsDispatched).toEqual(["late-t2"]);
+    // Not the ticket's fault, so nothing is charged…
+    expect(autoModeRegistry.listParked(PROJECT_ID)).toEqual([]);
+    // …but the skip is visible rather than silent.
+    expect(autoReasons("t1")).toContain(
+      "Auto mode skipped build: target is no longer buildable (now done)"
+    );
   });
 });
 

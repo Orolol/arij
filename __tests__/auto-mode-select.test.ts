@@ -583,7 +583,7 @@ describe("selectReviewCandidates", () => {
     ]);
   });
 
-  it("does NOT re-review after a silent review, but does not merge it either", () => {
+  it("retries a SILENT review, and never merges on one", () => {
     addEpic({ id: "e1", status: "review", branchName: "feat/e1" });
     addSession({
       epicId: "e1",
@@ -601,10 +601,41 @@ describe("selectReviewCandidates", () => {
       endedAt: at(21),
     });
 
-    // A reviewer that produced nothing must not be re-dispatched in a loop…
-    expect(selectReviewCandidates(PROJECT_ID)).toEqual([]);
+    // A reviewer that produced no verdict reviewed nothing. Treating it as a
+    // review would strand the epic — neither reviewable nor mergeable, with
+    // no way to reach the parking threshold. The engine charges each silent
+    // review as a failure instead, so the retries are bounded at three.
+    expect(selectReviewCandidates(PROJECT_ID).map((c) => c.epicId)).toEqual([
+      "e1",
+    ]);
     // …and it certainly did not approve anything.
     expect(selectMergeCandidates(PROJECT_ID)).toEqual([]);
+  });
+
+  it("never merges on a review with no recorded verdict (legacy rows)", () => {
+    addEpic({ id: "e1", status: "review", branchName: "feat/e1" });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "build",
+      createdAt: at(10),
+      endedAt: at(11),
+    });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "review_code",
+      outcome: null,
+      createdAt: at(20),
+      endedAt: at(21),
+    });
+
+    // Auto-merging on a verdict nobody ever recorded is precisely the thing
+    // the gate exists to prevent; it earns one fresh, classified review.
+    expect(selectMergeCandidates(PROJECT_ID)).toEqual([]);
+    expect(selectReviewCandidates(PROJECT_ID).map((c) => c.epicId)).toEqual([
+      "e1",
+    ]);
   });
 
   it("re-reviews after an asked_question review once the user replies", () => {

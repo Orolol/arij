@@ -92,6 +92,21 @@ interface AutoModeProjectState {
   failures: Map<string, FailureEntry>;
   /** Per-project mutex: true while a sweep is in flight. */
   sweeping: boolean;
+  /**
+   * Epics with merge work outstanding — from the moment `tryAutoMerge` starts
+   * until its git merge (and any conflict-agent retry) has settled. Git is not
+   * transactional and a merge takes seconds, so a second sweep must not start
+   * another one on the same branch. This outlives the merge-fix SESSION: that
+   * session goes terminal before its retry runs, and the terminal hook kicks a
+   * sweep in exactly that window.
+   */
+  merging: Set<string>;
+  /**
+   * epicId → ISO instant before which no merge should be re-attempted. Used
+   * when a conflict cannot be repaired right now (no build slot for an agent),
+   * so the sweep does not re-run a doomed `git merge` every 15 seconds.
+   */
+  mergeDeferredUntil: Map<string, string>;
 }
 
 function emptyState(): AutoModeProjectState {
@@ -102,6 +117,8 @@ function emptyState(): AutoModeProjectState {
     recent: [],
     failures: new Map(),
     sweeping: false,
+    merging: new Set(),
+    mergeDeferredUntil: new Map(),
   };
 }
 
@@ -234,6 +251,55 @@ export class AutoModeRegistry {
   /** Every session id the mode is tracking — the driver's `ownSessionIds`. */
   ownSessionIds(projectId: string): string[] {
     return Array.from(this.states.get(projectId)?.inFlight.keys() ?? []);
+  }
+
+  // ---------------------------------------------------------------------
+  // Merge work in flight
+  // ---------------------------------------------------------------------
+
+  /** Claims the merge lock for an epic. False when one is already held. */
+  beginMergeWork(projectId: string, epicId: string): boolean {
+    const state = this.stateFor(projectId);
+    if (state.merging.has(epicId)) return false;
+    state.merging.add(epicId);
+    return true;
+  }
+
+  endMergeWork(projectId: string, epicId: string): void {
+    this.states.get(projectId)?.merging.delete(epicId);
+  }
+
+  isMergeInFlight(projectId: string, epicId: string): boolean {
+    return this.states.get(projectId)?.merging.has(epicId) === true;
+  }
+
+  /** Epics with merge work outstanding — an exclusion set for the selectors. */
+  mergingEpicIds(projectId: string): Set<string> {
+    return new Set(this.states.get(projectId)?.merging ?? []);
+  }
+
+  /** Holds an epic's merge back until `until` (an unrepairable conflict). */
+  deferMerge(projectId: string, epicId: string, until: string): void {
+    this.stateFor(projectId).mergeDeferredUntil.set(epicId, until);
+  }
+
+  clearMergeDeferral(projectId: string, epicId: string): void {
+    this.states.get(projectId)?.mergeDeferredUntil.delete(epicId);
+  }
+
+  /** Epics whose merge deferral has not expired yet. */
+  mergeDeferredEpicIds(
+    projectId: string,
+    now: string = new Date().toISOString()
+  ): Set<string> {
+    const state = this.states.get(projectId);
+    if (!state) return new Set();
+    const deferred = new Set<string>();
+    for (const [epicId, until] of state.mergeDeferredUntil) {
+      if (until > now) deferred.add(epicId);
+      else state.mergeDeferredUntil.delete(epicId);
+    }
+    return deferred;
   }
 
   // ---------------------------------------------------------------------

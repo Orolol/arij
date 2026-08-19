@@ -27,7 +27,9 @@ import { and, eq } from "drizzle-orm";
 
 const gitMocks = vi.hoisted(() => ({
   mergeWorktree: vi.fn(),
-  createWorktree: vi.fn(),
+  attachWorktree: vi.fn(),
+  captureMergeCheckpoint: vi.fn(),
+  rollbackMerge: vi.fn(),
 }));
 
 vi.mock("@/lib/db", async () => {
@@ -38,7 +40,9 @@ vi.mock("@/lib/db", async () => {
 
 vi.mock("@/lib/git/manager", () => ({
   mergeWorktree: gitMocks.mergeWorktree,
-  createWorktree: gitMocks.createWorktree,
+  attachWorktree: gitMocks.attachWorktree,
+  captureMergeCheckpoint: gitMocks.captureMergeCheckpoint,
+  rollbackMerge: gitMocks.rollbackMerge,
 }));
 
 vi.mock("@/lib/sync/export", () => ({ tryExportArjiJson: vi.fn() }));
@@ -259,6 +263,11 @@ function completeReviewPass(sessionId: string): void {
   finishSession(sessionId, "answered");
 }
 
+/** The reviewer ran but produced no verdict — nothing to approve with. */
+function completeReviewSilently(sessionId: string): void {
+  finishSession(sessionId, "silent");
+}
+
 /** Review rejected: the driver bounces the epic back to in_progress. */
 function completeReviewChangesRequested(sessionId: string): void {
   const session = db
@@ -386,13 +395,22 @@ beforeEach(() => {
   dispatched.length = 0;
   gitMocks.mergeWorktree.mockReset();
   gitMocks.mergeWorktree.mockResolvedValue({ merged: true, commitHash: "c1" });
-  gitMocks.createWorktree.mockReset();
-  gitMocks.createWorktree.mockImplementation(
-    async (_repo: string, epicId: string) => ({
-      worktreePath: `/tmp/wt/${epicId}`,
-      branchName: `feature/${epicId}`,
+  gitMocks.attachWorktree.mockReset();
+  gitMocks.attachWorktree.mockImplementation(
+    async (_repo: string, branchName: string) => ({
+      worktreePath: `/tmp/wt/${branchName}`,
+      branchName,
     })
   );
+  gitMocks.captureMergeCheckpoint.mockReset();
+  gitMocks.captureMergeCheckpoint.mockResolvedValue({
+    mainBranch: "main",
+    mainHead: "main-head",
+    branchName: "feature/e1",
+    branchHead: "branch-head",
+  });
+  gitMocks.rollbackMerge.mockReset();
+  gitMocks.rollbackMerge.mockResolvedValue({ restored: true });
 
   db.insert(projects)
     .values({ id: PROJECT_ID, name: "E2E", gitRepoPath: "/repos/e2e" })
@@ -583,6 +601,7 @@ describe("merge gate", () => {
     gitMocks.mergeWorktree.mockResolvedValue({
       merged: false,
       error: "CONFLICT (content): lib/a.ts",
+      reason: "conflict",
     });
 
     const conflicted = await sweepProject(PROJECT_ID, deps());
@@ -727,6 +746,84 @@ describe("coexistence with other autonomous runs", () => {
     const result = await sweepProject(PROJECT_ID, deps());
     expect(result.buildsDispatched).toHaveLength(1);
     expect(dispatched[0].epicId).toBe("free");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 7a. The last-moment dispatch guards (real driver probe)             */
+/* ------------------------------------------------------------------ */
+
+describe("last-moment guards use the real driver probe", () => {
+  /**
+   * These two use the REAL dispatcher — the guard lives inside it, and a
+   * guard refusal returns before `launchStage`, so nothing is ever spawned.
+   * The activity log distinguishes the two possible outcomes: a refusal logs
+   * "Auto mode skipped build:", while a dispatch that got through and then
+   * blew up logs "Auto mode build dispatch failed:".
+   */
+  function autoReasons(epicId: string): string[] {
+    return db
+      .select()
+      .from(ticketActivityLog)
+      .where(eq(ticketActivityLog.epicId, epicId))
+      .all()
+      .map((row) => row.reason ?? "");
+  }
+
+  it("refuses a build onto an epic a human approved between snapshot and dispatch", async () => {
+    arm(1, 0);
+    addEpic("e1", "todo");
+
+    // A board snapshot taken while the epic was still `todo`, then the epic
+    // moves — exactly the window a human clicking Approve occupies.
+    const board = defaultAutoModeDeps.loadBoard(PROJECT_ID);
+    db.update(epics).set({ status: "done" }).where(eq(epics.id, "e1")).run();
+
+    const result = await sweepProject(PROJECT_ID, {
+      ...defaultAutoModeDeps,
+      loadBoard: () => board,
+    });
+
+    expect(result.buildsDispatched).toEqual([]);
+    // The build closure would otherwise have dragged it back to in_progress.
+    expect(epicStatus("e1")).toBe("done");
+    expect(
+      autoReasons("e1").some((reason) =>
+        reason.startsWith("Auto mode skipped build:")
+      )
+    ).toBe(true);
+    expect(
+      autoReasons("e1").some((reason) => reason.includes("dispatch failed"))
+    ).toBe(false);
+    expect(
+      db.select().from(agentSessions).all().filter((s) => s.epicId === "e1")
+    ).toEqual([]);
+  });
+
+  it("refuses a story build when the parent epic has been released", async () => {
+    arm(1, 0);
+    addEpic("e1", "todo");
+    addStory("s1", "e1", 0);
+
+    const board = defaultAutoModeDeps.loadBoard(PROJECT_ID);
+    db.update(epics).set({ status: "released" }).where(eq(epics.id, "e1")).run();
+
+    const result = await sweepProject(PROJECT_ID, {
+      ...defaultAutoModeDeps,
+      loadBoard: () => board,
+    });
+
+    // checkGuards reports the STORY's status for story scope, so the parent
+    // epic needs a check of its own.
+    expect(result.buildsDispatched).toEqual([]);
+    expect(
+      autoReasons("e1").some((reason) =>
+        reason.startsWith("Auto mode skipped build: parent epic is released")
+      )
+    ).toBe(true);
+    expect(
+      db.select().from(agentSessions).all().filter((s) => s.epicId === "e1")
+    ).toEqual([]);
   });
 });
 

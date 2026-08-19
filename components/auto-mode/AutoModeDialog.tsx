@@ -255,6 +255,7 @@ export function AutoModeDialog({
               <NamedAgentSelect
                 value={buildAgent}
                 onChange={setBuildAgent}
+                aria-label="Build agent"
                 className="h-[28px] w-[186px] text-[13px]"
               />
             </OptionRow>
@@ -280,6 +281,7 @@ export function AutoModeDialog({
               <NamedAgentSelect
                 value={reviewAgent}
                 onChange={setReviewAgent}
+                aria-label="Review agent"
                 className="h-[28px] w-[186px] text-[13px]"
               />
             </OptionRow>
@@ -306,6 +308,8 @@ export function AutoModeDialog({
           {overBudget && (
             <div
               data-testid="auto-mode-budget-warning"
+              role="status"
+              aria-live="polite"
               className="flex gap-2 rounded-[11px] border border-border-soft bg-band p-[14px] text-[12px] leading-[1.55] text-muted-foreground"
             >
               <TriangleAlert className="h-4 w-4 shrink-0 text-priority-yellow" />
@@ -335,6 +339,10 @@ export function AutoModeDialog({
 
           {error && (
             <p
+              // Announced, not just coloured: the load/save failure is the one
+              // thing a user must not miss before walking away from the board.
+              role="alert"
+              aria-live="assertive"
               className="text-[12.5px] text-destructive"
               data-testid="auto-mode-error"
             >

@@ -142,26 +142,24 @@ interface StoryRow {
 
 interface SessionFacts {
   /**
-   * Newest EPIC-SCOPED review session that ran to completion and did not end
-   * by asking the user something. "A review was attempted" — it blocks a
-   * re-review even when the reviewer produced nothing (`silent`), because a
-   * loop that re-dispatches a reviewer which keeps saying nothing is the
-   * token-burning version of hazard #1.
+   * Newest EPIC-SCOPED review session that completed with an actual verdict
+   * (`outcome = 'answered'`). ONE signal drives both directions: an epic is
+   * reviewable when there is no such session newer than its last code change,
+   * and mergeable when there is. They are exact complements, which is what
+   * makes "reviewed exactly once, then merged" true by construction.
    *
-   * A review session that FAILED or was CANCELLED is deliberately absent: no
-   * review happened, so the epic stays a review candidate and the engine's
-   * parking ladder — not this guard — bounds the retries.
-   *
-   * `asked_question` is absent too: `isAwaitingReply` holds the epic until
-   * the user answers, and once they have, re-running the reviewer with the
-   * answer in the comment thread is exactly the right move. A human is in
-   * that loop by construction, so it cannot spin.
-   */
-  lastReviewAttemptAt: string | null;
-  /**
-   * Newest EPIC-SCOPED review session that completed with a real verdict —
-   * the merge gate's half. Excludes `asked_question` (the reviewer asked, it
-   * did not approve) and `silent` (it produced nothing to approve with).
+   * Everything else is NOT a review, and every one of them is bounded by the
+   * engine's parking ladder rather than by this guard:
+   *   - `failed` / `cancelled` — no review ran;
+   *   - `silent` — the reviewer produced no verdict to act on. The engine
+   *     charges it as a failure, so three silent reviews park the epic
+   *     instead of leaving it neither reviewable nor mergeable;
+   *   - `asked_question` — the reviewer asked rather than approved.
+   *     `isAwaitingReply` holds the epic until the user answers, so the
+   *     re-review that follows always has a human in the loop;
+   *   - NULL — a legacy row from before outcomes were classified. Treating it
+   *     as clean would auto-merge on a verdict nobody ever recorded, so it
+   *     earns exactly one fresh, properly classified review.
    */
   lastCleanReviewAt: string | null;
   /**
@@ -200,6 +198,11 @@ export interface AutoModeBoard {
   lastUserCommentByStory: Map<string, string>;
   openReviewCommentsByEpic: Map<string, number>;
   parkedTicketIds: Set<string>;
+  /**
+   * Epics whose merge is on a short backoff after a conflict nobody could be
+   * dispatched to repair. Merge-only: they stay buildable and reviewable.
+   */
+  mergeDeferredEpicIds: Set<string>;
 }
 
 /**
@@ -305,19 +308,11 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
   const factRows = db
     .select({
       epicId: agentSessions.epicId,
-      lastReviewAttemptAt: sql<string | null>`MAX(CASE
-        WHEN ${agentSessions.status} = 'completed'
-         AND ${agentSessions.userStoryId} IS NULL
-         AND ${agentSessions.agentType} IN (${sql.raw(REVIEW_AGENT_TYPES_SQL)})
-         AND (${agentSessions.outcome} IS NULL
-              OR ${agentSessions.outcome} <> 'asked_question')
-        THEN ${SESSION_AT_SQL} END)`,
       lastCleanReviewAt: sql<string | null>`MAX(CASE
         WHEN ${agentSessions.status} = 'completed'
          AND ${agentSessions.userStoryId} IS NULL
          AND ${agentSessions.agentType} IN (${sql.raw(REVIEW_AGENT_TYPES_SQL)})
-         AND (${agentSessions.outcome} IS NULL
-              OR ${agentSessions.outcome} = 'answered')
+         AND ${agentSessions.outcome} = 'answered'
         THEN ${SESSION_AT_SQL} END)`,
       lastTerminalCodeAt: sql<string | null>`MAX(CASE
         WHEN ${agentSessions.status} IN (${sql.raw(TERMINAL_STATUSES_SQL)})
@@ -338,7 +333,6 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
   for (const row of factRows) {
     if (!row.epicId) continue;
     sessionFactsByEpic.set(row.epicId, {
-      lastReviewAttemptAt: row.lastReviewAttemptAt ?? null,
       lastCleanReviewAt: row.lastCleanReviewAt ?? null,
       lastTerminalCodeAt: row.lastTerminalCodeAt ?? null,
     });
@@ -504,6 +498,13 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
 
   const { blockedEpicIds, projectBlocked } = loadRegistryExclusions(projectId);
 
+  // An epic with merge work outstanding is off-limits to EVERY selector: git
+  // is not transactional, and a merge (plus any conflict-agent retry) owns the
+  // branch until it settles.
+  for (const epicId of autoModeRegistry.mergingEpicIds(projectId)) {
+    blockedEpicIds.add(epicId);
+  }
+
   return {
     projectId,
     epics: epicRows,
@@ -519,6 +520,7 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
     lastUserCommentByStory: storyUserCommentAt,
     openReviewCommentsByEpic,
     parkedTicketIds: autoModeRegistry.parkedTicketIds(projectId),
+    mergeDeferredEpicIds: autoModeRegistry.mergeDeferredEpicIds(projectId),
   };
 }
 
@@ -556,17 +558,12 @@ function compareEpics(a: EpicRow, b: EpicRow): number {
  * read. "Has a review been attempted since the last terminal code change?"
  * is a fact, not a guess.
  *
- * "Attempted" is doing real work here — see SessionFacts.lastReviewAttemptAt:
- * a failed or cancelled review is NOT an attempt (it retries, bounded by the
- * engine's parking ladder), and a review that ended by asking the user
- * something is not one either (`isAwaitingReply` holds the epic until the
- * answer, and re-running the reviewer with that answer is the point).
+ * "A review" means a completed, epic-scoped review that delivered a verdict —
+ * see SessionFacts.lastCleanReviewAt for what is deliberately excluded and
+ * why each exclusion cannot spin.
  */
 export function needsReview(facts: SessionFacts | undefined): boolean {
-  if (!facts) return true;
-  if (!facts.lastReviewAttemptAt) return true;
-  if (!facts.lastTerminalCodeAt) return false;
-  return facts.lastReviewAttemptAt <= facts.lastTerminalCodeAt;
+  return !hasFreshCleanReview(facts);
 }
 
 /**
@@ -690,6 +687,7 @@ export function selectMergeCandidates(
     .filter((epic) => epic.status === "review")
     .filter((epic) => !!epic.branchName)
     .filter((epic) => isEpicSelectable(board, epic))
+    .filter((epic) => !board.mergeDeferredEpicIds.has(epic.id))
     .filter((epic) => hasFreshCleanReview(board.sessionFactsByEpic.get(epic.id)))
     .filter((epic) => (board.openReviewCommentsByEpic.get(epic.id) ?? 0) === 0)
     .map((epic) => ({

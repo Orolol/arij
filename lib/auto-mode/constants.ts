@@ -292,7 +292,12 @@ export const AUTO_MODE_REASONS = {
   merged: "Auto mode: review clean, merged",
   mergeRefused: (error: string) => `Auto mode skipped merge: ${error}`,
   mergeConflict: "Auto mode merge conflict — merge-fix agent dispatched",
+  mergeConflictDeferred:
+    "Auto mode merge conflict — no build slot for a resolution agent, deferred",
   mergeFixRetried: "Auto mode retried the merge after the merge-fix agent",
+  /** The post-merge guard refused, so main was put back where it was. */
+  mergeRolledBack: (error: string) =>
+    `Auto mode rolled the merge back off main: ${error}`,
   /**
    * The branch landed on main but the ticket had moved on in the meantime, so
    * the `→ done` guards refused. Loud on purpose: main changed and the board
@@ -305,6 +310,8 @@ export const AUTO_MODE_REASONS = {
   parked: (failures: number) =>
     `Auto mode parked this ticket after ${failures} consecutive failures`,
   skippedBusy: "Auto mode skipped: another agent is already on this ticket",
+  skippedTargetMoved: (stage: string, detail: string) =>
+    `Auto mode skipped ${stage}: ${detail}`,
 } as const;
 
 /** True when an activity-log reason belongs to the Full Auto Mode trace. */
@@ -325,3 +332,11 @@ export function isAutoModeActivityReason(
  * loop must never burn budget re-running the same broken dispatch.
  */
 export const AUTO_MODE_MAX_CONSECUTIVE_FAILURES = 3;
+
+/**
+ * How long an epic's merge is held back after a conflict that could not be
+ * repaired because no build slot was free. Without it the sweep would re-run
+ * a doomed `git merge` — tearing the worktree down each time — every 15
+ * seconds until capacity happened to free up.
+ */
+export const AUTO_MERGE_CONFLICT_BACKOFF_MS = 5 * 60_000;

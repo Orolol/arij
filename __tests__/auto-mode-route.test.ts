@@ -263,6 +263,44 @@ describe("PUT /auto-mode", () => {
     expect(badConcurrency.status).toBe(400);
   });
 
+  it("writes NOTHING when any field of the payload is invalid", async () => {
+    // The dangerous shape: a valid `enabled: true` in front of an invalid
+    // field. Writing as we validated would arm an unattended supervisor and
+    // still answer 400, so the caller believes nothing happened.
+    const res = await PUT(
+      putRequest({
+        enabled: true,
+        buildAgent: "agent-1",
+        buildConcurrency: "lots",
+      }) as never,
+      params()
+    );
+
+    expect(res.status).toBe(400);
+    expect(settingValue(autoModeEnabledSettingKey(PROJECT_ID))).toBeUndefined();
+    expect(
+      settingValue(autoModeBuildAgentSettingKey(PROJECT_ID))
+    ).toBeUndefined();
+    expect(autoModeRegistry.isEnabled(PROJECT_ID)).toBe(false);
+    expect(engineMocks.kickAutoMode).not.toHaveBeenCalled();
+  });
+
+  it("leaves an existing configuration untouched when a later field is invalid", async () => {
+    await PUT(
+      putRequest({ enabled: false, buildConcurrency: 4 }) as never,
+      params()
+    );
+
+    const res = await PUT(
+      putRequest({ enabled: true, reviewConcurrency: 99.5 }) as never,
+      params()
+    );
+
+    expect(res.status).toBe(400);
+    expect(settingValue(autoModeEnabledSettingKey(PROJECT_ID))).toBe(false);
+    expect(settingValue(autoModeBuildConcurrencySettingKey(PROJECT_ID))).toBe(4);
+  });
+
   it("rejects a non-object body", async () => {
     const res = await PUT(
       new Request("http://localhost/api", {

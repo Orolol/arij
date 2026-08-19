@@ -134,55 +134,68 @@ export async function PUT(
 
   const payload = body as Record<string, unknown>;
 
+  // Every field is optional so the dialog can toggle the switch without
+  // resending the whole form. Values go through the same parsers the resolver
+  // uses, so a clamp applies at write time as well as read time.
+  //
+  // The whole payload is validated into `writes` BEFORE anything is
+  // persisted. Validating as we went would let `{enabled: true,
+  // buildConcurrency: "lots"}` arm the mode and then return 400 — the caller
+  // would believe nothing happened while a supervisor started dispatching.
+  const writes: Array<[string, unknown]> = [];
+
+  if ("enabled" in payload) {
+    const enabled = parseAutoModeEnabled(payload.enabled);
+    if (enabled === null) {
+      return NextResponse.json(
+        { error: "`enabled` must be a boolean." },
+        { status: 400 }
+      );
+    }
+    writes.push([autoModeEnabledSettingKey(projectId), enabled]);
+  }
+
+  if ("buildAgent" in payload) {
+    writes.push([
+      autoModeBuildAgentSettingKey(projectId),
+      parseAutoModeAgent(payload.buildAgent),
+    ]);
+  }
+  if ("reviewAgent" in payload) {
+    writes.push([
+      autoModeReviewAgentSettingKey(projectId),
+      parseAutoModeAgent(payload.reviewAgent),
+    ]);
+  }
+
+  if ("buildConcurrency" in payload) {
+    const value = parseAutoModeConcurrency(payload.buildConcurrency);
+    if (value === null) {
+      return NextResponse.json(
+        { error: "`buildConcurrency` must be an integer between 0 and 10." },
+        { status: 400 }
+      );
+    }
+    writes.push([autoModeBuildConcurrencySettingKey(projectId), value]);
+  }
+
+  if ("reviewConcurrency" in payload) {
+    const value = parseAutoModeConcurrency(payload.reviewConcurrency);
+    if (value === null) {
+      return NextResponse.json(
+        { error: "`reviewConcurrency` must be an integer between 0 and 10." },
+        { status: 400 }
+      );
+    }
+    writes.push([autoModeReviewConcurrencySettingKey(projectId), value]);
+  }
+
   try {
-    // Every field is optional so the dialog can toggle the switch without
-    // resending the whole form. Values go through the same parsers the
-    // resolver uses, so a clamp applies at write time as well as read time.
-    if ("enabled" in payload) {
-      const enabled = parseAutoModeEnabled(payload.enabled);
-      if (enabled === null) {
-        return NextResponse.json(
-          { error: "`enabled` must be a boolean." },
-          { status: 400 }
-        );
-      }
-      putSetting(autoModeEnabledSettingKey(projectId), enabled);
-    }
-
-    if ("buildAgent" in payload) {
-      putSetting(
-        autoModeBuildAgentSettingKey(projectId),
-        parseAutoModeAgent(payload.buildAgent)
-      );
-    }
-    if ("reviewAgent" in payload) {
-      putSetting(
-        autoModeReviewAgentSettingKey(projectId),
-        parseAutoModeAgent(payload.reviewAgent)
-      );
-    }
-
-    if ("buildConcurrency" in payload) {
-      const value = parseAutoModeConcurrency(payload.buildConcurrency);
-      if (value === null) {
-        return NextResponse.json(
-          { error: "`buildConcurrency` must be an integer between 0 and 10." },
-          { status: 400 }
-        );
-      }
-      putSetting(autoModeBuildConcurrencySettingKey(projectId), value);
-    }
-
-    if ("reviewConcurrency" in payload) {
-      const value = parseAutoModeConcurrency(payload.reviewConcurrency);
-      if (value === null) {
-        return NextResponse.json(
-          { error: "`reviewConcurrency` must be an integer between 0 and 10." },
-          { status: 400 }
-        );
-      }
-      putSetting(autoModeReviewConcurrencySettingKey(projectId), value);
-    }
+    // All-or-nothing: a half-applied configuration is how an unattended mode
+    // ends up running with settings nobody chose.
+    db.transaction(() => {
+      for (const [key, value] of writes) putSetting(key, value);
+    });
 
     // Mirror the persisted flag into the registry BEFORE building the
     // response, so the runtime fields the dialog reads back (`running`, and

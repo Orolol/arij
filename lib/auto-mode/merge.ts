@@ -29,13 +29,23 @@ import {
 } from "@/lib/agent-sessions/resume-capability";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { createWorktree, mergeWorktree } from "@/lib/git/manager";
+import {
+  attachWorktree,
+  captureMergeCheckpoint,
+  mergeWorktree,
+  rollbackMerge,
+  type MergeCheckpoint,
+} from "@/lib/git/manager";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import { applyTransition } from "@/lib/workflow/transition-service";
 import { logTransition } from "@/lib/workflow/log";
 import { createAutoModeMergeParkedNotification } from "@/lib/notifications/create";
 import type { KanbanStatus } from "@/lib/types/kanban";
-import { AUTO_MODE_REASONS, autoRunId } from "./constants";
+import {
+  AUTO_MERGE_CONFLICT_BACKOFF_MS,
+  AUTO_MODE_REASONS,
+  autoRunId,
+} from "./constants";
 import { autoModeRegistry } from "./registry";
 
 /**
@@ -164,21 +174,10 @@ function finalizeMergedEpic(input: {
   });
 
   if (!validation.valid) {
-    const error = validation.error ?? "Transition refused";
-    db.update(epics)
-      .set({ branchName: null, updatedAt: new Date().toISOString() })
-      .where(eq(epics.id, input.epicId))
-      .run();
-    logTransition({
-      projectId: input.projectId,
-      epicId: input.epicId,
-      fromStatus,
-      toStatus: fromStatus,
-      actor: "system",
-      reason: AUTO_MODE_REASONS.mergedButNotAdvanced(error),
-      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-    });
-    return { ok: false, error };
+    // The branch is deliberately left alone: the caller rolls the merge back,
+    // which restores it. Clearing it here would strand an epic whose work is
+    // no longer on main and no longer on a branch.
+    return { ok: false, error: validation.error ?? "Transition refused" };
   }
 
   db.update(epics)
@@ -195,18 +194,101 @@ function finalizeMergedEpic(input: {
 }
 
 /**
+ * Undoes a merge the post-merge guard refused, so `main` never keeps a change
+ * the workflow engine would not approve.
+ *
+ * The refusal means something landed while git was running — a review comment
+ * filed by a reviewer that was still settling, or a human moving the ticket.
+ * Rolling `main` back and restoring the branch returns the repository to the
+ * state the next sweep expects; nothing is parked, because the epic simply is
+ * not mergeable yet.
+ */
+async function rollbackRefusedMerge(input: {
+  projectId: string;
+  epicId: string;
+  gitRepoPath: string;
+  checkpoint: MergeCheckpoint | null;
+  reason: string;
+}): Promise<AutoMergeOutcome> {
+  const held =
+    db
+      .select({ status: epics.status })
+      .from(epics)
+      .where(eq(epics.id, input.epicId))
+      .get()?.status ?? "review";
+
+  if (!input.checkpoint) {
+    // No checkpoint means no undo. Say so loudly rather than pretend.
+    logTransition({
+      projectId: input.projectId,
+      epicId: input.epicId,
+      fromStatus: held,
+      toStatus: held,
+      actor: "system",
+      reason: AUTO_MODE_REASONS.mergedButNotAdvanced(input.reason),
+    });
+    return { status: "skipped", reason: input.reason, sessionId: null };
+  }
+
+  const rollback = await rollbackMerge(input.gitRepoPath, input.checkpoint);
+
+  logTransition({
+    projectId: input.projectId,
+    epicId: input.epicId,
+    fromStatus: held,
+    toStatus: held,
+    actor: "system",
+    reason: rollback.restored
+      ? AUTO_MODE_REASONS.mergeRolledBack(input.reason)
+      : AUTO_MODE_REASONS.mergedButNotAdvanced(
+          `${input.reason} (rollback failed: ${rollback.error ?? "unknown"})`
+        ),
+  });
+
+  return { status: "skipped", reason: input.reason, sessionId: null };
+}
+
+/**
  * Attempts to land one epic's branch.
  *
  * Order of operations differs from the human merge route in one deliberate
- * way: the workflow guards are validated BEFORE git runs, not after. The
- * route can afford to merge first and 400 afterwards because a human is
- * reading the error; unattended, a merge that lands on main while the ticket
- * refuses to move would leave the board lying about `main`.
+ * way: the workflow guards are validated BEFORE git runs, and re-validated
+ * after. The route can afford to merge first and 400 afterwards because a
+ * human is reading the error; unattended, a merge that lands on main while
+ * the ticket refuses to move would leave the board lying about `main` — so
+ * here that merge is rolled back instead.
  */
 export async function tryAutoMerge(
   projectId: string,
   epicId: string,
   options: TryAutoMergeOptions = {}
+): Promise<AutoMergeOutcome> {
+  // Git is not transactional and a merge takes seconds — one at a time per
+  // epic. The lock is released here for every terminal outcome; a dispatched
+  // conflict agent keeps it until its retry settles (see retryMergeAfterFix).
+  if (!autoModeRegistry.beginMergeWork(projectId, epicId)) {
+    return {
+      status: "skipped",
+      reason: "A merge is already in flight for this epic",
+      sessionId: null,
+    };
+  }
+
+  let releaseLock = true;
+  try {
+    const outcome = await runAutoMerge(projectId, epicId, options);
+    // A dispatched conflict agent owns the lock until its retry finishes.
+    releaseLock = outcome.status !== "conflict";
+    return outcome;
+  } finally {
+    if (releaseLock) autoModeRegistry.endMergeWork(projectId, epicId);
+  }
+}
+
+async function runAutoMerge(
+  projectId: string,
+  epicId: string,
+  options: TryAutoMergeOptions
 ): Promise<AutoMergeOutcome> {
   const project = db
     .select()
@@ -262,6 +344,15 @@ export async function tryAutoMerge(
   }
 
   const worktreePath = findWorktreePath(projectId, epicId);
+
+  // Where `main` and the branch point RIGHT NOW, so an unwanted merge can be
+  // undone. Unattended, "we changed main and then discovered we should not
+  // have" has to be recoverable — there is no human to notice.
+  const checkpoint = await captureMergeCheckpoint(
+    project.gitRepoPath,
+    epic.branchName
+  );
+
   const result = await mergeWorktree(
     project.gitRepoPath,
     epic.branchName,
@@ -274,34 +365,90 @@ export async function tryAutoMerge(
       epicId,
       reason: AUTO_MODE_REASONS.merged,
     });
-    if (!finalized.ok) {
-      // The guards passed pre-flight and refused post-merge — the epic moved
-      // under us. The branch is already on main; report it as skipped so the
-      // epic is not parked, and let the next sweep settle the board.
-      return { status: "skipped", reason: finalized.error, sessionId: null };
+    if (finalized.ok) {
+      autoModeRegistry.clearFailures(projectId, epicId);
+      autoModeRegistry.clearMergeDeferral(projectId, epicId);
+      autoModeRegistry.recordDispatch(projectId, {
+        kind: "merge",
+        epicId,
+        userStoryId: null,
+        sessionId: null,
+        detail: result.commitHash ?? null,
+      });
+      return {
+        status: "merged",
+        commitHash: result.commitHash ?? null,
+        sessionId: null,
+      };
     }
-    autoModeRegistry.clearFailures(projectId, epicId);
-    autoModeRegistry.recordDispatch(projectId, {
-      kind: "merge",
+
+    // The guards passed pre-flight and refused post-merge: a review comment
+    // landed, or the epic moved, while git was running. `main` has already
+    // changed, so put it back and restore the branch rather than leaving an
+    // unapproved merge behind.
+    return rollbackRefusedMerge({
+      projectId,
       epicId,
-      userStoryId: null,
-      sessionId: null,
-      detail: result.commitHash ?? null,
+      gitRepoPath: project.gitRepoPath,
+      checkpoint,
+      reason: finalized.error,
     });
-    return {
-      status: "merged",
-      commitHash: result.commitHash ?? null,
-      sessionId: null,
-    };
   }
 
   const error = result.error || "Merge failed";
 
-  // A merge-fix session is a build. Without a build slot to charge it to,
-  // the conflict simply waits for the next sweep — better than blowing
-  // through the budget the user set (or dispatching at all when they set
-  // build concurrency to 0, which means "run no code agents").
+  // Only a real content conflict is something an agent can fix. A missing
+  // branch (already merged, or deleted by hand) or a broken repo would just
+  // burn a build slot on a session with nothing to do.
+  if (result.reason !== "conflict") {
+    logTransition({
+      projectId,
+      epicId,
+      fromStatus,
+      toStatus: fromStatus,
+      actor: "system",
+      reason: AUTO_MODE_REASONS.dispatchFailed("merge", error),
+    });
+    return { status: "failed", error, sessionId: null };
+  }
+
+  // `mergeWorktree` removes the epic's worktree BEFORE it attempts the merge
+  // (lib/git/manager.ts), and the conflict path aborts without putting it
+  // back. The branch survives (it is only deleted after a successful merge),
+  // so re-attach a worktree to THAT EXACT branch — `createWorktree` would
+  // re-derive the name from the epic title, which may have been edited since.
+  const gitRepoPath = project.gitRepoPath;
+  const branchName = epic.branchName;
+  const restoreWorktree = async (): Promise<string | null> => {
+    try {
+      return (await attachWorktree(gitRepoPath, branchName)).worktreePath;
+    } catch (worktreeError) {
+      console.warn(
+        "[auto-mode/merge] Could not restore the worktree after a conflict:",
+        worktreeError instanceof Error ? worktreeError.message : worktreeError
+      );
+      return null;
+    }
+  };
+
+  // A merge-fix session is a build, so it needs a build slot. Without one the
+  // conflict waits — but the worktree still has to come back, and the merge
+  // must not be re-attempted every 15s until capacity frees.
   if (options.dispatchConflictAgent === false) {
+    await restoreWorktree();
+    autoModeRegistry.deferMerge(
+      projectId,
+      epicId,
+      new Date(Date.now() + AUTO_MERGE_CONFLICT_BACKOFF_MS).toISOString()
+    );
+    logTransition({
+      projectId,
+      epicId,
+      fromStatus,
+      toStatus: fromStatus,
+      actor: "system",
+      reason: AUTO_MODE_REASONS.mergeConflictDeferred,
+    });
     return {
       status: "skipped",
       reason: `${error} — no build capacity for a resolution agent`,
@@ -309,22 +456,8 @@ export async function tryAutoMerge(
     };
   }
 
-  // `mergeWorktree` removes the epic's worktree BEFORE it attempts the merge
-  // (lib/git/manager.ts:95), and the conflict path aborts without putting it
-  // back — so the directory the agent is supposed to work in no longer
-  // exists. The branch does survive (it is only deleted after a successful
-  // merge), and `createWorktree` re-attaches a worktree to an existing
-  // branch, so this restores exactly the tree the agent needs.
-  let conflictWorktreePath: string;
-  try {
-    conflictWorktreePath = (
-      await createWorktree(project.gitRepoPath, epicId, epic.title)
-    ).worktreePath;
-  } catch (worktreeError) {
-    console.warn(
-      "[auto-mode/merge] Could not restore the worktree for conflict resolution:",
-      worktreeError instanceof Error ? worktreeError.message : worktreeError
-    );
+  const conflictWorktreePath = await restoreWorktree();
+  if (!conflictWorktreePath) {
     return { status: "failed", error, sessionId: null };
   }
 
@@ -337,6 +470,8 @@ export async function tryAutoMerge(
   });
 
   if (!sessionId) {
+    // Nothing is going to repair this now; the caller releases the merge lock
+    // because the outcome is not "conflict".
     return { status: "failed", error, sessionId: null };
   }
 
@@ -487,16 +622,23 @@ async function dispatchMergeFixAgent(input: {
         })
         .run();
 
-      await retryMergeAfterFix({
-        projectId: project.id,
-        gitRepoPath: project.gitRepoPath,
-        epicId: epic.id,
-        branchName: epic.branchName,
-        worktreePath,
-        sessionId,
-        agentSucceeded: !!agentResult?.success,
-        originalError: error,
-      });
+      try {
+        await retryMergeAfterFix({
+          projectId: project.id,
+          gitRepoPath: project.gitRepoPath,
+          epicId: epic.id,
+          branchName: epic.branchName,
+          worktreePath,
+          sessionId,
+          agentSucceeded: !!agentResult?.success,
+          originalError: error,
+        });
+      } finally {
+        // The merge lock was held across the whole conflict repair — the
+        // session going terminal above kicks a sweep, and without this the
+        // sweep could start a second merge on the same branch mid-retry.
+        autoModeRegistry.endMergeWork(project.id, epic.id);
+      }
     });
 
     return sessionId;

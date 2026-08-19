@@ -92,7 +92,20 @@ your call.
 
 Every dispatch and every skip writes a `ticket_activity_log` entry with actor
 `system` and a reason prefixed `"Auto mode "`, so the ticket feed always
-explains why an agent appeared unprompted.
+explains why an agent appeared unprompted — and, just as importantly, why one
+that was selected did not.
+
+Two things are re-checked continuously rather than once per sweep:
+
+- **The on/off flag**, before every merge and every dispatch. A sweep can spend
+  many seconds inside git and agent dispatch, and switching the mode off has to
+  mean off *now*, not "after the work already selected finishes".
+- **The dispatch target's status**, immediately before `launchStage`, through
+  the driver's own `checkGuards`. The board snapshot is milliseconds old, but a
+  human approving or releasing a ticket in that window must win — otherwise the
+  build closure would drag it straight back to `in_progress`. Story-scoped
+  builds additionally check the parent epic, because `checkGuards` reports the
+  story's status for those.
 
 ### Granularity
 
@@ -124,14 +137,19 @@ session. (The verdict itself is a substring heuristic over the reviewer's
 markdown, with no structured field to read — so freshness is the fact, and the
 verdict is not.)
 
-"Attempted" carries the nuance, and the merge gate reads a *stricter* signal
-than the re-review guard:
+A "review" is one completed, epic-scoped review session that delivered a
+verdict (`outcome = 'answered'`). That single signal drives both directions —
+reviewable when there is none newer than the last code change, mergeable when
+there is — which is what makes "reviewed exactly once, then merged" true by
+construction. Everything else is not a review, and every one of those cases is
+bounded by the **parking ladder** rather than by this guard:
 
 | Review session ended | Re-reviewed? | Satisfies the merge gate? |
 |---|---|---|
 | completed, `answered` | no | **yes** |
-| completed, `silent` | no — re-dispatching a reviewer that says nothing is just a token-burning loop | no |
+| completed, `silent` | yes — but each one is charged as a failure, so three park the epic | no (it produced no verdict to approve with) |
 | completed, `asked_question` | yes, but only once the user replies (`isAwaitingReply` holds it until then, so a human is in the loop by construction) | no |
+| completed, no recorded outcome (legacy row) | yes, once — it earns a fresh, classified review | no |
 | `failed` / `cancelled` | yes — no review happened, and the parking ladder bounds the retries | no |
 
 Both signals are **epic-scoped**: a story-scoped review session never counts as
@@ -206,29 +224,44 @@ is spelled out in full:
 1. The mode merges with `mergeWorktree(...)` — the same primitive the manual
    Merge button uses. The workflow guards are validated **before** git runs, so
    a merge can never land on `main` while the ticket refuses to move.
+   Before git runs, the current `main` and branch tips are captured as a
+   **rollback checkpoint**.
 2. On a **clean** merge: the epic moves to `done` through `applyTransition`
    (`source: 'merge'`), its branch name is cleared, and `arji.json` is
    re-exported. No agent was involved. The `fromStatus` is re-read *after* the
    merge, not carried in from before it — `mergeWorktree` takes real seconds,
    and validating `review → done` against a stale snapshot would rubber-stamp
-   exactly the transition the engine exists to refuse. If the epic moved in
-   that window the branch is still cleared (git deleted it) but the ticket is
-   left alone, with a loud activity entry.
-3. On a **conflict**: a `merge`-type agent is dispatched with the conflict
-   error and instructions to resolve it, commit, and verify the build.
+   exactly the transition the engine exists to refuse.
+   If that post-merge guard refuses (a review comment landed, or the ticket
+   moved), **`main` is rolled back** to the checkpoint and the branch is
+   restored. Unattended, "we changed `main` and then found out we shouldn't
+   have" has to be recoverable — there is nobody watching to notice.
+3. On a **conflict** — and only a real content conflict; `mergeWorktree`
+   returns a structured `reason`, so a missing branch or a broken repo never
+   burns a build slot on an agent that cannot help — a `merge`-type agent is
+   dispatched with the conflict error and instructions to resolve it, commit,
+   and verify the build.
    - The agent runs in a **freshly re-attached worktree**. `mergeWorktree`
      removes the epic's worktree *before* it attempts the merge and the
      conflict path aborts without putting it back, so the directory recorded
      on the session row no longer exists. The branch survives (it is only
-     deleted after a successful merge), and `createWorktree` re-attaches to it.
+     deleted after a successful merge), and `attachWorktree` re-attaches to
+     **that exact branch name** — deriving it from the epic title again would
+     silently start work on a fresh branch if the title had been edited.
    - That session is **charged to the build budget**, and it is only dispatched
      when a build slot is actually free. With `auto_mode_build_concurrency` at
-     0 — "run no code agents" — no conflict agent is ever dispatched; the
-     conflict simply waits.
+     0 — "run no code agents" — no conflict agent is dispatched: the worktree
+     is restored and the epic's merge is held back for five minutes, so the
+     sweep does not re-run a doomed `git merge` every 15 seconds.
 4. When that agent finishes successfully, the merge is retried **once**.
 5. If the retry also fails — or the agent itself failed — the epic is **parked
    hard**, a `failed` notification deep-linking to the ticket is raised, and
    the mode never touches that epic again until you intervene.
+
+Throughout all of that the epic holds a **merge lock**, from the first git
+command until the conflict agent's retry has settled. The merge-fix session
+goes terminal *before* its retry runs, and that fires the sweep kick — without
+the lock, that sweep could start a second merge on the same branch mid-retry.
 
 In other words: an unattended agent may rewrite files in the epic's worktree to
 resolve a conflict, and a successful resolution is merged into `main` without

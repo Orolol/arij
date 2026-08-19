@@ -60,6 +60,12 @@ import { tryAutoMerge, type AutoMergeOutcome } from "./merge";
 
 const TERMINAL_SESSION_STATUSES = new Set(["completed", "failed", "cancelled"]);
 
+/** Statuses a build may still be dispatched onto, checked at the last moment. */
+const DISPATCHABLE_BUILD_STATUSES = new Set(["todo", "in_progress"]);
+
+/** Epics past the finish line — never a valid dispatch target. */
+const DELIVERED_EPIC_STATUSES = new Set(["done", "released"]);
+
 /* ------------------------------------------------------------------ */
 /* Injection surface                                                   */
 /* ------------------------------------------------------------------ */
@@ -85,6 +91,13 @@ export interface AutoModeDispatchResult {
    * failure of the ticket: skip it this sweep, charge nothing.
    */
   conflictSessionId: string | null;
+  /**
+   * A last-moment guard refused (the ticket moved between selection and
+   * dispatch). Not a failure either, but it must still be visible: a ticket
+   * the mode picked and then silently dropped is exactly the sort of thing a
+   * user cannot otherwise explain.
+   */
+  skipReason?: string | null;
 }
 
 export interface AutoModeEngineDeps {
@@ -102,6 +115,8 @@ export interface AutoModeEngineDeps {
     }
   ): Promise<AutoMergeOutcome>;
   readSessionStatus(sessionId: string): string | null;
+  /** Delivery verdict of a terminal session ("answered" | "silent" | …). */
+  readSessionOutcome(sessionId: string): string | null;
   readEpicStatus(epicId: string): string | null;
 }
 
@@ -143,19 +158,57 @@ async function defaultDispatch(
     };
   }
 
+  // `checkGuards` reports the DISPATCH TARGET's own status — the story for a
+  // story-scoped run, the epic otherwise.
+  const targetStatus = guard.reviewTargetStatus;
+
   // Mirror of the review routes' status guard: reviewing a ticket a human
   // just dragged out of Review would be dispatching work the route itself
   // would refuse.
   if (
     input.stage === "review" &&
-    guard.reviewTargetStatus !== "review" &&
-    guard.reviewTargetStatus !== "done"
+    targetStatus !== "review" &&
+    targetStatus !== "done"
   ) {
     return {
       sessionId: null,
       error: null,
       conflictSessionId: null,
+      skipReason: `target left review (now ${targetStatus ?? "unknown"})`,
     };
+  }
+
+  // The build stage needs the same treatment. Without it, a human approving
+  // or releasing a ticket in the window between the board snapshot and this
+  // dispatch would get a build agent on it anyway — and the build closure
+  // would drag the epic straight back to `in_progress`.
+  if (input.stage === "build") {
+    if (!DISPATCHABLE_BUILD_STATUSES.has(targetStatus ?? "")) {
+      return {
+        sessionId: null,
+        error: null,
+        conflictSessionId: null,
+        skipReason: `target is no longer buildable (now ${targetStatus ?? "unknown"})`,
+      };
+    }
+    // Story scope reports the story's status, so the parent epic is checked
+    // separately: a released epic must not gain a new story build.
+    if (input.scope === "story") {
+      const epicStatus =
+        db
+          .select({ status: epics.status })
+          .from(epics)
+          .where(eq(epics.id, input.epicId))
+          .get()?.status ?? null;
+      if (DELIVERED_EPIC_STATUSES.has(epicStatus ?? "")) {
+        return {
+          sessionId: null,
+          error: null,
+          conflictSessionId: null,
+          skipReason: `parent epic is ${epicStatus}`,
+        };
+      }
+    }
   }
 
   const handle = await driver.launchStage({
@@ -193,6 +246,12 @@ export const defaultAutoModeDeps: AutoModeEngineDeps = {
       .from(agentSessions)
       .where(eq(agentSessions.id, sessionId))
       .get()?.status ?? null,
+  readSessionOutcome: (sessionId) =>
+    db
+      .select({ outcome: agentSessions.outcome })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, sessionId))
+      .get()?.outcome ?? null,
   readEpicStatus: (epicId) =>
     db
       .select({ status: epics.status })
@@ -237,6 +296,28 @@ function emptyResult(
 /* The sweep                                                           */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Re-reads the on/off flag mid-sweep. A sweep can spend many seconds inside
+ * git and agent dispatch, and "off" has to mean off NOW — not after the work
+ * already queued finishes.
+ */
+function stillEnabled(
+  projectId: string,
+  deps: AutoModeEngineDeps
+): boolean {
+  try {
+    if (deps.resolveConfig(projectId).enabled) return true;
+  } catch (error) {
+    console.warn(
+      "[auto-mode] Could not re-read the enabled flag mid-sweep:",
+      error instanceof Error ? error.message : error
+    );
+    // Unreadable config is not permission to keep dispatching.
+  }
+  autoModeRegistry.setEnabled(projectId, false);
+  return false;
+}
+
 /** Best-effort activity trace; logTransition already swallows its own errors. */
 function trace(
   deps: AutoModeEngineDeps,
@@ -275,17 +356,28 @@ function reconcileInFlight(
 
     autoModeRegistry.removeInFlight(projectId, sessionId);
 
-    if (status === "completed") {
+    // A review that completed without producing a verdict delivered nothing.
+    // The selectors treat it as "no review happened" so the epic stays
+    // reviewable; charging it here is what bounds those retries — three
+    // silent reviews park the epic instead of looping.
+    const silentReview =
+      status === "completed" &&
+      entry.kind === "review" &&
+      deps.readSessionOutcome(sessionId) === "silent";
+
+    if (status === "completed" && !silentReview) {
       autoModeRegistry.clearFailures(projectId, entry.ticketId);
       continue;
     }
-    if (status !== "failed") continue;
+    if (status !== "failed" && !silentReview) continue;
 
     const failures = autoModeRegistry.recordFailure(
       projectId,
       entry.ticketId,
       entry.epicId,
-      `${entry.kind} session failed`
+      silentReview
+        ? "review completed with no verdict"
+        : `${entry.kind} session failed`
     );
     if (failures >= AUTO_MODE_MAX_CONSECUTIVE_FAILURES) {
       parked.push(entry.ticketId);
@@ -374,6 +466,14 @@ export async function sweepProject(
     // -----------------------------------------------------------------
     let mergedSomething = false;
     for (const candidate of selectMergeCandidates(projectId, board)) {
+      // Merging and dispatching both await real work, and the user can flip
+      // the switch off mid-sweep. Re-reading the flag before every action is
+      // the difference between "stop" and "stop after the current wave".
+      if (!stillEnabled(projectId, deps)) {
+        result.skipped = "disabled";
+        return result;
+      }
+
       // A conflict costs a merge-fix agent, and that agent IS a build — so it
       // has to fit in the build budget like any other. Checked per candidate,
       // because the previous one may just have taken the last slot.
@@ -503,6 +603,10 @@ async function dispatchKind(input: DispatchKindInput): Promise<void> {
   for (const candidate of candidates) {
     const inFlight = autoModeRegistry.countInFlight(projectId)[kind];
     if (inFlight >= budget) return;
+    if (!stillEnabled(projectId, deps)) {
+      result.skipped = "disabled";
+      return;
+    }
 
     const dispatched = await deps.dispatch({
       projectId,
@@ -527,7 +631,21 @@ async function dispatchKind(input: DispatchKindInput): Promise<void> {
     }
 
     if (!dispatched.sessionId) {
-      if (!dispatched.error) continue; // a silent guard refusal, not a failure
+      if (!dispatched.error) {
+        // A last-moment guard refused. Not the ticket's fault, so nothing is
+        // charged — but the skip is logged, because a ticket the mode picked
+        // and then dropped is otherwise invisible.
+        trace(
+          deps,
+          projectId,
+          candidate.epicId,
+          AUTO_MODE_REASONS.skippedTargetMoved(
+            kind,
+            dispatched.skipReason ?? "the target changed"
+          )
+        );
+        continue;
+      }
       const failures = autoModeRegistry.recordFailure(
         projectId,
         candidate.ticketId,
