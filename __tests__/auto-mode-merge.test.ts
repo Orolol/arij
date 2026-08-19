@@ -1,0 +1,447 @@
+/**
+ * Integration tests for Full Auto Mode's merge step (lib/auto-mode/merge.ts)
+ * against the migrated schema, with git and the CLI spawn mocked and the real
+ * scheduler, lifecycle and workflow engine in the loop:
+ *
+ *   - a clean merge is pure git (no session row, no scheduler slot), moves the
+ *     epic to done through applyTransition(source: 'merge'), clears the branch
+ *     and re-exports arji.json,
+ *   - the engine's `→ done` guards ARE the "review is OK" gate: an open review
+ *     comment or a missing completed review blocks the merge, is logged, and
+ *     leaves the epic UNPARKED (it retries once the comment is resolved),
+ *   - a conflict dispatches one merge-fix agent and retries once; a second
+ *     failure parks the epic and raises a notification,
+ *   - POST .../approve is never involved (it would bulk-resolve the very
+ *     findings that must stop an auto-merge).
+ */
+import { describe, it, expect, beforeEach, vi } from "vitest";
+import { eq } from "drizzle-orm";
+
+const gitMocks = vi.hoisted(() => ({
+  mergeWorktree: vi.fn(),
+}));
+
+const processManagerState = vi.hoisted(() => ({
+  result: { success: true } as Record<string, unknown> | undefined,
+}));
+
+const exportMock = vi.hoisted(() => ({ tryExportArjiJson: vi.fn() }));
+
+vi.mock("@/lib/db", async () => {
+  const { createTestDb } = await import("@/lib/db/test-utils");
+  const created = createTestDb();
+  return { db: created.db, sqlite: created.sqlite, ensureDbReady: vi.fn() };
+});
+
+vi.mock("@/lib/git/manager", () => ({
+  mergeWorktree: gitMocks.mergeWorktree,
+}));
+
+vi.mock("@/lib/sync/export", () => ({
+  tryExportArjiJson: exportMock.tryExportArjiJson,
+}));
+
+vi.mock("@/lib/claude/process-manager", () => ({
+  processManager: {
+    start: vi.fn(),
+    getStatus: vi.fn(() => ({
+      status: "completed",
+      result: processManagerState.result,
+    })),
+  },
+}));
+
+vi.mock("@/lib/agent-config/prompts", () => ({
+  resolveAgentPrompt: vi.fn().mockResolvedValue("merge system prompt"),
+}));
+
+vi.mock("@/lib/agent-config/agent-resolution", () => ({
+  resolveAgentByNamedId: vi.fn(() => ({
+    provider: "claude-code",
+    namedAgentId: null,
+    name: null,
+    model: null,
+  })),
+}));
+
+vi.mock("@/lib/events/emit", () => ({
+  emitTicketMoved: vi.fn(),
+  emitSessionStarted: vi.fn(),
+  emitSessionCompleted: vi.fn(),
+  emitSessionFailed: vi.fn(),
+}));
+
+vi.mock("fs", () => ({
+  default: {
+    mkdirSync: vi.fn(),
+    writeFileSync: vi.fn(),
+    existsSync: vi.fn(() => false),
+    readFileSync: vi.fn(() => {
+      throw new Error("no logs in tests");
+    }),
+  },
+}));
+
+const { db } = await import("@/lib/db");
+const {
+  projects,
+  epics,
+  agentSessions,
+  reviewComments,
+  ticketComments,
+  ticketActivityLog,
+  notifications,
+} = await import("@/lib/db/schema");
+const { tryAutoMerge } = await import("@/lib/auto-mode/merge");
+const { autoModeRegistry } = await import("@/lib/auto-mode/registry");
+const { AUTO_MODE_REASONS, autoRunId } = await import(
+  "@/lib/auto-mode/constants"
+);
+
+const PROJECT_ID = "proj-merge";
+const EPIC_ID = "epic-merge";
+
+let seq = 0;
+function isoAt(minute: number): string {
+  return new Date(Date.UTC(2026, 7, 19, 9, minute, 0)).toISOString();
+}
+
+function seed(options: { withCompletedReview?: boolean } = {}): void {
+  db.insert(projects)
+    .values({ id: PROJECT_ID, name: "Merge", gitRepoPath: "/repos/merge" })
+    .run();
+  db.insert(epics)
+    .values({
+      id: EPIC_ID,
+      projectId: PROJECT_ID,
+      title: "Landable epic",
+      status: "review",
+      branchName: "feature/landable",
+      position: 0,
+      readableId: "E-merge-1",
+      createdAt: isoAt(0),
+      updatedAt: isoAt(0),
+    })
+    .run();
+
+  // The worktree lookup takes the epic's most recent session.
+  seq += 1;
+  db.insert(agentSessions)
+    .values({
+      id: `build-${seq}`,
+      projectId: PROJECT_ID,
+      epicId: EPIC_ID,
+      status: "completed",
+      agentType: "build",
+      worktreePath: "/tmp/worktrees/landable",
+      createdAt: isoAt(1),
+      endedAt: isoAt(2),
+    })
+    .run();
+
+  if (options.withCompletedReview !== false) {
+    seq += 1;
+    db.insert(agentSessions)
+      .values({
+        id: `review-${seq}`,
+        projectId: PROJECT_ID,
+        epicId: EPIC_ID,
+        status: "completed",
+        agentType: "review_code",
+        worktreePath: "/tmp/worktrees/landable",
+        createdAt: isoAt(3),
+        endedAt: isoAt(4),
+      })
+      .run();
+  }
+}
+
+function activityReasons(): string[] {
+  return db
+    .select()
+    .from(ticketActivityLog)
+    .where(eq(ticketActivityLog.epicId, EPIC_ID))
+    .all()
+    .map((row) => row.reason ?? "");
+}
+
+/** Lets the scheduler's launch closure (and its retry) run to completion. */
+async function drainScheduler(): Promise<void> {
+  for (let i = 0; i < 20; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+beforeEach(() => {
+  db.delete(notifications).run();
+  db.delete(ticketComments).run();
+  db.delete(ticketActivityLog).run();
+  db.delete(reviewComments).run();
+  db.delete(agentSessions).run();
+  db.delete(epics).run();
+  db.delete(projects).run();
+  autoModeRegistry.resetAll();
+  gitMocks.mergeWorktree.mockReset();
+  exportMock.tryExportArjiJson.mockReset();
+  processManagerState.result = { success: true };
+});
+
+/* ------------------------------------------------------------------ */
+/* The happy path                                                      */
+/* ------------------------------------------------------------------ */
+
+describe("tryAutoMerge — clean merge", () => {
+  it("merges as pure git: no session created, no scheduler slot consumed", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockResolvedValue({
+      merged: true,
+      commitHash: "abc123",
+    });
+
+    const sessionsBefore = db.select().from(agentSessions).all().length;
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+
+    expect(outcome).toEqual({
+      status: "merged",
+      commitHash: "abc123",
+      sessionId: null,
+    });
+    expect(db.select().from(agentSessions).all()).toHaveLength(sessionsBefore);
+    expect(gitMocks.mergeWorktree).toHaveBeenCalledWith(
+      "/repos/merge",
+      "feature/landable",
+      "/tmp/worktrees/landable"
+    );
+  });
+
+  it("moves the epic to done, clears the branch and exports arji.json", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockResolvedValue({
+      merged: true,
+      commitHash: "abc123",
+    });
+
+    await tryAutoMerge(PROJECT_ID, EPIC_ID);
+
+    const epic = db.select().from(epics).where(eq(epics.id, EPIC_ID)).get()!;
+    expect(epic.status).toBe("done");
+    expect(epic.branchName).toBeNull();
+    expect(exportMock.tryExportArjiJson).toHaveBeenCalledWith(PROJECT_ID);
+  });
+
+  it("logs the transition through applyTransition with the auto-mode reason", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockResolvedValue({ merged: true });
+
+    await tryAutoMerge(PROJECT_ID, EPIC_ID);
+
+    const entry = db
+      .select()
+      .from(ticketActivityLog)
+      .where(eq(ticketActivityLog.epicId, EPIC_ID))
+      .all()
+      .find((row) => row.reason === AUTO_MODE_REASONS.merged);
+    expect(entry).toMatchObject({
+      fromStatus: "review",
+      toStatus: "done",
+      actor: "agent",
+    });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The gate                                                            */
+/* ------------------------------------------------------------------ */
+
+describe("tryAutoMerge — the workflow guards ARE the review gate", () => {
+  it("never merges an epic with an open review comment", async () => {
+    seed();
+    db.insert(reviewComments)
+      .values({
+        id: "rc-1",
+        epicId: EPIC_ID,
+        filePath: "lib/x.ts",
+        lineNumber: 3,
+        body: "[critical] nope",
+        author: "agent",
+        status: "open",
+      })
+      .run();
+    gitMocks.mergeWorktree.mockResolvedValue({ merged: true });
+
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+
+    expect(outcome.status).toBe("skipped");
+    expect(gitMocks.mergeWorktree).not.toHaveBeenCalled();
+    expect(
+      db.select().from(epics).where(eq(epics.id, EPIC_ID)).get()!.status
+    ).toBe("review");
+  });
+
+  it("logs the refusal and leaves the epic UNPARKED so it retries later", async () => {
+    seed();
+    db.insert(reviewComments)
+      .values({
+        id: "rc-1",
+        epicId: EPIC_ID,
+        filePath: "lib/x.ts",
+        lineNumber: 3,
+        body: "[major] nope",
+        author: "agent",
+        status: "open",
+      })
+      .run();
+    gitMocks.mergeWorktree.mockResolvedValue({ merged: true });
+
+    await tryAutoMerge(PROJECT_ID, EPIC_ID);
+
+    expect(
+      activityReasons().some((reason) =>
+        reason.startsWith("Auto mode skipped merge:")
+      )
+    ).toBe(true);
+    expect(autoModeRegistry.isParked(PROJECT_ID, EPIC_ID)).toBe(false);
+
+    // Resolve the finding → the very next attempt merges.
+    db.update(reviewComments).set({ status: "resolved" }).run();
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+    expect(outcome.status).toBe("merged");
+  });
+
+  it("never merges an epic with no completed review", async () => {
+    seed({ withCompletedReview: false });
+    gitMocks.mergeWorktree.mockResolvedValue({ merged: true });
+
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+
+    expect(outcome.status).toBe("skipped");
+    expect(gitMocks.mergeWorktree).not.toHaveBeenCalled();
+  });
+
+  it("skips an epic with no branch without touching git", async () => {
+    seed();
+    db.update(epics).set({ branchName: null }).run();
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+    expect(outcome).toMatchObject({ status: "skipped" });
+    expect(gitMocks.mergeWorktree).not.toHaveBeenCalled();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Conflict handling                                                   */
+/* ------------------------------------------------------------------ */
+
+describe("tryAutoMerge — merge conflict", () => {
+  it("dispatches one merge-fix agent tagged with the auto run id", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockResolvedValueOnce({
+      merged: false,
+      error: "CONFLICT in lib/x.ts",
+    });
+    gitMocks.mergeWorktree.mockResolvedValue({ merged: true, commitHash: "z9" });
+
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+    expect(outcome.status).toBe("conflict");
+    expect(outcome.sessionId).toBeTruthy();
+
+    const session = db
+      .select()
+      .from(agentSessions)
+      .where(eq(agentSessions.id, outcome.sessionId!))
+      .get()!;
+    expect(session).toMatchObject({
+      agentType: "merge",
+      epicId: EPIC_ID,
+      batchRunId: autoRunId(PROJECT_ID),
+    });
+    expect(session.prompt).toContain("failed to merge into main");
+    expect(session.prompt).toContain("/tmp/worktrees/landable");
+
+    await drainScheduler();
+  });
+
+  it("retries the merge once after the agent succeeds and lands the epic", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockResolvedValueOnce({
+      merged: false,
+      error: "CONFLICT in lib/x.ts",
+    });
+    gitMocks.mergeWorktree.mockResolvedValueOnce({
+      merged: true,
+      commitHash: "fixed1",
+    });
+
+    await tryAutoMerge(PROJECT_ID, EPIC_ID);
+    await drainScheduler();
+
+    expect(gitMocks.mergeWorktree).toHaveBeenCalledTimes(2);
+    const epic = db.select().from(epics).where(eq(epics.id, EPIC_ID)).get()!;
+    expect(epic.status).toBe("done");
+    expect(epic.branchName).toBeNull();
+    expect(activityReasons()).toContain(AUTO_MODE_REASONS.mergeFixRetried);
+    expect(autoModeRegistry.isParked(PROJECT_ID, EPIC_ID)).toBe(false);
+  });
+
+  it("parks the epic and notifies when the retry also fails", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockResolvedValue({
+      merged: false,
+      error: "CONFLICT in lib/x.ts",
+    });
+
+    await tryAutoMerge(PROJECT_ID, EPIC_ID);
+    await drainScheduler();
+
+    expect(gitMocks.mergeWorktree).toHaveBeenCalledTimes(2);
+    expect(autoModeRegistry.isParked(PROJECT_ID, EPIC_ID)).toBe(true);
+    expect(
+      db.select().from(epics).where(eq(epics.id, EPIC_ID)).get()!.status
+    ).toBe("review");
+
+    const notification = db.select().from(notifications).all()[0];
+    expect(notification).toMatchObject({
+      projectId: PROJECT_ID,
+      agentType: "merge",
+      status: "failed",
+    });
+    expect(notification.title).toContain("Auto mode could not merge");
+    expect(notification.targetUrl).toBe(
+      `/projects/${PROJECT_ID}?ticket=${EPIC_ID}`
+    );
+  });
+
+  it("parks without retrying when the merge-fix agent itself fails", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockResolvedValue({
+      merged: false,
+      error: "CONFLICT in lib/x.ts",
+    });
+    processManagerState.result = { success: false, error: "agent crashed" };
+
+    await tryAutoMerge(PROJECT_ID, EPIC_ID);
+    await drainScheduler();
+
+    // Only the initial merge attempt — a crashed agent resolved nothing.
+    expect(gitMocks.mergeWorktree).toHaveBeenCalledTimes(1);
+    expect(autoModeRegistry.isParked(PROJECT_ID, EPIC_ID)).toBe(true);
+  });
+
+  it("reports a hard failure when there is no worktree to resolve in", async () => {
+    seed();
+    db.update(agentSessions).set({ worktreePath: null }).run();
+    gitMocks.mergeWorktree.mockResolvedValue({
+      merged: false,
+      error: "Branch not found",
+    });
+
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+    expect(outcome).toMatchObject({ status: "failed" });
+    expect(
+      db
+        .select()
+        .from(agentSessions)
+        .all()
+        .some((s) => s.agentType === "merge")
+    ).toBe(false);
+  });
+});

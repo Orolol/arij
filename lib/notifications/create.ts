@@ -282,6 +282,56 @@ export function createAskedQuestionNotificationFromSession(
 }
 
 /**
+ * Create the "Full Auto Mode could not merge <ticket>" notification.
+ *
+ * The one path where Full Auto Mode gives up and needs a human: a merge
+ * conflict survived the merge-fix agent and the retry, so the epic is parked
+ * and its branch is still unmerged. Deep-links to the epic on the board —
+ * the actionable place is the ticket, not the (already finished) session.
+ * Uses the "failed" status for alarm styling.
+ */
+export function createAutoModeMergeParkedNotification(input: {
+  projectId: string;
+  epicId: string;
+  sessionId: string | null;
+  error: string;
+}): void {
+  const project = db
+    .select({ name: projects.name })
+    .from(projects)
+    .where(eq(projects.id, input.projectId))
+    .get();
+  if (!project) return;
+
+  const epic = db
+    .select({ title: epics.title, readableId: epics.readableId })
+    .from(epics)
+    .where(eq(epics.id, input.epicId))
+    .get();
+
+  const label = epic?.readableId
+    ? epic.title
+      ? `${epic.readableId}: ${epic.title}`
+      : epic.readableId
+    : (epic?.title ?? input.epicId);
+
+  db.insert(notifications)
+    .values({
+      id: createId(),
+      projectId: input.projectId,
+      projectName: project.name,
+      sessionId: input.sessionId,
+      agentType: "merge",
+      status: "failed",
+      title: `Auto mode could not merge ${label} — ${input.error}`,
+      targetUrl: buildEpicTargetUrl(input.projectId, input.epicId),
+    })
+    .run();
+
+  pruneNotifications();
+}
+
+/**
  * Create the watchdog's "Agent seems stalled" notification for a running
  * session that has produced no output chunks past its staleness threshold
  * (see lib/agents/watchdog.ts, which also guarantees at-most-once delivery
