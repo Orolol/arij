@@ -94,23 +94,79 @@ describe("sessions/resumable route", () => {
     });
   });
 
-  it("returns empty data when resolved provider is codex", async () => {
-    mockResolveAgent.mockReturnValue({ provider: "codex", namedAgentId: null });
+  /**
+   * The DB rows are deliberately non-empty: the endpoint must refuse on the
+   * provider's capability, not just happen to find nothing.
+   */
+  it.each(["codex", "qwen-code", "deepseek", "zai"])(
+    "returns empty data for the non-resumable provider %s",
+    async (provider) => {
+      mockResolveAgent.mockReturnValue({ provider, namedAgentId: null });
+      mockState.allQueue = [
+        [
+          {
+            id: "sess-x",
+            cliSessionId: "cli-x",
+            provider,
+            namedAgentId: null,
+            agentType: "build",
+            lastNonEmptyText: "done",
+            completedAt: "2026-08-19T00:00:00.000Z",
+          },
+        ],
+      ];
 
-    const { GET } = await import(
-      "@/app/api/projects/[projectId]/sessions/resumable/route"
-    );
-    const res = await GET(
-      mockNextRequest({
+      const { GET } = await import(
+        "@/app/api/projects/[projectId]/sessions/resumable/route"
+      );
+      const res = await GET(
+        mockNextRequest({
           url: "http://localhost/api/projects/proj-1/sessions/resumable?agentType=build",
-      }),
-      mockRouteContext({ projectId: "proj-1" }),
-    );
+        }),
+        mockRouteContext({ projectId: "proj-1" }),
+      );
 
-    const json = await res.json();
-    expect(res.status).toBe(200);
-    expect(json.data).toEqual([]);
-  });
+      const json = await res.json();
+      expect(res.status).toBe(200);
+      expect(json.data).toEqual([]);
+    },
+  );
+
+  it.each(["pi", "oh-my-pi"])(
+    "filters to the resolved provider's own sessions for %s",
+    async (provider) => {
+      mockResolveAgent.mockReturnValue({ provider, namedAgentId: null });
+      mockState.allQueue = [
+        [
+          {
+            id: "sess-pi",
+            cliSessionId: "3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50",
+            provider,
+            namedAgentId: null,
+            agentType: "build",
+            lastNonEmptyText: "done",
+            completedAt: "2026-08-19T00:00:00.000Z",
+          },
+        ],
+      ];
+
+      const { GET } = await import(
+        "@/app/api/projects/[projectId]/sessions/resumable/route"
+      );
+      const res = await GET(
+        mockNextRequest({
+          url: "http://localhost/api/projects/proj-1/sessions/resumable?agentType=build",
+        }),
+        mockRouteContext({ projectId: "proj-1" }),
+      );
+
+      const json = await res.json();
+      expect(json.data).toHaveLength(1);
+      // Without this filter an unrecognised provider dropped the WHERE clause
+      // and other providers' sessions leaked in as resume candidates.
+      expect(drizzle.eq).toHaveBeenCalledWith("agentSessions.provider", provider);
+    },
+  );
 
   it("filters by resolved provider and named agent when agentType is present", async () => {
     mockResolveAgentByNamedId.mockReturnValue({

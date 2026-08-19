@@ -8,7 +8,7 @@ export interface ProvidersAvailability {
   codexInstalled: boolean;
   geminiAvailable: boolean;
   geminiInstalled: boolean;
-  /** Per-provider availability map for all 9 providers. */
+  /** Per-provider availability map, one entry per PROVIDER_OPTIONS value. */
   providers: Record<AgentProvider, boolean>;
   loading: boolean;
 }
@@ -23,6 +23,8 @@ const DEFAULT_PROVIDERS: Record<AgentProvider, boolean> = {
   deepseek: false,
   kimi: false,
   zai: false,
+  pi: false,
+  "oh-my-pi": false,
 };
 
 /**
@@ -58,6 +60,8 @@ export function useProvidersAvailable(): ProvidersAvailability {
             deepseek: !!data.deepseek,
             kimi: !!data.kimi,
             zai: !!data.zai,
+            pi: !!data.pi,
+            "oh-my-pi": !!data["oh-my-pi"],
           },
         });
       })

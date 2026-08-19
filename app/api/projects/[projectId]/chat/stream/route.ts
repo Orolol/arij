@@ -17,21 +17,28 @@ import {
   MentionResolutionError,
   validateMentionsExist,
 } from "@/lib/documents/mentions";
+import {
+  isAgentProvider,
+  PROVIDER_LABELS,
+  type AgentProvider,
+} from "@/lib/agent-config/constants";
+import {
+  isResumableProvider,
+  providerAcceptsAssignedSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { chatMessageSchema } from "@/lib/validation/chat-schemas";
 
-const RESUME_CAPABLE_PROVIDERS = new Set<ProviderType>([
-  "claude-code",
-  "gemini-cli",
-  "codex",
-]);
-
+/**
+ * The stored conversation provider, honoured for any provider the app knows.
+ * A short allowlist here silently discards the user's choice: the
+ * conversation create/update routes accept every `isAgentProvider()` value,
+ * so a Pi conversation would normalize to null and fall back to the
+ * configured chat default — running a different CLI than the one shown.
+ */
 function normalizeProvider(value: string | null | undefined): ProviderType | null {
-  if (value === "claude-code" || value === "gemini-cli" || value === "codex") {
-    return value;
-  }
-  return null;
+  return value && isAgentProvider(value) ? (value as ProviderType) : null;
 }
 
 function isResumeSessionExpiredError(error: string | null | undefined): boolean {
@@ -195,15 +202,14 @@ export async function POST(
     throw error;
   }
 
-  const providerSupportsResume = RESUME_CAPABLE_PROVIDERS.has(
-    resolvedAgent.provider as ProviderType
-  );
+  const providerSupportsResume = isResumableProvider(resolvedAgent.provider);
   // Legacy-row fallback handled inside resolveCliSessionId().
   let cliSessionId = conversation
     ? resolveCliSessionId(conversation) ?? undefined
     : undefined;
   const resumeSession = Boolean(conversationId && cliSessionId && providerSupportsResume);
-  if (!cliSessionId && providerSupportsResume) {
+  // Only mint for providers that take a caller-chosen id — pi reports its own.
+  if (!cliSessionId && providerAcceptsAssignedSessionId(resolvedAgent.provider)) {
     cliSessionId = crypto.randomUUID();
   }
   const effectivePrompt = resumeSession ? userContent : prompt;
@@ -290,7 +296,7 @@ export async function POST(
     controller.close();
   }
 
-  // Gemini/Codex: non-streaming providers
+  // Every non-Claude provider: non-streaming, spawned through its own provider
   if (resolvedAgent.provider !== "claude-code") {
     const dynamicProvider = getProvider(resolvedAgent.provider);
     let activeProviderSession = dynamicProvider.spawn({
@@ -320,10 +326,10 @@ export async function POST(
         controller.enqueue(
           encoder.encode(
             `data: ${JSON.stringify({
-              status:
-                resolvedAgent.provider === "codex"
-                  ? "Codex processing..."
-                  : "Gemini processing...",
+              status: `${
+                PROVIDER_LABELS[resolvedAgent.provider as AgentProvider] ??
+                resolvedAgent.provider
+              } processing...`,
             })}\n\n`
           )
         );
@@ -337,7 +343,9 @@ export async function POST(
             !result.success &&
             isResumeSessionExpiredError(result.error)
           ) {
-            cliSessionId = providerSupportsResume ? crypto.randomUUID() : undefined;
+            cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
+              ? crypto.randomUUID()
+              : undefined;
             activeProviderSession = dynamicProvider.spawn({
               sessionId: `chat-${createId()}`,
               prompt,

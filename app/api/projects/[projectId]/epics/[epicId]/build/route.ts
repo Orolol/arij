@@ -43,6 +43,10 @@ import {
   validateMentionsExist,
 } from "@/lib/documents/mentions";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import {
+  isResumableProvider,
+  providerAcceptsAssignedSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import {
   emitSessionStarted,
@@ -207,25 +211,21 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const resolvedAgent = resolveAgentByNamedId("build", projectId, namedAgentId);
 
-  const providerSupportsResume =
-    resolvedAgent.provider === "claude-code" ||
-    resolvedAgent.provider === "gemini-cli" ||
-    resolvedAgent.provider === "codex";
-
   // Resume support — scope-guarded
   let cliSessionId: string | undefined;
   let resumeSession = false;
-  if (providerSupportsResume && body.resumeSessionId) {
+  if (isResumableProvider(resolvedAgent.provider) && body.resumeSessionId) {
     const validated = validateResumeSession({
       resumeSessionId: body.resumeSessionId,
       epicId: epicId,
+      expectedProvider: resolvedAgent.provider,
     });
     if (validated) {
       cliSessionId = validated.cliSessionId;
       resumeSession = true;
     }
   }
-  if (!cliSessionId && providerSupportsResume) {
+  if (!cliSessionId && providerAcceptsAssignedSessionId(resolvedAgent.provider)) {
     cliSessionId = crypto.randomUUID();
   }
 

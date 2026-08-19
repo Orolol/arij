@@ -47,6 +47,7 @@ import {
   enrichPromptWithDocumentMentions,
 } from "@/lib/documents/mentions";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
@@ -160,19 +161,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     epic.title
   );
 
-  // Resume support — scope-guarded
-  let resumeCliSessionId: string | undefined;
-  if (resumeSessionIdParam) {
-    const validated = validateResumeSession({
-      resumeSessionId: resumeSessionIdParam,
-      epicId: epic.id,
-      userStoryId: storyId,
-    });
-    if (validated) {
-      resumeCliSessionId = validated.cliSessionId;
-    }
-  }
-
   const sessionsCreated: string[] = [];
   const resolutions: Array<{
     sessionId: string;
@@ -225,16 +213,24 @@ export async function POST(request: NextRequest, { params }: Params) {
     const logsPath = path.join(logsDir, "logs.json");
 
     const agentMode = reviewType === "feature_review" ? "code" : "plan";
-    const providerSupportsResume =
-      resolvedAgent.provider === "claude-code" ||
-      resolvedAgent.provider === "gemini-cli" ||
-      resolvedAgent.provider === "codex";
 
-    // First review session can resume (when provider supports it); subsequent ones start fresh
-    const useResume = idx === 0 && providerSupportsResume && !!resumeCliSessionId;
+    // First review session can resume; subsequent ones start fresh. Resolved
+    // per review type because each one may land on a different provider, and
+    // the stored id is only valid for the provider that created it.
+    const resumeCliSessionId =
+      idx === 0 && resumeSessionIdParam
+        ? validateResumeSession({
+            resumeSessionId: resumeSessionIdParam,
+            epicId: epic.id,
+            userStoryId: storyId,
+            expectedProvider: resolvedAgent.provider,
+          })?.cliSessionId
+        : undefined;
+
+    const useResume = !!resumeCliSessionId;
     const cliSessionId = useResume
       ? resumeCliSessionId
-      : providerSupportsResume
+      : providerAcceptsAssignedSessionId(resolvedAgent.provider)
         ? crypto.randomUUID()
         : undefined;
 

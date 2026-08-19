@@ -83,8 +83,15 @@ export type AgentProvider =
   | "opencode"
   | "deepseek"
   | "kimi"
-  | "zai";
+  | "zai"
+  | "pi"
+  | "oh-my-pi";
 
+/**
+ * Stable order — `pickAlternativeReviewProvider()` walks this list to choose
+ * a reviewer that differs from the builder, so new providers are appended
+ * rather than inserted.
+ */
 export const PROVIDER_OPTIONS: AgentProvider[] = [
   "claude-code",
   "codex",
@@ -95,6 +102,8 @@ export const PROVIDER_OPTIONS: AgentProvider[] = [
   "deepseek",
   "kimi",
   "zai",
+  "pi",
+  "oh-my-pi",
 ];
 
 export const PROVIDER_LABELS: Record<AgentProvider, string> = {
@@ -107,12 +116,17 @@ export const PROVIDER_LABELS: Record<AgentProvider, string> = {
   deepseek: "DeepSeek",
   kimi: "Kimi",
   zai: "Zai",
+  pi: "Pi",
+  "oh-my-pi": "Oh My Pi",
 };
 
 /** Providers grouped by tier for UI display. */
 export const PROVIDER_TIERS: { label: string; providers: AgentProvider[] }[] = [
   { label: "Tier 1", providers: ["claude-code", "gemini-cli", "codex"] },
-  { label: "Tier 2", providers: ["mistral-vibe", "qwen-code", "opencode"] },
+  {
+    label: "Tier 2",
+    providers: ["mistral-vibe", "qwen-code", "opencode", "pi", "oh-my-pi"],
+  },
   { label: "Tier 3", providers: ["deepseek", "kimi", "zai"] },
 ];
 

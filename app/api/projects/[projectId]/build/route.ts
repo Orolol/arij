@@ -64,6 +64,7 @@ import { isPipelineRunActive } from "@/lib/pipeline/constants";
 import { NIGHT_RUN_ID_PREFIX } from "@/lib/night/constants";
 import { nightRunRegistry } from "@/lib/night/registry";
 import { startNightRun } from "@/lib/night/run";
+import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 
 /**
  * Batch build options (everything except `epicIds`, which keeps its
@@ -319,7 +320,11 @@ export async function POST(
       fs.mkdirSync(logsDir, { recursive: true });
       const logsPath = path.join(logsDir, "logs.json");
 
-      const teamCliSessionId = crypto.randomUUID();
+      const teamCliSessionId = providerAcceptsAssignedSessionId(
+        resolvedTeamAgent.provider,
+      )
+        ? crypto.randomUUID()
+        : undefined;
 
       createQueuedSession({
         id: sessionId,
@@ -527,9 +532,11 @@ export async function POST(
       );
     }
 
-    const providerSupportsResume =
-      resolvedBuildAgent.provider === "claude-code" || resolvedBuildAgent.provider === "gemini-cli";
-    const soloCliSessionId = providerSupportsResume ? crypto.randomUUID() : undefined;
+    const soloCliSessionId = providerAcceptsAssignedSessionId(
+      resolvedBuildAgent.provider,
+    )
+      ? crypto.randomUUID()
+      : undefined;
 
     createQueuedSession({
       id: sessionId,

@@ -42,6 +42,10 @@ import {
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import {
+  isResumableProvider,
+  providerAcceptsAssignedSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -161,22 +165,21 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
-  const providerSupportsResume = provider === "claude-code" || provider === "gemini-cli" || provider === "codex";
-
   // Resume support — scope-guarded
   let cliSessionId: string | undefined;
   let resumeSession = false;
-  if (providerSupportsResume && body.resumeSessionId) {
+  if (isResumableProvider(provider) && body.resumeSessionId) {
     const validated = validateResumeSession({
       resumeSessionId: body.resumeSessionId,
       epicId: epicId,
+      expectedProvider: provider,
     });
     if (validated) {
       cliSessionId = validated.cliSessionId;
       resumeSession = true;
     }
   }
-  if (!cliSessionId && providerSupportsResume) {
+  if (!cliSessionId && providerAcceptsAssignedSessionId(provider)) {
     cliSessionId = crypto.randomUUID();
   }
 

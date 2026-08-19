@@ -406,6 +406,78 @@ describe("fix stage dispatch (epic scope)", () => {
     expect(spawn.opts.cliSessionId).not.toBe("cli-gemini");
     await handle.settled;
   });
+
+  it("resumes a previous pi session with the id pi reported", async () => {
+    const { projectId, epicId } = seed("review");
+    const buildSid = `build-${counter}`;
+    insertSession({
+      id: buildSid,
+      projectId,
+      epicId,
+      provider: "pi",
+      cliSessionId: "3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50",
+    });
+    resolutionMocks.resolveAgentByNamedId.mockReturnValue({
+      provider: "pi",
+      namedAgentId: null,
+      name: null,
+      model: null,
+    });
+
+    const driver = createPipelineStageDriver({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildNamedAgentId: null,
+    });
+    const handle = await driver.launchStage({
+      stage: "fix",
+      attempt: 1,
+      fixCycle: 1,
+      previousAttemptSessionId: null,
+      lastCodeSessionId: buildSid,
+    });
+
+    const spawn = startOpts();
+    expect(spawn.opts.resumeSession).toBe(true);
+    expect(spawn.opts.cliSessionId).toBe("3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50");
+    await handle.settled;
+  });
+
+  /**
+   * pi prints the session id it created, so dispatch must not invent one:
+   * a minted id would be stored and later replayed into `--session`.
+   */
+  it("mints no cliSessionId for pi when there is nothing to resume", async () => {
+    const { projectId, epicId } = seed("review");
+    resolutionMocks.resolveAgentByNamedId.mockReturnValue({
+      provider: "oh-my-pi",
+      namedAgentId: null,
+      name: null,
+      model: null,
+    });
+
+    const driver = createPipelineStageDriver({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildNamedAgentId: null,
+    });
+    const handle = await driver.launchStage({
+      stage: "fix",
+      attempt: 1,
+      fixCycle: 1,
+      previousAttemptSessionId: null,
+      lastCodeSessionId: null,
+    });
+
+    const spawn = startOpts();
+    expect(spawn.opts.resumeSession).toBe(false);
+    expect(spawn.opts.cliSessionId).toBeUndefined();
+    await handle.settled;
+  });
 });
 
 describe("review stage dispatch", () => {
