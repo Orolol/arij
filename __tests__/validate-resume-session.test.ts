@@ -10,6 +10,17 @@ vi.mock("@/lib/db", async () => {
 
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
 
+/** A stored session row, defaulting to the legacy Claude Code shape. */
+function row(overrides: Record<string, unknown> = {}) {
+  return {
+    cliSessionId: "cli-abc",
+    claudeSessionId: null,
+    epicId: "epic-1",
+    userStoryId: null,
+    ...overrides,
+  };
+}
+
 describe("validateResumeSession", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -17,49 +28,174 @@ describe("validateResumeSession", () => {
   });
 
   it("returns null when no resumeSessionId is provided", () => {
-    const result = validateResumeSession({ resumeSessionId: undefined, epicId: "epic-1" });
+    const result = validateResumeSession({
+      resumeSessionId: undefined,
+      epicId: "epic-1",
+      expectedProvider: "claude-code",
+    });
     expect(result).toBeNull();
   });
 
   it("returns null when previous session is not found", () => {
     dbMockState.getQueue = [null];
-    const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1" });
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "claude-code",
+    });
     expect(result).toBeNull();
   });
 
   it("returns null when previous session has no cliSessionId", () => {
-    dbMockState.getQueue = [{ cliSessionId: null, claudeSessionId: null, epicId: "epic-1", userStoryId: null }];
-    const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1" });
+    dbMockState.getQueue = [row({ cliSessionId: null })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "claude-code",
+    });
     expect(result).toBeNull();
   });
 
   it("returns cliSessionId when epicId matches (epic-scoped)", () => {
-    dbMockState.getQueue = [{ cliSessionId: "cli-abc", claudeSessionId: null, epicId: "epic-1", userStoryId: null }];
-    const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1" });
+    dbMockState.getQueue = [row()];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "claude-code",
+    });
     expect(result).toEqual({ cliSessionId: "cli-abc" });
   });
 
   it("returns null when epicId does not match", () => {
-    dbMockState.getQueue = [{ cliSessionId: "cli-abc", claudeSessionId: null, epicId: "epic-2", userStoryId: null }];
-    const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1" });
+    dbMockState.getQueue = [row({ epicId: "epic-2" })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "claude-code",
+    });
     expect(result).toBeNull();
   });
 
   it("returns cliSessionId when userStoryId matches (story-scoped)", () => {
-    dbMockState.getQueue = [{ cliSessionId: "cli-abc", claudeSessionId: null, epicId: "epic-1", userStoryId: "story-1" }];
-    const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1", userStoryId: "story-1" });
+    dbMockState.getQueue = [row({ userStoryId: "story-1" })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      userStoryId: "story-1",
+      expectedProvider: "claude-code",
+    });
     expect(result).toEqual({ cliSessionId: "cli-abc" });
   });
 
   it("returns null when userStoryId does not match", () => {
-    dbMockState.getQueue = [{ cliSessionId: "cli-abc", claudeSessionId: null, epicId: "epic-1", userStoryId: "story-2" }];
-    const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1", userStoryId: "story-1" });
+    dbMockState.getQueue = [row({ userStoryId: "story-2" })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      userStoryId: "story-1",
+      expectedProvider: "claude-code",
+    });
     expect(result).toBeNull();
   });
 
   it("falls back to claudeSessionId when cliSessionId is null", () => {
-    dbMockState.getQueue = [{ cliSessionId: null, claudeSessionId: "claude-xyz", epicId: "epic-1", userStoryId: null }];
-    const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1" });
+    dbMockState.getQueue = [
+      row({ cliSessionId: null, claudeSessionId: "claude-xyz" }),
+    ];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "claude-code",
+    });
     expect(result).toEqual({ cliSessionId: "claude-xyz" });
+  });
+
+  it("treats a legacy row with no provider as claude-code", () => {
+    dbMockState.getQueue = [row({ provider: null })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "claude-code",
+    });
+    expect(result).toEqual({ cliSessionId: "cli-abc" });
+  });
+
+  it("returns the cliSessionId of a pi session", () => {
+    dbMockState.getQueue = [
+      row({ cliSessionId: "3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50", provider: "pi" }),
+    ];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "pi",
+    });
+    expect(result).toEqual({
+      cliSessionId: "3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50",
+    });
+  });
+
+  it("returns the cliSessionId of an oh-my-pi session", () => {
+    dbMockState.getQueue = [row({ cliSessionId: "cli-omp", provider: "oh-my-pi" })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "oh-my-pi",
+    });
+    expect(result).toEqual({ cliSessionId: "cli-omp" });
+  });
+
+  it("returns null for a provider that cannot resume", () => {
+    dbMockState.getQueue = [row({ provider: "qwen-code" })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "qwen-code",
+    });
+    expect(result).toBeNull();
+  });
+
+  // ---------------------------------------------------------------------
+  // Cross-provider guard: a stored id only means something to the CLI that
+  // minted it, so a same-scope id from another provider must be refused.
+  // ---------------------------------------------------------------------
+
+  it("refuses a gemini session id when launching pi", () => {
+    dbMockState.getQueue = [row({ cliSessionId: "cli-gemini", provider: "gemini-cli" })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "pi",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("refuses a pi session id when launching claude-code", () => {
+    dbMockState.getQueue = [row({ cliSessionId: "cli-pi", provider: "pi" })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "claude-code",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("refuses a pi session id when launching oh-my-pi", () => {
+    dbMockState.getQueue = [row({ cliSessionId: "cli-pi", provider: "pi" })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "oh-my-pi",
+    });
+    expect(result).toBeNull();
+  });
+
+  it("refuses a legacy claude-code row when launching another provider", () => {
+    dbMockState.getQueue = [row({ provider: null })];
+    const result = validateResumeSession({
+      resumeSessionId: "sess-1",
+      epicId: "epic-1",
+      expectedProvider: "opencode",
+    });
+    expect(result).toBeNull();
   });
 });

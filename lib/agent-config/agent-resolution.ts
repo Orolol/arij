@@ -1,7 +1,12 @@
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentProviderDefaults, namedAgents } from "@/lib/db/schema";
-import { AGENT_TYPES, type AgentProvider, type AgentType } from "./constants";
+import {
+  AGENT_TYPES,
+  isAgentProvider,
+  type AgentProvider,
+  type AgentType,
+} from "./constants";
 
 export type ProviderSource = "builtin" | "global" | "project";
 export type AgentResolveSource = ProviderSource | "override";
@@ -36,16 +41,9 @@ const FALLBACK_PROVIDER: AgentProvider = "claude-code";
 /** Name of the seeded global default agent (inserted by lib/db/index.ts). */
 export const GLOBAL_DEFAULT_AGENT_NAME = "Claude Code";
 
+/** Maps a stored provider column to a known provider, or the fallback. */
 function normalizeProvider(value: string | null | undefined): AgentProvider {
-  if (value === "codex") return "codex";
-  if (value === "gemini-cli") return "gemini-cli";
-  if (value === "mistral-vibe") return "mistral-vibe";
-  if (value === "qwen-code") return "qwen-code";
-  if (value === "opencode") return "opencode";
-  if (value === "deepseek") return "deepseek";
-  if (value === "kimi") return "kimi";
-  if (value === "zai") return "zai";
-  return "claude-code";
+  return value && isAgentProvider(value) ? value : FALLBACK_PROVIDER;
 }
 
 interface ProviderDefaultRow {

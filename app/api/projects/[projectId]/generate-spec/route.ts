@@ -91,7 +91,10 @@ export async function POST(
 
   try {
     let result;
-    if (resolvedAgent.provider === "codex" || resolvedAgent.provider === "gemini-cli") {
+    // Every non-Claude provider goes through the provider abstraction. An
+    // allowlist here would silently run some other CLI's work on Claude while
+    // the activity record claims the resolved provider.
+    if (resolvedAgent.provider !== "claude-code") {
       const dynamicProvider = getProvider(resolvedAgent.provider);
       const session = dynamicProvider.spawn({
         sessionId: `spec-${createId()}`,

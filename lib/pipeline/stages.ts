@@ -27,10 +27,11 @@ import {
   extractSessionUsage,
   resolveSessionOutput,
 } from "@/lib/claude/resolve-session-output";
+import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
 import {
   isResumableProvider,
-  validateResumeSession,
-} from "@/lib/agent-sessions/validate-resume";
+  providerReportsOwnSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 import {
   resolveAgentByNamedId,
   resolveAgentForDispatch,
@@ -95,9 +96,9 @@ import type {
  * attempt 1 and append the open review feedback + pipeline fix instructions
  * to the standard build prompt.
  *
- * `isResumableProvider` (lib/agent-sessions/validate-resume.ts) is the
- * single truth for resume support — NOT the build routes' local list, which
- * wrongly includes codex.
+ * `isResumableProvider` (lib/agent-sessions/resume-capability.ts) is the
+ * single truth for resume support. The build routes' local lists — which
+ * wrongly included codex — now defer to it too.
  */
 
 export const PIPELINE_REVIEW_LABEL = "Code Review";
@@ -408,20 +409,26 @@ async function dispatchPipelineStage(
   let cliSessionId: string | undefined;
   let resumeSession = false;
   if (resumeTarget && isResumableProvider(resolved.provider)) {
+    // validateResumeSession enforces the cross-provider guard itself: the
+    // stored cliSessionId only means something to the CLI that created it.
     const validated = validateResumeSession({
       resumeSessionId: resumeTarget,
       epicId,
       ...(scope === "story" && userStoryId ? { userStoryId } : {}),
+      expectedProvider: resolved.provider,
     });
-    // Guard against cross-provider resume: the stored cliSessionId only
-    // means something to the CLI that created it.
-    const targetRow = readSessionProvider(resumeTarget);
-    if (validated && targetRow?.provider === resolved.provider) {
+    if (validated) {
       cliSessionId = validated.cliSessionId;
       resumeSession = true;
     }
   }
-  if (!cliSessionId && isResumableProvider(resolved.provider)) {
+  // pi announces the session id it created, so minting one here would store
+  // an id the CLI never used.
+  if (
+    !cliSessionId &&
+    isResumableProvider(resolved.provider) &&
+    !providerReportsOwnSessionId(resolved.provider)
+  ) {
     cliSessionId = crypto.randomUUID();
   }
 
