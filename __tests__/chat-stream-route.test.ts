@@ -19,6 +19,7 @@ const mockSpawnHelpers = vi.hoisted(() => ({
 
 const mockResolveAgentPrompt = vi.hoisted(() => vi.fn());
 const mockDynamicProviderSpawn = vi.hoisted(() => vi.fn());
+const mockGetProvider = vi.hoisted(() => vi.fn());
 const mockResolveAgentByNamedId = vi.hoisted(() => vi.fn());
 
 // Real drizzle-orm + real @/lib/db/schema: both are side-effect-free pure
@@ -44,7 +45,7 @@ vi.mock("@/lib/claude/spawn", () => ({
 }));
 
 vi.mock("@/lib/providers", () => ({
-  getProvider: vi.fn(() => ({
+  getProvider: mockGetProvider.mockImplementation(() => ({
     spawn: mockDynamicProviderSpawn.mockImplementation(() => ({
       promise: Promise.resolve({ success: true, result: "Codex response" }),
       kill: vi.fn(),
@@ -480,9 +481,9 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     expect(assistantInsert.content).not.toContain('"type":"result"');
   });
 
-  it("falls back to fresh Codex run when resume session is expired", async () => {
+  it("falls back to a fresh run when a Gemini resume session is expired", async () => {
     mockResolveAgentByNamedId.mockReturnValue({
-      provider: "codex",
+      provider: "gemini-cli",
       model: undefined,
       namedAgentId: null,
     });
@@ -491,15 +492,15 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       promise: Promise.resolve({
         success: false,
         error: "session not found",
-        cliSessionId: "expired-codex",
+        cliSessionId: "expired-gemini",
       }),
       kill: vi.fn(),
     };
     const secondSession = {
       promise: Promise.resolve({
         success: true,
-        result: "Fresh codex fallback",
-        cliSessionId: "new-codex-session",
+        result: "Fresh gemini fallback",
+        cliSessionId: "new-gemini-session",
       }),
       kill: vi.fn(),
     };
@@ -511,11 +512,76 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     dbMockState.getQueue = [
       { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
       {
+        id: "conv-gemini",
+        type: "brainstorm",
+        provider: "gemini-cli",
+        namedAgentId: null,
+        cliSessionId: "expired-gemini",
+        label: "Chat",
+      },
+    ];
+    dbMockState.allQueue = [
+      [{ role: "user", content: "Previous", createdAt: "2026-01-01T10:00:00.000Z" }],
+    ];
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({ content: "Continue", conversationId: "conv-gemini" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const events = await readSseEvents(response as unknown as Response);
+    expect(events.some((e) => e.delta === "Fresh gemini fallback")).toBe(true);
+    expect(mockDynamicProviderSpawn).toHaveBeenCalledTimes(2);
+    expect(mockDynamicProviderSpawn.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        prompt: "Continue",
+        cliSessionId: "expired-gemini",
+        resumeSession: true,
+      }),
+    );
+    expect(mockDynamicProviderSpawn.mock.calls[1]?.[0]).toEqual(
+      expect.objectContaining({
+        prompt: "CHAT_PROMPT",
+        resumeSession: false,
+      }),
+    );
+  });
+
+  /**
+   * This used to assert a codex resume followed by an expired-session
+   * fallback. That resume could never succeed: codex only receives a
+   * cliSessionId inside its `exec resume` branch and its parseSessionId()
+   * returns undefined, so the stored id is always one Arij invented and
+   * `codex exec resume <it>` is rejected. The old behaviour was a guaranteed
+   * wasted CLI round-trip before the fallback; codex now goes straight to a
+   * fresh run.
+   */
+  it("starts a fresh Codex run instead of a resume that cannot succeed", async () => {
+    mockResolveAgentByNamedId.mockReturnValue({
+      provider: "codex",
+      model: undefined,
+      namedAgentId: null,
+    });
+
+    mockDynamicProviderSpawn.mockReturnValueOnce({
+      promise: Promise.resolve({
+        success: true,
+        result: "Fresh codex run",
+        cliSessionId: "new-codex-session",
+      }),
+      kill: vi.fn(),
+    });
+
+    dbMockState.getQueue = [
+      { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
+      {
         id: "conv-codex",
         type: "brainstorm",
         provider: "codex",
         namedAgentId: null,
-        cliSessionId: "expired-codex",
+        cliSessionId: "stale-codex",
         label: "Chat",
       },
     ];
@@ -531,20 +597,65 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
 
     expect(response.status).toBe(200);
     const events = await readSseEvents(response as unknown as Response);
-    expect(events.some((e) => e.delta === "Fresh codex fallback")).toBe(true);
-    expect(mockDynamicProviderSpawn).toHaveBeenCalledTimes(2);
+    expect(events.some((e) => e.delta === "Fresh codex run")).toBe(true);
+    expect(mockDynamicProviderSpawn).toHaveBeenCalledTimes(1);
     expect(mockDynamicProviderSpawn.mock.calls[0]?.[0]).toEqual(
-      expect.objectContaining({
-        prompt: "Continue",
-        cliSessionId: "expired-codex",
-        resumeSession: true,
-      }),
-    );
-    expect(mockDynamicProviderSpawn.mock.calls[1]?.[0]).toEqual(
-      expect.objectContaining({
-        prompt: "CHAT_PROMPT",
-        resumeSession: false,
-      }),
+      expect.objectContaining({ resumeSession: false }),
     );
   });
+
+  // -------------------------------------------------------------------
+  // Pi / Oh My Pi: the conversation APIs accept them, so chat must honour
+  // the stored provider instead of falling back to the chat default.
+  // -------------------------------------------------------------------
+
+  it.each(["pi", "oh-my-pi"])(
+    "runs a stored %s conversation on that provider, not the chat default",
+    async (provider) => {
+      // The chat default stays claude-code; only the conversation says pi.
+      mockResolveAgentByNamedId.mockReturnValue({
+        provider: "claude-code",
+        model: undefined,
+        namedAgentId: null,
+      });
+
+      mockDynamicProviderSpawn.mockReturnValueOnce({
+        promise: Promise.resolve({
+          success: true,
+          result: "Pi answered",
+          cliSessionId: "3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50",
+        }),
+        kill: vi.fn(),
+      });
+
+      dbMockState.getQueue = [
+        { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
+        {
+          id: "conv-pi",
+          type: "brainstorm",
+          provider,
+          namedAgentId: null,
+          cliSessionId: null,
+          label: "Chat",
+        },
+      ];
+      dbMockState.allQueue = [[]];
+
+      const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+      const response = await POST(
+        mockJsonRequest({ content: "Hello", conversationId: "conv-pi" }),
+        mockRouteContext({ projectId: "proj1" }),
+      );
+
+      expect(response.status).toBe(200);
+      const events = await readSseEvents(response as unknown as Response);
+      expect(events.some((e) => e.delta === "Pi answered")).toBe(true);
+
+      expect(mockGetProvider).toHaveBeenCalledWith(provider);
+      expect(mockSpawnHelpers.spawnClaudeStream).not.toHaveBeenCalled();
+      // pi reports its own session id; minting one would store an id the CLI
+      // never used and replay it into `--session` next turn.
+      expect(mockDynamicProviderSpawn.mock.calls[0]?.[0].cliSessionId).toBeUndefined();
+    },
+  );
 });

@@ -57,6 +57,7 @@ import { extractLastNonEmptyTextFromFile } from "@/lib/agent-sessions/last-text"
 import { buildMemoryDistillPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 import {
   getProjectMemoryContent,
   saveProjectMemory,
@@ -411,7 +412,9 @@ export async function dispatchMemoryDistillSession(
   const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
   fs.mkdirSync(logsDir, { recursive: true });
   const logsPath = path.join(logsDir, "logs.json");
-  const cliSessionId = crypto.randomUUID();
+  const cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
+    ? crypto.randomUUID()
+    : undefined;
 
   // Deliberately no epicId on the distill session row: epic-scoped
   // concurrency guards must not treat a background distill as "an agent is

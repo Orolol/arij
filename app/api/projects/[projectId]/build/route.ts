@@ -320,7 +320,11 @@ export async function POST(
       fs.mkdirSync(logsDir, { recursive: true });
       const logsPath = path.join(logsDir, "logs.json");
 
-      const teamCliSessionId = crypto.randomUUID();
+      const teamCliSessionId = providerAcceptsAssignedSessionId(
+        resolvedTeamAgent.provider,
+      )
+        ? crypto.randomUUID()
+        : undefined;
 
       createQueuedSession({
         id: sessionId,
