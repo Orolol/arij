@@ -26,10 +26,17 @@ export interface ChatAgentSelection {
 
 interface ChatProviderSelectProps {
   activeConversation: Conversation | null;
-  activeProvider: string;
   onSelect: (selection: ChatAgentSelection) => void;
   disabled?: boolean;
   className?: string;
+}
+
+/** True for a provider string that has its own item in the list below. */
+function isSelectableProvider(value: string): boolean {
+  return (
+    value === OPENAI_COMPATIBLE_PROVIDER ||
+    PROVIDER_OPTIONS.includes(value as AgentProvider)
+  );
 }
 
 /**
@@ -39,7 +46,6 @@ interface ChatProviderSelectProps {
  */
 export function ChatProviderSelect({
   activeConversation,
-  activeProvider,
   onSelect,
   disabled = false,
   className,
@@ -63,24 +69,19 @@ export function ChatProviderSelect({
     );
   }
 
-  // Determine selected value:
-  // 1. Direct API (OpenAI-compatible)
-  // 2. Named Agent ID
-  // 3. Raw CLI Provider string
-  let selectedValue = "";
-  if (activeConversation) {
-    if (activeConversation.namedAgentId) {
-      selectedValue = activeConversation.namedAgentId;
-    } else if (activeConversation.provider === OPENAI_COMPATIBLE_PROVIDER) {
-      selectedValue = OPENAI_COMPATIBLE_PROVIDER;
-    } else if (activeConversation.provider) {
-      selectedValue = activeConversation.provider;
-    }
-  } else if (activeProvider === OPENAI_COMPATIBLE_PROVIDER) {
-    selectedValue = OPENAI_COMPATIBLE_PROVIDER;
-  } else if (activeProvider) {
-    selectedValue = activeProvider;
-  }
+  // Mirrors the server's resolution order (chat/stream/route.ts): a linked
+  // named agent wins, otherwise the stored provider. A namedAgentId whose
+  // agent was deleted falls back to the provider rather than to an empty
+  // selection, so the trigger never goes blank on a live conversation.
+  const linkedAgent = activeConversation?.namedAgentId
+    ? safeAgents.find((agent) => agent.id === activeConversation.namedAgentId)
+    : undefined;
+  const storedProvider = activeConversation?.provider ?? "";
+  const selectedValue = linkedAgent
+    ? linkedAgent.id
+    : isSelectableProvider(storedProvider)
+      ? storedProvider
+      : "";
 
   function handleValueChange(nextValue: string) {
     if (nextValue === OPENAI_COMPATIBLE_PROVIDER) {

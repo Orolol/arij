@@ -86,11 +86,7 @@ describe("ChatProviderSelect", () => {
 
   it("offers Direct API (OpenAI-compatible) plus all configured Named Agents", () => {
     render(
-      <ChatProviderSelect
-        activeConversation={conversation()}
-        activeProvider="claude-code"
-        onSelect={noop}
-      />,
+      <ChatProviderSelect activeConversation={conversation()} onSelect={noop} />,
     );
 
     const values = optionValues();
@@ -103,7 +99,6 @@ describe("ChatProviderSelect", () => {
     render(
       <ChatProviderSelect
         activeConversation={conversation({ provider: "openai-compatible" })}
-        activeProvider="openai-compatible"
         onSelect={noop}
       />,
     );
@@ -115,14 +110,22 @@ describe("ChatProviderSelect", () => {
     expect(fastOption?.textContent).toBe("OpenAI-compatible");
   });
 
+  it("falls back to the stored provider when the linked named agent was deleted", () => {
+    render(
+      <ChatProviderSelect
+        activeConversation={conversation({ namedAgentId: "agent-gone", provider: "codex" })}
+        onSelect={noop}
+      />,
+    );
+
+    const select = screen.getByTestId("provider-select-native") as HTMLSelectElement;
+    expect(select.value).toBe("codex");
+  });
+
   it("reports the chosen provider and named agent through onSelect", () => {
     const onSelect = vi.fn();
     render(
-      <ChatProviderSelect
-        activeConversation={conversation()}
-        activeProvider="claude-code"
-        onSelect={onSelect}
-      />,
+      <ChatProviderSelect activeConversation={conversation()} onSelect={onSelect} />,
     );
 
     fireEvent.change(screen.getByTestId("provider-select-native"), {

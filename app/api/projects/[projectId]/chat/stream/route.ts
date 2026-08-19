@@ -121,9 +121,22 @@ export async function POST(
     conversation?.namedAgentId ?? null
   );
   const conversationProvider = normalizeProvider(conversation?.provider);
+  const overridesProvider =
+    Boolean(conversationProvider) && !conversation?.namedAgentId;
   const resolvedAgent =
-    conversationProvider && !conversation?.namedAgentId
-      ? { ...resolvedByNamedAgent, provider: conversationProvider }
+    overridesProvider && conversationProvider
+      ? {
+          ...resolvedByNamedAgent,
+          provider: conversationProvider,
+          // A raw provider choice carries no model. Keeping the resolved
+          // agent's model would hand e.g. `claude-opus-*` to `codex -m`,
+          // which rejects it — drop it and let the CLI pick its default
+          // unless both sides agree on the provider.
+          model:
+            conversationProvider === resolvedByNamedAgent.provider
+              ? resolvedByNamedAgent.model
+              : undefined,
+        }
       : resolvedByNamedAgent;
 
   let openAiConfig: ReturnType<typeof getOpenAiConfigFromSettings> | null = null;
@@ -276,6 +289,8 @@ export async function POST(
   let prompt = "";
   let chatSystemPrompt = "";
   const isEpicCreation = isEpicCreationConversationAgentType(conversationType);
+  const isFastMode =
+    resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER && openAiConfig !== null;
 
   if (isEpicCreation) {
     const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
@@ -290,18 +305,24 @@ export async function POST(
       .orderBy(epics.position)
       .all();
 
+    // The CLI path ships one self-contained prompt, so the transcript it
+    // embeds must include the message just saved. Fast mode sends that
+    // message as its own `user` turn, so its prompt stops one turn earlier
+    // — otherwise the current question travels twice.
+    const historyForPrompt = isFastMode ? messageHistory : fullHistory;
+
     prompt = finalize
       ? buildEpicFinalizationPrompt(
           project,
           [],
-          fullHistory,
+          historyForPrompt,
           globalPrompt,
           existingEpics,
         )
       : buildEpicRefinementPrompt(
           project,
           [],
-          fullHistory,
+          historyForPrompt,
           globalPrompt,
           existingEpics,
         );
@@ -314,8 +335,15 @@ export async function POST(
   // branches. History travels in the messages array (no session resume),
   // and upstream SSE chunks are re-emitted as token-by-token delta events.
   // ---------------------------------------------------------------------
-  if (resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER && openAiConfig) {
-    let fastModeSystemPrompt = isEpicCreation ? prompt : chatSystemPrompt;
+  if (isFastMode && openAiConfig) {
+    // Parity with the CLI branch below: the direct API must see the project
+    // context (spec, memory, documents) too, not just the configured chat
+    // system prompt — which is empty by default, leaving the model with no
+    // idea which project it is talking about. History is left out here; it
+    // travels as real chat messages.
+    let fastModeSystemPrompt = isEpicCreation
+      ? prompt
+      : buildChatPrompt(project, [], [], chatSystemPrompt);
 
     try {
       if (fastModeSystemPrompt.trim()) {
@@ -333,29 +361,23 @@ export async function POST(
     }
 
     const openAiMessages: OpenAiChatMessage[] = [];
-    if (isEpicCreation) {
-      if (fastModeSystemPrompt.trim()) {
-        openAiMessages.push({ role: "system", content: fastModeSystemPrompt });
-      }
-      openAiMessages.push({
-        role: "user",
-        content: userContent,
-      });
-    } else {
-      if (fastModeSystemPrompt.trim()) {
-        openAiMessages.push({ role: "system", content: fastModeSystemPrompt });
-      }
+    if (fastModeSystemPrompt.trim()) {
+      openAiMessages.push({ role: "system", content: fastModeSystemPrompt });
+    }
+    // The epic builders embed the transcript in the system prompt already;
+    // only the chat prompt needs it replayed as messages.
+    if (!isEpicCreation) {
       for (const message of messageHistory) {
         openAiMessages.push({
           role: message.role,
           content: message.content,
         });
       }
-      openAiMessages.push({
-        role: "user",
-        content: userContent,
-      });
     }
+    openAiMessages.push({
+      role: "user",
+      content: userContent,
+    });
     const activityLabel = conversation?.label
       ? `Chat: ${conversation.label}`
       : "Chat";

@@ -303,16 +303,14 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       if (!activeId || hasMessages) {
         return;
       }
-      if (provider === OPENAI_COMPATIBLE_PROVIDER) {
-        await updateConversation(activeId, {
-          provider: OPENAI_COMPATIBLE_PROVIDER,
-          namedAgentId: null,
-        });
-      } else if (namedAgentId) {
-        await updateConversation(activeId, { namedAgentId, provider });
-      } else {
-        await updateConversation(activeId, { provider, namedAgentId: null });
-      }
+      // A named agent owns its provider: the PATCH route re-derives it from
+      // the agent row, so sending one here would be silently ignored. Direct
+      // API and raw CLI providers both travel as a provider with the
+      // named-agent link explicitly cleared.
+      await updateConversation(
+        activeId,
+        namedAgentId ? { namedAgentId } : { provider, namedAgentId: null },
+      );
     }
 
     async function handleCreateEpic() {

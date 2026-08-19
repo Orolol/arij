@@ -94,11 +94,7 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
 
   it("includes Direct API, Named Agents, and CLI Providers in the single dropdown", () => {
     render(
-      <ChatProviderSelect
-        activeConversation={createConversation()}
-        activeProvider="claude-code"
-        onSelect={noop}
-      />,
+      <ChatProviderSelect activeConversation={createConversation()} onSelect={noop} />,
     );
 
     const select = screen.getByTestId("chat-agent-select") as HTMLSelectElement;
@@ -129,6 +125,7 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
         activeProvider="codex"
         hasMessages={false}
         isBusy={false}
+        onSelectAgentOrProvider={noop}
       />,
     );
 
@@ -144,6 +141,7 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
         activeProvider="openai-compatible"
         hasMessages={false}
         isBusy={false}
+        onSelectAgentOrProvider={noop}
       />,
     );
 
@@ -157,7 +155,6 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
     render(
       <ChatProviderSelect
         activeConversation={createConversation({ namedAgentId: "agent-1", provider: "claude-code" })}
-        activeProvider="claude-code"
         onSelect={onSelect}
       />,
     );
@@ -177,7 +174,6 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
     render(
       <ChatProviderSelect
         activeConversation={createConversation({ namedAgentId: null, provider: "openai-compatible" })}
-        activeProvider="openai-compatible"
         onSelect={onSelect}
       />,
     );
@@ -196,7 +192,6 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
     render(
       <ChatProviderSelect
         activeConversation={createConversation({ namedAgentId: "agent-1", provider: "claude-code" })}
-        activeProvider="claude-code"
         onSelect={onSelect}
       />,
     );
@@ -219,6 +214,7 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
         activeProvider="claude-code"
         hasMessages={true}
         isBusy={false}
+        onSelectAgentOrProvider={noop}
       />,
     );
 
@@ -230,6 +226,7 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
         activeProvider="claude-code"
         hasMessages={false}
         isBusy={true}
+        onSelectAgentOrProvider={noop}
       />,
     );
 

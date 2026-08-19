@@ -242,7 +242,8 @@ describe("UnifiedChatPanel named-agent toggle", () => {
     expect(screen.getByTestId("chat-agent-select")).toBeDisabled();
   });
 
-  it("calls PATCH API when named agent changes", async () => {
+  /** Selects `value` in the header dropdown, returns the PATCH mock. */
+  async function selectAndCapturePatch(value: string) {
     const mockFetch = vi.fn().mockResolvedValue({
       json: () => Promise.resolve({ data: {} }),
     });
@@ -250,18 +251,53 @@ describe("UnifiedChatPanel named-agent toggle", () => {
 
     renderExpandedPanel();
     fireEvent.change(screen.getByTestId("chat-agent-select"), {
-      target: { value: "agent-1" },
+      target: { value },
     });
 
-    await waitFor(() => {
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(mockFetch).toHaveBeenCalledWith(
-        "/api/projects/proj1/conversations/conv1",
-        expect.objectContaining({
-          method: "PATCH",
-          body: JSON.stringify({ namedAgentId: "agent-1", provider: "claude-code" }),
-        }),
-      );
-    });
+    await waitFor(() => expect(mockFetch).toHaveBeenCalled());
+    return mockFetch;
+  }
+
+  it("calls PATCH API when named agent changes", async () => {
+    const mockFetch = await selectAndCapturePatch("agent-1");
+
+    // Exactly one write: a single selection must not fan out into competing
+    // PATCHes that can undo each other.
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    // No provider: the route derives it from the agent row, so sending one
+    // would only be a redundant field in the contract.
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/projects/proj1/conversations/conv1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ namedAgentId: "agent-1" }),
+      }),
+    );
+  });
+
+  it("PATCHes the direct API provider with the named-agent link cleared", async () => {
+    const mockFetch = await selectAndCapturePatch("openai-compatible");
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/projects/proj1/conversations/conv1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ provider: "openai-compatible", namedAgentId: null }),
+      }),
+    );
+  });
+
+  it("PATCHes a raw CLI provider with the named-agent link cleared", async () => {
+    const mockFetch = await selectAndCapturePatch("codex");
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledWith(
+      "/api/projects/proj1/conversations/conv1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ provider: "codex", namedAgentId: null }),
+      }),
+    );
   });
 });

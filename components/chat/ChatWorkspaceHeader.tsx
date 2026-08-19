@@ -44,7 +44,6 @@ export function ChatWorkspaceHeader({
       )}
       <ChatProviderSelect
         activeConversation={activeConversation}
-        activeProvider={activeProvider}
         onSelect={onSelectAgentOrProvider}
         disabled={!activeConversation || hasMessages || isBusy}
       />
