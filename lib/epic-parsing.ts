@@ -176,7 +176,10 @@ function maybeParseJsonObject(input: string): Record<string, unknown> | null {
 function unwrapEpicPayload(raw: unknown): Record<string, unknown> | null {
   const queue: unknown[] = [raw];
   const seen = new Set<unknown>();
-  const wrapperKeys = ["epic", "data", "result", "payload"];
+  // "epics" is included because a CLI that lost the single-epic instruction
+  // answers with {"epics": [ … ]}. Only the first well-formed epic is kept —
+  // the create endpoint builds one epic per call.
+  const wrapperKeys = ["epic", "epics", "data", "result", "payload"];
 
   while (queue.length > 0) {
     const current = queue.shift();

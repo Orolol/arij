@@ -9,6 +9,7 @@ import {
 const mockPromptBuilder = vi.hoisted(() => ({
   buildChatPrompt: vi.fn(() => "CHAT_PROMPT"),
   buildEpicRefinementPrompt: vi.fn(() => "EPIC_PROMPT"),
+  buildEpicFinalizationPrompt: vi.fn(() => "EPIC_FINALIZATION_PROMPT"),
   buildTitleGenerationPrompt: vi.fn(() => "TITLE_PROMPT"),
 }));
 
@@ -36,6 +37,7 @@ vi.mock("@/lib/utils/nanoid", () => ({
 vi.mock("@/lib/claude/prompt-builder", () => ({
   buildChatPrompt: mockPromptBuilder.buildChatPrompt,
   buildEpicRefinementPrompt: mockPromptBuilder.buildEpicRefinementPrompt,
+  buildEpicFinalizationPrompt: mockPromptBuilder.buildEpicFinalizationPrompt,
   buildTitleGenerationPrompt: mockPromptBuilder.buildTitleGenerationPrompt,
 }));
 
@@ -100,6 +102,7 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
 
     mockPromptBuilder.buildChatPrompt.mockReturnValue("CHAT_PROMPT");
     mockPromptBuilder.buildEpicRefinementPrompt.mockReturnValue("EPIC_PROMPT");
+    mockPromptBuilder.buildEpicFinalizationPrompt.mockReturnValue("EPIC_FINALIZATION_PROMPT");
     mockPromptBuilder.buildTitleGenerationPrompt.mockReturnValue("TITLE_PROMPT");
 
     mockResolveAgentPrompt.mockResolvedValue("Chat system prompt");
@@ -272,6 +275,60 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     );
     expect(mockSpawnHelpers.spawnClaudeStream).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: "EPIC_PROMPT" }),
+    );
+  });
+
+  /**
+   * A resumed session normally receives only the new user text. Finalization
+   * must not: the strict JSON contract lives in the built prompt, and sending
+   * "Generate the final epic…" alone made the CLI answer in prose, so the
+   * client parser reported "I couldn't extract a full epic yet".
+   */
+  it("keeps the full finalization prompt when resuming an epic_creation session", async () => {
+    dbMockState.getQueue = [
+      { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
+      {
+        id: "conv1",
+        type: "epic_creation",
+        provider: "claude-code",
+        label: "New Epic",
+        cliSessionId: "3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50",
+      },
+      { key: "global_prompt", value: JSON.stringify("Global prompt") },
+    ];
+
+    dbMockState.allQueue = [
+      [{ role: "user", content: "Need auth flow", createdAt: "2026-01-01T10:00:00.000Z" }],
+      [],
+    ];
+
+    mockSpawnHelpers.spawnClaude.mockReturnValue({
+      promise: Promise.resolve({
+        success: true,
+        result: '```json\n{"title":"Auth"}\n```',
+      }),
+      kill: vi.fn(),
+    });
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({
+        content: "Generate the final epic with user stories based on our discussion.",
+        conversationId: "conv1",
+        finalize: true,
+      }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    expect(response.status).toBe(200);
+    await readSseEvents(response);
+
+    expect(mockPromptBuilder.buildEpicFinalizationPrompt).toHaveBeenCalledTimes(1);
+    expect(mockSpawnHelpers.spawnClaude).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: "EPIC_FINALIZATION_PROMPT",
+        resumeSession: true,
+      }),
     );
   });
 

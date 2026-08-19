@@ -224,6 +224,22 @@ describe("parseEpicFromConversation", () => {
     );
   });
 
+  it("unwraps an epics array and keeps the first well-formed epic", () => {
+    const messages = [
+      { role: "user", content: "Generate the final epic" },
+      {
+        role: "assistant",
+        content:
+          '```json\n{"epics":[{"title":"Agent model","description":"desc A","userStories":[{"title":"As a dev, I want optional params so that agents stay flexible","acceptanceCriteria":["Model is nullable"]}]},{"title":"Settings UI","description":"desc B","userStories":[{"title":"As a user, I want a settings tab so that I can edit agents"}]}]}\n```',
+      },
+    ];
+    const result = parseEpicFromConversation(messages);
+    expect(result).not.toBeNull();
+    expect(result!.title).toBe("Agent model");
+    expect(result!.userStories).toHaveLength(1);
+    expect(result!.userStories[0].acceptanceCriteria).toBe("- [ ] Model is nullable");
+  });
+
   it("normalizes object-array criteria and array descriptions", () => {
     const messages = [
       { role: "user", content: "Generate the final epic" },

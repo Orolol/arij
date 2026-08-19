@@ -212,7 +212,14 @@ export async function POST(
   if (!cliSessionId && providerAcceptsAssignedSessionId(resolvedAgent.provider)) {
     cliSessionId = crypto.randomUUID();
   }
-  const effectivePrompt = resumeSession ? userContent : prompt;
+  // A resumed session already carries the conversation, so the new user text is
+  // normally enough. Finalization is the exception: the strict JSON output
+  // contract lives in the built prompt, and sending only "Generate the final
+  // epic…" makes the CLI answer in prose (or with an `epics` array), which the
+  // client parser then rejects. Always send the full prompt for that turn.
+  const isEpicFinalization =
+    finalize && isEpicCreationConversationAgentType(conversationType);
+  const effectivePrompt = resumeSession && !isEpicFinalization ? userContent : prompt;
 
   function persistConversationSessionId(nextCliSessionId?: string) {
     if (!conversationId || !nextCliSessionId) return;
