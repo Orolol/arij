@@ -245,6 +245,22 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     expect(headers["Content-Type"]).toBe("application/json");
   });
 
+  it("includes reasoning_effort in the body only when it is not off", async () => {
+    seedFastModeConversation({ settings: { openai_reasoning_effort: "medium" } });
+    fetchMock.mockResolvedValue(sseResponse(["ok"]));
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({ content: "Current question", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+    await readSseEvents(response);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body.reasoning_effort).toBe("medium");
+  });
+
   it("omits the system message when no chat system prompt is configured", async () => {
     mockResolveAgentPrompt.mockResolvedValue("   ");
     seedFastModeConversation();
@@ -262,6 +278,38 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
       messages: Array<{ role: string }>;
     };
     expect(body.messages[0]?.role).toBe("user");
+  });
+
+  it("rejects epic_creation and brainstorm conversations with 400", async () => {
+    for (const type of ["epic_creation", "brainstorm"]) {
+      seedFastModeConversation({
+        conversation: {
+          id: "conv1",
+          type,
+          provider: "openai-compatible",
+          label: type === "epic_creation" ? "New Epic" : "Brainstorm",
+          status: "active",
+          namedAgentId: null,
+        },
+        settings: {},
+      });
+      // Epic path reads the global prompt and existing epics before the branch.
+      dbMockState.getQueue.push({ key: "global_prompt", value: JSON.stringify("") });
+      dbMockState.allQueue.push([]);
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValue(sseResponse(["ok"]));
+
+      const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+      const response = await POST(
+        mockJsonRequest({ content: "Hello", conversationId: "conv1" }),
+        mockRouteContext({ projectId: "proj1" }),
+      );
+
+      expect(response.status).toBe(400);
+      const json = (await response.json()) as { error: string };
+      expect(json.error).toContain("not available for epic-creation or brainstorm");
+      expect(fetchMock).not.toHaveBeenCalled();
+    }
   });
 
   it("rejects image attachments with 400", async () => {
@@ -300,6 +348,61 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("emits a readable error delta and marks the conversation error on HTTP failure", async () => {
+    seedFastModeConversation();
+    fetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ error: { message: "Invalid API key" } }), {
+        status: 401,
+        statusText: "Unauthorized",
+      }),
+    );
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({ content: "Current question", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    const events = await readSseEvents(response);
+    const failureMessage = "OpenAI-compatible API error: 401 Unauthorized: Invalid API key";
+    expect(events).toEqual([
+      { delta: failureMessage },
+      { done: true, messageId: "id-123" },
+    ]);
+
+    // The user message remains in history; the failure is persisted as the
+    // assistant entry so the next message starts from a consistent state.
+    expect(dbMockState.insertCalls[0]).toMatchObject({ role: "user" });
+    expect(dbMockState.insertCalls[1]).toMatchObject({
+      role: "assistant",
+      content: failureMessage,
+    });
+    expect(dbMockState.updateCalls).toContainEqual({ status: "generating" });
+    expect(dbMockState.updateCalls).toContainEqual({ status: "error" });
+  });
+
+  it("emits a readable error delta when the server is unreachable", async () => {
+    seedFastModeConversation();
+    fetchMock.mockRejectedValue(
+      Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }),
+    );
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({ content: "Current question", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    const events = await readSseEvents(response);
+    const failureMessage =
+      "OpenAI-compatible API error: connection refused — is the server running.";
+    expect(events).toEqual([
+      { delta: failureMessage },
+      { done: true, messageId: "id-123" },
+    ]);
+    expect(dbMockState.updateCalls).toContainEqual({ status: "error" });
+  });
+
   it("keeps CLI providers on the CLI path (openai branch is provider-scoped)", async () => {
     seedFastModeConversation({
       conversation: {
@@ -328,53 +431,5 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     await readSseEvents(response);
     expect(mockGetProvider).toHaveBeenCalledWith("gemini-cli");
     expect(fetchMock).not.toHaveBeenCalled();
-  });
-
-  it("includes reasoning_effort in the body only when it is not off", async () => {
-    seedFastModeConversation({ settings: { openai_reasoning_effort: "medium" } });
-    fetchMock.mockResolvedValue(sseResponse(["ok"]));
-
-    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
-    const response = await POST(
-      mockJsonRequest({ content: "Current question", conversationId: "conv1" }),
-      mockRouteContext({ projectId: "proj1" }),
-    );
-    await readSseEvents(response);
-
-    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
-    expect(body.reasoning_effort).toBe("medium");
-  });
-
-  it("rejects epic_creation and brainstorm conversations with 400", async () => {
-    for (const type of ["epic_creation", "brainstorm"]) {
-      seedFastModeConversation({
-        conversation: {
-          id: "conv1",
-          type,
-          provider: "openai-compatible",
-          label: type === "epic_creation" ? "New Epic" : "Brainstorm",
-          status: "active",
-          namedAgentId: null,
-        },
-        settings: {},
-      });
-      // Epic path reads the global prompt and existing epics before the branch.
-      dbMockState.getQueue.push({ key: "global_prompt", value: JSON.stringify("") });
-      dbMockState.allQueue.push([]);
-      fetchMock.mockReset();
-      fetchMock.mockResolvedValue(sseResponse(["ok"]));
-
-      const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
-      const response = await POST(
-        mockJsonRequest({ content: "Hello", conversationId: "conv1" }),
-        mockRouteContext({ projectId: "proj1" }),
-      );
-
-      expect(response.status).toBe(400);
-      const json = (await response.json()) as { error: string };
-      expect(json.error).toContain("not available for epic-creation or brainstorm");
-      expect(fetchMock).not.toHaveBeenCalled();
-    }
   });
 });
