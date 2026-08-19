@@ -3,6 +3,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 const mockGit = {
   branchLocal: vi.fn(),
   raw: vi.fn(),
+  checkout: vi.fn(),
+  merge: vi.fn(),
+  log: vi.fn(),
+  deleteLocalBranch: vi.fn(),
 };
 
 vi.mock("simple-git", () => ({
@@ -18,7 +22,7 @@ vi.mock("fs", () => ({
   mkdirSync: vi.fn(),
 }));
 
-import { createWorktree } from "@/lib/git/manager";
+import { createWorktree, mergeWorktree, resolveDefaultBranch } from "@/lib/git/manager";
 import fs from "fs";
 
 describe("createWorktree", () => {
@@ -169,5 +173,112 @@ describe("createWorktree", () => {
     expect(result.branchName).toContain("feature/epic-epic123");
     // Should not call git at all
     expect(mockGit.raw).not.toHaveBeenCalled();
+  });
+});
+
+describe("mergeWorktree", () => {
+  const epicBranch = "feature/epic-epic123-my-epic-title";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
+    mockGit.raw.mockResolvedValue("");
+    mockGit.checkout.mockResolvedValue(undefined);
+    mockGit.merge.mockResolvedValue({});
+    mockGit.log.mockResolvedValue({ latest: { hash: "abc123" } });
+    mockGit.deleteLocalBranch.mockResolvedValue(undefined);
+  });
+
+  function mockSymbolicRef(ref: string | null, error = false) {
+    mockGit.raw.mockImplementation(async (args: string[]) => {
+      if (args[0] === "symbolic-ref") {
+        if (error) throw new Error("no origin/HEAD");
+        return ref;
+      }
+      return "";
+    });
+  }
+
+  it("merges into origin/HEAD when the default branch is neither main nor master", async () => {
+    // A GitHub clone whose default is `develop`: the old code guessed
+    // `master` and failed with `invalid reference: master`.
+    mockGit.branchLocal.mockResolvedValue({
+      all: ["develop", epicBranch],
+      current: "develop",
+    });
+    mockSymbolicRef("origin/develop\n");
+
+    const result = await mergeWorktree("/repo", epicBranch);
+
+    expect(result).toEqual({ merged: true, commitHash: "abc123" });
+    expect(mockGit.checkout).toHaveBeenCalledWith("develop");
+    expect(mockGit.merge).toHaveBeenCalledWith([
+      epicBranch,
+      "--no-ff",
+      "-m",
+      `Merge ${epicBranch}`,
+    ]);
+  });
+
+  it("still prefers main over origin/HEAD so existing repos are unaffected", async () => {
+    mockGit.branchLocal.mockResolvedValue({
+      all: ["main", "develop", epicBranch],
+      current: "develop",
+    });
+    mockSymbolicRef("origin/develop\n");
+
+    await mergeWorktree("/repo", epicBranch);
+
+    expect(mockGit.checkout).toHaveBeenCalledWith("main");
+    expect(mockGit.raw).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["symbolic-ref"])
+    );
+  });
+
+  it("falls back to the checked-out branch when origin/HEAD is missing", async () => {
+    mockGit.branchLocal.mockResolvedValue({
+      all: ["trunk", epicBranch],
+      current: "trunk",
+    });
+    mockSymbolicRef(null, true);
+
+    const result = await mergeWorktree("/repo", epicBranch);
+
+    expect(result.merged).toBe(true);
+    expect(mockGit.checkout).toHaveBeenCalledWith("trunk");
+  });
+
+  it("reports a missing epic branch without touching the repo", async () => {
+    mockGit.branchLocal.mockResolvedValue({ all: ["develop"], current: "develop" });
+    mockSymbolicRef("origin/develop\n");
+
+    const result = await mergeWorktree("/repo", "feature/missing");
+
+    expect(result).toEqual({ merged: false, error: "Branch feature/missing not found" });
+    expect(mockGit.checkout).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveDefaultBranch", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("answers with origin/HEAD for a clone whose default is neither main nor master", async () => {
+    mockGit.branchLocal.mockResolvedValue({ all: ["develop"], current: "develop" });
+    mockGit.raw.mockImplementation(async (args: string[]) =>
+      args[0] === "symbolic-ref" ? "origin/develop\n" : ""
+    );
+
+    expect(await resolveDefaultBranch("/repo")).toBe("develop");
+  });
+
+  it("keeps main as the first answer for existing repos", async () => {
+    mockGit.branchLocal.mockResolvedValue({ all: ["main"], current: "main" });
+    mockGit.raw.mockImplementation(async (args: string[]) =>
+      args[0] === "symbolic-ref" ? "origin/develop\n" : ""
+    );
+
+    expect(await resolveDefaultBranch("/repo")).toBe("main");
   });
 });

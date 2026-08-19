@@ -16,6 +16,7 @@ import { createId } from "@/lib/utils/nanoid";
 import {
   createWorktree,
   isGitRepo,
+  resolveDefaultBranch,
   startMergeInWorktree,
   mergeWorktree,
 } from "@/lib/git/manager";
@@ -85,10 +86,13 @@ export async function POST(request: NextRequest, { params }: Params) {
     epic.title
   );
 
-  // Start merge in worktree to surface conflicts
+  // Start merge in worktree to surface conflicts. The target is the project's
+  // real default branch — a hard-coded "main" would fail on a clone whose
+  // default is `develop`/`trunk`.
+  const targetBranch = await resolveDefaultBranch(gitRepoPath);
   let mergeResult: { conflicted: boolean; output: string };
   try {
-    mergeResult = await startMergeInWorktree(worktreePath, "main");
+    mergeResult = await startMergeInWorktree(worktreePath, targetBranch);
   } catch (error) {
     return errorResponse(error, "Failed to start merge");
   }

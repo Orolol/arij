@@ -56,6 +56,19 @@ async function resolveBaseBranch(
 }
 
 /**
+ * Resolves the branch new epic branches are cut from and merges go back
+ * into, given a repository path. `main`/`master` keep priority so existing
+ * repos behave exactly as before; beyond them the clone itself is asked via
+ * `origin/HEAD`, which is how a GitHub import with a `develop`/`trunk`
+ * default keeps working end to end.
+ */
+export async function resolveDefaultBranch(repoPath: string): Promise<string> {
+  const git = getGit(repoPath);
+  const branches = await git.branchLocal();
+  return resolveBaseBranch(git, branches.all, branches.current);
+}
+
+/**
  * Creates a worktree for an epic with a dedicated branch.
  * Returns the worktree path.
  */
@@ -108,8 +121,13 @@ export async function createWorktree(
 }
 
 /**
- * Merges an epic branch into the main branch, then removes the worktree.
- * Returns the merge commit hash on success.
+ * Merges an epic branch into the project's default branch, then removes the
+ * worktree. Returns the merge commit hash on success.
+ *
+ * The merge target is resolved exactly like the branch base in
+ * `createWorktree` (main → master → origin/HEAD → current branch), so an epic
+ * cut from a `develop`-default clone is merged back into `develop` instead of
+ * a guessed `master` that does not exist.
  */
 export async function mergeWorktree(
   repoPath: string,
@@ -119,14 +137,19 @@ export async function mergeWorktree(
   const git = getGit(repoPath);
 
   try {
-    // Get the main branch name
     const branches = await git.branchLocal();
-    const mainBranch = branches.all.includes("main") ? "main" : "master";
 
     // Make sure the branch exists
     if (!branches.all.includes(branchName)) {
       return { merged: false, error: `Branch ${branchName} not found` };
     }
+
+    // Resolved like createWorktree so build and merge always agree on the base.
+    const mainBranch = await resolveBaseBranch(
+      git,
+      branches.all,
+      branches.current
+    );
 
     // Remove the worktree first (git can't merge while worktree is active)
     if (worktreePath && fs.existsSync(worktreePath)) {
@@ -134,7 +157,7 @@ export async function mergeWorktree(
       await git.raw(["worktree", "prune"]);
     }
 
-    // Checkout main
+    // Checkout the resolved default branch
     await git.checkout(mainBranch);
 
     // Merge the epic branch
