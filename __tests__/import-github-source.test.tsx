@@ -392,3 +392,108 @@ describe("clone failures", () => {
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Provenance must not outlive the preview it belongs to. `cloneSource` is the
+ * ownership flag that later authorises Arij to delete the directory, so a
+ * local folder inheriting it from an abandoned GitHub import would mark a
+ * directory the user owns as Arij's to remove — and attribute it to the wrong
+ * repository besides.
+ */
+describe("clone provenance does not leak between imports", () => {
+  const LOCAL_PATH = "/home/user/code/legacy";
+
+  /** Runs a local-folder import through to project creation. */
+  async function importLocalFolder() {
+    fireEvent.change(screen.getByPlaceholderText("/path/to/your/project"), {
+      target: { value: LOCAL_PATH },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Analyze" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Validate & Import/ })
+      ).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Validate & Import/ }));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+
+    return (
+      calls.find((c) => c.url === "/api/projects" && c.method === "POST")
+        ?.body ?? null
+    );
+  }
+
+  function chooseLocal() {
+    fireEvent.click(screen.getByRole("radio", { name: /Local folder/ }));
+  }
+
+  async function cloneToPreview() {
+    chooseGitHub();
+    fireEvent.change(urlField(), { target: { value: "octocat/hello-world" } });
+    fireEvent.click(cloneButton());
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: /Validate & Import/ })
+      ).toBeInTheDocument()
+    );
+  }
+
+  /** Every field that would misattribute the project if it survived. */
+  function expectNoProvenance(body: Record<string, unknown> | null | undefined) {
+    expect(body).toMatchObject({ gitRepoPath: LOCAL_PATH });
+    expect(body).not.toHaveProperty("cloneSource");
+    expect(body).not.toHaveProperty("githubOwnerRepo");
+    expect(body).not.toHaveProperty("gitRemoteUrl");
+    expect(body).not.toHaveProperty("defaultBranch");
+  }
+
+  it("drops provenance when a GitHub preview is cancelled", async () => {
+    await renderPage();
+    await cloneToPreview();
+
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    chooseLocal();
+
+    expectNoProvenance(await importLocalFolder());
+  });
+
+  it("drops provenance when the analysis of a clone fails", async () => {
+    // The clone succeeded, so its metadata is in hand, but the import it was
+    // gathered for never happened: the page returns to the source picker and
+    // the next import must start clean.
+    mockFetch({
+      "/api/projects/import": { json: { error: "Claude analysis failed" } },
+    });
+
+    await renderPage();
+    chooseGitHub();
+    fireEvent.change(urlField(), { target: { value: "octocat/hello-world" } });
+    fireEvent.click(cloneButton());
+    await waitFor(() =>
+      expect(screen.getByText("Claude analysis failed")).toBeInTheDocument()
+    );
+
+    mockFetch();
+    chooseLocal();
+
+    expectNoProvenance(await importLocalFolder());
+  });
+
+  it("still records provenance for the GitHub import that earned it", async () => {
+    // The counterpart: clearing must not be so eager that the real case breaks.
+    await renderPage();
+    await cloneToPreview();
+
+    fireEvent.click(screen.getByRole("button", { name: /Validate & Import/ }));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+
+    const create = calls.find(
+      (c) => c.url === "/api/projects" && c.method === "POST"
+    );
+    expect(create?.body).toMatchObject({
+      cloneSource: "github",
+      githubOwnerRepo: "octocat/hello-world",
+    });
+  });
+});

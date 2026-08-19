@@ -189,8 +189,6 @@ describe("parseGitHubRepoInput — strict owner/repo validation", () => {
     ["parent traversal in owner", "../hello-world"],
     ["dot repo", "octocat/."],
     ["dot owner", "./hello-world"],
-    ["embedded traversal in repo", "octocat/he..llo"],
-    ["embedded traversal in owner", "oct..ocat/hello-world"],
     ["encoded traversal", "https://github.com/octocat/%2e%2e"],
     ["backslash in repo", "octocat/hello\\world"],
     ["backslash traversal", "octocat/..\\..\\etc"],
@@ -230,6 +228,36 @@ describe("parseGitHubRepoInput — strict owner/repo validation", () => {
       owner: "dot.org",
       repo: "my.repo.name",
     });
+  });
+
+  /**
+   * Only the exact `.` and `..` components traverse. A `..` *inside* a name is
+   * an ordinary GitHub repository name, and since the character class excludes
+   * every separator it cannot climb anywhere: `<root>/octocat-he..llo` is a
+   * single child directory of the clone root, not an escape from it.
+   */
+  it.each([
+    ["consecutive dots in repo", "octocat/he..llo", "octocat", "he..llo"],
+    ["consecutive dots in owner", "oct..ocat/hello", "oct..ocat", "hello"],
+    ["archive-style suffix", "octocat/repo..archive", "octocat", "repo..archive"],
+    ["leading dot in repo", "octocat/.github", "octocat", ".github"],
+    ["trailing dots", "octocat/repo..", "octocat", "repo.."],
+  ])("accepts %s", (_label, input, owner, repo) => {
+    expect(parseGitHubRepoInput(input)).toMatchObject({
+      owner,
+      repo,
+      cloneUrl: `https://github.com/${owner}/${repo}.git`,
+    });
+  });
+
+  it("keeps an accepted consecutive-dot name inside the clone root", () => {
+    const parsed = parseGitHubRepoInput("oct..ocat/he..llo");
+    expect(parsed).not.toBeNull();
+    // The directory name cloneDestinationFor() builds has no separator, so it
+    // resolves to exactly one level below the root.
+    const dirName = `${parsed!.owner}-${parsed!.repo}`;
+    expect(dirName).toBe("oct..ocat-he..llo");
+    expect(path.resolve("/root", dirName)).toBe("/root/oct..ocat-he..llo");
   });
 });
 

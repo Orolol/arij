@@ -70,9 +70,12 @@ const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 function isSafeRepoSegment(segment: string): boolean {
   if (!segment) return false;
   if (segment.startsWith("-")) return false;
-  // Rejects `.`, `..` and any embedded traversal component, matching the
-  // posture of validatePath() in lib/validation/path.ts.
-  if (segment === "." || segment.includes("..")) return false;
+  // Only the exact `.` and `..` components traverse. Dots *inside* a name are
+  // ordinary GitHub characters (`repo..archive` is a legal repository), and the
+  // character class below already excludes every separator, so an embedded `..`
+  // cannot climb out of the clone root. Matches assertSegment() in
+  // lib/projects/workspace.ts, which draws the line in the same place.
+  if (segment === "." || segment === "..") return false;
   return REPO_SEGMENT_PATTERN.test(segment);
 }
 

@@ -14,10 +14,27 @@ export const createProjectSchema = z.object({
    * path must stay NULL, so the field is deliberately not free-form.
    */
   cloneSource: z.enum(["github"]).nullish(),
-  /** Clean clone URL. Never tokenised: parseGitHubRepoInput() refuses userinfo. */
+  /**
+   * Clean clone URL. Re-parsed and normalised by the route, which refuses
+   * userinfo — a stored URL must never carry a credential.
+   */
   gitRemoteUrl: z.string().max(500).nullish(),
-  /** Branch reported by the clone, used instead of the main/master guess. */
-  defaultBranch: z.string().max(255).nullish(),
+  /**
+   * Branch reported by the clone, used instead of the main/master guess. It
+   * is later handed to git as a start-point, so the shapes git itself forbids
+   * in a ref name are refused here rather than at the call site.
+   */
+  defaultBranch: z
+    .string()
+    .max(255)
+    .refine(
+      (value) =>
+        value.trim().length > 0 &&
+        !value.startsWith("-") &&
+        !/[\s~^:?*[\\\x00-\x1f]/.test(value),
+      "Invalid branch name"
+    )
+    .nullish(),
 });
 
 export const updateProjectSchema = z.object({

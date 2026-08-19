@@ -182,6 +182,38 @@ export async function getConflictFileDiffs(
   return diffs;
 }
 
+/**
+ * The branch `origin` advertises as its default — `main`, but just as often
+ * `trunk`, `develop` or `dev`. Read from the `origin/HEAD` symbolic ref that
+ * `git clone` writes.
+ *
+ * Returns null when the repository has no remote, or when the remote never
+ * advertised a HEAD. Callers pick their own fallback from there: "no remote"
+ * means something different to a fresh clone than it does to a merge.
+ */
+export async function resolveRemoteDefaultBranch(
+  repoPath: string,
+  remote = "origin"
+): Promise<string | null> {
+  const cleanRemote = defaultRemote(remote);
+
+  try {
+    const ref = await getGit(repoPath).raw([
+      "symbolic-ref",
+      "--quiet",
+      "--short",
+      `refs/remotes/${cleanRemote}/HEAD`,
+    ]);
+
+    const value = ref?.trim() ?? "";
+    const prefix = `${cleanRemote}/`;
+    const branch = value.startsWith(prefix) ? value.slice(prefix.length) : value;
+    return branch || null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getCurrentGitBranch(repoPath: string): Promise<string> {
   const git = getGit(repoPath);
   const branches = await git.branchLocal();

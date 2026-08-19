@@ -3,8 +3,8 @@ import path from "node:path";
 import simpleGit, { CheckRepoActions, type SimpleGit } from "simple-git";
 import {
   detectGitHubRemote,
-  fetchGitRemote,
   getCurrentGitBranch,
+  resolveRemoteDefaultBranch,
 } from "./remote";
 import { DEFAULT_CLONE_TIMEOUT_MS } from "./clone-constants";
 
@@ -209,7 +209,9 @@ async function runClone(
 
     await git.raw(buildCloneArgs({ cloneUrl, dest, branch, token }));
 
-    const defaultBranch = await getCurrentGitBranch(dest);
+    // An explicitly requested branch is what got checked out, so it is the
+    // base the caller asked for; otherwise ask the remote what its default is.
+    const defaultBranch = branch ?? (await resolveDefaultBranch(dest));
     return {
       path: dest,
       defaultBranch,
@@ -278,15 +280,39 @@ async function reuseExistingClone(
     );
   }
 
+  // Same transport as the clone itself: the token has to be re-supplied (it
+  // was deliberately never written to .git/config), prompts have to stay
+  // disabled, and the fetch has to be bounded — an unauthenticated fetch of a
+  // private repo otherwise sits on a credential prompt until the request dies.
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CLONE_TIMEOUT_MS;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
   try {
-    await fetchGitRemote(dest);
+    const git = simpleGit({
+      baseDir: dest,
+      abort: controller.signal,
+    }).env(nonInteractiveEnv());
+
+    await git.raw([...authConfigArgs(token), "fetch", "origin"]);
   } catch (error) {
+    if (controller.signal.aborted) {
+      throw new CloneError(
+        "timeout",
+        `Fetch aborted after ${Math.round(timeoutMs / 1000)}s while refreshing the existing clone at ${dest}. Raise the clone timeout or retry.`,
+        { timeoutMs, path: dest }
+      );
+    }
     throw toCloneError(error, { cloneUrl, branch: options.branch, token });
+  } finally {
+    clearTimeout(timer);
   }
 
   // The existing checkout belongs to the user; a requested branch does not
-  // justify switching it out from under them. Report what is actually there.
-  const defaultBranch = await getCurrentGitBranch(dest);
+  // justify switching it out from under them. What gets reported is the
+  // remote's default branch, not whatever happens to be checked out — that
+  // value is persisted as the project's base for worktrees and merges.
+  const defaultBranch = await resolveDefaultBranch(dest);
 
   return {
     path: dest,
@@ -300,21 +326,31 @@ async function reuseExistingClone(
 /* Git plumbing                                                        */
 /* ------------------------------------------------------------------ */
 
+/**
+ * `-c http.extraHeader=Authorization: Basic …` for an authenticated transport,
+ * or nothing at all for a public repository.
+ *
+ * `-c` keeps the header out of `.git/config`: origin stays clean and the clone
+ * carries no secret on disk. Every command that talks to the remote has to
+ * re-supply it for exactly that reason — a private repository that cloned fine
+ * would otherwise fail (or block on a credential prompt) the next time Arij
+ * fetches it.
+ */
+function authConfigArgs(token?: string | null): string[] {
+  const clean = token?.trim();
+  if (!clean) return [];
+
+  const basic = Buffer.from(`x-access-token:${clean}`).toString("base64");
+  return ["-c", `http.extraHeader=Authorization: Basic ${basic}`];
+}
+
 function buildCloneArgs(input: {
   cloneUrl: string;
   dest: string;
   branch: string | null;
   token?: string | null;
 }): string[] {
-  const args: string[] = [];
-  const token = input.token?.trim();
-
-  if (token) {
-    // `-c` keeps the header out of .git/config: origin stays clean and the
-    // clone carries no secret on disk.
-    const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
-    args.push("-c", `http.extraHeader=Authorization: Basic ${basic}`);
-  }
+  const args = authConfigArgs(input.token);
 
   args.push("clone");
   if (input.branch) {
@@ -357,6 +393,23 @@ async function isRepositoryRoot(dest: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+/**
+ * The branch the *remote* treats as default, read from `origin/HEAD`.
+ *
+ * Not the same thing as the checked-out branch: a reused clone sits on
+ * whatever the user last worked on, and this value is persisted as
+ * `projects.default_branch` — the base every later worktree and merge starts
+ * from. Falls back to the current branch when the remote advertised no HEAD.
+ */
+async function resolveDefaultBranch(repoPath: string): Promise<string> {
+  // No origin/HEAD (a remote that never advertised one) falls through to
+  // whatever is checked out — which for a fresh clone is the right answer.
+  return (
+    (await resolveRemoteDefaultBranch(repoPath)) ??
+    (await getCurrentGitBranch(repoPath))
+  );
 }
 
 async function readOriginUrl(repoPath: string): Promise<string | null> {

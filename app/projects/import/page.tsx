@@ -136,16 +136,23 @@ export default function ImportProjectPage() {
       return;
     }
 
-    setClone(cloned);
     setCloneTarget(cloned.ownerRepo);
-    await handleAnalyze(cloned.path);
+    await handleAnalyze(cloned.path, cloned);
   }
 
-  async function handleAnalyze(path: string) {
+  /**
+   * Provenance travels with the analysis rather than living beside it: `clone`
+   * is only ever set for the preview it belongs to, and is cleared on every
+   * path that leaves the preview. Leaving it set would attach the previous
+   * repository's owner, remote and branch to the *next* import — and a local
+   * folder would be created claiming to be a GitHub clone.
+   */
+  async function handleAnalyze(path: string, provenance: CloneResult | null) {
     setFolderPath(path);
     setState("analyzing");
     setError("");
     setDebug(null);
+    setClone(null);
 
     try {
       const res = await fetch("/api/projects/import", {
@@ -164,6 +171,7 @@ export default function ImportProjectPage() {
 
       setImportData(data.data.preview);
       setFromExistingFile(!!data.data.fromExistingFile);
+      setClone(provenance);
       setState("preview");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to analyze project");
@@ -315,10 +323,13 @@ export default function ImportProjectPage() {
               setSource(next);
               setError("");
               setDebug(null);
+              // Switching source abandons whatever the other one produced.
+              setClone(null);
+              setCloneTarget(null);
             }}
           />
           {source === "local" ? (
-            <FolderSelector onAnalyze={handleAnalyze} />
+            <FolderSelector onAnalyze={(folder) => handleAnalyze(folder, null)} />
           ) : (
             <GitHubRepoSelector
               value={repoUrl}
@@ -348,7 +359,12 @@ export default function ImportProjectPage() {
         <ImportPreview
           data={importData}
           onValidate={handleValidate}
-          onCancel={() => setState("select")}
+          onCancel={() => {
+            setState("select");
+            setImportData(null);
+            setClone(null);
+            setCloneTarget(null);
+          }}
         />
       )}
     </div>

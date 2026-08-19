@@ -6,6 +6,8 @@ import { createId } from "@/lib/utils/nanoid";
 import { createProjectSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { validatePath } from "@/lib/validation/path";
+import { parseGitHubRepoInput } from "@/lib/git/remote";
+import { cloneDestinationFor } from "@/lib/projects/workspace";
 
 export async function GET() {
   const queryStartedAt = Date.now();
@@ -128,6 +130,84 @@ export async function POST(request: NextRequest) {
     storedRepoPath = pathResult.normalizedPath;
   }
 
+  /*
+   * Clone provenance is established here, not taken on the caller's word.
+   * `cloneSource` is the ownership flag that later authorises Arij to delete
+   * the directory, and `gitRemoteUrl` is bound by the no-secret-on-disk
+   * contract — so a request must not be able to claim either for a path Arij
+   * never created, nor to smuggle credentials into a stored URL.
+   */
+  let storedRemoteUrl: string | null = null;
+  let storedOwnerRepo: string | null = githubOwnerRepo?.trim() || null;
+
+  if (gitRemoteUrl?.trim()) {
+    // Rejects userinfo for free: `https://user:token@github.com/o/r` does not
+    // match the parser's host anchor, so it never becomes a stored URL.
+    const parsedRemote = parseGitHubRepoInput(gitRemoteUrl);
+    if (!parsedRemote) {
+      return NextResponse.json(
+        {
+          error:
+            "gitRemoteUrl must be a GitHub repository URL and must not embed credentials.",
+        },
+        { status: 400 }
+      );
+    }
+
+    // Store the normalised clone URL, never the raw input.
+    storedRemoteUrl = parsedRemote.cloneUrl;
+
+    if (
+      storedOwnerRepo &&
+      storedOwnerRepo.toLowerCase() !== parsedRemote.ownerRepo.toLowerCase()
+    ) {
+      return NextResponse.json(
+        {
+          error: `githubOwnerRepo (${storedOwnerRepo}) does not match gitRemoteUrl (${parsedRemote.ownerRepo}).`,
+        },
+        { status: 400 }
+      );
+    }
+    storedOwnerRepo = storedOwnerRepo ?? parsedRemote.ownerRepo;
+  }
+
+  if (cloneSource === "github") {
+    if (!storedRepoPath || !storedRemoteUrl || !storedOwnerRepo) {
+      return NextResponse.json(
+        {
+          error:
+            'cloneSource "github" requires both gitRepoPath and gitRemoteUrl.',
+        },
+        { status: 400 }
+      );
+    }
+
+    // The one path that can legitimately carry this flag is the one the clone
+    // service would have produced for this repository. Recomputing it checks
+    // containment in the managed root and the `<owner>-<repo>` name in a
+    // single comparison, and cloneDestinationFor() re-runs the traversal guard.
+    const [owner, repo] = storedOwnerRepo.split("/");
+    let managedPath: string;
+    try {
+      managedPath = cloneDestinationFor(owner, repo);
+    } catch {
+      return NextResponse.json(
+        { error: `Invalid GitHub repository: ${storedOwnerRepo}` },
+        { status: 400 }
+      );
+    }
+
+    if (storedRepoPath !== managedPath) {
+      return NextResponse.json(
+        {
+          error:
+            'cloneSource "github" is reserved for repositories Arij cloned itself. Import this directory as a local folder instead.',
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   const id = createId();
   const now = new Date().toISOString();
 
@@ -137,12 +217,13 @@ export async function POST(request: NextRequest) {
       name,
       description: description || null,
       gitRepoPath: storedRepoPath,
-      githubOwnerRepo: githubOwnerRepo || null,
+      githubOwnerRepo: storedOwnerRepo,
       // Clone provenance (0027): NULL for a user-supplied path, so Arij never
-      // treats a directory it did not create as its own.
+      // treats a directory it did not create as its own. The values below are
+      // the verified/normalised ones, not the raw request fields.
       cloneSource: cloneSource || null,
-      gitRemoteUrl: gitRemoteUrl || null,
-      defaultBranch: defaultBranch || null,
+      gitRemoteUrl: storedRemoteUrl,
+      defaultBranch: defaultBranch?.trim() || null,
       status: "ideation",
       createdAt: now,
       updatedAt: now,

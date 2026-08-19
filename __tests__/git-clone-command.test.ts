@@ -281,3 +281,139 @@ describe("clone failure classification", () => {
     expect(serialized).not.toContain(basic);
   });
 });
+
+/**
+ * The reuse path talks to the remote just like the clone path does. It is the
+ * easy one to get wrong: the token is deliberately absent from `.git/config`,
+ * so a fetch that does not re-supply it is unauthenticated — which for a
+ * private repository means a credential prompt, and with no terminal attached
+ * that is a hang rather than an error.
+ */
+describe("reuse transport", () => {
+  /** An existing destination holding the same repository. */
+  function reusableDestination(name = "octocat-hello-world"): string {
+    const target = dest(name);
+    fs.mkdirSync(target, { recursive: true });
+    gitMock.checkIsRepo = vi.fn().mockResolvedValue(true);
+    gitMock.getRemotes = vi.fn().mockResolvedValue([
+      { name: "origin", refs: { fetch: CLONE_URL, push: CLONE_URL } },
+    ]);
+    return target;
+  }
+
+  function fetchArgs(): string[] {
+    const call = gitMock.raw.mock.calls.find((args) =>
+      (args[0] as string[]).includes("fetch")
+    );
+    if (!call) throw new Error("git never fetched");
+    return call[0] as string[];
+  }
+
+  it("re-supplies the PAT on the fetch", async () => {
+    const target = reusableDestination();
+
+    const result = await cloneRepository({
+      cloneUrl: CLONE_URL,
+      dest: target,
+      token: PAT,
+      expectedOwnerRepo: "octocat/hello-world",
+    });
+
+    expect(result.reused).toBe(true);
+
+    const args = fetchArgs();
+    expect(args[0]).toBe("-c");
+    expect(args[1]).toMatch(/^http\.extraHeader=Authorization: Basic /);
+    expect(args.slice(2)).toEqual(["fetch", "origin"]);
+
+    const basic = args[1].replace("http.extraHeader=Authorization: Basic ", "");
+    expect(Buffer.from(basic, "base64").toString("utf-8")).toBe(
+      `x-access-token:${PAT}`
+    );
+  });
+
+  it("fetches unauthenticated when there is no PAT", async () => {
+    const target = reusableDestination();
+
+    await cloneRepository({ cloneUrl: CLONE_URL, dest: target });
+
+    expect(fetchArgs()).toEqual(["fetch", "origin"]);
+  });
+
+  it("disables interactive credential prompts on the fetch", async () => {
+    const target = reusableDestination();
+
+    await cloneRepository({ cloneUrl: CLONE_URL, dest: target, token: PAT });
+
+    expect(gitMock.env).toHaveBeenCalledWith(
+      expect.objectContaining({ GIT_TERMINAL_PROMPT: "0" })
+    );
+  });
+
+  it("bounds the fetch with the clone timeout instead of hanging", async () => {
+    const target = reusableDestination();
+    gitMock.raw.mockImplementation(async (args: string[]) => {
+      if (!args.includes("fetch")) return "";
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      throw new Error("aborted");
+    });
+
+    await expect(
+      cloneRepository({ cloneUrl: CLONE_URL, dest: target, timeoutMs: 10 })
+    ).rejects.toMatchObject({ code: "timeout" });
+
+    // The destination was the user's before this call and stays untouched: a
+    // failed *fetch* is not a partial clone.
+    expect(fs.existsSync(target)).toBe(true);
+  });
+
+  it("keeps the PAT out of a failed fetch's error", async () => {
+    const target = reusableDestination();
+    gitMock.raw.mockImplementation(async (args: string[]) => {
+      if (!args.includes("fetch")) return "";
+      throw new Error(
+        `fatal: could not read from 'https://x-access-token:${PAT}@github.com/octocat/hello-world.git'`
+      );
+    });
+
+    const error = await cloneRepository({
+      cloneUrl: CLONE_URL,
+      dest: target,
+      token: PAT,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(CloneError);
+    expect(`${error.message} ${JSON.stringify(error.details)}`).not.toContain(PAT);
+  });
+
+  it("reports the remote's default branch, not whatever is checked out", async () => {
+    const target = reusableDestination();
+    // The user left this clone on a feature branch. Persisting that as the
+    // project's default branch would send every later worktree to the wrong
+    // base, so `origin/HEAD` wins.
+    gitMock.branchLocal.mockResolvedValue({
+      current: "feature/wip",
+      all: ["feature/wip", "trunk"],
+    });
+    gitMock.raw.mockImplementation(async (args: string[]) =>
+      args.includes("symbolic-ref") ? "origin/trunk\n" : ""
+    );
+
+    const result = await cloneRepository({ cloneUrl: CLONE_URL, dest: target });
+
+    expect(result).toMatchObject({ reused: true, defaultBranch: "trunk" });
+  });
+
+  it("falls back to the checked-out branch when the remote advertises no HEAD", async () => {
+    const target = reusableDestination();
+    gitMock.branchLocal.mockResolvedValue({ current: "main", all: ["main"] });
+    gitMock.raw.mockImplementation(async (args: string[]) => {
+      if (args.includes("symbolic-ref")) throw new Error("fatal: ref not a symbolic ref");
+      return "";
+    });
+
+    const result = await cloneRepository({ cloneUrl: CLONE_URL, dest: target });
+
+    expect(result.defaultBranch).toBe("main");
+  });
+});

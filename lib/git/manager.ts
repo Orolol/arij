@@ -1,6 +1,7 @@
 import simpleGit, { type SimpleGit } from "simple-git";
 import path from "path";
 import fs from "fs";
+import { resolveRemoteDefaultBranch } from "./remote";
 
 function slugify(text: string): string {
   return text
@@ -12,6 +13,36 @@ function slugify(text: string): string {
 
 function getGit(repoPath: string): SimpleGit {
   return simpleGit(repoPath);
+}
+
+/**
+ * The branch epic work should be based on and merged back into.
+ *
+ * `main`-else-`master` is a guess, and it is wrong for every repository whose
+ * default is `trunk`, `develop` or `dev`: such a repo imports cleanly and then
+ * fails at `worktree add` against a branch that does not exist. Ask the
+ * repository instead — `origin/HEAD` records what the remote considers
+ * default — and only fall back to the guess when there is no remote to ask.
+ *
+ * The remote's answer is only used when the branch is actually present
+ * locally: `main` on its own does not resolve to `refs/remotes/origin/main`,
+ * so handing git a start-point it cannot resolve would trade one failure for
+ * another.
+ */
+async function resolveBaseBranch(
+  repoPath: string,
+  branches: { all: string[]; current: string }
+): Promise<string> {
+  const remoteDefault = await resolveRemoteDefaultBranch(repoPath);
+  if (remoteDefault && branches.all.includes(remoteDefault)) {
+    return remoteDefault;
+  }
+
+  if (branches.all.includes("main")) return "main";
+  if (branches.all.includes("master")) return "master";
+  // Neither convention is present and the remote had no opinion: the checked
+  // out branch is the only one guaranteed to exist.
+  return branches.current || branches.all[0] || "main";
 }
 
 /**
@@ -49,21 +80,19 @@ export async function createWorktree(
   const branches = await git.branchLocal();
   const branchExists = branches.all.includes(branchName);
 
-  // Determine the main branch to base new branches from
-  const mainBranch = branches.all.includes("main") ? "main" : "master";
-
   if (branchExists) {
     // Create worktree from existing branch
     await git.raw(["worktree", "add", worktreePath, branchName]);
   } else {
-    // Create new branch + worktree, explicitly based from main
+    // Create new branch + worktree, explicitly based from the default branch
+    const baseBranch = await resolveBaseBranch(repoPath, branches);
     await git.raw([
       "worktree",
       "add",
       "-b",
       branchName,
       worktreePath,
-      mainBranch,
+      baseBranch,
     ]);
   }
 
@@ -82,9 +111,9 @@ export async function mergeWorktree(
   const git = getGit(repoPath);
 
   try {
-    // Get the main branch name
+    // Get the branch epic work merges back into
     const branches = await git.branchLocal();
-    const mainBranch = branches.all.includes("main") ? "main" : "master";
+    const mainBranch = await resolveBaseBranch(repoPath, branches);
 
     // Make sure the branch exists
     if (!branches.all.includes(branchName)) {
