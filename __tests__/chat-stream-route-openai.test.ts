@@ -329,4 +329,20 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     expect(mockGetProvider).toHaveBeenCalledWith("gemini-cli");
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("includes reasoning_effort in the body only when it is not off", async () => {
+    seedFastModeConversation({ settings: { openai_reasoning_effort: "medium" } });
+    fetchMock.mockResolvedValue(sseResponse(["ok"]));
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({ content: "Current question", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+    await readSseEvents(response);
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+    expect(body.reasoning_effort).toBe("medium");
+  });
 });
