@@ -21,6 +21,24 @@ vi.mock("@/lib/validation/path", () => ({
   validatePath: vi.fn(async () => pathState.result),
 }));
 
+// The real module is pure except `detectGitHubRemote`, which shells out to
+// git — override just that so the origin check is a plain stub.
+vi.mock("@/lib/git/remote", async () => {
+  const actual = await import("@/lib/git/remote");
+  return {
+    ...actual,
+    detectGitHubRemote: vi.fn(),
+  };
+});
+
+const MATCHING_ORIGIN = {
+  owner: "Orolol",
+  repo: "arij",
+  ownerRepo: "Orolol/arij",
+  remoteName: "origin",
+  remoteUrl: "https://github.com/Orolol/arij.git",
+};
+
 const BASE = { name: "Arij", description: "Orchestrator" };
 
 describe("createProjectSchema", () => {
@@ -64,10 +82,15 @@ describe("createProjectSchema", () => {
 });
 
 describe("POST /api/projects", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     resetDbMockState();
     pathState.result = { valid: true, normalizedPath: "/normalized/path" };
+
+    // Default: the directory is the claimed clone, so happy-path payloads
+    // pass the provenance check.
+    const { detectGitHubRemote } = await import("@/lib/git/remote");
+    vi.mocked(detectGitHubRemote).mockResolvedValue(MATCHING_ORIGIN);
   });
 
   async function post(body: unknown) {
@@ -151,5 +174,125 @@ describe("POST /api/projects", () => {
     expect(res.status).toBe(400);
     expect(json.error).toBe("Path does not exist or is not accessible");
     expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("rejects a cloneSource without the full provenance tuple", async () => {
+    dbMockState.getQueue = [{ id: "proj-1" }];
+
+    const res = await post({
+      ...BASE,
+      gitRepoPath: "/home/user/arij/projects/Orolol-arij",
+      githubOwnerRepo: "Orolol/arij",
+      cloneSource: "github",
+      // gitRemoteUrl and defaultBranch missing
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toContain("cloneSource requires");
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("rejects a cloneSource with no gitRepoPath at all", async () => {
+    const res = await post({
+      ...BASE,
+      githubOwnerRepo: "Orolol/arij",
+      gitRemoteUrl: "https://github.com/Orolol/arij.git",
+      cloneSource: "github",
+      defaultBranch: "main",
+    });
+
+    expect(res.status).toBe(400);
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("rejects clone metadata whose remote URL names a different repository", async () => {
+    const res = await post({
+      ...BASE,
+      gitRepoPath: "/home/user/arij/projects/Orolol-arij",
+      githubOwnerRepo: "Orolol/arij",
+      gitRemoteUrl: "https://github.com/evil/totally-different.git",
+      cloneSource: "github",
+      defaultBranch: "main",
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toContain("does not describe the claimed GitHub repository");
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("rejects a credential-bearing remote URL as a clean clone URL", async () => {
+    const res = await post({
+      ...BASE,
+      gitRepoPath: "/home/user/arij/projects/Orolol-arij",
+      githubOwnerRepo: "Orolol/arij",
+      gitRemoteUrl: "https://x-access-token:sekrit@github.com/Orolol/arij.git",
+      cloneSource: "github",
+      defaultBranch: "main",
+    });
+
+    expect(res.status).toBe(400);
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("rejects cloneSource when the directory is not a clone of the claimed repo", async () => {
+    const { detectGitHubRemote } = await import("@/lib/git/remote");
+    vi.mocked(detectGitHubRemote).mockResolvedValue({
+      owner: "someone-else",
+      repo: "unrelated",
+      ownerRepo: "someone-else/unrelated",
+      remoteName: "origin",
+      remoteUrl: "https://github.com/someone-else/unrelated.git",
+    });
+
+    const res = await post({
+      ...BASE,
+      gitRepoPath: "/home/user/arij/projects/Orolol-arij",
+      githubOwnerRepo: "Orolol/arij",
+      gitRemoteUrl: "https://github.com/Orolol/arij.git",
+      cloneSource: "github",
+      defaultBranch: "main",
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toContain("not a clone of the claimed GitHub repository");
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("rejects cloneSource when the directory is not a GitHub clone at all", async () => {
+    const { detectGitHubRemote } = await import("@/lib/git/remote");
+    vi.mocked(detectGitHubRemote).mockResolvedValue(null);
+
+    const res = await post({
+      ...BASE,
+      gitRepoPath: "/home/user/arij/projects/Orolol-arij",
+      githubOwnerRepo: "Orolol/arij",
+      gitRemoteUrl: "https://github.com/Orolol/arij.git",
+      cloneSource: "github",
+      defaultBranch: "main",
+    });
+
+    expect(res.status).toBe(400);
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("compares the claimed owner/repo case-insensitively", async () => {
+    dbMockState.getQueue = [{ id: "proj-1" }];
+    const { detectGitHubRemote } = await import("@/lib/git/remote");
+    vi.mocked(detectGitHubRemote).mockResolvedValue(MATCHING_ORIGIN);
+
+    const res = await post({
+      ...BASE,
+      gitRepoPath: "/home/user/arij/projects/Orolol-arij",
+      githubOwnerRepo: "orolol/arij",
+      gitRemoteUrl: "https://github.com/Orolol/arij.git",
+      cloneSource: "github",
+      defaultBranch: "main",
+    });
+
+    expect(res.status).toBe(201);
+    expect(dbMockState.insertCalls).toHaveLength(1);
   });
 });

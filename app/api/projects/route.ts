@@ -6,6 +6,7 @@ import { createId } from "@/lib/utils/nanoid";
 import { createProjectSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { validatePath } from "@/lib/validation/path";
+import { parseGitHubOwnerRepoFromRemoteUrl, detectGitHubRemote } from "@/lib/git/remote";
 
 export async function GET() {
   const queryStartedAt = Date.now();
@@ -128,6 +129,61 @@ export async function POST(request: NextRequest) {
 
   const id = createId();
   const now = new Date().toISOString();
+
+  // `cloneSource: "github"` marks the directory as Arij-owned — the flag a
+  // later clone cleanup acts on. The client asserting it is not enough: the
+  // full provenance tuple must be present, internally consistent, and the
+  // directory must actually be a clone of the claimed repository. Without
+  // this, a crafted request could mark any existing directory as Arij-owned.
+  if (cloneSource) {
+    if (
+      !githubOwnerRepo ||
+      !gitRemoteUrl ||
+      !defaultBranch ||
+      !normalizedRepoPath
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "cloneSource requires githubOwnerRepo, gitRemoteUrl, defaultBranch and gitRepoPath",
+        },
+        { status: 400 }
+      );
+    }
+
+    // The stored remote URL must be a clean GitHub URL naming the same
+    // owner/repo as githubOwnerRepo (credential-bearing URLs fail to parse).
+    const parsedRemote = parseGitHubOwnerRepoFromRemoteUrl(gitRemoteUrl);
+    if (
+      !parsedRemote ||
+      parsedRemote.ownerRepo.toLowerCase() !== githubOwnerRepo.toLowerCase()
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "gitRemoteUrl does not describe the claimed GitHub repository (githubOwnerRepo)",
+        },
+        { status: 400 }
+      );
+    }
+
+    // The directory on disk must be a real clone of that repository — its
+    // origin is the clean URL Arij wrote, so an unrelated directory cannot
+    // pass this check.
+    const detected = await detectGitHubRemote(normalizedRepoPath);
+    if (
+      !detected ||
+      detected.ownerRepo.toLowerCase() !== githubOwnerRepo.toLowerCase()
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            "The git repository path is not a clone of the claimed GitHub repository",
+        },
+        { status: 400 }
+      );
+    }
+  }
 
   db.insert(projects)
     .values({
