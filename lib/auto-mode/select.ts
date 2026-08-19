@@ -1,0 +1,639 @@
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { db } from "@/lib/db";
+import {
+  agentSessions,
+  epics,
+  reviewComments,
+  ticketComments,
+  userStories,
+} from "@/lib/db/schema";
+import { isAwaitingReply } from "@/lib/kanban/awaiting-reply";
+import { isPipelineRunActive } from "@/lib/pipeline/constants";
+import { listPipelineRunsByProject } from "@/lib/pipeline/registry";
+import { dagBatchRegistry } from "@/lib/agents/dag-batch-registry";
+import { nightRunRegistry } from "@/lib/night/registry";
+import { autoModeRegistry } from "./registry";
+
+/**
+ * Candidate selection for Full Auto Mode: which tickets may be built,
+ * reviewed and merged right now.
+ *
+ * This module lives in lib/auto-mode/ rather than lib/kanban/ because it
+ * queries the database — lib/kanban/ is client-safe by convention. It does
+ * import the pure `isAwaitingReply` predicate from there, which is exactly
+ * what that split is for.
+ *
+ * Every selector shares one board snapshot built from a FIXED number of
+ * queries (nine), never one lookup per ticket: the sweep runs every 15s on a
+ * board that can hold hundreds of tickets, so an N+1 here would be a
+ * per-sweep table scan storm.
+ *
+ * The exclusions, in the order they matter:
+ *
+ *   busy         an active (queued|running) session on the ticket — the same
+ *                condition `getRunningSessionForTarget` refuses on, evaluated
+ *                in bulk. For a story this includes sessions on the PARENT
+ *                epic, mirroring lib/agents/concurrency.ts:65-70, which is
+ *                what serialises stories of one epic.
+ *   owned        the ticket belongs to a live pipeline run, DAG wave batch or
+ *                night run — the three conflicts the batch route already
+ *                refuses on (build/route.ts:742-775).
+ *   awaiting     the ticket is holding an unanswered agent question. An
+ *                `asked_question` session leaves the ticket in `in_progress`
+ *                exactly like a ticket bounced back from review, so without
+ *                this guard the supervisor would bulldoze the question.
+ *   parked       the supervisor already failed on this ticket three times.
+ *   delivered    the epic is done/released — nothing to schedule.
+ */
+
+/* ------------------------------------------------------------------ */
+/* Status vocabularies                                                 */
+/* ------------------------------------------------------------------ */
+
+const ACTIVE_SESSION_STATUSES = ["queued", "running"];
+
+/** Epic statuses the supervisor may dispatch a build for. */
+const BUILDABLE_EPIC_STATUSES = new Set(["todo", "in_progress"]);
+
+/** Story statuses the supervisor may dispatch a build for. */
+const BUILDABLE_STORY_STATUSES = new Set(["todo", "in_progress"]);
+
+/** Epics past the finish line — never candidates for anything. */
+const DELIVERED_EPIC_STATUSES = new Set(["done", "released"]);
+
+/**
+ * Agent types that constitute "a review happened". Same family the workflow
+ * engine's `hasCompletedReview` recognises (lib/workflow/context.ts:42-51).
+ */
+const REVIEW_AGENT_TYPES_SQL =
+  "'review_security','review_code','review_compliance','review_feature'";
+
+/**
+ * Agent types that constitute "the code changed". `merge` counts: a
+ * merge-fix agent rewrites the branch, so a review that predates it is stale.
+ */
+const CODE_AGENT_TYPES_SQL = "'build','ticket_build','team_build','merge'";
+
+const TERMINAL_STATUSES_SQL = "'completed','failed','cancelled'";
+
+/**
+ * Session timestamps mix ISO-8601 (`2026-08-16T09:00:00.000Z`, written by
+ * routes) and SQLite CURRENT_TIMESTAMP (`2026-08-16 09:00:00`). Normalising
+ * the separator makes lexicographic MAX/compare chronologically correct —
+ * the same normalisation lib/kanban/awaiting-reply.ts does in JS.
+ */
+const SESSION_AT_SQL = sql`REPLACE(COALESCE(${agentSessions.endedAt}, ${agentSessions.completedAt}, ${agentSessions.createdAt}), ' ', 'T')`;
+
+/* ------------------------------------------------------------------ */
+/* Public shapes                                                       */
+/* ------------------------------------------------------------------ */
+
+export interface AutoBuildCandidate {
+  scope: "epic" | "story";
+  epicId: string;
+  userStoryId: string | null;
+  /** Parking / logging key: the story id for story scope, else the epic id. */
+  ticketId: string;
+  title: string;
+  readableId: string | null;
+}
+
+export interface AutoReviewCandidate {
+  epicId: string;
+  ticketId: string;
+  title: string;
+  readableId: string | null;
+}
+
+export interface AutoMergeCandidate {
+  epicId: string;
+  ticketId: string;
+  branchName: string;
+  title: string;
+  readableId: string | null;
+}
+
+/* ------------------------------------------------------------------ */
+/* Board snapshot                                                      */
+/* ------------------------------------------------------------------ */
+
+interface EpicRow {
+  id: string;
+  status: string | null;
+  priority: number | null;
+  position: number | null;
+  branchName: string | null;
+  title: string;
+  readableId: string | null;
+}
+
+interface StoryRow {
+  id: string;
+  epicId: string;
+  status: string | null;
+  position: number | null;
+  title: string;
+}
+
+interface SessionFacts {
+  /** Newest terminal review session (completed | failed | cancelled). */
+  lastTerminalReviewAt: string | null;
+  /** Newest *successfully completed* review session. */
+  lastCompletedReviewAt: string | null;
+  /** Newest terminal code-writing session. */
+  lastTerminalCodeAt: string | null;
+}
+
+interface AwaitingFacts {
+  latestSessionOutcome: string | null;
+  latestSessionEndedAt: string | null;
+  latestUserCommentCreatedAt: string | null;
+}
+
+export interface AutoModeBoard {
+  projectId: string;
+  epics: EpicRow[];
+  storiesByEpic: Map<string, StoryRow[]>;
+  busyEpicIds: Set<string>;
+  busyStoryIds: Set<string>;
+  blockedEpicIds: Set<string>;
+  /** True when a DAG wave batch owns the whole project (no per-epic list). */
+  projectBlocked: boolean;
+  sessionFactsByEpic: Map<string, SessionFacts>;
+  awaitingByEpic: Map<string, AwaitingFacts>;
+  awaitingByStory: Map<string, AwaitingFacts>;
+  /**
+   * Newest USER comment per ticket, independent of whether an agent ever ran
+   * on it. `awaiting*` carries the same timestamp but only for tickets that
+   * HAVE a session, so the un-park ("the user touched it") check reads these
+   * instead — a ticket parked on repeated dispatch failures has no session
+   * row at all.
+   */
+  lastUserCommentByEpic: Map<string, string>;
+  lastUserCommentByStory: Map<string, string>;
+  openReviewCommentsByEpic: Map<string, number>;
+  parkedTicketIds: Set<string>;
+}
+
+/**
+ * Live in-memory owners of a ticket. Pipeline runs and night runs carry the
+ * epics they own, so exclusion is per epic. A DAG wave batch does not
+ * (DagBatchSnapshot has counts, not an epic list), so an active one blocks
+ * the whole project — the same project-wide stance the batch route takes
+ * when it refuses to start a night run over a live batch.
+ */
+function loadRegistryExclusions(projectId: string): {
+  blockedEpicIds: Set<string>;
+  projectBlocked: boolean;
+} {
+  const blockedEpicIds = new Set<string>();
+
+  for (const run of listPipelineRunsByProject(projectId)) {
+    if (isPipelineRunActive(run.state)) blockedEpicIds.add(run.epicId);
+  }
+
+  const night = nightRunRegistry.getActiveByProject(projectId);
+  if (night) {
+    for (const entry of night.epics) blockedEpicIds.add(entry.epicId);
+  }
+
+  return {
+    blockedEpicIds,
+    projectBlocked: dagBatchRegistry.listByProject(projectId).length > 0,
+  };
+}
+
+/**
+ * One board snapshot per sweep. Nine queries, all bounded by the project —
+ * never one per ticket.
+ */
+export function loadAutoModeBoard(projectId: string): AutoModeBoard {
+  // 1. Epics.
+  const epicRows = db
+    .select({
+      id: epics.id,
+      status: epics.status,
+      priority: epics.priority,
+      position: epics.position,
+      branchName: epics.branchName,
+      title: epics.title,
+      readableId: epics.readableId,
+    })
+    .from(epics)
+    .where(eq(epics.projectId, projectId))
+    .all();
+
+  // 2. Stories (scoped through the parent epic — stories carry no projectId).
+  const storyRows = db
+    .select({
+      id: userStories.id,
+      epicId: userStories.epicId,
+      status: userStories.status,
+      position: userStories.position,
+      title: userStories.title,
+    })
+    .from(userStories)
+    .innerJoin(epics, eq(userStories.epicId, epics.id))
+    .where(eq(epics.projectId, projectId))
+    .all();
+
+  const storiesByEpic = new Map<string, StoryRow[]>();
+  for (const story of storyRows) {
+    const list = storiesByEpic.get(story.epicId) ?? [];
+    list.push(story);
+    storiesByEpic.set(story.epicId, list);
+  }
+  for (const list of storiesByEpic.values()) {
+    list.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
+  }
+
+  // 3. Active sessions — the bulk form of getRunningSessionForTarget.
+  const activeRows = db
+    .select({
+      epicId: agentSessions.epicId,
+      userStoryId: agentSessions.userStoryId,
+    })
+    .from(agentSessions)
+    .where(
+      and(
+        eq(agentSessions.projectId, projectId),
+        inArray(agentSessions.status, ACTIVE_SESSION_STATUSES)
+      )
+    )
+    .all();
+
+  const busyEpicIds = new Set<string>();
+  const busyStoryIds = new Set<string>();
+  for (const row of activeRows) {
+    if (row.epicId) busyEpicIds.add(row.epicId);
+    if (row.userStoryId) busyStoryIds.add(row.userStoryId);
+  }
+
+  // 4. Review/code freshness facts per epic (conditional aggregation).
+  const factRows = db
+    .select({
+      epicId: agentSessions.epicId,
+      lastTerminalReviewAt: sql<string | null>`MAX(CASE
+        WHEN ${agentSessions.status} IN (${sql.raw(TERMINAL_STATUSES_SQL)})
+         AND ${agentSessions.agentType} IN (${sql.raw(REVIEW_AGENT_TYPES_SQL)})
+        THEN ${SESSION_AT_SQL} END)`,
+      lastCompletedReviewAt: sql<string | null>`MAX(CASE
+        WHEN ${agentSessions.status} = 'completed'
+         AND ${agentSessions.agentType} IN (${sql.raw(REVIEW_AGENT_TYPES_SQL)})
+        THEN ${SESSION_AT_SQL} END)`,
+      lastTerminalCodeAt: sql<string | null>`MAX(CASE
+        WHEN ${agentSessions.status} IN (${sql.raw(TERMINAL_STATUSES_SQL)})
+         AND ${agentSessions.agentType} IN (${sql.raw(CODE_AGENT_TYPES_SQL)})
+        THEN ${SESSION_AT_SQL} END)`,
+    })
+    .from(agentSessions)
+    .where(
+      and(
+        eq(agentSessions.projectId, projectId),
+        sql`${agentSessions.epicId} IS NOT NULL`
+      )
+    )
+    .groupBy(agentSessions.epicId)
+    .all();
+
+  const sessionFactsByEpic = new Map<string, SessionFacts>();
+  for (const row of factRows) {
+    if (!row.epicId) continue;
+    sessionFactsByEpic.set(row.epicId, {
+      lastTerminalReviewAt: row.lastTerminalReviewAt ?? null,
+      lastCompletedReviewAt: row.lastCompletedReviewAt ?? null,
+      lastTerminalCodeAt: row.lastTerminalCodeAt ?? null,
+    });
+  }
+
+  // 5 + 6. Latest session per epic / per story (the awaiting-reply verdict).
+  const rankedEpicSessions = db
+    .select({
+      epicId: agentSessions.epicId,
+      outcome: agentSessions.outcome,
+      endedAt: sql<string | null>`COALESCE(
+        ${agentSessions.endedAt}, ${agentSessions.completedAt}, ${agentSessions.createdAt}
+      )`.as("latest_session_ended_at"),
+      rowNum: sql<number>`ROW_NUMBER() OVER (
+        PARTITION BY ${agentSessions.epicId}
+        ORDER BY ${agentSessions.createdAt} DESC, ${agentSessions.id} DESC
+      )`.as("session_row_num"),
+    })
+    .from(agentSessions)
+    .where(
+      and(
+        eq(agentSessions.projectId, projectId),
+        sql`${agentSessions.epicId} IS NOT NULL`
+      )
+    )
+    .as("ranked_epic_sessions");
+
+  const latestEpicSessions = db
+    .select({
+      epicId: rankedEpicSessions.epicId,
+      outcome: rankedEpicSessions.outcome,
+      endedAt: rankedEpicSessions.endedAt,
+    })
+    .from(rankedEpicSessions)
+    .where(eq(rankedEpicSessions.rowNum, 1))
+    .all();
+
+  const rankedStorySessions = db
+    .select({
+      userStoryId: agentSessions.userStoryId,
+      outcome: agentSessions.outcome,
+      endedAt: sql<string | null>`COALESCE(
+        ${agentSessions.endedAt}, ${agentSessions.completedAt}, ${agentSessions.createdAt}
+      )`.as("latest_story_session_ended_at"),
+      rowNum: sql<number>`ROW_NUMBER() OVER (
+        PARTITION BY ${agentSessions.userStoryId}
+        ORDER BY ${agentSessions.createdAt} DESC, ${agentSessions.id} DESC
+      )`.as("story_session_row_num"),
+    })
+    .from(agentSessions)
+    .where(
+      and(
+        eq(agentSessions.projectId, projectId),
+        sql`${agentSessions.userStoryId} IS NOT NULL`
+      )
+    )
+    .as("ranked_story_sessions");
+
+  const latestStorySessions = db
+    .select({
+      userStoryId: rankedStorySessions.userStoryId,
+      outcome: rankedStorySessions.outcome,
+      endedAt: rankedStorySessions.endedAt,
+    })
+    .from(rankedStorySessions)
+    .where(eq(rankedStorySessions.rowNum, 1))
+    .all();
+
+  // 7 + 8. Latest USER comment per epic / per story (a reply to the question).
+  const latestEpicUserComments = db
+    .select({
+      epicId: ticketComments.epicId,
+      at: sql<string | null>`MAX(${ticketComments.createdAt})`,
+    })
+    .from(ticketComments)
+    .innerJoin(epics, eq(ticketComments.epicId, epics.id))
+    .where(
+      and(eq(epics.projectId, projectId), eq(ticketComments.author, "user"))
+    )
+    .groupBy(ticketComments.epicId)
+    .all();
+
+  const latestStoryUserComments = db
+    .select({
+      userStoryId: ticketComments.userStoryId,
+      at: sql<string | null>`MAX(${ticketComments.createdAt})`,
+    })
+    .from(ticketComments)
+    .innerJoin(userStories, eq(ticketComments.userStoryId, userStories.id))
+    .innerJoin(epics, eq(userStories.epicId, epics.id))
+    .where(
+      and(eq(epics.projectId, projectId), eq(ticketComments.author, "user"))
+    )
+    .groupBy(ticketComments.userStoryId)
+    .all();
+
+  const epicUserCommentAt = new Map<string, string>();
+  for (const row of latestEpicUserComments) {
+    if (row.epicId && row.at) epicUserCommentAt.set(row.epicId, row.at);
+  }
+  const storyUserCommentAt = new Map<string, string>();
+  for (const row of latestStoryUserComments) {
+    if (row.userStoryId && row.at) {
+      storyUserCommentAt.set(row.userStoryId, row.at);
+    }
+  }
+
+  const awaitingByEpic = new Map<string, AwaitingFacts>();
+  for (const row of latestEpicSessions) {
+    if (!row.epicId) continue;
+    awaitingByEpic.set(row.epicId, {
+      latestSessionOutcome: row.outcome ?? null,
+      latestSessionEndedAt: row.endedAt ?? null,
+      latestUserCommentCreatedAt: epicUserCommentAt.get(row.epicId) ?? null,
+    });
+  }
+
+  const awaitingByStory = new Map<string, AwaitingFacts>();
+  for (const row of latestStorySessions) {
+    if (!row.userStoryId) continue;
+    awaitingByStory.set(row.userStoryId, {
+      latestSessionOutcome: row.outcome ?? null,
+      latestSessionEndedAt: row.endedAt ?? null,
+      latestUserCommentCreatedAt:
+        storyUserCommentAt.get(row.userStoryId) ?? null,
+    });
+  }
+
+  // 9. Open review comments per epic — the merge gate's blocking findings.
+  const openReviewRows = db
+    .select({
+      epicId: reviewComments.epicId,
+      openCount: sql<number>`COUNT(*)`,
+    })
+    .from(reviewComments)
+    .innerJoin(epics, eq(reviewComments.epicId, epics.id))
+    .where(
+      and(eq(epics.projectId, projectId), eq(reviewComments.status, "open"))
+    )
+    .groupBy(reviewComments.epicId)
+    .all();
+
+  const openReviewCommentsByEpic = new Map<string, number>();
+  for (const row of openReviewRows) {
+    openReviewCommentsByEpic.set(row.epicId, Number(row.openCount ?? 0));
+  }
+
+  const { blockedEpicIds, projectBlocked } = loadRegistryExclusions(projectId);
+
+  return {
+    projectId,
+    epics: epicRows,
+    storiesByEpic,
+    busyEpicIds,
+    busyStoryIds,
+    blockedEpicIds,
+    projectBlocked,
+    sessionFactsByEpic,
+    awaitingByEpic,
+    awaitingByStory,
+    lastUserCommentByEpic: epicUserCommentAt,
+    lastUserCommentByStory: storyUserCommentAt,
+    openReviewCommentsByEpic,
+    parkedTicketIds: autoModeRegistry.parkedTicketIds(projectId),
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared predicates                                                   */
+/* ------------------------------------------------------------------ */
+
+/** Epic-level exclusions every selector applies before looking at status. */
+function isEpicSelectable(board: AutoModeBoard, epic: EpicRow): boolean {
+  if (board.projectBlocked) return false;
+  if (DELIVERED_EPIC_STATUSES.has(epic.status ?? "")) return false;
+  if (board.blockedEpicIds.has(epic.id)) return false;
+  if (board.busyEpicIds.has(epic.id)) return false;
+  if (board.parkedTicketIds.has(epic.id)) return false;
+  const awaiting = board.awaitingByEpic.get(epic.id);
+  if (awaiting && isAwaitingReply(awaiting)) return false;
+  return true;
+}
+
+/** Board order: priority DESC, then position ASC (the kanban reading order). */
+function compareEpics(a: EpicRow, b: EpicRow): number {
+  const priority = (b.priority ?? 0) - (a.priority ?? 0);
+  if (priority !== 0) return priority;
+  return (a.position ?? 0) - (b.position ?? 0);
+}
+
+/**
+ * The infinite-re-review guard.
+ *
+ * A review that PASSES leaves the epic in `review` (the pipeline never
+ * auto-approves), so a naive "everything in review" selector would review the
+ * same epic forever. The guard is deliberately temporal rather than
+ * verdict-based: the verdict is a substring heuristic over the reviewer's
+ * markdown (epics/[epicId]/review/route.ts:337), with no structured field to
+ * read. "Has a terminal review happened since the last terminal code change?"
+ * is a fact, not a guess.
+ */
+export function needsReview(facts: SessionFacts | undefined): boolean {
+  if (!facts) return true;
+  if (!facts.lastTerminalReviewAt) return true;
+  if (!facts.lastTerminalCodeAt) return false;
+  return facts.lastTerminalReviewAt <= facts.lastTerminalCodeAt;
+}
+
+/**
+ * The merge gate's freshness half: a review COMPLETED after the last code
+ * change. Stricter than the workflow engine's `hasCompletedReview` (which
+ * accepts any completed review session ever), which is the point — the
+ * engine's guard is the floor, not the ceiling.
+ */
+export function hasFreshCompletedReview(facts: SessionFacts | undefined): boolean {
+  if (!facts?.lastCompletedReviewAt) return false;
+  if (!facts.lastTerminalCodeAt) return true;
+  return facts.lastCompletedReviewAt > facts.lastTerminalCodeAt;
+}
+
+/* ------------------------------------------------------------------ */
+/* Selectors                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Tickets a build agent may be dispatched onto, in board order.
+ *
+ * Granularity rule (git is the constraint — one worktree and one branch per
+ * epic): an epic WITH stories yields at most ONE story candidate, because
+ * `getRunningSessionForTarget` in story scope also matches the parent epic's
+ * sessions, so two stories of one epic can never run in parallel anyway.
+ * An epic WITHOUT stories yields itself, epic-scoped.
+ */
+export function selectBuildCandidates(
+  projectId: string,
+  board: AutoModeBoard = loadAutoModeBoard(projectId)
+): AutoBuildCandidate[] {
+  const candidates: AutoBuildCandidate[] = [];
+
+  for (const epic of [...board.epics].sort(compareEpics)) {
+    if (!isEpicSelectable(board, epic)) continue;
+
+    const stories = board.storiesByEpic.get(epic.id) ?? [];
+
+    if (stories.length === 0) {
+      if (!BUILDABLE_EPIC_STATUSES.has(epic.status ?? "")) continue;
+      candidates.push({
+        scope: "epic",
+        epicId: epic.id,
+        userStoryId: null,
+        ticketId: epic.id,
+        title: epic.title,
+        readableId: epic.readableId,
+      });
+      continue;
+    }
+
+    // Story scope: the first buildable story by position. The epic itself may
+    // still be in `todo` — the story build route promotes the epic to
+    // `review` only once every sibling is review/done.
+    const next = stories.find((story) => {
+      if (!BUILDABLE_STORY_STATUSES.has(story.status ?? "")) return false;
+      if (board.busyStoryIds.has(story.id)) return false;
+      if (board.parkedTicketIds.has(story.id)) return false;
+      const awaiting = board.awaitingByStory.get(story.id);
+      if (awaiting && isAwaitingReply(awaiting)) return false;
+      return true;
+    });
+    if (!next) continue;
+
+    candidates.push({
+      scope: "story",
+      epicId: epic.id,
+      userStoryId: next.id,
+      ticketId: next.id,
+      title: next.title,
+      readableId: epic.readableId,
+    });
+  }
+
+  return candidates;
+}
+
+/**
+ * Epics whose branch is ready for a review pass: sitting in `review` and not
+ * reviewed since the last code change. Reviews are ALWAYS epic-scoped — the
+ * branch is the integration unit, and reviewing each story then the epic
+ * would pay twice for the same diff.
+ */
+export function selectReviewCandidates(
+  projectId: string,
+  board: AutoModeBoard = loadAutoModeBoard(projectId)
+): AutoReviewCandidate[] {
+  return [...board.epics]
+    .sort(compareEpics)
+    .filter((epic) => epic.status === "review")
+    .filter((epic) => isEpicSelectable(board, epic))
+    .filter((epic) => needsReview(board.sessionFactsByEpic.get(epic.id)))
+    .map((epic) => ({
+      epicId: epic.id,
+      ticketId: epic.id,
+      title: epic.title,
+      readableId: epic.readableId,
+    }));
+}
+
+/**
+ * Epics whose review came back clean and whose branch can land: in `review`,
+ * with a branch, reviewed since the last code change, and with zero open
+ * review comments.
+ *
+ * This is the supervisor's own gate, and it is STRICTER than the workflow
+ * engine's `→ done` guards on purpose. The engine still has the last word —
+ * `applyTransition` refuses unless `hasCompletedReview` and no open comments
+ * — but the engine's freshness is lax, so the temporal check above is what
+ * makes "review is OK" mean something without inventing a new boolean.
+ */
+export function selectMergeCandidates(
+  projectId: string,
+  board: AutoModeBoard = loadAutoModeBoard(projectId)
+): AutoMergeCandidate[] {
+  return [...board.epics]
+    .sort(compareEpics)
+    .filter((epic) => epic.status === "review")
+    .filter((epic) => !!epic.branchName)
+    .filter((epic) => isEpicSelectable(board, epic))
+    .filter((epic) => hasFreshCompletedReview(board.sessionFactsByEpic.get(epic.id)))
+    .filter((epic) => (board.openReviewCommentsByEpic.get(epic.id) ?? 0) === 0)
+    .map((epic) => ({
+      epicId: epic.id,
+      ticketId: epic.id,
+      branchName: epic.branchName!,
+      title: epic.title,
+      readableId: epic.readableId,
+    }));
+}
