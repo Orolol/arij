@@ -520,6 +520,43 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     expect(dbMockState.insertCalls[0]).toMatchObject({ role: "user" });
   });
 
+  it("closes the SSE response stream when killed from the server / monitor", async () => {
+    seedFastModeConversation();
+    const hungStream = new ReadableStream<Uint8Array>({
+      start() {
+        // Never produces data
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response(hungStream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const { activityRegistry } = await import("@/lib/activity-registry");
+
+    const response = await POST(
+      mockJsonRequest({ content: "Current question", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const activities = activityRegistry.listByProject("proj1");
+    const activity = activities[0]!;
+    expect(activity.provider).toBe("openai-compatible");
+
+    // Server-side kill from monitor
+    activityRegistry.cancel(activity.id);
+
+    // Stream must terminate so the client reader completes without hanging
+    const events = await readSseEvents(response);
+    expect(events).toEqual([]);
+    expect(dbMockState.updateCalls).toContainEqual({ status: "active" });
+    expect(dbMockState.insertCalls).toHaveLength(1);
+  });
+
   it("keeps CLI providers on the CLI path (openai branch is provider-scoped)", async () => {
     seedFastModeConversation({
       conversation: {

@@ -67,6 +67,7 @@ export default function SettingsPage() {
     useState<OpenAiReasoningEffort>("off");
   const [hasSavedOpenAiKey, setHasSavedOpenAiKey] = useState(false);
   const [savingOpenAi, setSavingOpenAi] = useState(false);
+  const [clearingOpenAiKey, setClearingOpenAiKey] = useState(false);
   const [testingOpenAi, setTestingOpenAi] = useState(false);
   const [openAiMessage, setOpenAiMessage] = useState<string | null>(null);
   const [openAiError, setOpenAiError] = useState<string | null>(null);
@@ -601,7 +602,7 @@ export default function SettingsPage() {
     }
   }
   async function handleClearOpenAiKey() {
-    setSavingOpenAi(true);
+    setClearingOpenAiKey(true);
     setOpenAiMessage(null);
     setOpenAiError(null);
 
@@ -629,7 +630,7 @@ export default function SettingsPage() {
         "Failed to clear the saved API key. Check your connection and retry."
       );
     } finally {
-      setSavingOpenAi(false);
+      setClearingOpenAiKey(false);
     }
   }
 
@@ -1037,12 +1038,12 @@ export default function SettingsPage() {
               <span>An API key is already saved for this workspace.</span>
               <button
                 type="button"
-                className="text-xs text-destructive hover:underline cursor-pointer bg-transparent border-0 p-0"
+                className="text-xs text-destructive hover:underline cursor-pointer bg-transparent border-0 p-0 disabled:opacity-50"
                 onClick={handleClearOpenAiKey}
-                disabled={savingOpenAi}
+                disabled={clearingOpenAiKey || savingOpenAi}
                 data-testid="openai-clear-key-button"
               >
-                Clear key
+                {clearingOpenAiKey ? "Clearing..." : "Clear key"}
               </button>
             </div>
           )}
@@ -1131,7 +1132,7 @@ export default function SettingsPage() {
           >
             {testingOpenAi ? "Testing..." : "Test connection"}
           </Button>
-          <Button type="button" onClick={handleSaveOpenAi} disabled={savingOpenAi}>
+          <Button type="button" onClick={handleSaveOpenAi} disabled={savingOpenAi || clearingOpenAiKey}>
             {savingOpenAi ? "Saving..." : "Save"}
           </Button>
         </div>

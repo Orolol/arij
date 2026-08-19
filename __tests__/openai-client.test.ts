@@ -231,7 +231,7 @@ describe("testOpenAiConnection", () => {
     expect(result).toEqual({ ok: true, model: "llama3.1" });
   });
 
-  it("returns a readable 401 error without throwing", async () => {
+  it("returns a readable 401 error with 401 status without throwing", async () => {
     fetchMock.mockResolvedValue(
       new Response("", { status: 401, statusText: "Unauthorized" }),
     );
@@ -239,28 +239,34 @@ describe("testOpenAiConnection", () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toBe("OpenAI-compatible API error: 401 Unauthorized");
+      expect(result.status).toBe(401);
     }
   });
 
   it("flags missing Base URL or Model before any request", async () => {
     const noUrl = await testOpenAiConnection({ ...baseConfig, baseUrl: "" });
-    expect(noUrl).toEqual({ ok: false, error: "OpenAI-compatible API error: no Base URL configured." });
+    expect(noUrl).toEqual({ ok: false, error: "OpenAI-compatible API error: no Base URL configured.", status: 400 });
 
     const noModel = await testOpenAiConnection({ ...baseConfig, model: "" });
-    expect(noModel).toEqual({ ok: false, error: "OpenAI-compatible API error: no Model configured." });
+    expect(noModel).toEqual({ ok: false, error: "OpenAI-compatible API error: no Model configured.", status: 400 });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("flags an invalid Base URL before any request", async () => {
-    const result = await testOpenAiConnection({ ...baseConfig, baseUrl: "not a url" });
+  it("flags an invalid Base URL before any request and redacts userinfo", async () => {
+    const result = await testOpenAiConnection({
+      ...baseConfig,
+      baseUrl: "https://secret-token@invalid-url:notaport",
+    });
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.error).toContain("invalid Base URL");
+      expect(result.error).not.toContain("secret-token");
+      expect(result.status).toBe(400);
     }
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("maps connection refused to a readable error", async () => {
+  it("maps connection refused to a readable error with 502 status", async () => {
     fetchMock.mockRejectedValue(
       Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }),
     );
@@ -270,6 +276,7 @@ describe("testOpenAiConnection", () => {
       expect(result.error).toBe(
         "OpenAI-compatible API error: connection refused — is the server running.",
       );
+      expect(result.status).toBe(502);
     }
   });
 });

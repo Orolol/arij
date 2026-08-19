@@ -16,7 +16,10 @@ export async function POST() {
   const result = await testOpenAiConnection(config);
 
   if (!result.ok) {
-    return NextResponse.json({ error: result.error }, { status: 400 });
+    return NextResponse.json(
+      { error: result.error },
+      { status: result.status ?? 400 }
+    );
   }
   return NextResponse.json({ data: { valid: true, model: result.model } });
 }

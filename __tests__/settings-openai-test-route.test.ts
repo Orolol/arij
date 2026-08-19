@@ -58,7 +58,7 @@ describe("POST /api/settings/openai/test", () => {
     expect(JSON.stringify(json)).not.toContain("sk-test");
   });
 
-  it("returns 400 with a readable error for an unauthorized endpoint", async () => {
+  it("returns 401 with a readable error for an unauthorized endpoint", async () => {
     seedConfig();
     fetchMock.mockResolvedValue(
       new Response("nope", { status: 401, statusText: "Unauthorized" }),
@@ -68,11 +68,11 @@ describe("POST /api/settings/openai/test", () => {
     const res = await POST();
     const json = await res.json();
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(401);
     expect(json.error).toBe("OpenAI-compatible API error: 401 Unauthorized: nope");
   });
 
-  it("returns 400 with a readable error when the server is unreachable", async () => {
+  it("returns 502 with a readable error when the server is unreachable", async () => {
     seedConfig();
     fetchMock.mockRejectedValue(
       Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }),
@@ -82,7 +82,7 @@ describe("POST /api/settings/openai/test", () => {
     const res = await POST();
     const json = await res.json();
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(502);
     expect(json.error).toBe(
       "OpenAI-compatible API error: connection refused — is the server running.",
     );

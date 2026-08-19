@@ -243,7 +243,7 @@ export async function POST(
           .from(chatConversations)
           .where(eq(chatConversations.id, conversationId))
           .get();
-        if (conv && (conv.label === "Brainstorm" || conv.label === "New Epic")) {
+        if (conv && (conv.label === "Brainstorm" || conv.label === "New Epic" || conv.label === "Chat")) {
           const titlePrompt = buildTitleGenerationPrompt(userContent, fullContent);
           spawnClaude({ mode: "plan", prompt: titlePrompt, model: "haiku" }).promise
             .then((titleResult) => {
@@ -332,6 +332,7 @@ export async function POST(
       kill: () => abortController.abort(),
     });
 
+    let clientCancelled = false;
     let fullContent = "";
     const sseStream = new ReadableStream({
       async start(controller) {
@@ -347,12 +348,22 @@ export async function POST(
             );
           }
           activityRegistry.unregister(activityId);
+          if (abortController.signal.aborted) {
+            setConversationStatus("active");
+            if (!clientCancelled) {
+              controller.close();
+            }
+            return;
+          }
           saveAssistantAndTitle(controller, fullContent, "active");
         } catch (error) {
           if (abortController.signal.aborted) {
-            // Client disconnected or the activity was killed — nothing to persist.
+            // Client disconnected or the activity was killed.
             activityRegistry.unregister(activityId);
             setConversationStatus("active");
+            if (!clientCancelled) {
+              controller.close();
+            }
             return;
           }
           const failureMessage =
@@ -378,6 +389,7 @@ export async function POST(
         }
       },
       cancel() {
+        clientCancelled = true;
         activityRegistry.unregister(activityId);
         abortController.abort();
         setConversationStatus("active");
@@ -386,6 +398,13 @@ export async function POST(
 
     return sseResponse(sseStream);
   }
+
+  // Full history including the user message just saved above, required by
+  // prompt builders so the agent answers the current question.
+  const fullHistory = [
+    ...messageHistory,
+    { role: "user" as const, content: userContent },
+  ];
 
   let prompt: string;
   if (isEpicCreationConversationAgentType(conversationType)) {
@@ -405,27 +424,27 @@ export async function POST(
       ? buildEpicFinalizationPrompt(
           project,
           [],
-          messageHistory,
+          fullHistory,
           globalPrompt,
           existingEpics,
         )
       : buildEpicRefinementPrompt(
           project,
           [],
-          messageHistory,
+          fullHistory,
           globalPrompt,
           existingEpics,
         );
   } else {
     const chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
-    prompt = buildChatPrompt(project, [], messageHistory, chatSystemPrompt);
+    prompt = buildChatPrompt(project, [], fullHistory, chatSystemPrompt);
   }
 
   try {
     prompt = enrichPromptWithDocumentMentions({
       projectId,
       prompt,
-      textSources: [body.content, ...messageHistory.map((m) => m.content)],
+      textSources: [body.content, ...fullHistory.map((m) => m.content)],
     }).prompt;
   } catch (error) {
     if (error instanceof MentionResolutionError) {

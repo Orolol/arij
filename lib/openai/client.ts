@@ -113,6 +113,41 @@ export function buildChatCompletionsBody(
 /* Error descriptions                                                  */
 /* ------------------------------------------------------------------ */
 
+function redactUrl(url: string): string {
+  return url.replace(/(https?:\/\/)[^@/]+@/, "$1");
+}
+function combineAbortSignals(
+  signal1?: AbortSignal,
+  signal2?: AbortSignal,
+): { signal: AbortSignal; cleanup: () => void } {
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+
+  if (signal1) {
+    if (signal1.aborted) {
+      controller.abort();
+      return { signal: controller.signal, cleanup: () => {} };
+    }
+    signal1.addEventListener("abort", onAbort, { once: true });
+  }
+
+  if (signal2) {
+    if (signal2.aborted) {
+      controller.abort();
+      return { signal: controller.signal, cleanup: () => {} };
+    }
+    signal2.addEventListener("abort", onAbort, { once: true });
+  }
+
+  const cleanup = () => {
+    if (signal1) signal1.removeEventListener("abort", onAbort);
+    if (signal2) signal2.removeEventListener("abort", onAbort);
+  };
+
+  return { signal: controller.signal, cleanup };
+}
+
+
 function truncate(text: string, max = 300): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
@@ -192,7 +227,7 @@ function httpError(status: number, statusText: string, bodyText: string): Error 
 
 export type OpenAiTestResult =
   | { ok: true; model: string }
-  | { ok: false; error: string };
+  | { ok: false; error: string; status?: number };
 
 /**
  * Minimal non-streaming completion used by the Settings "Test connection"
@@ -204,10 +239,10 @@ export async function testOpenAiConnection(
   timeoutMs = 15000,
 ): Promise<OpenAiTestResult> {
   if (!config.baseUrl) {
-    return { ok: false, error: `${ERROR_PREFIX} no Base URL configured.` };
+    return { ok: false, error: `${ERROR_PREFIX} no Base URL configured.`, status: 400 };
   }
   if (!config.model) {
-    return { ok: false, error: `${ERROR_PREFIX} no Model configured.` };
+    return { ok: false, error: `${ERROR_PREFIX} no Model configured.`, status: 400 };
   }
 
   let url: string;
@@ -217,7 +252,8 @@ export async function testOpenAiConnection(
   } catch {
     return {
       ok: false,
-      error: `${ERROR_PREFIX} invalid Base URL "${config.baseUrl}".`,
+      error: `${ERROR_PREFIX} invalid Base URL "${redactUrl(config.baseUrl)}".`,
+      status: 400,
     };
   }
 
@@ -239,9 +275,11 @@ export async function testOpenAiConnection(
 
     if (!response.ok) {
       const bodyText = await response.text().catch(() => "");
+      const status = response.status === 401 || response.status === 403 ? 401 : 502;
       return {
         ok: false,
         error: `${ERROR_PREFIX} ${describeHttpError(response.status, response.statusText, bodyText)}`,
+        status,
       };
     }
 
@@ -254,7 +292,7 @@ export async function testOpenAiConnection(
         : config.model;
     return { ok: true, model };
   } catch (error) {
-    return { ok: false, error: describeNetworkError(error) };
+    return { ok: false, error: describeNetworkError(error), status: 502 };
   } finally {
     clearTimeout(timer);
   }
@@ -315,24 +353,39 @@ export async function* streamOpenAiChatCompletion(
   config: OpenAiConfig,
   messages: OpenAiChatMessage[],
   signal?: AbortSignal,
+  timeoutMs = 60000,
 ): AsyncGenerator<string, void, unknown> {
   let url: string;
   try {
     url = buildChatCompletionsUrl(config.baseUrl);
     new URL(url);
   } catch {
-    throw new Error(`${ERROR_PREFIX} invalid Base URL "${config.baseUrl}".`);
+    throw new Error(`${ERROR_PREFIX} invalid Base URL "${redactUrl(config.baseUrl)}".`);
   }
+
+  const timeoutController = new AbortController();
+  const timer = setTimeout(() => {
+    timeoutController.abort(new DOMException("The request timed out.", "TimeoutError"));
+  }, timeoutMs);
+
+  const { signal: fetchSignal, cleanup } = combineAbortSignals(
+    signal,
+    timeoutController.signal,
+  );
+
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
       headers: buildOpenAiHeaders(config.apiKey),
       body: JSON.stringify(buildChatCompletionsBody(config, messages, true)),
-      signal,
+      signal: fetchSignal,
     });
   } catch (error) {
     throw new Error(describeNetworkError(error));
+  } finally {
+    clearTimeout(timer);
+    cleanup();
   }
 
   if (!response.ok || !response.body) {
@@ -341,6 +394,17 @@ export async function* streamOpenAiChatCompletion(
   }
 
   const reader = response.body.getReader();
+  const onAbort = () => {
+    reader.cancel().catch(() => {});
+  };
+  if (signal) {
+    if (signal.aborted) {
+      reader.cancel().catch(() => {});
+    } else {
+      signal.addEventListener("abort", onAbort, { once: true });
+    }
+  }
+
   const decoder = new TextDecoder();
   let buffer = "";
   let rawText = "";
@@ -348,8 +412,9 @@ export async function* streamOpenAiChatCompletion(
 
   try {
     while (true) {
+      if (signal?.aborted) break;
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done || signal?.aborted) break;
       const chunk = decoder.decode(value, { stream: true });
       if (!sawSseDataLine) {
         rawText += chunk;
@@ -377,6 +442,9 @@ export async function* streamOpenAiChatCompletion(
     if (tailDelta === DONE) return;
     if (tailDelta) yield tailDelta;
   } finally {
+    if (signal) {
+      signal.removeEventListener("abort", onAbort);
+    }
     reader.releaseLock();
   }
 

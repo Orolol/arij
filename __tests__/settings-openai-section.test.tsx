@@ -202,6 +202,46 @@ describe("Settings page — OpenAI-compatible API section", () => {
     });
   });
 
+  it("disables the Test connection button while the test request is in flight", async () => {
+    const { promise, resolve } = Promise.withResolvers<{
+      ok: boolean;
+      status: number;
+      json: () => Promise<unknown>;
+    }>();
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/api/settings/openai/test")) {
+        return promise;
+      }
+      return Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve({ data: mockSettings }),
+      });
+    });
+
+    render(<SettingsPage />);
+
+    const section = screen.getByTestId("openai-settings");
+    const testButton = within(section).getByRole("button", { name: "Test connection" });
+    expect(testButton).not.toBeDisabled();
+
+    fireEvent.click(testButton);
+
+    expect(testButton).toBeDisabled();
+    expect(testButton).toHaveTextContent("Testing...");
+
+    resolve({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ data: { valid: true, model: "llama3.1" } }),
+    });
+
+    await waitFor(() => {
+      expect(testButton).not.toBeDisabled();
+      expect(testButton).toHaveTextContent("Test connection");
+    });
+  });
+
   it("shows the readable server error on a failed connection test", async () => {
     openAiTestResponse = {
       ok: false,

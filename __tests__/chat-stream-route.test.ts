@@ -263,7 +263,10 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     expect(mockPromptBuilder.buildEpicRefinementPrompt).toHaveBeenCalledWith(
       expect.objectContaining({ name: "Arij" }),
       [],
-      expect.any(Array),
+      [
+        { role: "user", content: "Need auth flow" },
+        { role: "user", content: "Let's define the epic" },
+      ],
       "Global prompt",
       [
         { title: "User Management", description: "Manage users" },
@@ -295,6 +298,15 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     expect(response.status).toBe(200);
     expect(mockResolveAgentPrompt).toHaveBeenCalledWith("chat", "proj1");
     expect(mockPromptBuilder.buildChatPrompt).toHaveBeenCalledTimes(1);
+    expect(mockPromptBuilder.buildChatPrompt).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "Arij" }),
+      [],
+      [
+        { role: "user", content: "How should architecture look?" },
+        { role: "user", content: "Any ideas?" },
+      ],
+      "Chat system prompt",
+    );
     expect(mockPromptBuilder.buildEpicRefinementPrompt).not.toHaveBeenCalled();
     expect(mockSpawnHelpers.spawnClaudeStream).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: "CHAT_PROMPT" }),
