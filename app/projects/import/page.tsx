@@ -162,7 +162,9 @@ async function createEpicsAndStories(
       continue;
     }
 
-    for (const us of epic.user_stories) {
+    // Defensive: the preview passed the shape guard before rendering, but an
+    // entry without user_stories must fail per-epic, not throw here.
+    for (const us of epic.user_stories ?? []) {
       const storyResult = await sendJson<unknown>(
         `/api/projects/${projectId}/user-stories`,
         {
@@ -253,6 +255,8 @@ export default function ImportProjectPage() {
     // The route may return a valid envelope whose preview is still malformed;
     // rendering it would crash the preview screen, so guard the shape too.
     const preview = result.data?.preview;
+
+    // Envelope level: the route promises { preview: { project, epics } }.
     if (
       !preview ||
       typeof preview !== "object" ||
@@ -262,6 +266,27 @@ export default function ImportProjectPage() {
     ) {
       setError(
         "The analysis returned an unexpected preview (missing project or epics). Nothing was imported."
+      );
+      setState("select");
+      return;
+    }
+
+    // Entry level: ImportPreview dereferences `epic.title` and
+    // `epic.user_stories.length` on every entry. The preview may come from a
+    // third-party arji.json inside a freshly cloned repository (spec §5), so
+    // an epic missing user_stories must be rejected here — not thrown from
+    // the render, which would blank the whole app (no error boundary).
+    if (
+      !preview.epics.every(
+        (epic) =>
+          epic &&
+          typeof epic === "object" &&
+          typeof epic.title === "string" &&
+          Array.isArray(epic.user_stories)
+      )
+    ) {
+      setError(
+        "The analysis returned an unexpected preview (an epic is missing its title or its user stories). Nothing was imported."
       );
       setState("select");
       return;

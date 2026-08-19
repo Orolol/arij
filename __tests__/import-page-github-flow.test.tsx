@@ -555,6 +555,64 @@ describe("import page — malformed responses", () => {
     ).toBeInTheDocument();
   });
 
+  it("rejects an epic that lacks user_stories instead of crashing the render", async () => {
+    // ImportPreview dereferences epic.user_stories.length on every entry and
+    // the page has no error boundary: such a preview used to throw during
+    // render and blank the whole app. The shape guard must reject it first.
+    installFetch({
+      import: {
+        body: {
+          data: {
+            preview: {
+              project: { name: "Arij", description: "Orchestrator" },
+              epics: [{ title: "x", status: "todo" }],
+            },
+          },
+        },
+      },
+    });
+    render(<ImportProjectPage />);
+
+    await runLocalAnalysis();
+
+    expect(
+      await screen.findByText(
+        "The analysis returned an unexpected preview (an epic is missing its title or its user stories). Nothing was imported."
+      )
+    ).toBeInTheDocument();
+    // The selector is back — no preview, no partial import.
+    expect(
+      screen.getByPlaceholderText("/path/to/your/project")
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Validate & Import" })
+    ).not.toBeInTheDocument();
+  });
+
+  it("rejects a preview whose epic entry is not an object", async () => {
+    installFetch({
+      import: {
+        body: {
+          data: {
+            preview: {
+              project: { name: "Arij", description: "Orchestrator" },
+              epics: ["not-an-object"],
+            },
+          },
+        },
+      },
+    });
+    render(<ImportProjectPage />);
+
+    await runLocalAnalysis();
+
+    expect(
+      await screen.findByText(
+        "The analysis returned an unexpected preview (an epic is missing its title or its user stories). Nothing was imported."
+      )
+    ).toBeInTheDocument();
+  });
+
   it("renders the stack from an unexpected-error debug block", async () => {
     installFetch({
       import: {

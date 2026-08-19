@@ -49,7 +49,9 @@ export function ImportPreview({
 
   function removeUS(epicIndex: number, usIndex: number) {
     const updated = structuredClone(editData);
-    updated.epics[epicIndex].user_stories.splice(usIndex, 1);
+    // Defensive: an epic handed in without user_stories must not crash the
+    // remove handler either (the page validates the shape before rendering).
+    updated.epics[epicIndex].user_stories?.splice(usIndex, 1);
     setEditData(updated);
   }
 
@@ -91,7 +93,13 @@ export function ImportPreview({
           Epics ({editData.epics.length})
         </h2>
         <div className="space-y-3">
-          {editData.epics.map((epic, ei) => (
+          {editData.epics.map((epic, ei) => {
+            // Defensive: the import page rejects a preview whose epics lack
+            // user_stories before rendering, but the component must not throw
+            // on a malformed entry either — `epic.user_stories.length` used to
+            // crash the whole app (no error boundary) on such a preview.
+            const stories = epic.user_stories ?? [];
+            return (
             <Card key={ei} className="p-4">
               <div className="flex items-start gap-2 mb-2">
                 <Input
@@ -116,9 +124,9 @@ export function ImportPreview({
                   <Trash2 className="h-4 w-4" />
                 </Button>
               </div>
-              {epic.user_stories.length > 0 && (
+              {stories.length > 0 && (
                 <div className="ml-4 space-y-1">
-                  {epic.user_stories.map((us, usi) => (
+                  {stories.map((us, usi) => (
                     <div key={usi} className="flex items-center gap-2 text-sm">
                       <Badge
                         variant="outline"
@@ -140,7 +148,8 @@ export function ImportPreview({
                 </div>
               )}
             </Card>
-          ))}
+            );
+          })}
         </div>
       </div>
 
