@@ -22,6 +22,40 @@ export function epicBranchName(epicId: string, epicTitle: string): string {
 }
 
 /**
+ * Resolves the branch new epic branches are cut from.
+ *
+ * `main` and `master` keep priority so existing repos behave exactly as before.
+ * Beyond them the clone itself is asked: `origin/HEAD` records the branch the
+ * remote reports as default, which for a GitHub import is frequently neither
+ * (`develop`, `trunk`). Guessing `master` there made `worktree add` fail
+ * outright with `invalid reference: master`, so a freshly cloned project could
+ * never be sent to dev.
+ */
+async function resolveBaseBranch(
+  git: SimpleGit,
+  localBranches: string[],
+  currentBranch: string
+): Promise<string> {
+  if (localBranches.includes("main")) return "main";
+  if (localBranches.includes("master")) return "master";
+
+  try {
+    const head = await git.raw([
+      "symbolic-ref",
+      "--short",
+      "refs/remotes/origin/HEAD",
+    ]);
+    const remoteDefault = head?.trim().replace(/^origin\//, "");
+    if (remoteDefault) return remoteDefault;
+  } catch {
+    // No remote, or no origin/HEAD ref — the checked-out branch is the best
+    // remaining answer.
+  }
+
+  return currentBranch || "master";
+}
+
+/**
  * Creates a worktree for an epic with a dedicated branch.
  * Returns the worktree path.
  */
@@ -49,21 +83,24 @@ export async function createWorktree(
   const branches = await git.branchLocal();
   const branchExists = branches.all.includes(branchName);
 
-  // Determine the main branch to base new branches from
-  const mainBranch = branches.all.includes("main") ? "main" : "master";
-
   if (branchExists) {
     // Create worktree from existing branch
     await git.raw(["worktree", "add", worktreePath, branchName]);
   } else {
-    // Create new branch + worktree, explicitly based from main
+    // Resolved lazily: an existing branch needs no start point.
+    const baseBranch = await resolveBaseBranch(
+      git,
+      branches.all,
+      branches.current
+    );
+    // Create new branch + worktree, explicitly based from the default branch
     await git.raw([
       "worktree",
       "add",
       "-b",
       branchName,
       worktreePath,
-      mainBranch,
+      baseBranch,
     ]);
   }
 
