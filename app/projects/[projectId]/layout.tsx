@@ -32,6 +32,10 @@ import { RepoStatusBar } from "@/components/layout/RepoStatusBar";
 interface ProjectSummary {
   gitRepoPath: string | null;
   githubOwnerRepo: string | null;
+  /** The branch Arij bases work on (stored at GitHub import). The repo bar
+   *  reads ahead/behind against it — main is just the fallback for legacy
+   *  projects that predate the column. */
+  defaultBranch: string | null;
 }
 
 const TAB_CLASS =
@@ -50,6 +54,7 @@ export default function ProjectLayout({
   const [projectSummary, setProjectSummary] = useState<ProjectSummary>({
     gitRepoPath: null,
     githubOwnerRepo: null,
+    defaultBranch: null,
   });
   const [syncing, setSyncing] = useState(false);
 
@@ -62,6 +67,7 @@ export default function ProjectLayout({
           setProjectSummary({
             gitRepoPath: d.data.gitRepoPath ?? null,
             githubOwnerRepo: d.data.githubOwnerRepo ?? null,
+            defaultBranch: d.data.defaultBranch ?? null,
           });
         }
       })
@@ -276,6 +282,7 @@ export default function ProjectLayout({
           projectId={projectId}
           ownerRepo={projectSummary.githubOwnerRepo}
           gitRepoPath={projectSummary.gitRepoPath}
+          defaultBranch={projectSummary.defaultBranch}
         />
       )}
     </div>
