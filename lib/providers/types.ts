@@ -14,7 +14,9 @@ export type ProviderType =
   | "opencode"
   | "deepseek"
   | "kimi"
-  | "zai";
+  | "zai"
+  | "pi"
+  | "oh-my-pi";
 
 export type ProviderChunkStreamType = "response" | "raw" | "output";
 

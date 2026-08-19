@@ -22,6 +22,7 @@ interface ValidateResumeResult {
  * - mistral-vibe: --resume <ID>
  * - opencode: --session <ID>
  * - kimi: --continue (directory-scoped)
+ * - pi / oh-my-pi: --session <ID>
  *
  * Non-resumable: codex, qwen-code, deepseek, zai
  */
@@ -31,6 +32,8 @@ const RESUMABLE_PROVIDERS = new Set<ProviderType>([
   "mistral-vibe",
   "opencode",
   "kimi",
+  "pi",
+  "oh-my-pi",
 ]);
 
 /**
