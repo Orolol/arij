@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getWorktreeDiff } from "@/lib/git/diff";
-import { createWorktree, isGitRepo } from "@/lib/git/manager";
+import {
+  createWorktree,
+  isGitRepo,
+  resolveDefaultBranch,
+} from "@/lib/git/manager";
 import {
   errorResponse,
   getEpicOr404,
@@ -40,11 +44,20 @@ export async function GET(_request: NextRequest, { params }: Params) {
   const { worktreePath } = await createWorktree(
     project.gitRepoPath,
     epic.id,
-    epic.title
+    epic.title,
+    project.defaultBranch || undefined
   );
 
   try {
-    const result = await getWorktreeDiff(worktreePath);
+    // Diff against the branch the worktree was actually cut from. A
+    // hard-coded "main" fails merge-base on a develop-default clone and
+    // silently produces an empty diff with 0 ahead/behind — the review
+    // screen would then claim the branch "has not diverged" over an epic
+    // with real commits.
+    const baseBranch = project.defaultBranch
+      ? project.defaultBranch
+      : await resolveDefaultBranch(project.gitRepoPath);
+    const result = await getWorktreeDiff(worktreePath, baseBranch);
     return NextResponse.json({ data: result });
   } catch (error) {
     return errorResponse(error, "Failed to generate diff");

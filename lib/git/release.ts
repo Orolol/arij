@@ -8,7 +8,17 @@ export interface ReleaseBranchResult {
   commitHash: string | null;
 }
 
-function pickBaseBranch(branches: string[]): string {
+/**
+ * Picks the branch a release branches off.
+ *
+ * `preferred` is the project's stored `default_branch` (set by a GitHub
+ * import). When it still exists locally it wins — falling back to
+ * `branches[0]` instead could pick a feature branch on a repo with a
+ * non-main/master default. Otherwise `main` → `master` keep priority so
+ * existing repos behave exactly as before.
+ */
+function pickBaseBranch(branches: string[], preferred?: string): string {
+  if (preferred && branches.includes(preferred)) return preferred;
   if (branches.includes("main")) return "main";
   if (branches.includes("master")) return "master";
   if (branches.length > 0) return branches[0];
@@ -18,14 +28,18 @@ function pickBaseBranch(branches: string[]): string {
 export async function createReleaseBranchAndCommitChangelog(
   repoPath: string,
   version: string,
-  changelog: string
+  changelog: string,
+  preferredBaseBranch?: string
 ): Promise<ReleaseBranchResult> {
   const git = simpleGit(repoPath);
   const releaseBranch = `release/v${version}`;
 
   const branchSummary = await git.branchLocal();
   const originalBranch = branchSummary.current;
-  const baseBranch = pickBaseBranch(branchSummary.all);
+  const baseBranch = pickBaseBranch(
+    branchSummary.all,
+    preferredBaseBranch
+  );
 
   try {
     const branchExists = branchSummary.all.includes(releaseBranch);

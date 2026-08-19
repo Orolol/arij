@@ -323,7 +323,8 @@ ${ticketContext}
     releaseBranchResult = await createReleaseBranchAndCommitChangelog(
       project.gitRepoPath,
       version,
-      changelog
+      changelog,
+      project.defaultBranch || undefined
     );
     releaseBranch = releaseBranchResult.releaseBranch;
   }

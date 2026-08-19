@@ -72,7 +72,12 @@ export async function POST(
 
   const worktreePath = session?.worktreePath || undefined;
 
-  const result = await mergeWorktree(project.gitRepoPath, epic.branchName, worktreePath);
+  const result = await mergeWorktree(
+    project.gitRepoPath,
+    epic.branchName,
+    worktreePath,
+    project.defaultBranch || undefined
+  );
 
   if (result.merged) {
     const prevStatus = (epic.status ?? "review") as KanbanStatus;
@@ -210,7 +215,8 @@ export async function POST(
         const retryResult = await mergeWorktree(
           project.gitRepoPath!,
           epic.branchName!,
-          worktreePath
+          worktreePath,
+          project.defaultBranch || undefined
         );
         if (retryResult.merged) {
           const mergedAt = new Date().toISOString();

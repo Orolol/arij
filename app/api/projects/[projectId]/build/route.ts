@@ -254,7 +254,8 @@ export async function POST(
         const { worktreePath, branchName } = await createWorktree(
           gitRepoPath,
           epic.id,
-          epic.title
+          epic.title,
+          project.defaultBranch || undefined
         );
 
         teamEpics.push({
@@ -480,7 +481,8 @@ export async function POST(
     const { worktreePath, branchName } = await createWorktree(
       gitRepoPath,
       epic.id,
-      epic.title
+      epic.title,
+      projectRef.defaultBranch || undefined
     );
 
     // Compose prompt

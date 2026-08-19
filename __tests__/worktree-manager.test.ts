@@ -174,6 +174,74 @@ describe("createWorktree", () => {
     // Should not call git at all
     expect(mockGit.raw).not.toHaveBeenCalled();
   });
+
+  // The project's stored default_branch (set by a GitHub import) is
+  // authoritative: a gitflow repo may carry a local `main` while its GitHub
+  // default is `develop`, and the imported value is the one the PR base and
+  // the remote agree on.
+  it("prefers the stored default branch over a local main", async () => {
+    mockGit.branchLocal.mockResolvedValue({
+      all: ["main", "develop"],
+      current: "develop",
+    });
+    mockGit.raw.mockResolvedValue("");
+
+    await createWorktree("/repo", "epic123", "My Epic Title", "develop");
+
+    expect(mockGit.raw).toHaveBeenCalledWith([
+      "worktree",
+      "add",
+      "-b",
+      "feature/epic-epic123-my-epic-title",
+      expect.any(String),
+      "develop",
+    ]);
+    expect(mockGit.raw).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["symbolic-ref"])
+    );
+  });
+
+  it("falls through to the chain when the stored default branch is missing locally", async () => {
+    // e.g. the default was deleted after the import: main wins again, and the
+    // origin/HEAD lookup is not consulted either (main answers first).
+    mockGit.branchLocal.mockResolvedValue({
+      all: ["main", "feature-branch"],
+      current: "main",
+    });
+    mockGit.raw.mockResolvedValue("");
+
+    await createWorktree("/repo", "epic123", "My Epic Title", "develop");
+
+    expect(mockGit.raw).toHaveBeenCalledWith([
+      "worktree",
+      "add",
+      "-b",
+      "feature/epic-epic123-my-epic-title",
+      expect.any(String),
+      "main",
+    ]);
+  });
+
+  it("ignores an empty-string stored default branch", async () => {
+    mockGit.branchLocal.mockResolvedValue({
+      all: ["develop"],
+      current: "develop",
+    });
+    mockGit.raw.mockImplementation(async (args: string[]) =>
+      args[0] === "symbolic-ref" ? "origin/develop\n" : ""
+    );
+
+    await createWorktree("/repo", "epic123", "My Epic Title", "");
+
+    expect(mockGit.raw).toHaveBeenCalledWith([
+      "worktree",
+      "add",
+      "-b",
+      "feature/epic-epic123-my-epic-title",
+      expect.any(String),
+      "develop",
+    ]);
+  });
 });
 
 describe("mergeWorktree", () => {
@@ -257,6 +325,34 @@ describe("mergeWorktree", () => {
     expect(result).toEqual({ merged: false, error: "Branch feature/missing not found" });
     expect(mockGit.checkout).not.toHaveBeenCalled();
   });
+
+  it("prefers the stored default branch over a local main, like createWorktree", async () => {
+    mockGit.branchLocal.mockResolvedValue({
+      all: ["main", "develop", epicBranch],
+      current: "develop",
+    });
+    mockSymbolicRef("origin/develop\n");
+
+    const result = await mergeWorktree("/repo", epicBranch, undefined, "develop");
+
+    expect(result).toEqual({ merged: true, commitHash: "abc123" });
+    expect(mockGit.checkout).toHaveBeenCalledWith("develop");
+    expect(mockGit.raw).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["symbolic-ref"])
+    );
+  });
+
+  it("falls back to the chain when the stored default branch is missing locally", async () => {
+    mockGit.branchLocal.mockResolvedValue({
+      all: ["main", "develop", epicBranch],
+      current: "develop",
+    });
+    mockSymbolicRef("origin/develop\n");
+
+    await mergeWorktree("/repo", epicBranch, undefined, "trunk");
+
+    expect(mockGit.checkout).toHaveBeenCalledWith("main");
+  });
 });
 
 describe("resolveDefaultBranch", () => {
@@ -280,5 +376,27 @@ describe("resolveDefaultBranch", () => {
     );
 
     expect(await resolveDefaultBranch("/repo")).toBe("main");
+  });
+
+  it("answers with the stored default branch when it exists locally", async () => {
+    mockGit.branchLocal.mockResolvedValue({ all: ["main", "develop"], current: "main" });
+    mockGit.raw.mockImplementation(async (args: string[]) =>
+      args[0] === "symbolic-ref" ? "origin/main\n" : ""
+    );
+
+    expect(await resolveDefaultBranch("/repo", "develop")).toBe("develop");
+    // The stored value is trusted without an origin/HEAD lookup.
+    expect(mockGit.raw).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["symbolic-ref"])
+    );
+  });
+
+  it("ignores a stored default branch that no longer exists locally", async () => {
+    mockGit.branchLocal.mockResolvedValue({ all: ["main"], current: "main" });
+    mockGit.raw.mockImplementation(async (args: string[]) =>
+      args[0] === "symbolic-ref" ? "origin/main\n" : ""
+    );
+
+    expect(await resolveDefaultBranch("/repo", "develop")).toBe("main");
   });
 });

@@ -24,18 +24,26 @@ export function epicBranchName(epicId: string, epicTitle: string): string {
 /**
  * Resolves the branch new epic branches are cut from.
  *
- * `main` and `master` keep priority so existing repos behave exactly as before.
- * Beyond them the clone itself is asked: `origin/HEAD` records the branch the
- * remote reports as default, which for a GitHub import is frequently neither
+ * `preferred` is the project's stored `default_branch` (set by a GitHub
+ * import). When it still exists locally it is authoritative — a gitflow
+ * repo may carry a local `main` while its GitHub default is `develop`, and
+ * the imported value is the one the PR base and the clone's remote agree
+ * on. If it is missing locally the resolution falls through to the chain
+ * below. `main` and `master` keep priority in that chain so existing repos
+ * (no `default_branch` column value) behave exactly as before. Beyond them
+ * the clone itself is asked: `origin/HEAD` records the branch the remote
+ * reports as default, which for a GitHub import is frequently neither
  * (`develop`, `trunk`). Guessing `master` there made `worktree add` fail
- * outright with `invalid reference: master`, so a freshly cloned project could
- * never be sent to dev.
+ * outright with `invalid reference: master`, so a freshly cloned project
+ * could never be sent to dev.
  */
 async function resolveBaseBranch(
   git: SimpleGit,
   localBranches: string[],
-  currentBranch: string
+  currentBranch: string,
+  preferred?: string
 ): Promise<string> {
+  if (preferred && localBranches.includes(preferred)) return preferred;
   if (localBranches.includes("main")) return "main";
   if (localBranches.includes("master")) return "master";
 
@@ -57,15 +65,19 @@ async function resolveBaseBranch(
 
 /**
  * Resolves the branch new epic branches are cut from and merges go back
- * into, given a repository path. `main`/`master` keep priority so existing
- * repos behave exactly as before; beyond them the clone itself is asked via
- * `origin/HEAD`, which is how a GitHub import with a `develop`/`trunk`
- * default keeps working end to end.
+ * into, given a repository path. `preferred` (the project's stored
+ * `default_branch`) wins when it exists locally; otherwise `main`/
+ * `master` keep priority so existing repos behave exactly as before, and
+ * beyond them the clone itself is asked via `origin/HEAD`, which is how a
+ * GitHub import with a `develop`/`trunk` default keeps working end to end.
  */
-export async function resolveDefaultBranch(repoPath: string): Promise<string> {
+export async function resolveDefaultBranch(
+  repoPath: string,
+  preferred?: string
+): Promise<string> {
   const git = getGit(repoPath);
   const branches = await git.branchLocal();
-  return resolveBaseBranch(git, branches.all, branches.current);
+  return resolveBaseBranch(git, branches.all, branches.current, preferred);
 }
 
 /**
@@ -75,7 +87,8 @@ export async function resolveDefaultBranch(repoPath: string): Promise<string> {
 export async function createWorktree(
   repoPath: string,
   epicId: string,
-  epicTitle: string
+  epicTitle: string,
+  preferredBaseBranch?: string
 ): Promise<{ worktreePath: string; branchName: string }> {
   const git = getGit(repoPath);
   const branchName = epicBranchName(epicId, epicTitle);
@@ -104,7 +117,8 @@ export async function createWorktree(
     const baseBranch = await resolveBaseBranch(
       git,
       branches.all,
-      branches.current
+      branches.current,
+      preferredBaseBranch
     );
     // Create new branch + worktree, explicitly based from the default branch
     await git.raw([
@@ -125,14 +139,15 @@ export async function createWorktree(
  * worktree. Returns the merge commit hash on success.
  *
  * The merge target is resolved exactly like the branch base in
- * `createWorktree` (main → master → origin/HEAD → current branch), so an epic
- * cut from a `develop`-default clone is merged back into `develop` instead of
- * a guessed `master` that does not exist.
+ * `createWorktree` (stored default branch → main → master → origin/HEAD →
+ * current branch), so an epic cut from a `develop`-default clone is merged
+ * back into `develop` instead of a guessed `master` that does not exist.
  */
 export async function mergeWorktree(
   repoPath: string,
   branchName: string,
-  worktreePath?: string
+  worktreePath?: string,
+  preferredBaseBranch?: string
 ): Promise<{ merged: boolean; commitHash?: string; error?: string }> {
   const git = getGit(repoPath);
 
@@ -148,7 +163,8 @@ export async function mergeWorktree(
     const mainBranch = await resolveBaseBranch(
       git,
       branches.all,
-      branches.current
+      branches.current,
+      preferredBaseBranch
     );
 
     // Remove the worktree first (git can't merge while worktree is active)
