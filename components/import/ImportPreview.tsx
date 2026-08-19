@@ -7,34 +7,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Trash2 } from "lucide-react";
-
-interface ImportData {
-  project: {
-    name: string;
-    description: string;
-    stack?: string;
-    architecture?: string;
-  };
-  epics: Array<{
-    title: string;
-    description?: string;
-    status: string;
-    confidence?: number;
-    evidence?: string;
-    user_stories: Array<{
-      title: string;
-      description?: string;
-      acceptance_criteria?: string;
-      status: string;
-    }>;
-  }>;
-}
+import type { ImportData } from "@/components/import/types";
 
 interface ImportPreviewProps {
   data: ImportData;
   /** Blocks a second submit while the import chain is running, or after it
    *  created a project row that a retry would duplicate. */
   busy?: boolean;
+  /** Disables Cancel while the import chain is in flight, so leaving the
+   *  preview cannot race the running chain (late redirects or state writes
+   *  landing on a second import). */
+  cancelDisabled?: boolean;
   onValidate: (data: ImportData) => void;
   onCancel: () => void;
 }
@@ -42,6 +25,7 @@ interface ImportPreviewProps {
 export function ImportPreview({
   data,
   busy = false,
+  cancelDisabled = false,
   onValidate,
   onCancel,
 }: ImportPreviewProps) {
@@ -160,7 +144,11 @@ export function ImportPreview({
         <Button onClick={() => onValidate(editData)} disabled={busy}>
           {busy ? "Importing..." : "Validate & Import"}
         </Button>
-        <Button variant="outline" onClick={onCancel}>
+        <Button
+          variant="outline"
+          onClick={onCancel}
+          disabled={cancelDisabled}
+        >
           Cancel
         </Button>
       </div>

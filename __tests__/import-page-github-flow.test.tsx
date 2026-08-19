@@ -12,6 +12,8 @@ interface Reply {
   body: unknown;
   /** When set, the response only resolves after this promise settles. */
   gate?: Promise<void>;
+  /** When set, response.json() rejects — a 2xx whose body is not JSON. */
+  malformedJson?: boolean;
 }
 
 interface Routes {
@@ -106,7 +108,10 @@ function installFetch(routes: Routes = {}) {
     return {
       ok: status >= 200 && status < 300,
       status,
-      json: async () => reply.body,
+      json: async () => {
+        if (reply.malformedJson) throw new Error("invalid JSON body");
+        return reply.body;
+      },
     };
   });
 
@@ -481,5 +486,184 @@ describe("import page — failure reporting", () => {
         "Project status and spec were not saved: patch rejected"
       )
     ).toBeInTheDocument();
+  });
+});
+
+describe("import page — malformed responses", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function runLocalAnalysis() {
+    fireEvent.change(screen.getByPlaceholderText("/path/to/your/project"), {
+      target: { value: "/local/repo" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Analyze" }));
+  }
+
+  it("lands back on the selector when a 2xx response is not JSON", async () => {
+    installFetch({ import: { body: null, malformedJson: true } });
+    render(<ImportProjectPage />);
+
+    await runLocalAnalysis();
+
+    expect(
+      await screen.findByText(
+        /Unexpected response from \/api\/projects\/import \(HTTP 200\): the body is not JSON/
+      )
+    ).toBeInTheDocument();
+    // Back on the select step with the selector on screen — no frozen spinner.
+    expect(
+      screen.getByPlaceholderText("/path/to/your/project")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Analyzing project...")).not.toBeInTheDocument();
+  });
+
+  it("treats a 2xx response without the data envelope as a failure", async () => {
+    installFetch({ import: { body: {} } });
+    render(<ImportProjectPage />);
+
+    await runLocalAnalysis();
+
+    expect(
+      await screen.findByText(
+        /has no "data" field/
+      )
+    ).toBeInTheDocument();
+    expect(
+      screen.getByPlaceholderText("/path/to/your/project")
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Analyzing project...")).not.toBeInTheDocument();
+  });
+
+  it("does not crash on an envelope-valid but preview-malformed analysis", async () => {
+    installFetch({ import: { body: { data: {} } } });
+    render(<ImportProjectPage />);
+
+    await runLocalAnalysis();
+
+    expect(
+      await screen.findByText(
+        "The analysis returned an unexpected preview (missing project or epics). Nothing was imported."
+      )
+    ).toBeInTheDocument();
+    // The selector is back — the user is not stranded on an empty preview.
+    expect(
+      screen.getByPlaceholderText("/path/to/your/project")
+    ).toBeInTheDocument();
+  });
+
+  it("renders the stack from an unexpected-error debug block", async () => {
+    installFetch({
+      import: {
+        status: 500,
+        body: {
+          error: "Claude exploded",
+          debug: { stack: "Error: Claude exploded\n    at boom (spawn.ts:42:11)" },
+        },
+      },
+    });
+    render(<ImportProjectPage />);
+
+    await runLocalAnalysis();
+
+    expect(await screen.findByText("Claude exploded")).toBeInTheDocument();
+    expect(screen.getByText("Debug info")).toBeInTheDocument();
+    expect(screen.getByText(/at boom \(spawn\.ts:42:11\)/)).toBeInTheDocument();
+  });
+
+  it("renders the raw file preview and keys from a debug block", async () => {
+    installFetch({
+      import: {
+        status: 500,
+        body: {
+          error: "arji.json exists but contains invalid JSON.",
+          debug: { rawPreview: '{"project": oops', keys: ["project", "epics"] },
+        },
+      },
+    });
+    render(<ImportProjectPage />);
+
+    await runLocalAnalysis();
+
+    expect(
+      await screen.findByText("arji.json exists but contains invalid JSON.")
+    ).toBeInTheDocument();
+    expect(screen.getByText('{"project": oops')).toBeInTheDocument();
+    expect(screen.getByText("project, epics")).toBeInTheDocument();
+  });
+});
+
+describe("import page — partial-import recovery", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("lets the user start a fresh import after cancelling a partial one", async () => {
+    // Every epic fails, so the first import is partial.
+    installFetch({
+      epics: [{ status: 500, body: { error: "epic insert failed" } }],
+    });
+    render(<ImportProjectPage />);
+
+    await reachPreview();
+    fireEvent.click(screen.getByRole("button", { name: "Validate & Import" }));
+
+    expect(
+      await screen.findByText(
+        'Epic "Epic One" was not created: epic insert failed'
+      )
+    ).toBeInTheDocument();
+    // The partial project is reachable and the preview is locked against a duplicate.
+    expect(
+      screen.getByRole("link", { name: "Open the partially created project" })
+    ).toBeInTheDocument();
+    // While busy, the submit button reads "Importing..." — that is the disabled state.
+    expect(screen.getByRole("button", { name: "Importing..." })).toBeDisabled();
+
+    // Cancelling clears the partial state entirely — including the created id.
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByLabelText("GitHub repository URL")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("link", { name: "Open the partially created project" })
+    ).not.toBeInTheDocument();
+
+    // A brand-new import must land on an editable, submittable preview —
+    // the regression that used to leave Validate disabled with no message.
+    await importFromGitHub();
+    await screen.findByRole("button", { name: "Validate & Import" });
+    expect(
+      screen.getByRole("button", { name: "Validate & Import" })
+    ).toBeEnabled();
+  });
+
+  it("keeps Cancel disabled while the import chain is in flight", async () => {
+    let releaseCreate: () => void = () => {};
+    const createGate = new Promise<void>((r) => {
+      releaseCreate = r;
+    });
+    installFetch({
+      create: { body: { data: { id: "proj-1" } }, gate: createGate },
+    });
+    render(<ImportProjectPage />);
+
+    await reachPreview();
+    fireEvent.click(screen.getByRole("button", { name: "Validate & Import" }));
+
+    // In flight: leaving the preview is impossible, so the running chain can
+    // no longer land late state or redirects on a second import.
+    expect(screen.getByRole("button", { name: "Importing..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+
+    releaseCreate();
+    await waitFor(() =>
+      expect(nav.push).toHaveBeenCalledWith("/projects/proj-1")
+    );
+
+    // Chain finished: Cancel is available again; the submit button stays locked
+    // ("Importing..." label) because the project row exists.
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Importing..." })).toBeDisabled();
   });
 });

@@ -11,6 +11,7 @@ import {
 } from "@/components/import/GitHubUrlSelector";
 import { ImportProgress } from "@/components/import/ImportProgress";
 import { ImportPreview } from "@/components/import/ImportPreview";
+import type { ImportData } from "@/components/import/types";
 
 type ImportState = "select" | "cloning" | "analyzing" | "preview";
 type ImportSource = "local" | "github";
@@ -18,9 +19,11 @@ type ImportSource = "local" | "github";
 interface DebugInfo {
   duration?: number;
   rawOutput?: string;
+  rawPreview?: string;
   parsedContent?: string;
   parseError?: string;
   metadata?: Record<string, unknown>;
+  keys?: string[];
   stack?: string;
 }
 
@@ -31,33 +34,6 @@ interface CloneInfo {
   remoteUrl: string;
   defaultBranch?: string | null;
   reused?: boolean;
-}
-
-interface ImportData {
-  project: {
-    name: string;
-    description: string;
-    status?: string;
-    spec?: string | null;
-    stack?: string;
-    architecture?: string;
-  };
-  epics: Array<{
-    title: string;
-    description?: string;
-    status: string;
-    priority?: number;
-    position?: number;
-    branchName?: string | null;
-    confidence?: number;
-    evidence?: string;
-    user_stories: Array<{
-      title: string;
-      description?: string;
-      acceptance_criteria?: string;
-      status: string;
-    }>;
-  }>;
 }
 
 type PostResult<T> =
@@ -77,7 +53,9 @@ function formatDetails(details: unknown): string {
  * Every step of the import chain goes through here so a failure is always
  * reported instead of surfacing later as `undefined is not an object`. Routes
  * signal failure either with a non-2xx status or with an `error` key on a 200,
- * so both are treated as failures.
+ * so both are treated as failures. A 2xx whose body is not a JSON object — or
+ * is missing the `data` envelope — is equally a failure: an unchecked cast
+ * there used to turn a broken response into a permanent "Analyzing" spinner.
  */
 async function sendJson<T>(
   url: string,
@@ -119,7 +97,21 @@ async function sendJson<T>(
     };
   }
 
-  return { ok: true, data: payload?.data as T };
+  if (payload === null || typeof payload !== "object") {
+    return {
+      ok: false,
+      error: `Unexpected response from ${url} (HTTP ${response.status}): the body is not JSON`,
+    };
+  }
+
+  if (payload.data === undefined) {
+    return {
+      ok: false,
+      error: `Unexpected response from ${url} (HTTP ${response.status}): the JSON has no "data" field`,
+    };
+  }
+
+  return { ok: true, data: payload.data };
 }
 
 /**
@@ -221,6 +213,21 @@ export default function ImportProjectPage() {
     setIssues([]);
   }
 
+  /**
+   * Wipes every trace of the previous import — feedback, clone info, the
+   * parsed preview AND the created-project id. Called both when the user
+   * deliberately starts a new import and when they cancel the preview, so a
+   * partial creation can never lock the next preview's Validate button.
+   */
+  function resetForNewImport() {
+    resetFeedback();
+    setCloneInfo(null);
+    setCloningRepo("");
+    setImportData(null);
+    setFromExistingFile(false);
+    setCreatedProjectId(null);
+  }
+
   function handleSourceChange(next: ImportSource) {
     if (next === source) return;
     setSource(next);
@@ -243,20 +250,35 @@ export default function ImportProjectPage() {
       return;
     }
 
-    setImportData(result.data.preview);
+    // The route may return a valid envelope whose preview is still malformed;
+    // rendering it would crash the preview screen, so guard the shape too.
+    const preview = result.data?.preview;
+    if (
+      !preview ||
+      typeof preview !== "object" ||
+      !preview.project ||
+      typeof preview.project !== "object" ||
+      !Array.isArray(preview.epics)
+    ) {
+      setError(
+        "The analysis returned an unexpected preview (missing project or epics). Nothing was imported."
+      );
+      setState("select");
+      return;
+    }
+
+    setImportData(preview);
     setFromExistingFile(!!result.data.fromExistingFile);
     setState("preview");
   }
 
   async function handleAnalyze(path: string) {
-    resetFeedback();
-    setCloneInfo(null);
+    resetForNewImport();
     await runAnalysis(path);
   }
 
   async function handleGitHubImport({ url, ownerRepo }: GitHubImportRequest) {
-    resetFeedback();
-    setCloneInfo(null);
+    resetForNewImport();
     setCloningRepo(ownerRepo);
     setState("cloning");
 
@@ -380,6 +402,28 @@ export default function ImportProjectPage() {
                     </pre>
                   </div>
                 )}
+                {debug.rawPreview && (
+                  <div>
+                    <p className="font-medium">File preview:</p>
+                    <pre className="mt-1 p-2 bg-black/20 rounded overflow-auto max-h-48 whitespace-pre-wrap">
+                      {debug.rawPreview}
+                    </pre>
+                  </div>
+                )}
+                {debug.keys && (
+                  <div>
+                    <p className="font-medium">Top-level keys:</p>
+                    <p className="mt-1">{debug.keys.join(", ")}</p>
+                  </div>
+                )}
+                {debug.stack && (
+                  <div>
+                    <p className="font-medium">Stack:</p>
+                    <pre className="mt-1 p-2 bg-black/20 rounded overflow-auto max-h-48 whitespace-pre-wrap">
+                      {debug.stack}
+                    </pre>
+                  </div>
+                )}
               </div>
             </details>
           )}
@@ -458,9 +502,12 @@ export default function ImportProjectPage() {
           // Once the project row exists, re-running the import would duplicate
           // it — the link above is the way forward instead.
           busy={validating || createdProjectId !== null}
+          // Never let the user leave the preview while the chain is in flight:
+          // a late router.push or state write would land on a second import.
+          cancelDisabled={validating}
           onValidate={handleValidate}
           onCancel={() => {
-            resetFeedback();
+            resetForNewImport();
             setState("select");
           }}
         />
