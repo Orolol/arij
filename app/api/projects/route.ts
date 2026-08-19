@@ -130,6 +130,25 @@ export async function POST(request: NextRequest) {
   const id = createId();
   const now = new Date().toISOString();
 
+  // `git_remote_url` is a clean-URL column: it is rendered in the UI and
+  // later re-cloned from, so a credential-bearing or non-GitHub URL must not
+  // be persisted. Validate it whenever it is present — not only on the
+  // cloneSource path, where a crafted request would otherwise park a dirty
+  // URL on a manual project.
+  let parsedRemote: ReturnType<typeof parseGitHubOwnerRepoFromRemoteUrl> = null;
+  if (gitRemoteUrl) {
+    parsedRemote = parseGitHubOwnerRepoFromRemoteUrl(gitRemoteUrl);
+    if (!parsedRemote) {
+      return NextResponse.json(
+        {
+          error:
+            "gitRemoteUrl is not a parseable clean GitHub remote URL (credentials are not allowed)",
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   // `cloneSource: "github"` marks the directory as Arij-owned — the flag a
   // later clone cleanup acts on. The client asserting it is not enough: the
   // full provenance tuple must be present, internally consistent, and the
@@ -151,9 +170,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // The stored remote URL must be a clean GitHub URL naming the same
-    // owner/repo as githubOwnerRepo (credential-bearing URLs fail to parse).
-    const parsedRemote = parseGitHubOwnerRepoFromRemoteUrl(gitRemoteUrl);
+    // The stored remote URL must name the same owner/repo as githubOwnerRepo
+    // (parseability was already enforced above for any gitRemoteUrl).
     if (
       !parsedRemote ||
       parsedRemote.ownerRepo.toLowerCase() !== githubOwnerRepo.toLowerCase()

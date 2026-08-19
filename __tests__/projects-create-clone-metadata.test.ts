@@ -231,9 +231,65 @@ describe("POST /api/projects", () => {
       cloneSource: "github",
       defaultBranch: "main",
     });
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toContain("not a parseable clean GitHub remote URL");
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("rejects a credential-bearing gitRemoteUrl even without cloneSource", async () => {
+    // git_remote_url is a clean-URL column (rendered in the UI and later
+    // re-cloned from): a credential-bearing URL must not be persisted on a
+    // manual project either, not only on the cloneSource path.
+    const res = await post({
+      ...BASE,
+      gitRepoPath: "/home/user/repo",
+      githubOwnerRepo: "Orolol/arij",
+      gitRemoteUrl: "https://x-access-token:sekrit@github.com/Orolol/arij.git",
+      defaultBranch: "main",
+    });
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toContain("not a parseable clean GitHub remote URL");
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("rejects a non-GitHub gitRemoteUrl even without cloneSource", async () => {
+    const res = await post({
+      ...BASE,
+      gitRepoPath: "/home/user/repo",
+      githubOwnerRepo: "Orolol/arij",
+      gitRemoteUrl: "https://gitlab.com/Orolol/arij.git",
+      defaultBranch: "main",
+    });
 
     expect(res.status).toBe(400);
     expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+
+  it("stores a clean gitRemoteUrl without cloneSource", async () => {
+    dbMockState.getQueue = [{ id: "proj-1" }];
+
+    const res = await post({
+      ...BASE,
+      gitRepoPath: "/home/user/repo",
+      githubOwnerRepo: "Orolol/arij",
+      gitRemoteUrl: "https://github.com/Orolol/arij.git",
+      defaultBranch: "develop",
+    });
+
+    expect(res.status).toBe(201);
+    expect(dbMockState.insertCalls[0]).toEqual(
+      expect.objectContaining({
+        gitRemoteUrl: "https://github.com/Orolol/arij.git",
+        defaultBranch: "develop",
+        // No cloneSource: the provenance (origin) check stays skipped — the
+        // directory is user-supplied, only the URL grammar is enforced.
+        cloneSource: null,
+      })
+    );
   });
 
   it("rejects cloneSource when the directory is not a clone of the claimed repo", async () => {
