@@ -19,6 +19,7 @@ import { eq } from "drizzle-orm";
 
 const gitMocks = vi.hoisted(() => ({
   mergeWorktree: vi.fn(),
+  createWorktree: vi.fn(),
 }));
 
 const processManagerState = vi.hoisted(() => ({
@@ -35,6 +36,7 @@ vi.mock("@/lib/db", async () => {
 
 vi.mock("@/lib/git/manager", () => ({
   mergeWorktree: gitMocks.mergeWorktree,
+  createWorktree: gitMocks.createWorktree,
 }));
 
 vi.mock("@/lib/sync/export", () => ({
@@ -182,6 +184,13 @@ beforeEach(() => {
   db.delete(projects).run();
   autoModeRegistry.resetAll();
   gitMocks.mergeWorktree.mockReset();
+  gitMocks.createWorktree.mockReset();
+  // mergeWorktree removes the worktree before merging, so the conflict path
+  // has to re-attach one to the surviving branch before dispatching an agent.
+  gitMocks.createWorktree.mockResolvedValue({
+    worktreePath: "/tmp/worktrees/landable",
+    branchName: "feature/landable",
+  });
   exportMock.tryExportArjiJson.mockReset();
   processManagerState.result = { success: true };
 });
@@ -426,15 +435,51 @@ describe("tryAutoMerge — merge conflict", () => {
     expect(autoModeRegistry.isParked(PROJECT_ID, EPIC_ID)).toBe(true);
   });
 
-  it("reports a hard failure when there is no worktree to resolve in", async () => {
+  it("restores the worktree mergeWorktree deleted before dispatching the agent", async () => {
     seed();
+    // The session row's worktree is stale/absent: mergeWorktree removes the
+    // directory BEFORE attempting the merge and the conflict path aborts
+    // without putting it back, so the agent needs a fresh one on the branch.
     db.update(agentSessions).set({ worktreePath: null }).run();
-    gitMocks.mergeWorktree.mockResolvedValue({
+    gitMocks.mergeWorktree.mockResolvedValueOnce({
       merged: false,
-      error: "Branch not found",
+      error: "CONFLICT in lib/x.ts",
+    });
+    gitMocks.mergeWorktree.mockResolvedValue({ merged: true, commitHash: "z" });
+    gitMocks.createWorktree.mockResolvedValue({
+      worktreePath: "/tmp/worktrees/restored",
+      branchName: "feature/landable",
     });
 
     const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+
+    expect(gitMocks.createWorktree).toHaveBeenCalledWith(
+      "/repos/merge",
+      EPIC_ID,
+      "Landable epic"
+    );
+    expect(outcome.status).toBe("conflict");
+    const session = db
+      .select()
+      .from(agentSessions)
+      .where(eq(agentSessions.id, outcome.sessionId!))
+      .get()!;
+    expect(session.worktreePath).toBe("/tmp/worktrees/restored");
+    expect(session.prompt).toContain("/tmp/worktrees/restored");
+
+    await drainScheduler();
+  });
+
+  it("reports a hard failure when the worktree cannot be restored", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockResolvedValue({
+      merged: false,
+      error: "CONFLICT in lib/x.ts",
+    });
+    gitMocks.createWorktree.mockRejectedValue(new Error("disk full"));
+
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+
     expect(outcome).toMatchObject({ status: "failed" });
     expect(
       db
@@ -443,5 +488,87 @@ describe("tryAutoMerge — merge conflict", () => {
         .all()
         .some((s) => s.agentType === "merge")
     ).toBe(false);
+  });
+
+  it("skips the conflict agent when the caller has no build slot for it", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockResolvedValue({
+      merged: false,
+      error: "CONFLICT in lib/x.ts",
+    });
+
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID, {
+      dispatchConflictAgent: false,
+    });
+
+    expect(outcome).toMatchObject({ status: "skipped" });
+    expect(gitMocks.createWorktree).not.toHaveBeenCalled();
+    expect(
+      db
+        .select()
+        .from(agentSessions)
+        .all()
+        .some((s) => s.agentType === "merge")
+    ).toBe(false);
+    // Deferred, not failed: it retries as soon as a slot frees.
+    expect(autoModeRegistry.isParked(PROJECT_ID, EPIC_ID)).toBe(false);
+  });
+
+  it("keeps the epic parked even after its merge-fix session is reconciled", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockResolvedValue({
+      merged: false,
+      error: "CONFLICT in lib/x.ts",
+    });
+
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+    autoModeRegistry.addInFlight(PROJECT_ID, outcome.sessionId!, {
+      kind: "build",
+      ticketId: EPIC_ID,
+      epicId: EPIC_ID,
+    });
+    await drainScheduler();
+
+    expect(autoModeRegistry.isParked(PROJECT_ID, EPIC_ID)).toBe(true);
+
+    // The merge-fix agent itself COMPLETED, so the engine's reconcile pass
+    // credits it and clears the ticket's streak. Emulate that exactly. A
+    // merge-conflict park is HARD and must survive it — otherwise the epic is
+    // un-parked and the sweep loops on the same conflict forever.
+    for (const { sessionId, entry } of autoModeRegistry.listInFlight(
+      PROJECT_ID
+    )) {
+      autoModeRegistry.removeInFlight(PROJECT_ID, sessionId);
+      autoModeRegistry.clearFailures(PROJECT_ID, entry.ticketId);
+    }
+    autoModeRegistry.clearFailures(PROJECT_ID, EPIC_ID);
+    expect(autoModeRegistry.isParked(PROJECT_ID, EPIC_ID)).toBe(true);
+
+    // Only a deliberate reversal lets it through again.
+    autoModeRegistry.unpark(PROJECT_ID, EPIC_ID);
+    expect(autoModeRegistry.isParked(PROJECT_ID, EPIC_ID)).toBe(false);
+  });
+
+  it("clears the branch but refuses to advance an epic that moved during the merge", async () => {
+    seed();
+    gitMocks.mergeWorktree.mockImplementation(async () => {
+      // The review that was settling when the merge started bounces the epic
+      // back — exactly the window a stale captured fromStatus would ignore.
+      db.update(epics).set({ status: "in_progress" }).run();
+      return { merged: true, commitHash: "raced" };
+    });
+
+    const outcome = await tryAutoMerge(PROJECT_ID, EPIC_ID);
+
+    expect(outcome.status).toBe("skipped");
+    const epic = db.select().from(epics).where(eq(epics.id, EPIC_ID)).get()!;
+    expect(epic.status).toBe("in_progress");
+    expect(epic.branchName).toBeNull();
+    expect(
+      activityReasons().some((reason) =>
+        reason.startsWith("Auto mode merged the branch but left the ticket")
+      )
+    ).toBe(true);
+    expect(autoModeRegistry.isParked(PROJECT_ID, EPIC_ID)).toBe(false);
   });
 });

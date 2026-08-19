@@ -1,6 +1,6 @@
 import { inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { settings } from "@/lib/db/schema";
+import { projects, settings } from "@/lib/db/schema";
 import {
   AUTO_MODE_BUILD_AGENT_SETTING_KEY,
   AUTO_MODE_BUILD_CONCURRENCY_SETTING_KEY,
@@ -115,23 +115,49 @@ export function resolveAutoModeConfigForProject(
 /**
  * Every project that has Full Auto Mode switched on right now.
  *
- * The standing sweep has no request context, so it needs to discover its own
- * work list: any `auto_mode_enabled:<projectId>` row that parses to true.
- * The global key is deliberately NOT a blanket "all projects on" switch —
- * activation is per project (the user's decision), so the global key only
- * acts as the fallback value for a project whose own key is absent, and a
- * project is swept only once its own key exists.
+ * The standing sweep has no request context, so it discovers its own work
+ * list. It MUST use the same project → global → default chain
+ * `resolveAutoModeConfigForProject` uses, or the UI would report a project as
+ * enabled while the supervisor silently never swept it: with a global
+ * `auto_mode_enabled` of true, a project with no key of its own is enabled,
+ * and reading only `auto_mode_enabled:<projectId>` rows would miss it.
+ *
+ * So: start from the projects table when the global key is on, and from the
+ * per-project keys otherwise (the overwhelmingly common case, which costs one
+ * settings scan and no project query).
  */
 export function listAutoModeEnabledProjectIds(): string[] {
   const prefix = `${AUTO_MODE_ENABLED_SETTING_KEY}:`;
-  return db
+  const rows = db
     .select({ key: settings.key, value: settings.value })
     .from(settings)
+    .all();
+
+  const globalDefault =
+    parseAutoModeEnabled(
+      rows.find((row) => row.key === AUTO_MODE_ENABLED_SETTING_KEY)?.value
+    ) === true;
+
+  const perProject = new Map<string, boolean>();
+  for (const row of rows) {
+    if (!row.key.startsWith(prefix)) continue;
+    const projectId = row.key.slice(prefix.length);
+    if (!projectId) continue;
+    const parsed = parseAutoModeEnabled(row.value);
+    if (parsed !== null) perProject.set(projectId, parsed);
+  }
+
+  if (!globalDefault) {
+    return Array.from(perProject.entries())
+      .filter(([, enabled]) => enabled)
+      .map(([projectId]) => projectId);
+  }
+
+  // Global ON: every project except those that opted out explicitly.
+  return db
+    .select({ id: projects.id })
+    .from(projects)
     .all()
-    .filter(
-      (row) =>
-        row.key.startsWith(prefix) && parseAutoModeEnabled(row.value) === true
-    )
-    .map((row) => row.key.slice(prefix.length))
-    .filter((projectId) => projectId.length > 0);
+    .map((row) => row.id)
+    .filter((projectId) => perProject.get(projectId) !== false);
 }

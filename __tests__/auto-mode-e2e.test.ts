@@ -22,10 +22,13 @@
  *   4. story serialisation       — one story of an epic at a time
  *   5. restart                   — the mode resumes from settings, orphans die
  */
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
 
-const gitMocks = vi.hoisted(() => ({ mergeWorktree: vi.fn() }));
+const gitMocks = vi.hoisted(() => ({
+  mergeWorktree: vi.fn(),
+  createWorktree: vi.fn(),
+}));
 
 vi.mock("@/lib/db", async () => {
   const { createTestDb } = await import("@/lib/db/test-utils");
@@ -35,6 +38,7 @@ vi.mock("@/lib/db", async () => {
 
 vi.mock("@/lib/git/manager", () => ({
   mergeWorktree: gitMocks.mergeWorktree,
+  createWorktree: gitMocks.createWorktree,
 }));
 
 vi.mock("@/lib/sync/export", () => ({ tryExportArjiJson: vi.fn() }));
@@ -89,8 +93,15 @@ const {
   notifications,
   settings,
 } = await import("@/lib/db/schema");
-const { sweepProject, defaultAutoModeDeps } = await import(
-  "@/lib/auto-mode/engine"
+const {
+  sweepProject,
+  defaultAutoModeDeps,
+  kickAutoModeForSession,
+  cancelPendingKicks,
+} = await import("@/lib/auto-mode/engine");
+const { markSessionTerminal } = await import("@/lib/agent-sessions/lifecycle");
+const { setSessionTerminalHook } = await import(
+  "@/lib/agent-sessions/terminal-hooks"
 );
 const { autoModeRegistry } = await import("@/lib/auto-mode/registry");
 const { listAutoModeEnabledProjectIds } = await import("@/lib/auto-mode/config");
@@ -375,6 +386,13 @@ beforeEach(() => {
   dispatched.length = 0;
   gitMocks.mergeWorktree.mockReset();
   gitMocks.mergeWorktree.mockResolvedValue({ merged: true, commitHash: "c1" });
+  gitMocks.createWorktree.mockReset();
+  gitMocks.createWorktree.mockImplementation(
+    async (_repo: string, epicId: string) => ({
+      worktreePath: `/tmp/wt/${epicId}`,
+      branchName: `feature/${epicId}`,
+    })
+  );
 
   db.insert(projects)
     .values({ id: PROJECT_ID, name: "E2E", gitRepoPath: "/repos/e2e" })
@@ -709,6 +727,118 @@ describe("coexistence with other autonomous runs", () => {
     const result = await sweepProject(PROJECT_ID, deps());
     expect(result.buildsDispatched).toHaveLength(1);
     expect(dispatched[0].epicId).toBe("free");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* 7b. The terminal-hook race                                          */
+/* ------------------------------------------------------------------ */
+
+describe("terminal-hook kick ordering", () => {
+  /**
+   * Reproduces the exact shape of the dispatch closures: `markSessionTerminal`
+   * — which fires the session terminal hook SYNCHRONOUSLY — followed, in the
+   * same synchronous block, by the ticket updates
+   * (lib/pipeline/stages.ts `finalizeReviewSession`).
+   */
+  function settleReviewLikeTheDriver(
+    sessionId: string,
+    apply: () => void
+  ): void {
+    markSessionTerminal(
+      sessionId,
+      { success: true, outcome: "answered" },
+      tick()
+    );
+    apply();
+  }
+
+  function seedReviewInFlight(): string {
+    // Build → review already happened; the reviewer is running.
+    addEpic("e1", "review");
+    db.update(epics)
+      .set({ branchName: "feature/e1" })
+      .where(eq(epics.id, "e1"))
+      .run();
+    db.insert(agentSessions)
+      .values({
+        id: "build-1",
+        projectId: PROJECT_ID,
+        epicId: "e1",
+        status: "completed",
+        agentType: "build",
+        outcome: "answered",
+        createdAt: tick(),
+        endedAt: tick(),
+      })
+      .run();
+    db.insert(agentSessions)
+      .values({
+        id: "review-1",
+        projectId: PROJECT_ID,
+        epicId: "e1",
+        status: "running",
+        agentType: "review_code",
+        startedAt: tick(),
+        createdAt: tick(),
+      })
+      .run();
+    return "review-1";
+  }
+
+  beforeEach(() => {
+    setSessionTerminalHook((event) => kickAutoModeForSession(event.sessionId));
+  });
+
+  afterEach(() => {
+    setSessionTerminalHook(null);
+    cancelPendingKicks();
+  });
+
+  it("does NOT merge an epic whose negative review has not been applied yet", async () => {
+    vi.useFakeTimers();
+    try {
+      // Merges only — this is about the merge gate, not about dispatch.
+      arm(0, 0);
+      const sessionId = seedReviewInFlight();
+
+      settleReviewLikeTheDriver(sessionId, () => {
+        // The driver's revert: a "changes requested" verdict bounces the epic.
+        db.update(epics)
+          .set({ status: "in_progress" })
+          .where(eq(epics.id, "e1"))
+          .run();
+      });
+
+      await vi.advanceTimersByTimeAsync(600);
+
+      // Between markSessionTerminal and this revert, the epic looked exactly
+      // like a clean review: in `review`, a completed reviewer newer than the
+      // build, no open findings. A sweep running inside the hook would have
+      // merged a REJECTED epic into main.
+      expect(gitMocks.mergeWorktree).not.toHaveBeenCalled();
+      expect(epicStatus("e1")).toBe("in_progress");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still merges promptly when the review really did pass", async () => {
+    vi.useFakeTimers();
+    try {
+      arm(0, 0);
+      const sessionId = seedReviewInFlight();
+
+      // A passing review leaves the epic in `review` — nothing to apply.
+      settleReviewLikeTheDriver(sessionId, () => {});
+
+      await vi.advanceTimersByTimeAsync(600);
+
+      expect(gitMocks.mergeWorktree).toHaveBeenCalledTimes(1);
+      expect(epicStatus("e1")).toBe("done");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

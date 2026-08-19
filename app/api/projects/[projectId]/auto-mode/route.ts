@@ -184,10 +184,17 @@ export async function PUT(
       putSetting(autoModeReviewConcurrencySettingKey(projectId), value);
     }
 
+    // Mirror the persisted flag into the registry BEFORE building the
+    // response, so the runtime fields the dialog reads back (`running`, and
+    // the in-flight counts a disable clears) describe the state the caller
+    // just asked for rather than the one the sweep has not caught up with.
+    const config = resolveAutoModeConfigForProject(projectId);
+    autoModeRegistry.setEnabled(projectId, config.enabled);
+
     const status = buildStatus(projectId);
 
     // Enabling (or retuning) takes effect now, not on the next 15s tick.
-    // Disabling also sweeps: that pass is what clears the registry state.
+    // Disabling also sweeps: that pass is what settles the registry state.
     kickAutoMode(projectId);
 
     return NextResponse.json({ data: status });

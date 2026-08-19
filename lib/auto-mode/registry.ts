@@ -63,6 +63,15 @@ interface FailureEntry {
   failures: number;
   reason: string;
   at: string;
+  /**
+   * True for a park set outright by `park()` rather than accumulated by a
+   * failure streak. A hard park survives `clearFailures`: an unresolved merge
+   * conflict is parked while its (successfully completed) merge-fix session is
+   * still being reconciled, and reading that session's "completed" status must
+   * not be allowed to undo the decision. Only `unpark()` and disabling the
+   * mode clear it.
+   */
+  hard: boolean;
 }
 
 /** What one in-flight session of the mode's own dispatch is working on. */
@@ -246,8 +255,15 @@ export class AutoModeRegistry {
   ): number {
     const state = this.stateFor(projectId);
     const previous = state.failures.get(ticketId);
+    if (previous?.hard) return previous.failures;
     const failures = (previous?.failures ?? 0) + 1;
-    state.failures.set(ticketId, { epicId, failures, reason, at });
+    state.failures.set(ticketId, {
+      epicId,
+      failures,
+      reason,
+      at,
+      hard: false,
+    });
     return failures;
   }
 
@@ -268,11 +284,23 @@ export class AutoModeRegistry {
       failures: AUTO_MODE_MAX_CONSECUTIVE_FAILURES,
       reason,
       at,
+      hard: true,
     });
   }
 
-  /** Forgets a ticket's failure streak (a success, or a manual un-park). */
+  /**
+   * Forgets a ticket's failure STREAK — what a completed session earns. A
+   * hard park (see FailureEntry.hard) is deliberately immune: it was a
+   * decision, not a tally, and only `unpark` reverses it.
+   */
   clearFailures(projectId: string, ticketId: string): void {
+    const failures = this.states.get(projectId)?.failures;
+    if (failures?.get(ticketId)?.hard) return;
+    failures?.delete(ticketId);
+  }
+
+  /** Un-parks a ticket unconditionally (the user touched it). */
+  unpark(projectId: string, ticketId: string): void {
     this.states.get(projectId)?.failures.delete(ticketId);
   }
 

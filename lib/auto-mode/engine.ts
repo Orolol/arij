@@ -95,7 +95,11 @@ export interface AutoModeEngineDeps {
   merge(
     projectId: string,
     epicId: string,
-    options: { namedAgentId: string | null }
+    options: {
+      namedAgentId: string | null;
+      /** False when no build slot is free for a conflict-resolution agent. */
+      dispatchConflictAgent: boolean;
+    }
   ): Promise<AutoMergeOutcome>;
   readSessionStatus(sessionId: string): string | null;
   readEpicStatus(epicId: string): string | null;
@@ -316,7 +320,9 @@ function unparkTouchedTickets(
       ? commentedAt
       : commentedAt.replace(" ", "T");
     if (normalized > parkedTicket.at) {
-      autoModeRegistry.clearFailures(projectId, parkedTicket.ticketId);
+      // unpark, not clearFailures: a merge-conflict park is HARD and only a
+      // deliberate reversal (this, or switching the mode off) clears it.
+      autoModeRegistry.unpark(projectId, parkedTicket.ticketId);
       unparked = true;
     }
   }
@@ -368,8 +374,14 @@ export async function sweepProject(
     // -----------------------------------------------------------------
     let mergedSomething = false;
     for (const candidate of selectMergeCandidates(projectId, board)) {
+      // A conflict costs a merge-fix agent, and that agent IS a build — so it
+      // has to fit in the build budget like any other. Checked per candidate,
+      // because the previous one may just have taken the last slot.
+      const buildsInFlight = autoModeRegistry.countInFlight(projectId).build;
       const outcome = await deps.merge(projectId, candidate.epicId, {
         namedAgentId: config.buildAgent,
+        dispatchConflictAgent:
+          config.buildConcurrency > 0 && buildsInFlight < config.buildConcurrency,
       });
 
       if (outcome.status === "merged") {
@@ -646,6 +658,7 @@ export function stopAutoMode(): void {
     clearInterval(slot.timer);
     slot.timer = null;
   }
+  cancelPendingKicks();
 }
 
 export function isAutoModeRunning(): boolean {
@@ -657,14 +670,66 @@ export function isAutoModeRunning(): boolean {
 /* ------------------------------------------------------------------ */
 
 /**
- * Fire-and-forget sweep for one project. Used by the PUT route (enabling
- * must not wait up to 15s for the next tick) and by the session terminal
- * hook (a finished agent frees a slot; the timer stays the backstop).
+ * Per-project pending kick timers, globalThis-backed like everything else
+ * that must survive a dev hot reload without doubling.
  */
-export function kickAutoMode(projectId: string): void {
-  void sweepProject(projectId).catch((error) => {
-    console.error(`[auto-mode] Kick failed for project ${projectId}:`, error);
-  });
+const AUTO_MODE_KICKS_GLOBAL_KEY = Symbol.for("arij.auto-mode-kicks");
+
+type KickGlobal = {
+  [AUTO_MODE_KICKS_GLOBAL_KEY]?: Map<string, ReturnType<typeof setTimeout>>;
+};
+
+function kickTimers(): Map<string, ReturnType<typeof setTimeout>> {
+  const store = globalThis as KickGlobal;
+  if (!store[AUTO_MODE_KICKS_GLOBAL_KEY]) {
+    store[AUTO_MODE_KICKS_GLOBAL_KEY] = new Map();
+  }
+  return store[AUTO_MODE_KICKS_GLOBAL_KEY];
+}
+
+/**
+ * Debounced, fire-and-forget sweep for one project. Used by the PUT route
+ * (enabling must not wait up to 15s for the next tick) and by the session
+ * terminal hook (a finished agent frees a slot; the timer stays the backstop).
+ *
+ * The delay is NOT a nicety, it is a correctness requirement. The terminal
+ * hook fires from inside `markSessionTerminal`, which every dispatch closure
+ * calls BEFORE it applies the session's board effects — the pipeline driver
+ * finalizes a build to `review`, or bounces a rejected epic back to
+ * `in_progress`, in the statements right after (lib/pipeline/stages.ts).
+ * A sweep running synchronously from that hook would read the board mid-flight
+ * and could re-build a ticket that is about to enter review, or — far worse —
+ * merge an epic whose negative review has not been applied yet. Deferring to a
+ * later macrotask lets the finalization block finish first.
+ *
+ * Debouncing also collapses the storm a settling wave produces: ten sessions
+ * ending together are worth one sweep, not ten.
+ */
+export const AUTO_MODE_KICK_DELAY_MS = 250;
+
+export function kickAutoMode(
+  projectId: string,
+  delayMs: number = AUTO_MODE_KICK_DELAY_MS
+): void {
+  const timers = kickTimers();
+  const pending = timers.get(projectId);
+  if (pending) clearTimeout(pending);
+
+  const timer = setTimeout(() => {
+    timers.delete(projectId);
+    void sweepProject(projectId).catch((error) => {
+      console.error(`[auto-mode] Kick failed for project ${projectId}:`, error);
+    });
+  }, delayMs);
+  timer.unref?.();
+  timers.set(projectId, timer);
+}
+
+/** Cancels every pending kick (tests, and stopAutoMode). */
+export function cancelPendingKicks(): void {
+  const timers = kickTimers();
+  for (const timer of timers.values()) clearTimeout(timer);
+  timers.clear();
 }
 
 /**

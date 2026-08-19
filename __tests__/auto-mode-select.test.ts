@@ -104,6 +104,7 @@ function addSession(input: {
   userStoryId?: string | null;
   status: string;
   agentType?: string | null;
+  /** Defaults to "answered" for completed sessions — what a real run stores. */
   outcome?: string | null;
   createdAt: string;
   endedAt?: string | null;
@@ -117,7 +118,12 @@ function addSession(input: {
       userStoryId: input.userStoryId ?? null,
       status: input.status,
       agentType: input.agentType ?? null,
-      outcome: input.outcome ?? null,
+      outcome:
+        input.outcome !== undefined
+          ? input.outcome
+          : input.status === "completed"
+            ? "answered"
+            : null,
       createdAt: input.createdAt,
       endedAt: input.endedAt ?? null,
     })
@@ -527,6 +533,236 @@ describe("selectReviewCandidates", () => {
     addEpic({ id: "e1", status: "in_progress" });
     addEpic({ id: "e2", status: "done" });
     expect(selectReviewCandidates(PROJECT_ID)).toEqual([]);
+  });
+
+  it("retries a review that FAILED — a failed review is not a review", () => {
+    addEpic({ id: "e1", status: "review", branchName: "feat/e1" });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "build",
+      createdAt: at(10),
+      endedAt: at(11),
+    });
+    addSession({
+      epicId: "e1",
+      status: "failed",
+      agentType: "review_code",
+      createdAt: at(20),
+      endedAt: at(21),
+    });
+
+    // Otherwise the epic is stuck forever: never re-reviewed (a terminal
+    // review exists) and never mergeable (no COMPLETED review), so the
+    // parking ladder never even gets a second failure to count.
+    expect(selectReviewCandidates(PROJECT_ID).map((c) => c.epicId)).toEqual([
+      "e1",
+    ]);
+    expect(selectMergeCandidates(PROJECT_ID)).toEqual([]);
+  });
+
+  it("retries a review that was CANCELLED", () => {
+    addEpic({ id: "e1", status: "review" });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "build",
+      createdAt: at(10),
+      endedAt: at(11),
+    });
+    addSession({
+      epicId: "e1",
+      status: "cancelled",
+      agentType: "review_code",
+      createdAt: at(20),
+      endedAt: at(21),
+    });
+
+    expect(selectReviewCandidates(PROJECT_ID).map((c) => c.epicId)).toEqual([
+      "e1",
+    ]);
+  });
+
+  it("does NOT re-review after a silent review, but does not merge it either", () => {
+    addEpic({ id: "e1", status: "review", branchName: "feat/e1" });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "build",
+      createdAt: at(10),
+      endedAt: at(11),
+    });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "review_code",
+      outcome: "silent",
+      createdAt: at(20),
+      endedAt: at(21),
+    });
+
+    // A reviewer that produced nothing must not be re-dispatched in a loop…
+    expect(selectReviewCandidates(PROJECT_ID)).toEqual([]);
+    // …and it certainly did not approve anything.
+    expect(selectMergeCandidates(PROJECT_ID)).toEqual([]);
+  });
+
+  it("re-reviews after an asked_question review once the user replies", () => {
+    addEpic({ id: "e1", status: "review", branchName: "feat/e1" });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "build",
+      createdAt: at(10),
+      endedAt: at(11),
+    });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "review_code",
+      outcome: "asked_question",
+      createdAt: at(20),
+      endedAt: at(21),
+    });
+
+    // Unanswered: held by the awaiting-reply guard.
+    expect(selectReviewCandidates(PROJECT_ID)).toEqual([]);
+    expect(selectMergeCandidates(PROJECT_ID)).toEqual([]);
+
+    addUserComment({ epicId: "e1", createdAt: at(30) });
+
+    // Answered: the reviewer gets to finish its job — it must NOT become
+    // mergeable just because a session with status 'completed' exists.
+    expect(selectReviewCandidates(PROJECT_ID).map((c) => c.epicId)).toEqual([
+      "e1",
+    ]);
+    expect(selectMergeCandidates(PROJECT_ID)).toEqual([]);
+  });
+
+  it("ignores STORY-scoped review sessions at epic level", () => {
+    addEpic({ id: "e1", status: "review", branchName: "feat/e1" });
+    addStory({ id: "s1", epicId: "e1", status: "review" });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "build",
+      createdAt: at(10),
+      endedAt: at(11),
+    });
+    // A story review is not the epic's review: reviews and merges are
+    // epic-scoped because the branch is the integration unit.
+    addSession({
+      epicId: "e1",
+      userStoryId: "s1",
+      status: "completed",
+      agentType: "review_code",
+      createdAt: at(20),
+      endedAt: at(21),
+    });
+
+    expect(selectReviewCandidates(PROJECT_ID).map((c) => c.epicId)).toEqual([
+      "e1",
+    ]);
+    expect(selectMergeCandidates(PROJECT_ID)).toEqual([]);
+  });
+
+  it("counts story BUILDS as code changes that stale an epic review", () => {
+    addEpic({ id: "e1", status: "review", branchName: "feat/e1" });
+    addStory({ id: "s1", epicId: "e1", status: "review" });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "review_code",
+      createdAt: at(10),
+      endedAt: at(11),
+    });
+    // A story build commits to the epic's branch, so the review above is now
+    // stale even though it was epic-scoped.
+    addSession({
+      epicId: "e1",
+      userStoryId: "s1",
+      status: "completed",
+      agentType: "ticket_build",
+      createdAt: at(20),
+      endedAt: at(21),
+    });
+
+    expect(selectReviewCandidates(PROJECT_ID).map((c) => c.epicId)).toEqual([
+      "e1",
+    ]);
+    expect(selectMergeCandidates(PROJECT_ID)).toEqual([]);
+  });
+});
+
+describe("story questions do not hold the parent epic", () => {
+  it("keeps the epic selectable when only a STORY asked a question", () => {
+    addEpic({ id: "e1", status: "review", branchName: "feat/e1" });
+    addStory({ id: "s1", epicId: "e1", status: "review" });
+    addSession({
+      epicId: "e1",
+      status: "completed",
+      agentType: "build",
+      createdAt: at(10),
+      endedAt: at(11),
+    });
+    addSession({
+      epicId: "e1",
+      userStoryId: "s1",
+      status: "completed",
+      agentType: "ticket_build",
+      outcome: "asked_question",
+      createdAt: at(20),
+      endedAt: at(21),
+    });
+
+    // The story's question belongs to the story. Ranking it at epic level
+    // would hold the epic hostage against a reply it cannot even see.
+    expect(selectReviewCandidates(PROJECT_ID).map((c) => c.epicId)).toEqual([
+      "e1",
+    ]);
+  });
+
+  it("accepts a reply on the EPIC as the answer to a story question", () => {
+    addEpic({ id: "e1", status: "in_progress" });
+    addStory({ id: "s1", epicId: "e1", status: "in_progress" });
+    addSession({
+      epicId: "e1",
+      userStoryId: "s1",
+      status: "completed",
+      agentType: "ticket_build",
+      outcome: "asked_question",
+      createdAt: at(20),
+      endedAt: at(21),
+    });
+
+    expect(selectBuildCandidates(PROJECT_ID)).toEqual([]);
+
+    // handleAskedQuestionOutcome deep-links the notification to the EPIC, so
+    // that is where the user actually replies.
+    addUserComment({ epicId: "e1", createdAt: at(30) });
+
+    expect(selectBuildCandidates(PROJECT_ID).map((c) => c.ticketId)).toEqual([
+      "s1",
+    ]);
+  });
+
+  it("also accepts a reply on the story itself", () => {
+    addEpic({ id: "e1", status: "in_progress" });
+    addStory({ id: "s1", epicId: "e1", status: "in_progress" });
+    addSession({
+      epicId: "e1",
+      userStoryId: "s1",
+      status: "completed",
+      agentType: "ticket_build",
+      outcome: "asked_question",
+      createdAt: at(20),
+      endedAt: at(21),
+    });
+    addUserComment({ userStoryId: "s1", createdAt: at(30) });
+
+    expect(selectBuildCandidates(PROJECT_ID).map((c) => c.ticketId)).toEqual([
+      "s1",
+    ]);
   });
 });
 

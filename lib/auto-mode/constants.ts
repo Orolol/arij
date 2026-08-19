@@ -273,6 +273,15 @@ export function resolveAutoModeConfig(
  */
 export const AUTO_MODE_REASON_PREFIX = "Auto mode ";
 
+/**
+ * Reasons read as a sentence ("Auto mode dispatched a review") or as a label
+ * ("Auto mode: review clean, merged"), so the family is `Auto mode` followed
+ * by a space OR a colon. `isAutoModeActivityReason` matches both — keying the
+ * feed off the bare prefix alone would silently drop the colon-form entries,
+ * of which the successful auto-merge is the most important one to show.
+ */
+const AUTO_MODE_REASON_PATTERN = /^Auto mode[ :]/;
+
 export const AUTO_MODE_REASONS = {
   enabled: "Auto mode enabled",
   disabled: "Auto mode disabled",
@@ -284,6 +293,13 @@ export const AUTO_MODE_REASONS = {
   mergeRefused: (error: string) => `Auto mode skipped merge: ${error}`,
   mergeConflict: "Auto mode merge conflict — merge-fix agent dispatched",
   mergeFixRetried: "Auto mode retried the merge after the merge-fix agent",
+  /**
+   * The branch landed on main but the ticket had moved on in the meantime, so
+   * the `→ done` guards refused. Loud on purpose: main changed and the board
+   * did not follow.
+   */
+  mergedButNotAdvanced: (error: string) =>
+    `Auto mode merged the branch but left the ticket where it is: ${error}`,
   dispatchFailed: (stage: string, error: string) =>
     `Auto mode ${stage} dispatch failed: ${error}`,
   parked: (failures: number) =>
@@ -295,9 +311,7 @@ export const AUTO_MODE_REASONS = {
 export function isAutoModeActivityReason(
   reason: string | null | undefined
 ): boolean {
-  return (
-    typeof reason === "string" && reason.startsWith(AUTO_MODE_REASON_PREFIX)
-  );
+  return typeof reason === "string" && AUTO_MODE_REASON_PATTERN.test(reason);
 }
 
 /* ------------------------------------------------------------------ */

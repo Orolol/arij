@@ -18,10 +18,11 @@ vi.mock("@/lib/db", async () => {
 });
 
 const { db } = await import("@/lib/db");
-const { settings } = await import("@/lib/db/schema");
+const { projects, settings } = await import("@/lib/db/schema");
 const {
   AUTO_MODE_BUILD_CONCURRENCY_SETTING_KEY,
   AUTO_MODE_CONCURRENCY_RANGE,
+  AUTO_MODE_REASONS,
   AUTO_MODE_ENABLED_SETTING_KEY,
   AUTO_MODE_REASON_PREFIX,
   AUTO_MODE_REVIEW_CONCURRENCY_SETTING_KEY,
@@ -61,6 +62,7 @@ function putSetting(key: string, value: unknown): void {
 
 beforeEach(() => {
   db.delete(settings).run();
+  db.delete(projects).run();
 });
 
 describe("auto-mode setting keys", () => {
@@ -100,6 +102,19 @@ describe("auto-mode setting keys", () => {
     expect(isAutoModeActivityReason("Auto mode dispatched a review")).toBe(true);
     expect(isAutoModeActivityReason("Pipeline started")).toBe(false);
     expect(isAutoModeActivityReason(null)).toBe(false);
+  });
+
+  it("recognises EVERY reason it emits, including the colon form", () => {
+    // "Auto mode: review clean, merged" reads as a label, not a sentence —
+    // and the successful auto-merge is the entry the feed most needs to show.
+    expect(isAutoModeActivityReason(AUTO_MODE_REASONS.merged)).toBe(true);
+
+    const emitted = Object.values(AUTO_MODE_REASONS).map((reason) =>
+      typeof reason === "function" ? reason(1 as never, "x" as never) : reason
+    );
+    for (const reason of emitted) {
+      expect(isAutoModeActivityReason(reason)).toBe(true);
+    }
   });
 });
 
@@ -247,15 +262,53 @@ describe("resolveAutoModeConfigForProject (server-side)", () => {
 });
 
 describe("listAutoModeEnabledProjectIds", () => {
-  it("lists only projects whose own key parses to true", () => {
-    putSetting(AUTO_MODE_ENABLED_SETTING_KEY, true);
+  function seedProjects(...ids: string[]): void {
+    for (const id of ids) {
+      db.insert(projects)
+        .values({ id, name: id, gitRepoPath: `/repos/${id}` })
+        .run();
+    }
+  }
+
+  it("lists projects whose own key parses to true", () => {
+    seedProjects("p1", "p2", "p3");
     putSetting(autoModeEnabledSettingKey("p1"), true);
     putSetting(autoModeEnabledSettingKey("p2"), false);
     expect(listAutoModeEnabledProjectIds()).toEqual(["p1"]);
   });
 
-  it("is empty when no project opted in", () => {
-    putSetting(AUTO_MODE_ENABLED_SETTING_KEY, true);
+  it("is empty when nothing is configured", () => {
+    seedProjects("p1", "p2");
     expect(listAutoModeEnabledProjectIds()).toEqual([]);
+  });
+
+  /**
+   * Discovery MUST agree with resolveAutoModeConfigForProject, or the API
+   * reports a project as enabled while the supervisor never sweeps it.
+   */
+  it("agrees with the resolver when the GLOBAL key is the one that enables", () => {
+    seedProjects("p1", "p2", "p3");
+    putSetting(AUTO_MODE_ENABLED_SETTING_KEY, true);
+    putSetting(autoModeEnabledSettingKey("p3"), false);
+
+    expect(resolveAutoModeConfigForProject("p1").enabled).toBe(true);
+    expect(resolveAutoModeConfigForProject("p2").enabled).toBe(true);
+    expect(resolveAutoModeConfigForProject("p3").enabled).toBe(false);
+
+    expect(listAutoModeEnabledProjectIds().sort()).toEqual(["p1", "p2"]);
+  });
+
+  it("never disagrees with the resolver, whatever the key combination", () => {
+    seedProjects("a", "b", "c", "d");
+    putSetting(AUTO_MODE_ENABLED_SETTING_KEY, true);
+    putSetting(autoModeEnabledSettingKey("b"), true);
+    putSetting(autoModeEnabledSettingKey("c"), false);
+
+    const discovered = new Set(listAutoModeEnabledProjectIds());
+    for (const projectId of ["a", "b", "c", "d"]) {
+      expect(discovered.has(projectId)).toBe(
+        resolveAutoModeConfigForProject(projectId).enabled
+      );
+    }
   });
 });

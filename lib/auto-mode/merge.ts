@@ -29,7 +29,7 @@ import {
 } from "@/lib/agent-sessions/resume-capability";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import { mergeWorktree } from "@/lib/git/manager";
+import { createWorktree, mergeWorktree } from "@/lib/git/manager";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import { applyTransition } from "@/lib/workflow/transition-service";
 import { logTransition } from "@/lib/workflow/log";
@@ -87,6 +87,14 @@ export interface TryAutoMergeOptions {
    * charged to the build budget.
    */
   namedAgentId?: string | null;
+  /**
+   * Whether a conflict may spend a build slot on a resolution agent. The
+   * caller decides, because only it knows how much of the build budget is
+   * left — and a merge-fix session IS a build. False turns a conflict into a
+   * plain "skipped", retried on the next sweep once a slot frees. Defaults to
+   * true so a direct call still self-heals.
+   */
+  dispatchConflictAgent?: boolean;
 }
 
 const MERGE_ALLOWED_TOOLS = ["Edit", "Write", "Bash", "Read", "Glob", "Grep"];
@@ -116,18 +124,35 @@ function findWorktreePath(
  * its branch and re-exports arji.json — the merge route's success block
  * (merge/route.ts:77-102), shared by the direct merge and the post-merge-fix
  * retry.
+ *
+ * The `fromStatus` is RE-READ here rather than carried in from before the
+ * merge. `mergeWorktree` takes real seconds, and anything can happen in that
+ * window: a human drags the ticket, or the review stage that was settling
+ * when the merge started bounces the epic back to `in_progress`. Validating
+ * `review → done` against a stale snapshot would rubber-stamp exactly the
+ * transition the engine exists to refuse.
+ *
+ * On refusal the branch is still cleared — `mergeWorktree` deleted it on the
+ * way out, so leaving the name behind would make every later sweep try to
+ * merge a branch that no longer exists.
  */
 function finalizeMergedEpic(input: {
   projectId: string;
   epicId: string;
-  fromStatus: KanbanStatus;
   sessionId?: string;
   reason: string;
 }): { ok: true } | { ok: false; error: string } {
+  const current = db
+    .select({ status: epics.status })
+    .from(epics)
+    .where(eq(epics.id, input.epicId))
+    .get();
+  const fromStatus = (current?.status ?? "review") as KanbanStatus;
+
   const validation = applyTransition({
     projectId: input.projectId,
     epicId: input.epicId,
-    fromStatus: input.fromStatus,
+    fromStatus,
     toStatus: "done",
     actor: "agent",
     source: "merge",
@@ -137,8 +162,23 @@ function finalizeMergedEpic(input: {
     // service validates/emits/logs but leaves the row to us.
     skipDbUpdate: true,
   });
+
   if (!validation.valid) {
-    return { ok: false, error: validation.error ?? "Transition refused" };
+    const error = validation.error ?? "Transition refused";
+    db.update(epics)
+      .set({ branchName: null, updatedAt: new Date().toISOString() })
+      .where(eq(epics.id, input.epicId))
+      .run();
+    logTransition({
+      projectId: input.projectId,
+      epicId: input.epicId,
+      fromStatus,
+      toStatus: fromStatus,
+      actor: "system",
+      reason: AUTO_MODE_REASONS.mergedButNotAdvanced(error),
+      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
+    });
+    return { ok: false, error };
   }
 
   db.update(epics)
@@ -232,13 +272,12 @@ export async function tryAutoMerge(
     const finalized = finalizeMergedEpic({
       projectId,
       epicId,
-      fromStatus,
       reason: AUTO_MODE_REASONS.merged,
     });
     if (!finalized.ok) {
-      // The guards passed pre-flight and refused post-merge — a race with a
-      // human action. The branch is already on main; report it as skipped so
-      // the epic is not parked, and let the next sweep settle the board.
+      // The guards passed pre-flight and refused post-merge — the epic moved
+      // under us. The branch is already on main; report it as skipped so the
+      // epic is not parked, and let the next sweep settle the board.
       return { status: "skipped", reason: finalized.error, sessionId: null };
     }
     autoModeRegistry.clearFailures(projectId, epicId);
@@ -258,15 +297,41 @@ export async function tryAutoMerge(
 
   const error = result.error || "Merge failed";
 
-  // No worktree means no place for an agent to resolve the conflict.
-  if (!worktreePath) {
+  // A merge-fix session is a build. Without a build slot to charge it to,
+  // the conflict simply waits for the next sweep — better than blowing
+  // through the budget the user set (or dispatching at all when they set
+  // build concurrency to 0, which means "run no code agents").
+  if (options.dispatchConflictAgent === false) {
+    return {
+      status: "skipped",
+      reason: `${error} — no build capacity for a resolution agent`,
+      sessionId: null,
+    };
+  }
+
+  // `mergeWorktree` removes the epic's worktree BEFORE it attempts the merge
+  // (lib/git/manager.ts:95), and the conflict path aborts without putting it
+  // back — so the directory the agent is supposed to work in no longer
+  // exists. The branch does survive (it is only deleted after a successful
+  // merge), and `createWorktree` re-attaches a worktree to an existing
+  // branch, so this restores exactly the tree the agent needs.
+  let conflictWorktreePath: string;
+  try {
+    conflictWorktreePath = (
+      await createWorktree(project.gitRepoPath, epicId, epic.title)
+    ).worktreePath;
+  } catch (worktreeError) {
+    console.warn(
+      "[auto-mode/merge] Could not restore the worktree for conflict resolution:",
+      worktreeError instanceof Error ? worktreeError.message : worktreeError
+    );
     return { status: "failed", error, sessionId: null };
   }
 
   const sessionId = await dispatchMergeFixAgent({
     project: { id: projectId, gitRepoPath: project.gitRepoPath },
     epic: { id: epicId, branchName: epic.branchName, status: fromStatus },
-    worktreePath,
+    worktreePath: conflictWorktreePath,
     error,
     namedAgentId: options.namedAgentId ?? null,
   });
@@ -459,6 +524,12 @@ async function retryMergeAfterFix(input: {
   originalError: string;
 }): Promise<void> {
   const park = (error: string): void => {
+    // Drop the merge-fix session from the in-flight map FIRST. It completed
+    // successfully as an agent run, so leaving it there would let the next
+    // sweep's reconcile read "completed" and clear the very failure streak we
+    // are about to set — un-parking the epic and looping on the conflict.
+    // (`park` also marks the entry hard, so ordering is belt and braces.)
+    autoModeRegistry.removeInFlight(input.projectId, input.sessionId);
     autoModeRegistry.park(
       input.projectId,
       input.epicId,
@@ -517,16 +588,9 @@ async function retryMergeAfterFix(input: {
     return;
   }
 
-  const current = db
-    .select({ status: epics.status })
-    .from(epics)
-    .where(eq(epics.id, input.epicId))
-    .get();
-
   const finalized = finalizeMergedEpic({
     projectId: input.projectId,
     epicId: input.epicId,
-    fromStatus: (current?.status ?? "review") as KanbanStatus,
     sessionId: input.sessionId,
     reason: AUTO_MODE_REASONS.mergeFixRetried,
   });

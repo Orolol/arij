@@ -128,11 +128,19 @@ export function AutoModeDialog({
     let cancelled = false;
     setLoading(true);
     setError(null);
+    setStatus(null);
     fetch(`/api/projects/${projectId}/auto-mode`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (cancelled || !d?.data) return;
-        applyStatus(d.data as AutoModeStatus, defaultNamedAgentId);
+      .then(async (r) => {
+        // A 404/500 still carries a JSON body, so status has to be checked
+        // explicitly — otherwise the dialog would sit on its defaults and let
+        // Save write them over the real configuration.
+        const body = await r.json().catch(() => null);
+        if (cancelled) return;
+        if (!r.ok || !body?.data) {
+          setError(body?.error || "Failed to load auto mode settings");
+          return;
+        }
+        applyStatus(body.data as AutoModeStatus, defaultNamedAgentId);
       })
       .catch(() => {
         if (!cancelled) setError("Failed to load auto mode settings");
@@ -345,7 +353,8 @@ export function AutoModeDialog({
           </Button>
           <Button
             onClick={handleSave}
-            disabled={saving || loading}
+            // No loaded status = nothing trustworthy to save over.
+            disabled={saving || loading || !status}
             data-testid="auto-mode-save"
             className="h-[31px] rounded-[8px] px-[13px] text-[13px] font-medium"
           >

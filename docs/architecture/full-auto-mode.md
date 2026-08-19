@@ -42,7 +42,7 @@ without a restart.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `auto_mode_enabled` | `false` | Is the mode armed? The **per-project** key is what arms a project; the global key only supplies a fallback value. |
+| `auto_mode_enabled` | `false` | Is the mode armed? Normally set per project; a global `true` arms every project that has not opted out with an explicit per-project `false`. |
 | `auto_mode_build_agent` | *(none)* | Named agent for build dispatches. Absent = the normal resolution chain. |
 | `auto_mode_build_concurrency` | `2` | How many builds of the mode's own dispatch may be in flight. Clamped 0..10. |
 | `auto_mode_review_agent` | *(none)* | Named agent for review dispatches. An explicit choice beats review-provider segregation. |
@@ -56,6 +56,17 @@ right after any agent session reaches a terminal state (the session terminal
 hook kicks it) and right after you save the dialog. Every session it dispatches
 is tagged `agent_sessions.batch_run_id = auto_<projectId>`, so the whole of the
 mode's work is greppable as one batch in the sessions viewer.
+
+Those kicks are **debounced by 250 ms** (`AUTO_MODE_KICK_DELAY_MS`), and that
+delay is a correctness requirement rather than a nicety. The terminal hook
+fires from inside `markSessionTerminal`, which every dispatch closure calls
+*before* it applies the session's board effects — the pipeline driver moves a
+finished build to `review`, or bounces a rejected epic back to `in_progress`,
+in the statements right after. A sweep running synchronously from that hook
+would read the board mid-flight: it could re-build a ticket that is about to
+enter review, or merge an epic whose negative review has not landed yet.
+Deferring to a later macrotask lets the finalization block finish first, and
+collapses the storm a settling wave produces into one sweep.
 
 ### Concurrency vs. the scheduler budget
 
@@ -108,10 +119,25 @@ A review that **passes** leaves the epic in `review` — the pipeline never
 auto-approves. A naive "everything in Review" selector would review it forever.
 
 The guard is **temporal, not verdict-based**: an epic in `review` is a review
-candidate only if it has no terminal review session newer than its newest
-terminal code session. (The verdict itself is a substring heuristic over the
-reviewer's markdown, with no structured field to read — so freshness is the
-fact, and the verdict is not.)
+candidate only if no review has been *attempted* since its newest terminal code
+session. (The verdict itself is a substring heuristic over the reviewer's
+markdown, with no structured field to read — so freshness is the fact, and the
+verdict is not.)
+
+"Attempted" carries the nuance, and the merge gate reads a *stricter* signal
+than the re-review guard:
+
+| Review session ended | Re-reviewed? | Satisfies the merge gate? |
+|---|---|---|
+| completed, `answered` | no | **yes** |
+| completed, `silent` | no — re-dispatching a reviewer that says nothing is just a token-burning loop | no |
+| completed, `asked_question` | yes, but only once the user replies (`isAwaitingReply` holds it until then, so a human is in the loop by construction) | no |
+| `failed` / `cancelled` | yes — no review happened, and the parking ladder bounds the retries | no |
+
+Both signals are **epic-scoped**: a story-scoped review session never counts as
+the epic's review, because the branch — not the story — is what merges. Story
+*builds* do count as code changes, though: they commit to the same branch, so
+they stale an epic review that predates them.
 
 ### 2. Bulldozing an agent's question
 
@@ -120,6 +146,11 @@ An agent that ends with `asked_question` leaves the ticket held in
 ticket bounced back by a negative review. Every selector therefore excludes any
 ticket where `isAwaitingReply` is true. The ticket becomes eligible again the
 moment you post a comment.
+
+A story's question holds the *story*, not its parent epic — otherwise one
+unanswered story would freeze an epic against a reply it cannot even see. And
+because the asked-question notification deep-links to the **epic**, a reply on
+either thread counts as the answer to a story question.
 
 ### 3. Merging something that is not actually approved
 
@@ -158,6 +189,13 @@ on it** or **toggle the mode off and on** (switching off clears all runtime
 state). A merge refused by a workflow guard is *not* a failure and never parks:
 it retries as soon as the review comments are resolved.
 
+An unresolved merge conflict parks the epic **hard**. A soft streak is cleared
+by the next session that completes, and the merge-fix agent *does* complete
+successfully right before its retry fails — so without that distinction the
+reconcile pass would credit the agent, clear the streak, un-park the epic and
+loop on the same conflict forever. Only a comment on the ticket or switching
+the mode off reverses a hard park.
+
 ---
 
 ## ⚠️ Unattended merge-conflict resolution
@@ -170,13 +208,26 @@ is spelled out in full:
    a merge can never land on `main` while the ticket refuses to move.
 2. On a **clean** merge: the epic moves to `done` through `applyTransition`
    (`source: 'merge'`), its branch name is cleared, and `arji.json` is
-   re-exported. No agent was involved.
-3. On a **conflict**: a `merge`-type agent is dispatched into the epic's
-   worktree with the conflict error and instructions to resolve it, commit, and
-   verify the build. That session is **charged to the build budget**.
+   re-exported. No agent was involved. The `fromStatus` is re-read *after* the
+   merge, not carried in from before it — `mergeWorktree` takes real seconds,
+   and validating `review → done` against a stale snapshot would rubber-stamp
+   exactly the transition the engine exists to refuse. If the epic moved in
+   that window the branch is still cleared (git deleted it) but the ticket is
+   left alone, with a loud activity entry.
+3. On a **conflict**: a `merge`-type agent is dispatched with the conflict
+   error and instructions to resolve it, commit, and verify the build.
+   - The agent runs in a **freshly re-attached worktree**. `mergeWorktree`
+     removes the epic's worktree *before* it attempts the merge and the
+     conflict path aborts without putting it back, so the directory recorded
+     on the session row no longer exists. The branch survives (it is only
+     deleted after a successful merge), and `createWorktree` re-attaches to it.
+   - That session is **charged to the build budget**, and it is only dispatched
+     when a build slot is actually free. With `auto_mode_build_concurrency` at
+     0 — "run no code agents" — no conflict agent is ever dispatched; the
+     conflict simply waits.
 4. When that agent finishes successfully, the merge is retried **once**.
-5. If the retry also fails — or the agent itself failed — the epic is
-   **parked**, a `failed` notification deep-linking to the ticket is raised, and
+5. If the retry also fails — or the agent itself failed — the epic is **parked
+   hard**, a `failed` notification deep-linking to the ticket is raised, and
    the mode never touches that epic again until you intervene.
 
 In other words: an unattended agent may rewrite files in the epic's worktree to

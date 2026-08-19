@@ -84,6 +84,11 @@ const TERMINAL_STATUSES_SQL = "'completed','failed','cancelled'";
  */
 const SESSION_AT_SQL = sql`REPLACE(COALESCE(${agentSessions.endedAt}, ${agentSessions.completedAt}, ${agentSessions.createdAt}), ' ', 'T')`;
 
+/** JS-side twin of the SQL normalisation above, for comparing timestamps. */
+export function normalizeAt(value: string): string {
+  return value.includes("T") ? value : value.replace(" ", "T");
+}
+
 /* ------------------------------------------------------------------ */
 /* Public shapes                                                       */
 /* ------------------------------------------------------------------ */
@@ -136,11 +141,33 @@ interface StoryRow {
 }
 
 interface SessionFacts {
-  /** Newest terminal review session (completed | failed | cancelled). */
-  lastTerminalReviewAt: string | null;
-  /** Newest *successfully completed* review session. */
-  lastCompletedReviewAt: string | null;
-  /** Newest terminal code-writing session. */
+  /**
+   * Newest EPIC-SCOPED review session that ran to completion and did not end
+   * by asking the user something. "A review was attempted" — it blocks a
+   * re-review even when the reviewer produced nothing (`silent`), because a
+   * loop that re-dispatches a reviewer which keeps saying nothing is the
+   * token-burning version of hazard #1.
+   *
+   * A review session that FAILED or was CANCELLED is deliberately absent: no
+   * review happened, so the epic stays a review candidate and the engine's
+   * parking ladder — not this guard — bounds the retries.
+   *
+   * `asked_question` is absent too: `isAwaitingReply` holds the epic until
+   * the user answers, and once they have, re-running the reviewer with the
+   * answer in the comment thread is exactly the right move. A human is in
+   * that loop by construction, so it cannot spin.
+   */
+  lastReviewAttemptAt: string | null;
+  /**
+   * Newest EPIC-SCOPED review session that completed with a real verdict —
+   * the merge gate's half. Excludes `asked_question` (the reviewer asked, it
+   * did not approve) and `silent` (it produced nothing to approve with).
+   */
+  lastCleanReviewAt: string | null;
+  /**
+   * Newest terminal code-writing session, story-scoped ones INCLUDED: a story
+   * build commits to the epic's branch, so a review that predates it is stale.
+   */
   lastTerminalCodeAt: string | null;
 }
 
@@ -270,16 +297,27 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
   }
 
   // 4. Review/code freshness facts per epic (conditional aggregation).
+  //
+  // The review branches are EPIC-SCOPED (`user_story_id IS NULL`): reviews
+  // and merges are epic-level by design, so a story review must never
+  // satisfy the epic's merge gate. The code branch deliberately keeps story
+  // sessions — they commit to the same branch.
   const factRows = db
     .select({
       epicId: agentSessions.epicId,
-      lastTerminalReviewAt: sql<string | null>`MAX(CASE
-        WHEN ${agentSessions.status} IN (${sql.raw(TERMINAL_STATUSES_SQL)})
-         AND ${agentSessions.agentType} IN (${sql.raw(REVIEW_AGENT_TYPES_SQL)})
-        THEN ${SESSION_AT_SQL} END)`,
-      lastCompletedReviewAt: sql<string | null>`MAX(CASE
+      lastReviewAttemptAt: sql<string | null>`MAX(CASE
         WHEN ${agentSessions.status} = 'completed'
+         AND ${agentSessions.userStoryId} IS NULL
          AND ${agentSessions.agentType} IN (${sql.raw(REVIEW_AGENT_TYPES_SQL)})
+         AND (${agentSessions.outcome} IS NULL
+              OR ${agentSessions.outcome} <> 'asked_question')
+        THEN ${SESSION_AT_SQL} END)`,
+      lastCleanReviewAt: sql<string | null>`MAX(CASE
+        WHEN ${agentSessions.status} = 'completed'
+         AND ${agentSessions.userStoryId} IS NULL
+         AND ${agentSessions.agentType} IN (${sql.raw(REVIEW_AGENT_TYPES_SQL)})
+         AND (${agentSessions.outcome} IS NULL
+              OR ${agentSessions.outcome} = 'answered')
         THEN ${SESSION_AT_SQL} END)`,
       lastTerminalCodeAt: sql<string | null>`MAX(CASE
         WHEN ${agentSessions.status} IN (${sql.raw(TERMINAL_STATUSES_SQL)})
@@ -300,13 +338,18 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
   for (const row of factRows) {
     if (!row.epicId) continue;
     sessionFactsByEpic.set(row.epicId, {
-      lastTerminalReviewAt: row.lastTerminalReviewAt ?? null,
-      lastCompletedReviewAt: row.lastCompletedReviewAt ?? null,
+      lastReviewAttemptAt: row.lastReviewAttemptAt ?? null,
+      lastCleanReviewAt: row.lastCleanReviewAt ?? null,
       lastTerminalCodeAt: row.lastTerminalCodeAt ?? null,
     });
   }
 
   // 5 + 6. Latest session per epic / per story (the awaiting-reply verdict).
+  //
+  // Epic-scoped only (`user_story_id IS NULL`). A story session that asked a
+  // question is the STORY's business: ranking it here would hold the parent
+  // epic hostage, and the epic's own comment thread is not where a story
+  // question is necessarily answered.
   const rankedEpicSessions = db
     .select({
       epicId: agentSessions.epicId,
@@ -323,7 +366,8 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
     .where(
       and(
         eq(agentSessions.projectId, projectId),
-        sql`${agentSessions.epicId} IS NOT NULL`
+        sql`${agentSessions.epicId} IS NOT NULL`,
+        sql`${agentSessions.userStoryId} IS NULL`
       )
     )
     .as("ranked_epic_sessions");
@@ -421,11 +465,21 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
   const awaitingByStory = new Map<string, AwaitingFacts>();
   for (const row of latestStorySessions) {
     if (!row.userStoryId) continue;
+    const story = storyRows.find((s) => s.id === row.userStoryId);
+    // A story question notifies with a deep link to the EPIC
+    // (handleAskedQuestionOutcome → buildEpicTargetUrl), so the user's reply
+    // usually lands on the epic thread. Either thread counts as the answer.
+    const replies = [
+      storyUserCommentAt.get(row.userStoryId),
+      story ? epicUserCommentAt.get(story.epicId) : undefined,
+    ].filter((value): value is string => typeof value === "string");
     awaitingByStory.set(row.userStoryId, {
       latestSessionOutcome: row.outcome ?? null,
       latestSessionEndedAt: row.endedAt ?? null,
       latestUserCommentCreatedAt:
-        storyUserCommentAt.get(row.userStoryId) ?? null,
+        replies.length > 0
+          ? replies.reduce((a, b) => (normalizeAt(a) >= normalizeAt(b) ? a : b))
+          : null,
     });
   }
 
@@ -499,26 +553,35 @@ function compareEpics(a: EpicRow, b: EpicRow): number {
  * same epic forever. The guard is deliberately temporal rather than
  * verdict-based: the verdict is a substring heuristic over the reviewer's
  * markdown (epics/[epicId]/review/route.ts:337), with no structured field to
- * read. "Has a terminal review happened since the last terminal code change?"
+ * read. "Has a review been attempted since the last terminal code change?"
  * is a fact, not a guess.
+ *
+ * "Attempted" is doing real work here — see SessionFacts.lastReviewAttemptAt:
+ * a failed or cancelled review is NOT an attempt (it retries, bounded by the
+ * engine's parking ladder), and a review that ended by asking the user
+ * something is not one either (`isAwaitingReply` holds the epic until the
+ * answer, and re-running the reviewer with that answer is the point).
  */
 export function needsReview(facts: SessionFacts | undefined): boolean {
   if (!facts) return true;
-  if (!facts.lastTerminalReviewAt) return true;
+  if (!facts.lastReviewAttemptAt) return true;
   if (!facts.lastTerminalCodeAt) return false;
-  return facts.lastTerminalReviewAt <= facts.lastTerminalCodeAt;
+  return facts.lastReviewAttemptAt <= facts.lastTerminalCodeAt;
 }
 
 /**
- * The merge gate's freshness half: a review COMPLETED after the last code
- * change. Stricter than the workflow engine's `hasCompletedReview` (which
- * accepts any completed review session ever), which is the point — the
- * engine's guard is the floor, not the ceiling.
+ * The merge gate's freshness half: a review that COMPLETED WITH A VERDICT
+ * after the last code change.
+ *
+ * Stricter than the workflow engine's `hasCompletedReview` on both axes —
+ * the engine accepts any completed review session ever, including one that
+ * merely asked a question or produced nothing. That laxity is exactly what
+ * this compensates for; the engine's guard stays the floor, not the ceiling.
  */
-export function hasFreshCompletedReview(facts: SessionFacts | undefined): boolean {
-  if (!facts?.lastCompletedReviewAt) return false;
+export function hasFreshCleanReview(facts: SessionFacts | undefined): boolean {
+  if (!facts?.lastCleanReviewAt) return false;
   if (!facts.lastTerminalCodeAt) return true;
-  return facts.lastCompletedReviewAt > facts.lastTerminalCodeAt;
+  return facts.lastCleanReviewAt > facts.lastTerminalCodeAt;
 }
 
 /* ------------------------------------------------------------------ */
@@ -627,7 +690,7 @@ export function selectMergeCandidates(
     .filter((epic) => epic.status === "review")
     .filter((epic) => !!epic.branchName)
     .filter((epic) => isEpicSelectable(board, epic))
-    .filter((epic) => hasFreshCompletedReview(board.sessionFactsByEpic.get(epic.id)))
+    .filter((epic) => hasFreshCleanReview(board.sessionFactsByEpic.get(epic.id)))
     .filter((epic) => (board.openReviewCommentsByEpic.get(epic.id) ?? 0) === 0)
     .map((epic) => ({
       epicId: epic.id,

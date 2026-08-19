@@ -200,6 +200,29 @@ describe("PUT /auto-mode", () => {
     expect(engineMocks.kickAutoMode).toHaveBeenCalledWith(PROJECT_ID);
   });
 
+  it("returns runtime fields that already reflect the change, not the last sweep", async () => {
+    const enabled = await (
+      await PUT(putRequest({ enabled: true }) as never, params())
+    ).json();
+    // The sweep is deferred, so the response must not report `running: false`
+    // just because no tick has happened yet.
+    expect(enabled.data.running).toBe(true);
+    expect(autoModeRegistry.isEnabled(PROJECT_ID)).toBe(true);
+
+    autoModeRegistry.addInFlight(PROJECT_ID, "s1", {
+      kind: "build",
+      ticketId: "e1",
+      epicId: "e1",
+    });
+
+    const disabled = await (
+      await PUT(putRequest({ enabled: false }) as never, params())
+    ).json();
+    expect(disabled.data.running).toBe(false);
+    expect(disabled.data.inFlight).toEqual({ build: 0, review: 0 });
+    expect(autoModeRegistry.isEnabled(PROJECT_ID)).toBe(false);
+  });
+
   it("accepts a partial payload without clobbering the other keys", async () => {
     await PUT(
       putRequest({ enabled: true, buildConcurrency: 5 }) as never,

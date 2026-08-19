@@ -258,6 +258,39 @@ describe("AutoModeDialog — scheduler budget warning", () => {
     expect(put.body).not.toHaveProperty("effectiveSchedulerBudget");
   });
 
+  it("reports a failed status load and refuses to save over it", async () => {
+    const calls: FetchLog[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        calls.push({
+          url,
+          method: init?.method ?? "GET",
+          body: init?.body ? JSON.parse(init.body as string) : null,
+        });
+        // A 404 still carries a JSON body — checking only `data` would leave
+        // the dialog on its defaults and let Save overwrite the real config.
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ error: "Project not found" }),
+        } as Response;
+      })
+    );
+
+    render(<AutoModeDialog projectId="p1" open onOpenChange={() => {}} />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("auto-mode-error")).toHaveTextContent(
+        "Project not found"
+      )
+    );
+    expect(screen.getByTestId("auto-mode-save")).toBeDisabled();
+
+    fireEvent.click(screen.getByTestId("auto-mode-save"));
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
   it("always shows the unattended-merge warning", async () => {
     installFetch(statusFixture());
     render(<AutoModeDialog projectId="p1" open onOpenChange={() => {}} />);

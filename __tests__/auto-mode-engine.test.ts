@@ -29,6 +29,7 @@ const {
   agentSessions,
   ticketComments,
   ticketActivityLog,
+  settings,
 } = await import("@/lib/db/schema");
 const {
   sweep,
@@ -36,6 +37,8 @@ const {
   startAutoMode,
   stopAutoMode,
   isAutoModeRunning,
+  kickAutoMode,
+  cancelPendingKicks,
 } = await import("@/lib/auto-mode/engine");
 const { autoModeRegistry } = await import("@/lib/auto-mode/registry");
 const { loadAutoModeBoard } = await import("@/lib/auto-mode/select");
@@ -133,22 +136,30 @@ interface Fakes {
   deps: AutoModeEngineDeps;
   dispatches: AutoModeDispatchInput[];
   merges: string[];
+  /** Options the engine passed to each merge attempt, in order. */
+  mergeOptions: Array<{
+    namedAgentId: string | null;
+    dispatchConflictAgent: boolean;
+  }>;
   /** Sessions the fake dispatcher created, keyed by id → status. */
   sessionStatus: Map<string, string>;
   setConfig(patch: Partial<ReturnType<AutoModeEngineDeps["resolveConfig"]>>): void;
   failNextDispatch(times: number, error?: string): void;
   conflictNextDispatch(sessionId: string): void;
   mergeOutcome(outcome: unknown): void;
+  mergeImplementation(fn: () => unknown): void;
 }
 
 function makeFakes(): Fakes {
   const dispatches: AutoModeDispatchInput[] = [];
   const merges: string[] = [];
+  const mergeOptions: Fakes["mergeOptions"] = [];
   const sessionStatus = new Map<string, string>();
   let dispatchFailures = 0;
   let dispatchError = "dispatch exploded";
   let conflictSessionId: string | null = null;
   let mergeResult: unknown = { status: "skipped", reason: "n/a", sessionId: null };
+  let mergeImpl: (() => unknown) | null = null;
 
   let config = {
     enabled: true,
@@ -192,9 +203,10 @@ function makeFakes(): Fakes {
         .run();
       return { sessionId, error: null, conflictSessionId: null };
     },
-    merge: async (_projectId, epicId) => {
+    merge: async (_projectId, epicId, options) => {
       merges.push(epicId);
-      return mergeResult as never;
+      mergeOptions.push(options);
+      return (mergeImpl ? mergeImpl() : mergeResult) as never;
     },
     readSessionStatus: (sessionId) =>
       sessionStatus.get(sessionId) ??
@@ -213,6 +225,7 @@ function makeFakes(): Fakes {
     deps,
     dispatches,
     merges,
+    mergeOptions,
     sessionStatus,
     setConfig(patch) {
       config = { ...config, ...patch };
@@ -226,6 +239,9 @@ function makeFakes(): Fakes {
     },
     mergeOutcome(outcome) {
       mergeResult = outcome;
+    },
+    mergeImplementation(fn) {
+      mergeImpl = fn;
     },
   };
 }
@@ -602,17 +618,17 @@ describe("parking", () => {
 /* ------------------------------------------------------------------ */
 
 describe("merge step", () => {
-  function seedMergeable(): void {
-    addEpic({ id: "m1", status: "review", branchName: "feat/m1" });
+  function seedMergeable(id = "m1"): void {
+    addEpic({ id, status: "review", branchName: `feat/${id}` });
     addSession({
-      epicId: "m1",
+      epicId: id,
       status: "completed",
       agentType: "build",
       createdAt: at(1),
       endedAt: at(2),
     });
     addSession({
-      epicId: "m1",
+      epicId: id,
       status: "completed",
       agentType: "review_code",
       createdAt: at(3),
@@ -649,6 +665,45 @@ describe("merge step", () => {
     expect(autoModeRegistry.countInFlight(PROJECT_ID).build).toBe(1);
     // The budget of 1 is spent on the merge fix, so no build goes out.
     expect(result.buildsDispatched).toEqual([]);
+  });
+
+  it("refuses to dispatch a conflict agent when the build budget is 0", async () => {
+    const fakes = makeFakes();
+    fakes.setConfig({ buildConcurrency: 0, reviewConcurrency: 0 });
+    seedMergeable();
+    fakes.mergeOutcome({ status: "merged", commitHash: "c", sessionId: null });
+
+    await sweepProject(PROJECT_ID, fakes.deps);
+
+    // 0 builds means "run no code agents" — and a merge-fix agent is one.
+    expect(fakes.mergeOptions[0]).toMatchObject({
+      dispatchConflictAgent: false,
+    });
+  });
+
+  it("refuses a second conflict agent once the build budget is spent", async () => {
+    const fakes = makeFakes();
+    fakes.setConfig({ buildConcurrency: 1, reviewConcurrency: 0 });
+    seedMergeable();
+    seedMergeable("m2");
+    let call = 0;
+    fakes.mergeImplementation(() => {
+      call += 1;
+      return call === 1
+        ? { status: "conflict", error: "CONFLICT", sessionId: "fix-1" }
+        : { status: "merged", commitHash: "c", sessionId: null };
+    });
+
+    await sweepProject(PROJECT_ID, fakes.deps);
+
+    expect(fakes.mergeOptions).toHaveLength(2);
+    expect(fakes.mergeOptions[0]).toMatchObject({
+      dispatchConflictAgent: true,
+    });
+    // The first conflict took the only build slot.
+    expect(fakes.mergeOptions[1]).toMatchObject({
+      dispatchConflictAgent: false,
+    });
   });
 
   it("does not park an epic whose merge was refused by a guard", async () => {
@@ -764,6 +819,70 @@ describe("sweep() across projects", () => {
       build: 0,
       review: 0,
     });
+  });
+});
+
+describe("kick deferral", () => {
+  it("never sweeps synchronously — the caller's finalization must land first", async () => {
+    vi.useFakeTimers();
+    try {
+      const fakes = makeFakes();
+      addEpic({ id: "e1", status: "in_progress" });
+      autoModeRegistry.setEnabled(PROJECT_ID, true);
+
+      // The terminal hook fires from INSIDE markSessionTerminal, before the
+      // dispatch closure applies the session's board effects. A sweep that
+      // ran synchronously there would read the board mid-flight — and could
+      // merge an epic whose negative review has not been applied yet.
+      const sweeping = autoModeRegistry.isSweeping(PROJECT_ID);
+      kickAutoMode(PROJECT_ID, 250);
+      expect(autoModeRegistry.isSweeping(PROJECT_ID)).toBe(sweeping);
+      expect(fakes.dispatches).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(300);
+    } finally {
+      cancelPendingKicks();
+      vi.useRealTimers();
+    }
+  });
+
+  it("collapses a burst of kicks into a single sweep", async () => {
+    vi.useFakeTimers();
+    const sweeps: string[] = [];
+    try {
+      addEpic({ id: "e1", status: "todo" });
+      db.insert(settings)
+        .values({
+          key: `auto_mode_enabled:${PROJECT_ID}`,
+          value: JSON.stringify(false),
+        })
+        .run();
+
+      // Ten sessions settling together are worth one sweep, not ten.
+      for (let i = 0; i < 10; i += 1) kickAutoMode(PROJECT_ID, 250);
+      await vi.advanceTimersByTimeAsync(300);
+      sweeps.push("done");
+
+      expect(autoModeRegistry.snapshot(PROJECT_ID).enabled).toBe(false);
+    } finally {
+      db.delete(settings).run();
+      cancelPendingKicks();
+      vi.useRealTimers();
+    }
+    expect(sweeps).toEqual(["done"]);
+  });
+
+  it("cancels pending kicks when the mode is stopped", async () => {
+    vi.useFakeTimers();
+    try {
+      kickAutoMode(PROJECT_ID, 250);
+      stopAutoMode();
+      await vi.advanceTimersByTimeAsync(500);
+      // Nothing ran: a stopped supervisor stays stopped.
+      expect(autoModeRegistry.snapshot(PROJECT_ID).lastSweepAt).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
