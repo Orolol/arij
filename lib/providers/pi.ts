@@ -133,8 +133,9 @@ export function extractPiSessionId(raw: string): string | undefined {
  * pi exits 0 in `--mode json` even when the run ended on a model error (only
  * its text mode maps that to exit code 1), so the final assistant message's
  * stopReason is the only failure signal available. Returns null on success.
+ * `cliName` labels the fallback messages ("Pi" or "Oh My Pi").
  */
-export function findPiRunFailure(stdout: string): string | null {
+export function findPiRunFailure(stdout: string, cliName = "Pi"): string | null {
   const messages = collectPiAssistantMessages(stdout);
   const last = messages[messages.length - 1];
   if (!last) return null;
@@ -144,8 +145,8 @@ export function findPiRunFailure(stdout: string): string | null {
   return (
     last.errorMessage?.trim() ||
     (last.stopReason === "aborted"
-      ? "Pi run was aborted."
-      : "Pi run ended with an error.")
+      ? `${cliName} run was aborted.`
+      : `${cliName} run ended with an error.`)
   );
 }
 
@@ -156,12 +157,23 @@ export class PiProvider extends BaseCliProvider {
     return "pi";
   }
 
-  /**
-   * Extra CLI arguments inserted just before the prompt. Empty for plain pi;
-   * Oh My Pi uses it to load its orchestrator extension.
-   */
-  protected extraArgs(): string[] {
-    return [];
+  /** Human-readable CLI name used in error messages. */
+  protected get cliDisplayName(): string {
+    return "Pi";
+  }
+
+  /** Built-in tools that cannot modify the working tree (omp's set differs). */
+  protected readonlyTools(): string[] {
+    return PI_READONLY_TOOLS;
+  }
+
+  /** Arguments that resume `cliSessionId` — pi's flag is `--session`, omp's is `--resume`. */
+  protected resumeArgs(cliSessionId: string): string[] {
+    return ["--session", cliSessionId];
+  }
+
+  protected notAuthenticatedMessage(): string {
+    return "Pi is not authenticated. Run `pi` and use /login, or set the provider API key.";
   }
 
   buildArgs(options: ProviderSpawnOptions): string[] {
@@ -171,18 +183,17 @@ export class PiProvider extends BaseCliProvider {
 
     // plan/analyze must not touch the working tree — drop write/edit/bash.
     if (mode !== "code") {
-      args.push("--tools", PI_READONLY_TOOLS.join(","));
+      args.push("--tools", this.readonlyTools().join(","));
     }
 
     if (cliSessionId && resumeSession) {
-      args.push("--session", cliSessionId);
+      args.push(...this.resumeArgs(cliSessionId));
     }
 
     if (model) {
       args.push("--model", model);
     }
 
-    args.push(...this.extraArgs());
     args.push("-p", prompt);
 
     return args;
@@ -216,12 +227,12 @@ export class PiProvider extends BaseCliProvider {
     const combinedOutput = stderr + "\n" + stdout;
 
     if (/no api key|not authenticated|unauthorized|invalid api key/i.test(combinedOutput)) {
-      return "Pi is not authenticated. Run `pi` and use /login, or set the provider API key.";
+      return this.notAuthenticatedMessage();
     }
 
     return (
-      findPiRunFailure(stdout) ??
-      (stderr.trim() || `Pi CLI exited with code ${code}`)
+      findPiRunFailure(stdout, this.cliDisplayName) ??
+      (stderr.trim() || `${this.cliDisplayName} CLI exited with code ${code}`)
     );
   }
 
@@ -238,7 +249,7 @@ export class PiProvider extends BaseCliProvider {
     const result = super.handleExit(info, callbacks, logCtx);
     if (!result.success) return result;
 
-    const failure = findPiRunFailure(info.stdout);
+    const failure = findPiRunFailure(info.stdout, this.cliDisplayName);
     if (!failure) return result;
 
     return { ...result, success: false, error: failure };

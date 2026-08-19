@@ -17,7 +17,8 @@ import type { ProviderType } from "@/lib/providers/types";
  * - mistral-vibe: --resume <ID>
  * - opencode: --session <ID>
  * - kimi: --continue (directory-scoped)
- * - pi / oh-my-pi: --session <ID>
+ * - pi: --session <ID>
+ * - oh-my-pi: --resume <ID> (standalone `omp` fork of pi; no --session flag)
  *
  * Non-resumable: codex, qwen-code, deepseek, zai.
  *
@@ -42,9 +43,9 @@ const RESUMABLE_PROVIDERS = new Set<ProviderType>([
 /**
  * Providers that announce the session id they created, so dispatch must NOT
  * invent one for them: pi prints a `{"type":"session","id":…}` header and
- * `PiProvider.parseSessionId` reads it back. A pre-assigned id would be
- * stored, never used by the CLI, and then replayed into `--session` on a
- * later resume.
+ * `PiProvider.parseSessionId` reads it back (omp emits the same header). A
+ * pre-assigned id would be stored, never used by the CLI, and then replayed
+ * into the resume flag on a later run.
  */
 const SELF_REPORTED_SESSION_ID_PROVIDERS = new Set<ProviderType>([
   "pi",
