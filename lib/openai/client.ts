@@ -319,8 +319,30 @@ function parseSseDataLine(line: string): string | typeof DONE | null {
   if (payload === "[DONE]") return DONE;
   if (!payload || payload === "{}") return null;
   try {
-    return extractDelta(JSON.parse(payload));
-  } catch {
+    const parsed: unknown = JSON.parse(payload);
+    if (parsed && typeof parsed === "object") {
+      const obj = parsed as Record<string, unknown>;
+      if (obj.error) {
+        const errorObj = obj.error;
+        const msg =
+          typeof errorObj === "string"
+            ? errorObj
+            : errorObj !== null &&
+                typeof errorObj === "object" &&
+                typeof (errorObj as { message?: unknown }).message === "string"
+              ? (errorObj as { message: string }).message
+              : "stream error";
+        throw new Error(`${ERROR_PREFIX} ${msg}`);
+      }
+    }
+    return extractDelta(parsed);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith(ERROR_PREFIX)) {
+      throw error;
+    }
+    if (payload.startsWith("{") || payload.startsWith("[")) {
+      return null;
+    }
     return payload;
   }
 }
@@ -364,9 +386,14 @@ export async function* streamOpenAiChatCompletion(
   }
 
   const timeoutController = new AbortController();
-  const timer = setTimeout(() => {
-    timeoutController.abort(new DOMException("The request timed out.", "TimeoutError"));
-  }, timeoutMs);
+  let timer: NodeJS.Timeout | undefined;
+  const resetTimer = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => {
+      timeoutController.abort(new DOMException("The request timed out.", "TimeoutError"));
+    }, timeoutMs);
+  };
+  resetTimer();
 
   const { signal: fetchSignal, cleanup } = combineAbortSignals(
     signal,
@@ -383,12 +410,11 @@ export async function* streamOpenAiChatCompletion(
     });
   } catch (error) {
     throw new Error(describeNetworkError(error));
-  } finally {
-    clearTimeout(timer);
-    cleanup();
   }
 
   if (!response.ok || !response.body) {
+    clearTimeout(timer);
+    cleanup();
     const bodyText = await response.text().catch(() => "");
     throw httpError(response.status, response.statusText, bodyText);
   }
@@ -397,11 +423,11 @@ export async function* streamOpenAiChatCompletion(
   const onAbort = () => {
     reader.cancel().catch(() => {});
   };
-  if (signal) {
-    if (signal.aborted) {
+  if (fetchSignal) {
+    if (fetchSignal.aborted) {
       reader.cancel().catch(() => {});
     } else {
-      signal.addEventListener("abort", onAbort, { once: true });
+      fetchSignal.addEventListener("abort", onAbort, { once: true });
     }
   }
 
@@ -412,9 +438,10 @@ export async function* streamOpenAiChatCompletion(
 
   try {
     while (true) {
-      if (signal?.aborted) break;
+      if (fetchSignal?.aborted) break;
       const { done, value } = await reader.read();
-      if (done || signal?.aborted) break;
+      resetTimer();
+      if (done || fetchSignal?.aborted) break;
       const chunk = decoder.decode(value, { stream: true });
       if (!sawSseDataLine) {
         rawText += chunk;
@@ -431,26 +458,31 @@ export async function* streamOpenAiChatCompletion(
         if (delta) yield delta;
       }
     }
-    const lastChunk = decoder.decode();
-    if (lastChunk) {
-      if (!sawSseDataLine) rawText += lastChunk;
-      buffer += lastChunk;
+
+    if (!fetchSignal?.aborted) {
+      const lastChunk = decoder.decode();
+      if (lastChunk) {
+        if (!sawSseDataLine) rawText += lastChunk;
+        buffer += lastChunk;
+      }
+      const tail = buffer.replace(/\r$/, "");
+      if (tail.startsWith("data:")) sawSseDataLine = true;
+      const tailDelta = parseSseDataLine(tail);
+      if (tailDelta === DONE) return;
+      if (tailDelta) yield tailDelta;
     }
-    const tail = buffer.replace(/\r$/, "");
-    if (tail.startsWith("data:")) sawSseDataLine = true;
-    const tailDelta = parseSseDataLine(tail);
-    if (tailDelta === DONE) return;
-    if (tailDelta) yield tailDelta;
   } finally {
-    if (signal) {
-      signal.removeEventListener("abort", onAbort);
+    clearTimeout(timer);
+    cleanup();
+    if (fetchSignal) {
+      fetchSignal.removeEventListener("abort", onAbort);
     }
     reader.releaseLock();
   }
 
   // A server that ignored `stream: true` answered with one JSON completion
   // instead of an SSE stream — emit it as a single delta.
-  if (!sawSseDataLine) {
+  if (!sawSseDataLine && !fetchSignal?.aborted) {
     try {
       const delta = extractDelta(JSON.parse(rawText.trim()));
       if (delta) yield delta;

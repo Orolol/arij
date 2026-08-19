@@ -349,9 +349,15 @@ export async function POST(
           }
           activityRegistry.unregister(activityId);
           if (abortController.signal.aborted) {
-            setConversationStatus("active");
             if (!clientCancelled) {
-              controller.close();
+              if (fullContent.length > 0) {
+                saveAssistantAndTitle(controller, fullContent, "active");
+              } else {
+                setConversationStatus("active");
+                controller.close();
+              }
+            } else {
+              setConversationStatus("active");
             }
             return;
           }
@@ -360,9 +366,15 @@ export async function POST(
           if (abortController.signal.aborted) {
             // Client disconnected or the activity was killed.
             activityRegistry.unregister(activityId);
-            setConversationStatus("active");
             if (!clientCancelled) {
-              controller.close();
+              if (fullContent.length > 0) {
+                saveAssistantAndTitle(controller, fullContent, "active");
+              } else {
+                setConversationStatus("active");
+                controller.close();
+              }
+            } else {
+              setConversationStatus("active");
             }
             return;
           }

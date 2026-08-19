@@ -131,10 +131,10 @@ export default function SettingsPage() {
           | GitHubPatSetting
           | undefined;
         setHasSavedOpenAiKey(Boolean(openAiKeySetting?.hasToken));
-        const openAiBaseUrl = d.data?.[OPENAI_BASE_URL_SETTING_KEY];
-        if (typeof openAiBaseUrl === "string") setOpenAiBaseUrl(openAiBaseUrl);
-        const openAiModel = d.data?.[OPENAI_MODEL_SETTING_KEY];
-        if (typeof openAiModel === "string") setOpenAiModel(openAiModel);
+        const savedBaseUrl = d.data?.[OPENAI_BASE_URL_SETTING_KEY];
+        if (typeof savedBaseUrl === "string") setOpenAiBaseUrl(savedBaseUrl);
+        const savedModel = d.data?.[OPENAI_MODEL_SETTING_KEY];
+        if (typeof savedModel === "string") setOpenAiModel(savedModel);
         setOpenAiReasoningEffort(
           parseOpenAiReasoningEffort(d.data?.[OPENAI_REASONING_EFFORT_SETTING_KEY]),
         );

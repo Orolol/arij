@@ -487,6 +487,98 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     });
     expect(dbMockState.updateCalls).toContainEqual({ status: "error" });
   });
+  it("handles mid-stream SSE error events by preserving partial output and setting status to error", async () => {
+    seedFastModeConversation();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(
+          new TextEncoder().encode(
+            `data: ${JSON.stringify({ choices: [{ delta: { content: "Drafting answer " } }] })}\n\n` +
+            `data: ${JSON.stringify({ error: { message: "Context length exceeded", code: 400 } })}\n\n`
+          )
+        );
+        controller.close();
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response(stream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({ content: "Current question", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    const events = await readSseEvents(response);
+    const failureMessage = "OpenAI-compatible API error: Context length exceeded";
+    expect(events).toEqual([
+      { delta: "Drafting answer " },
+      { delta: `\n\n${failureMessage}` },
+      { done: true, messageId: "id-123" },
+    ]);
+
+    expect(dbMockState.insertCalls[1]).toMatchObject({
+      role: "assistant",
+      content: `Drafting answer \n\n${failureMessage}`,
+    });
+    expect(dbMockState.updateCalls).toContainEqual({ status: "error" });
+  });
+
+  it("persists partial output when killed from the monitor after some tokens have streamed", async () => {
+    seedFastModeConversation();
+    const delayedStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const line = `data: ${JSON.stringify({ choices: [{ delta: { content: "Partial thoughts" } }] })}\n\n`;
+        controller.enqueue(new TextEncoder().encode(line));
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response(delayedStream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const { activityRegistry } = await import("@/lib/activity-registry");
+
+    const response = await POST(
+      mockJsonRequest({ content: "Current question", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    expect(response.status).toBe(200);
+    const activities = activityRegistry.listByProject("proj1");
+    expect(activities).toHaveLength(1);
+
+    const reader = response.body?.getReader();
+    const decoder = new TextDecoder();
+    let firstChunk = "";
+    if (reader) {
+      const { value } = await reader.read();
+      if (value) firstChunk = decoder.decode(value);
+      reader.releaseLock();
+    }
+    expect(firstChunk).toContain("Partial thoughts");
+
+    // Kill from monitor
+    activityRegistry.cancel(activities[0]!.id);
+
+    // Remainder of stream delivers the done marker
+    const remainingEvents = await readSseEvents(response);
+    expect(remainingEvents).toEqual([
+      { done: true, messageId: "id-123" },
+    ]);
+    // Assistant message contains the partial output
+    expect(dbMockState.insertCalls[1]).toMatchObject({
+      role: "assistant",
+      content: "Partial thoughts",
+    });
+  });
 
   it("resets status to active and saves nothing when the stream is cancelled by the client", async () => {
     seedFastModeConversation();

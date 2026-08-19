@@ -8,8 +8,9 @@ import { getOpenAiConfigFromSettings, testOpenAiConnection } from "@/lib/openai/
  * API key never round-trips through the browser.
  *
  * - 200 `{ data: { valid: true, model } }` on success
- * - 400 `{ error }` with a readable message (invalid URL, 401, timeout,
- *   connection refused, not configured, …)
+ * - 400 `{ error }` for configuration errors (missing base URL, invalid URL)
+ * - 401 `{ error }` for unauthorized / auth failures
+ * - 502 `{ error }` for connectivity, timeout, or server failures
  */
 export async function POST() {
   const config = getOpenAiConfigFromSettings();

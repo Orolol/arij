@@ -81,7 +81,9 @@ export function MessageInput({
     if ((!trimmed && effectiveAttachments.length === 0) || disabled || uploading) return;
     onSend(trimmed, effectiveAttachments.map((a) => a.id));
     setValue("");
-    setAttachments([]);
+    if (!attachmentsDisabled) {
+      setAttachments([]);
+    }
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {

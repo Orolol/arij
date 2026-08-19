@@ -199,6 +199,22 @@ describe("streamOpenAiChatCompletion", () => {
     ).rejects.toThrow('OpenAI-compatible API error: invalid Base URL "not a url".');
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it("throws a readable error when an SSE error event arrives mid-stream", async () => {
+    const chunks = [
+      `data: ${JSON.stringify({ choices: [{ delta: { content: "Partial " } }] })}\n\n`,
+      `data: ${JSON.stringify({ error: { message: "insufficient credits", code: 402 } })}\n\n`,
+    ];
+    fetchMock.mockResolvedValue(sseResponse(chunks));
+
+    const gen = streamOpenAiChatCompletion(baseConfig, messages);
+    const first = await gen.next();
+    expect(first.value).toBe("Partial ");
+
+    await expect(gen.next()).rejects.toThrow(
+      "OpenAI-compatible API error: insufficient credits",
+    );
+  });
 });
 
 describe("testOpenAiConnection", () => {
