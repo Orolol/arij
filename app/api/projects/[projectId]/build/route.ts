@@ -40,10 +40,6 @@ import {
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import {
-  enrichPromptWithDocumentMentions,
-  MentionResolutionError,
-} from "@/lib/documents/mentions";
 import { buildExecutionPlan } from "@/lib/dependencies/scheduler";
 import {
   filterBuildableTickets,
@@ -89,23 +85,6 @@ const batchBuildOptionsSchema = z.object({
   circuitBreaker: z.number().int().min(0).max(10).optional(),
   costCapUsd: z.number().positive().optional(),
 });
-
-function collectEpicMentionSources(
-  epic: { title?: string | null; description?: string | null },
-  stories: Array<{
-    title?: string | null;
-    description?: string | null;
-    acceptanceCriteria?: string | null;
-  }>
-): Array<string | null | undefined> {
-  return [
-    epic.title,
-    epic.description,
-    ...stories.map((story) => story.title),
-    ...stories.map((story) => story.description),
-    ...stories.map((story) => story.acceptanceCriteria),
-  ];
-}
 
 export async function POST(
   request: NextRequest,
@@ -282,25 +261,10 @@ export async function POST(
         teamEpics,
         teamBuildSystemPrompt
       );
-      let enrichedTeamPrompt = prompt;
-      try {
-        enrichedTeamPrompt = enrichPromptWithDocumentMentions({
-          projectId,
-          prompt,
-          textSources: teamEpics.flatMap((teamEpic) => [
-            teamEpic.title,
-            teamEpic.description,
-            ...teamEpic.userStories.map((story) => story.title),
-            ...teamEpic.userStories.map((story) => story.description),
-            ...teamEpic.userStories.map((story) => story.acceptanceCriteria),
-          ]),
-        }).prompt;
-      } catch (error) {
-        if (error instanceof MentionResolutionError) {
-          return NextResponse.json({ error: error.message }, { status: 400 });
-        }
-        throw error;
-      }
+      // No document mentions to resolve: the batch prompt carries no
+      // user-written text — epic and story fields are generated content, and
+      // an agent's `@some/file.ts` points at the project's codebase, not Docs.
+      const enrichedTeamPrompt = prompt;
       const resolvedTeamAgent = resolveAgentByNamedId(
         "team_build",
         projectId,
@@ -496,19 +460,8 @@ export async function POST(
       us,
       buildSystemPrompt
     );
-    let enrichedPrompt = prompt;
-    try {
-      enrichedPrompt = enrichPromptWithDocumentMentions({
-        projectId,
-        prompt,
-        textSources: collectEpicMentionSources(epic, us),
-      }).prompt;
-    } catch (error) {
-      if (error instanceof MentionResolutionError) {
-        throw error;
-      }
-      throw error;
-    }
+    // Same as team mode: nothing user-written to resolve mentions from.
+    const enrichedPrompt = prompt;
     const resolvedBuildAgent = resolveAgentByNamedId("build", projectId, namedAgentId);
 
     // Create session in DB
@@ -984,9 +937,6 @@ export async function POST(
       },
     });
   } catch (e) {
-    if (e instanceof MentionResolutionError) {
-      return NextResponse.json({ error: e.message }, { status: 400 });
-    }
     if (
       e &&
       typeof e === "object" &&

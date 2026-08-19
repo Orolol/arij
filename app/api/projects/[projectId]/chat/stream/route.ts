@@ -15,6 +15,7 @@ import { activityRegistry } from "@/lib/activity-registry";
 import {
   enrichPromptWithDocumentMentions,
   MentionResolutionError,
+  userAuthoredTexts,
   validateMentionsExist,
 } from "@/lib/documents/mentions";
 import {
@@ -189,18 +190,14 @@ export async function POST(
       ? { ...resolvedByNamedAgent, provider: conversationProvider }
       : resolvedByNamedAgent;
 
-  try {
-    prompt = enrichPromptWithDocumentMentions({
-      projectId,
-      prompt,
-      textSources: [body.content, ...messageHistory.map((m) => m.content)],
-    }).prompt;
-  } catch (error) {
-    if (error instanceof MentionResolutionError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    throw error;
-  }
+  // The new user message plus earlier user messages only: an assistant reply
+  // naming a codebase file is not an Arij document reference. Unknown mentions
+  // in the new message already returned 400 above (validateMentionsExist).
+  prompt = enrichPromptWithDocumentMentions({
+    projectId,
+    prompt,
+    textSources: [body.content, ...userAuthoredTexts(messageHistory)],
+  }).prompt;
 
   const providerSupportsResume = isResumableProvider(resolvedAgent.provider);
   // Legacy-row fallback handled inside resolveCliSessionId().

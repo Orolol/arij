@@ -43,9 +43,13 @@ import {
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
 import {
-  MentionResolutionError,
   enrichPromptWithDocumentMentions,
+  userAuthoredTexts,
 } from "@/lib/documents/mentions";
+import {
+  buildEpicTargetUrl,
+  createUnresolvedMentionsNotification,
+} from "@/lib/notifications/create";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
 import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 
@@ -185,19 +189,20 @@ export async function POST(request: NextRequest, { params }: Params) {
       reviewSystemPrompt
     );
 
-    let enrichedPrompt = prompt;
-    try {
-      enrichedPrompt = enrichPromptWithDocumentMentions({
-        projectId,
-        prompt,
-        textSources: comments.map((comment) => comment.content),
-      }).prompt;
-    } catch (error) {
-      if (error instanceof MentionResolutionError) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
-      }
-      throw error;
-    }
+    // Only user-written comments can reference an Arij document; an agent
+    // comment mentioning a codebase file must neither resolve nor block review.
+    const mentionEnrichment = enrichPromptWithDocumentMentions({
+      projectId,
+      prompt,
+      textSources: userAuthoredTexts(comments),
+    });
+    const enrichedPrompt = mentionEnrichment.prompt;
+    createUnresolvedMentionsNotification({
+      projectId,
+      missing: mentionEnrichment.missing,
+      agentType: REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
+      targetUrl: buildEpicTargetUrl(projectId, epic.id),
+    });
 
     const resolvedAgent = await resolveAgentForDispatch(
       REVIEW_TYPE_TO_AGENT_TYPE[reviewType],

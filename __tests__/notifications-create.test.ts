@@ -35,6 +35,8 @@ import {
   createNotificationFromSession,
   createAskedQuestionNotificationFromSession,
   createDagWaveOutcomeNotification,
+  buildUnresolvedMentionsTitle,
+  createUnresolvedMentionsNotification,
 } from "@/lib/notifications/create";
 
 // ---- Tests ----
@@ -432,6 +434,48 @@ describe("createDagWaveOutcomeNotification()", () => {
       blocked: [{ epicId: "e1", kind: "failed" }],
       skippedCount: 0,
       stopped: false,
+    });
+
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
+});
+
+describe("unresolved document mentions", () => {
+  beforeEach(() => {
+    resetDbMockState();
+  });
+
+  it("names the agent and every unresolved mention", () => {
+    expect(buildUnresolvedMentionsTitle(["spec.md", "UI Mock.png"], "build")).toBe(
+      "Build ran without @spec.md, @{UI Mock.png} — no such document in Docs"
+    );
+  });
+
+  it("inserts one notification pointing at the ticket", () => {
+    dbMockState.getQueue.push({ name: "My Project" });
+
+    createUnresolvedMentionsNotification({
+      projectId: "p1",
+      missing: ["spec.md"],
+      agentType: "build",
+      targetUrl: "/projects/p1?ticket=e1",
+    });
+
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    const payload = dbMockState.insertCalls[0] as Record<string, unknown>;
+    expect(payload.title).toBe(
+      "Build ran without @spec.md — no such document in Docs"
+    );
+    expect(payload.targetUrl).toBe("/projects/p1?ticket=e1");
+    expect(payload.sessionId).toBeNull();
+  });
+
+  it("stays silent when every mention resolved", () => {
+    createUnresolvedMentionsNotification({
+      projectId: "p1",
+      missing: [],
+      agentType: "build",
+      targetUrl: "/projects/p1",
     });
 
     expect(dbMockState.insertCalls).toHaveLength(0);

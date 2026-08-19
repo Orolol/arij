@@ -87,7 +87,11 @@ vi.mock("@/lib/events/emit", () => ({
 
 vi.mock("@/lib/documents/mentions", () => ({
   enrichPromptWithDocumentMentions: vi.fn(
-    ({ prompt }: { prompt: string }) => ({ prompt })
+    ({ prompt }: { prompt: string }) => ({ prompt, missing: [] })
+  ),
+  userAuthoredTexts: vi.fn(
+    (entries: Array<{ author?: string | null; content?: string | null }>) =>
+      entries.filter((e) => e.author !== "agent").map((e) => e.content)
   ),
 }));
 

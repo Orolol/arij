@@ -8,6 +8,7 @@ import {
 } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 import { AGENT_TYPE_LABELS } from "@/lib/agent-config/constants";
+import { formatDocumentMention } from "@/lib/documents/mention-format";
 import { durationMsBetween, sendProjectWebhook } from "@/lib/webhooks/send";
 import { NIGHT_STOPPED_ABORT_REASON } from "@/lib/night/constants";
 import type { TicketExecutionStatus } from "@/lib/dependencies/scheduler";
@@ -112,6 +113,64 @@ export function buildStalledTitle(
     return `${base} on ${epicReadableId ?? epicTitle} ${suffix}`;
   }
   return `${base} ${suffix}`;
+}
+
+/**
+ * Title for a run launched with document mentions Arij could not resolve.
+ *
+ * Examples:
+ *   "Build ran without @spec.md — no such document in Docs"
+ *   "Code review ran without @spec.md, @notes.md — no such document in Docs"
+ */
+export function buildUnresolvedMentionsTitle(
+  missing: string[],
+  agentType: string | null
+): string {
+  const label =
+    (agentType && AGENT_TYPE_LABELS[agentType as keyof typeof AGENT_TYPE_LABELS]) ||
+    agentType ||
+    "Agent";
+  const list = missing.map((name) => formatDocumentMention(name)).join(", ");
+  return `${label} ran without ${list} — no such document in Docs`;
+}
+
+/**
+ * Notify that a prompt referenced documents that do not exist in Docs.
+ *
+ * The run still launched: an agent writing `@some/file.ts` about the project's
+ * own codebase must never block a build or a review, and a user typo should
+ * cost a notification, not a refused launch.
+ */
+export function createUnresolvedMentionsNotification(input: {
+  projectId: string;
+  missing: string[];
+  agentType: string | null;
+  targetUrl: string;
+  sessionId?: string | null;
+}): void {
+  if (input.missing.length === 0) return;
+
+  const project = db
+    .select({ name: projects.name })
+    .from(projects)
+    .where(eq(projects.id, input.projectId))
+    .get();
+  if (!project) return;
+
+  db.insert(notifications)
+    .values({
+      id: createId(),
+      projectId: input.projectId,
+      projectName: project.name,
+      sessionId: input.sessionId ?? null,
+      agentType: input.agentType,
+      status: "failed",
+      title: buildUnresolvedMentionsTitle(input.missing, input.agentType),
+      targetUrl: input.targetUrl,
+    })
+    .run();
+
+  pruneNotifications();
 }
 
 interface SessionNotificationContext {

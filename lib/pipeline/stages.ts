@@ -51,7 +51,10 @@ import {
   buildTicketBuildPrompt,
   type PromptComment,
 } from "@/lib/claude/prompt-builder";
-import { enrichPromptWithDocumentMentions } from "@/lib/documents/mentions";
+import {
+  enrichPromptWithDocumentMentions,
+  userAuthoredTexts,
+} from "@/lib/documents/mentions";
 import type { ClaudeResult } from "@/lib/claude/spawn";
 import {
   emitSessionCompleted,
@@ -61,6 +64,10 @@ import {
 } from "@/lib/events/emit";
 import { logTransition } from "@/lib/workflow/log";
 import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
+import {
+  buildEpicTargetUrl,
+  createUnresolvedMentionsNotification,
+} from "@/lib/notifications/create";
 import { PIPELINE_REVIEW_TYPE } from "./constants";
 import { assessReviewOutcome } from "./findings";
 import type {
@@ -533,20 +540,21 @@ async function dispatchPipelineStage(
     }
   }
 
-  // Document mentions: best-effort for a background stage — a stale mention
-  // must not kill the run the way a 400 informs a human caller.
-  try {
-    prompt = enrichPromptWithDocumentMentions({
-      projectId,
-      prompt,
-      textSources: comments.map((c) => c.content),
-    }).prompt;
-  } catch (error) {
-    console.warn(
-      "[pipeline] Document mention enrichment failed:",
-      error instanceof Error ? error.message : error
-    );
-  }
+  // Document mentions: user-written comments only. An agent comment naming a
+  // codebase file is not an Arij document reference, and an unresolved mention
+  // never stops a background stage — it is reported, not raised.
+  const mentionEnrichment = enrichPromptWithDocumentMentions({
+    projectId,
+    prompt,
+    textSources: userAuthoredTexts(comments),
+  });
+  prompt = mentionEnrichment.prompt;
+  createUnresolvedMentionsNotification({
+    projectId,
+    missing: mentionEnrichment.missing,
+    agentType: request.stage,
+    targetUrl: buildEpicTargetUrl(projectId, epicId),
+  });
 
   // ---------------------------------------------------------------------
   // Session row + dispatch-side status sync (mirror of the routes).
