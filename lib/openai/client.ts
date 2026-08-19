@@ -316,8 +316,13 @@ export async function* streamOpenAiChatCompletion(
   messages: OpenAiChatMessage[],
   signal?: AbortSignal,
 ): AsyncGenerator<string, void, unknown> {
-  const url = buildChatCompletionsUrl(config.baseUrl);
-
+  let url: string;
+  try {
+    url = buildChatCompletionsUrl(config.baseUrl);
+    new URL(url);
+  } catch {
+    throw new Error(`${ERROR_PREFIX} invalid Base URL "${config.baseUrl}".`);
+  }
   let response: Response;
   try {
     response = await fetch(url, {
@@ -346,7 +351,9 @@ export async function* streamOpenAiChatCompletion(
       const { done, value } = await reader.read();
       if (done) break;
       const chunk = decoder.decode(value, { stream: true });
-      rawText += chunk;
+      if (!sawSseDataLine) {
+        rawText += chunk;
+      }
       buffer += chunk;
 
       let newlineIndex: number;
@@ -358,6 +365,11 @@ export async function* streamOpenAiChatCompletion(
         if (delta === DONE) return;
         if (delta) yield delta;
       }
+    }
+    const lastChunk = decoder.decode();
+    if (lastChunk) {
+      if (!sawSseDataLine) rawText += lastChunk;
+      buffer += lastChunk;
     }
     const tail = buffer.replace(/\r$/, "");
     if (tail.startsWith("data:")) sawSseDataLine = true;

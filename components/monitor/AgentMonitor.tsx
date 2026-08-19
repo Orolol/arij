@@ -19,7 +19,7 @@ import {
   Workflow,
 } from "lucide-react";
 import {
-  isAgentProvider,
+  isChatProvider,
   PROVIDER_LABELS,
 } from "@/lib/agent-config/constants";
 import { isNightRunId } from "@/lib/night/constants";
@@ -51,7 +51,7 @@ interface AgentMonitorProps {
 function providerLabel(provider: string): string {
   if (provider === "claude-code") return "CC";
   if (provider === "gemini-cli") return "Gemini";
-  return isAgentProvider(provider) ? PROVIDER_LABELS[provider] : provider;
+  return isChatProvider(provider) ? PROVIDER_LABELS[provider] : provider;
 }
 
 /**

@@ -564,16 +564,20 @@ export default function SettingsPage() {
       return;
     }
 
+    const patchBody: Record<string, unknown> = {
+      [OPENAI_BASE_URL_SETTING_KEY]: baseUrl,
+      [OPENAI_MODEL_SETTING_KEY]: model,
+      [OPENAI_REASONING_EFFORT_SETTING_KEY]: openAiReasoningEffort,
+    };
+    if (openAiApiKey.trim().length > 0) {
+      patchBody[OPENAI_API_KEY_SETTING_KEY] = openAiApiKey.trim();
+    }
+
     try {
       const response = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          [OPENAI_BASE_URL_SETTING_KEY]: baseUrl,
-          [OPENAI_API_KEY_SETTING_KEY]: openAiApiKey.trim(),
-          [OPENAI_MODEL_SETTING_KEY]: model,
-          [OPENAI_REASONING_EFFORT_SETTING_KEY]: openAiReasoningEffort,
-        }),
+        body: JSON.stringify(patchBody),
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
@@ -583,12 +587,46 @@ export default function SettingsPage() {
         return;
       }
 
-      setHasSavedOpenAiKey(openAiApiKey.trim().length > 0);
+      if (openAiApiKey.trim().length > 0) {
+        setHasSavedOpenAiKey(true);
+      }
       setOpenAiApiKey("");
       setOpenAiMessage("OpenAI-compatible settings saved.");
     } catch {
       setOpenAiError(
         "Failed to save the OpenAI-compatible settings. Check your connection and retry."
+      );
+    } finally {
+      setSavingOpenAi(false);
+    }
+  }
+  async function handleClearOpenAiKey() {
+    setSavingOpenAi(true);
+    setOpenAiMessage(null);
+    setOpenAiError(null);
+
+    try {
+      const response = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          [OPENAI_API_KEY_SETTING_KEY]: "",
+        }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        setOpenAiError(
+          payload?.error ?? "Failed to clear the saved API key."
+        );
+        return;
+      }
+
+      setHasSavedOpenAiKey(false);
+      setOpenAiApiKey("");
+      setOpenAiMessage("Saved API key cleared.");
+    } catch {
+      setOpenAiError(
+        "Failed to clear the saved API key. Check your connection and retry."
       );
     } finally {
       setSavingOpenAi(false);
@@ -995,9 +1033,18 @@ export default function SettingsPage() {
             agents.
           </p>
           {hasSavedOpenAiKey && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              An API key is already saved for this workspace.
-            </p>
+            <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+              <span>An API key is already saved for this workspace.</span>
+              <button
+                type="button"
+                className="text-xs text-destructive hover:underline cursor-pointer bg-transparent border-0 p-0"
+                onClick={handleClearOpenAiKey}
+                disabled={savingOpenAi}
+                data-testid="openai-clear-key-button"
+              >
+                Clear key
+              </button>
+            </div>
           )}
         </div>
 

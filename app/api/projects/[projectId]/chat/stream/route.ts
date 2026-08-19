@@ -59,6 +59,16 @@ function isResumeSessionExpiredError(error: string | null | undefined): boolean 
   );
 }
 
+function sseResponse(stream: ReadableStream) {
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
+}
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
@@ -94,6 +104,81 @@ export async function POST(
   const attachmentIds: string[] = body.attachmentIds || [];
   const finalize: boolean = body.finalize === true;
 
+  // Load context
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
+
+  const conversation = conversationId
+    ? db
+        .select()
+        .from(chatConversations)
+        .where(eq(chatConversations.id, conversationId))
+        .get()
+    : null;
+  const conversationType = conversation?.type ?? null;
+
+  const resolvedByNamedAgent = resolveAgentByNamedId(
+    "chat",
+    projectId,
+    conversation?.namedAgentId ?? null
+  );
+  const conversationProvider = normalizeProvider(conversation?.provider);
+  const resolvedAgent =
+    conversationProvider && !conversation?.namedAgentId
+      ? { ...resolvedByNamedAgent, provider: conversationProvider }
+      : resolvedByNamedAgent;
+
+  let openAiConfig: ReturnType<typeof getOpenAiConfigFromSettings> | null = null;
+  if (resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER) {
+    if (isOpenAiIneligibleConversationAgentType(conversationType)) {
+      return NextResponse.json(
+        {
+          error:
+            "OpenAI-compatible mode is not available for epic-creation or brainstorm conversations.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (attachmentIds.length > 0) {
+      return NextResponse.json(
+        { error: "Image attachments are not supported in OpenAI-compatible mode." },
+        { status: 400 }
+      );
+    }
+
+    openAiConfig = getOpenAiConfigFromSettings();
+    if (!openAiConfig.baseUrl || !openAiConfig.model) {
+      return NextResponse.json(
+        {
+          error:
+            "OpenAI-compatible mode is not configured. Set the Base URL and Model in Settings.",
+        },
+        { status: 400 }
+      );
+    }
+  }
+
+  const conditions = [eq(chatMessages.projectId, projectId)];
+  if (conversationId) {
+    conditions.push(eq(chatMessages.conversationId, conversationId));
+  }
+
+  const recentMessages = db
+    .select()
+    .from(chatMessages)
+    .where(and(...conditions))
+    .orderBy(desc(chatMessages.createdAt))
+    .limit(20)
+    .all()
+    .reverse();
+
+  const messageHistory = recentMessages.map((m) => ({
+    role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
+    content: m.content,
+  }));
+
   function setConversationStatus(status: "active" | "generating" | "error") {
     if (!conversationId) return;
     db.update(chatConversations)
@@ -102,7 +187,7 @@ export async function POST(
       .run();
   }
 
-  // Save user message
+  // Save user message (after fast-mode and parameter validation checks have passed)
   const userMsgId = createId();
   const userContent = body.content || (attachmentIds.length > 0 ? "[image]" : "");
   db.insert(chatMessages)
@@ -124,130 +209,109 @@ export async function POST(
       .run();
   }
 
-  // Load context
-  const found = getProjectOr404(projectId);
-  if (isErrorResponse(found)) return found;
-  const { project } = found;
-
-  const conditions = [eq(chatMessages.projectId, projectId)];
-  if (conversationId) {
-    conditions.push(eq(chatMessages.conversationId, conversationId));
-  }
-
-  const recentMessages = db
-    .select()
-    .from(chatMessages)
-    .where(and(...conditions))
-    .orderBy(desc(chatMessages.createdAt))
-    .limit(20)
-    .all()
-    .reverse();
-
-  const conversation = conversationId
-    ? db
-        .select()
-        .from(chatConversations)
-        .where(eq(chatConversations.id, conversationId))
-        .get()
-    : null;
-  const conversationType = conversation?.type ?? null;
-
-  const messageHistory = recentMessages.map((m) => ({
-    role: m.role as "user" | "assistant",
-    content: m.content,
-  }));
-
-  let prompt: string;
-  if (isEpicCreationConversationAgentType(conversationType)) {
-    const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
-    const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
-    const existingEpics = db
-      .select({
-        title: epics.title,
-        description: epics.description,
+  /**
+   * Helper: save assistant message and generate title after stream completes.
+   */
+  function saveAssistantAndTitle(
+    controller: ReadableStreamDefaultController,
+    fullContent: string,
+    finalStatus: "active" | "error" = "active",
+  ) {
+    const assistantMsgId = createId();
+    db.insert(chatMessages)
+      .values({
+        id: assistantMsgId,
+        projectId,
+        conversationId,
+        role: "assistant",
+        content: fullContent || "(empty response)",
+        createdAt: new Date().toISOString(),
       })
-      .from(epics)
-      .where(eq(epics.projectId, projectId))
-      .orderBy(epics.position)
-      .all();
+      .run();
 
-    prompt = finalize
-      ? buildEpicFinalizationPrompt(
-          project,
-          [],
-          messageHistory,
-          globalPrompt,
-          existingEpics,
-        )
-      : buildEpicRefinementPrompt(
-          project,
-          [],
-          messageHistory,
-          globalPrompt,
-          existingEpics,
-        );
-  } else {
-    const chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
-    prompt = buildChatPrompt(project, [], messageHistory, chatSystemPrompt);
+    // Fire-and-forget title generation for first exchange
+    if (conversationId && fullContent) {
+      const msgCount = db
+        .select({ id: chatMessages.id })
+        .from(chatMessages)
+        .where(eq(chatMessages.conversationId, conversationId))
+        .all().length;
+
+      if (msgCount === 2) {
+        const conv = db
+          .select()
+          .from(chatConversations)
+          .where(eq(chatConversations.id, conversationId))
+          .get();
+        if (conv && (conv.label === "Brainstorm" || conv.label === "New Epic")) {
+          const titlePrompt = buildTitleGenerationPrompt(userContent, fullContent);
+          spawnClaude({ mode: "plan", prompt: titlePrompt, model: "haiku" }).promise
+            .then((titleResult) => {
+              if (titleResult.success && titleResult.result) {
+                let title = titleResult.result.trim();
+                try {
+                  const parsed = JSON.parse(title);
+                  if (parsed.result) title = parsed.result;
+                  else if (typeof parsed === "string") title = parsed;
+                } catch { /* use raw */ }
+                title = title.replace(/^["']|["']$/g, "").trim();
+                if (title && title.length <= 60) {
+                  db.update(chatConversations)
+                    .set({ label: title })
+                    .where(eq(chatConversations.id, conversationId))
+                    .run();
+                }
+              }
+            })
+            .catch(() => { /* ignore title gen errors */ });
+        }
+      }
+    }
+
+    setConversationStatus(finalStatus);
+
+    controller.enqueue(
+      encoder.encode(
+        `data: ${JSON.stringify({ done: true, messageId: assistantMsgId })}\n\n`
+      )
+    );
+    controller.close();
   }
-
-  const resolvedByNamedAgent = resolveAgentByNamedId(
-    "chat",
-    projectId,
-    conversation?.namedAgentId ?? null
-  );
-  const conversationProvider = normalizeProvider(conversation?.provider);
-  const resolvedAgent =
-    conversationProvider && !conversation?.namedAgentId
-      ? { ...resolvedByNamedAgent, provider: conversationProvider }
-      : resolvedByNamedAgent;
 
   // ---------------------------------------------------------------------
   // OpenAI-compatible fast mode: dedicated HTTP path ahead of the CLI
   // branches. History travels in the messages array (no session resume),
   // and upstream SSE chunks are re-emitted as token-by-token delta events.
   // ---------------------------------------------------------------------
-  if (resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER) {
-    if (isOpenAiIneligibleConversationAgentType(conversationType)) {
-      return NextResponse.json(
-        {
-          error:
-            "OpenAI-compatible mode is not available for epic-creation or brainstorm conversations.",
-        },
-        { status: 400 }
-      );
+  if (resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER && openAiConfig) {
+    let chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
+    try {
+      chatSystemPrompt = enrichPromptWithDocumentMentions({
+        projectId,
+        prompt: chatSystemPrompt,
+        textSources: [body.content, ...messageHistory.map((m) => m.content)],
+      }).prompt;
+    } catch (error) {
+      if (error instanceof MentionResolutionError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      throw error;
     }
 
-    if (attachmentIds.length > 0) {
-      return NextResponse.json(
-        { error: "Image attachments are not supported in OpenAI-compatible mode." },
-        { status: 400 }
-      );
-    }
-
-    const openAiConfig = getOpenAiConfigFromSettings();
-    if (!openAiConfig.baseUrl || !openAiConfig.model) {
-      return NextResponse.json(
-        {
-          error:
-            "OpenAI-compatible mode is not configured. Set the Base URL and Model in Settings.",
-        },
-        { status: 400 }
-      );
-    }
-
-    const chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
     const openAiMessages: OpenAiChatMessage[] = [];
     if (chatSystemPrompt.trim()) {
       openAiMessages.push({ role: "system", content: chatSystemPrompt });
     }
-    // recentMessages already includes the user message saved above.
-    for (const message of recentMessages) {
+    for (const message of messageHistory) {
       openAiMessages.push({
-        role: message.role as OpenAiChatMessage["role"],
+        role: message.role,
         content: message.content,
       });
     }
+    openAiMessages.push({
+      role: "user",
+      content: userContent,
+    });
 
     const activityLabel = conversation?.label
       ? `Chat: ${conversation.label}`
@@ -283,8 +347,6 @@ export async function POST(
             );
           }
           activityRegistry.unregister(activityId);
-          // saveAssistantAndTitle is hoisted from below; it also emits the
-          // { done: true, messageId } event and closes the stream.
           saveAssistantAndTitle(controller, fullContent, "active");
         } catch (error) {
           if (abortController.signal.aborted) {
@@ -300,12 +362,19 @@ export async function POST(
               : `OpenAI-compatible API error: ${
                   error instanceof Error ? error.message : "request failed"
                 }`;
-          fullContent = failureMessage;
+          const isMidStream = fullContent.length > 0;
+          fullContent = isMidStream
+            ? `${fullContent}\n\n${failureMessage}`
+            : failureMessage;
           controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ delta: failureMessage })}\n\n`)
+            encoder.encode(
+              `data: ${JSON.stringify({
+                delta: isMidStream ? `\n\n${failureMessage}` : failureMessage,
+              })}\n\n`
+            )
           );
           activityRegistry.unregister(activityId);
-          saveAssistantAndTitle(controller, failureMessage, "error");
+          saveAssistantAndTitle(controller, fullContent, "error");
         }
       },
       cancel() {
@@ -315,13 +384,41 @@ export async function POST(
       },
     });
 
-    return new Response(sseStream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    return sseResponse(sseStream);
+  }
+
+  let prompt: string;
+  if (isEpicCreationConversationAgentType(conversationType)) {
+    const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
+    const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+    const existingEpics = db
+      .select({
+        title: epics.title,
+        description: epics.description,
+      })
+      .from(epics)
+      .where(eq(epics.projectId, projectId))
+      .orderBy(epics.position)
+      .all();
+
+    prompt = finalize
+      ? buildEpicFinalizationPrompt(
+          project,
+          [],
+          messageHistory,
+          globalPrompt,
+          existingEpics,
+        )
+      : buildEpicRefinementPrompt(
+          project,
+          [],
+          messageHistory,
+          globalPrompt,
+          existingEpics,
+        );
+  } else {
+    const chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
+    prompt = buildChatPrompt(project, [], messageHistory, chatSystemPrompt);
   }
 
   try {
@@ -364,70 +461,6 @@ export async function POST(
     conversation?.label ? `Chat: ${conversation.label}` : "Chat";
   const activityId = `chat-${createId()}`;
 
-  /**
-   * Helper: save assistant message and generate title after stream completes.
-   */
-  function saveAssistantAndTitle(
-    controller: ReadableStreamDefaultController,
-    fullContent: string,
-    finalStatus: "active" | "error" = "active",
-  ) {
-    const assistantMsgId = createId();
-    db.insert(chatMessages)
-      .values({
-        id: assistantMsgId,
-        projectId,
-        conversationId,
-        role: "assistant",
-        content: fullContent || "(empty response)",
-        createdAt: new Date().toISOString(),
-      })
-      .run();
-
-    // Fire-and-forget title generation for first exchange
-    if (conversationId && fullContent) {
-      const msgCount = db
-        .select({ id: chatMessages.id })
-        .from(chatMessages)
-        .where(eq(chatMessages.conversationId, conversationId))
-        .all().length;
-
-      if (msgCount === 2) {
-        const conv = db.select().from(chatConversations).where(eq(chatConversations.id, conversationId)).get();
-        if (conv && (conv.label === "Brainstorm" || conv.label === "New Epic")) {
-          const titlePrompt = buildTitleGenerationPrompt(userContent, fullContent);
-          spawnClaude({ mode: "plan", prompt: titlePrompt, model: "haiku" }).promise
-            .then((titleResult) => {
-              if (titleResult.success && titleResult.result) {
-                let title = titleResult.result.trim();
-                try {
-                  const parsed = JSON.parse(title);
-                  if (parsed.result) title = parsed.result;
-                  else if (typeof parsed === "string") title = parsed;
-                } catch { /* use raw */ }
-                title = title.replace(/^["']|["']$/g, "").trim();
-                if (title && title.length <= 60) {
-                  db.update(chatConversations)
-                    .set({ label: title })
-                    .where(eq(chatConversations.id, conversationId))
-                    .run();
-                }
-              }
-            })
-            .catch(() => { /* ignore title gen errors */ });
-        }
-      }
-    }
-
-    setConversationStatus(finalStatus);
-
-    controller.enqueue(
-      encoder.encode(
-        `data: ${JSON.stringify({ done: true, messageId: assistantMsgId })}\n\n`
-      )
-    );
-    controller.close();
-  }
 
   // Every non-Claude provider: non-streaming, spawned through its own provider
   if (resolvedAgent.provider !== "claude-code") {
@@ -525,13 +558,7 @@ export async function POST(
       },
     });
 
-    return new Response(sseStream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    return sseResponse(sseStream);
   }
 
   // Claude resume-first path: attempt resume non-streaming, fallback to fresh prompt.
@@ -615,13 +642,7 @@ export async function POST(
       },
     });
 
-    return new Response(sseStream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    return sseResponse(sseStream);
   }
 
   // Claude Code fresh-session path: preserve stream-json UX.
@@ -691,11 +712,5 @@ export async function POST(
     },
   });
 
-  return new Response(sseStream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+    return sseResponse(sseStream);
 }

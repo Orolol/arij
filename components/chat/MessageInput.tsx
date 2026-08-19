@@ -77,8 +77,9 @@ export function MessageInput({
 
   function handleSubmit() {
     const trimmed = value.trim();
-    if ((!trimmed && attachments.length === 0) || disabled || uploading) return;
-    onSend(trimmed, attachments.map((a) => a.id));
+    const effectiveAttachments = attachmentsDisabled ? [] : attachments;
+    if ((!trimmed && effectiveAttachments.length === 0) || disabled || uploading) return;
+    onSend(trimmed, effectiveAttachments.map((a) => a.id));
     setValue("");
     setAttachments([]);
   }
@@ -125,14 +126,15 @@ export function MessageInput({
     e.target.value = "";
   }
 
-  const hasContent = value.trim().length > 0 || attachments.length > 0;
+  const effectiveAttachments = attachmentsDisabled ? [] : attachments;
+  const hasContent = value.trim().length > 0 || effectiveAttachments.length > 0;
 
   return (
     <div className="border-t border-border px-[18px] py-[14px]">
       {/* Attachment preview strip */}
-      {(attachments.length > 0 || uploading) && (
+      {(effectiveAttachments.length > 0 || uploading) && (
         <div className="mb-2 flex flex-wrap gap-2">
-          {attachments.map((att) => (
+          {effectiveAttachments.map((att) => (
             <div key={att.id} className="relative group">
               <img
                 src={att.previewUrl}

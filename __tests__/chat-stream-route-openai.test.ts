@@ -134,8 +134,7 @@ function seedFastModeConversation(overrides: {
 
   dbMockState.allQueue = [
     overrides.recentMessages ?? [
-      { role: "user", content: "Current question", createdAt: "2026-01-02T10:00:00.000Z" },
-      { role: "user", content: "Previous message", createdAt: "2026-01-01T10:00:00.000Z" },
+      { role: "assistant", content: "Previous message", createdAt: "2026-01-01T10:00:00.000Z" },
     ],
   ];
 }
@@ -223,7 +222,7 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     // just-saved user message included).
     expect(body.messages).toEqual([
       { role: "system", content: "Chat system prompt" },
-      { role: "user", content: "Previous message" },
+      { role: "assistant", content: "Previous message" },
       { role: "user", content: "Current question" },
     ]);
   });
@@ -277,7 +276,7 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     const body = JSON.parse(String(init.body)) as {
       messages: Array<{ role: string }>;
     };
-    expect(body.messages[0]?.role).toBe("user");
+    expect(body.messages.some((m) => m.role === "system")).toBe(false);
   });
 
   it("rejects epic_creation and brainstorm conversations with 400", async () => {
@@ -293,9 +292,6 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
         },
         settings: {},
       });
-      // Epic path reads the global prompt and existing epics before the branch.
-      dbMockState.getQueue.push({ key: "global_prompt", value: JSON.stringify("") });
-      dbMockState.allQueue.push([]);
       fetchMock.mockReset();
       fetchMock.mockResolvedValue(sseResponse(["ok"]));
 
@@ -309,6 +305,7 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
       const json = (await response.json()) as { error: string };
       expect(json.error).toContain("not available for epic-creation or brainstorm");
       expect(fetchMock).not.toHaveBeenCalled();
+      expect(dbMockState.insertCalls).toHaveLength(0);
     }
   });
 
@@ -330,6 +327,7 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     const json = (await response.json()) as { error: string };
     expect(json.error).toContain("attachments are not supported");
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(dbMockState.insertCalls).toHaveLength(0);
   });
 
   it("rejects with 400 when the endpoint is not configured", async () => {
@@ -346,6 +344,7 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     const json = (await response.json()) as { error: string };
     expect(json.error).toContain("not configured");
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(dbMockState.insertCalls).toHaveLength(0);
   });
 
   it("emits a readable error delta and marks the conversation error on HTTP failure", async () => {
@@ -401,6 +400,124 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
       { done: true, messageId: "id-123" },
     ]);
     expect(dbMockState.updateCalls).toContainEqual({ status: "error" });
+  });
+  it("enriches the system prompt with @document mentions in fast mode", async () => {
+    seedFastModeConversation();
+    const docRow = {
+      id: "doc-1",
+      projectId: "proj1",
+      originalFilename: "architecture.md",
+      storedFilename: "doc-1_architecture.md",
+      mimeType: "text/markdown",
+      fileSize: 1234,
+      kind: "text" as const,
+      summary: "System architecture doc",
+      contentPreview: "# Architecture\nOur architecture details.",
+      markdownContent: "# Architecture\nOur architecture details.",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    // 1. validateMentionsExist -> listProjectDocuments
+    // 2. recentMessages -> chatMessages
+    // 3. enrichPromptWithDocumentMentions -> listProjectDocuments
+    dbMockState.allQueue = [
+      [docRow],
+      [{ role: "assistant", content: "Previous message", createdAt: "2026-01-01T10:00:00.000Z" }],
+      [docRow],
+    ];
+    fetchMock.mockResolvedValue(sseResponse(["ok"]));
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({ content: "Please read @architecture.md", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+    await readSseEvents(response);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const body = JSON.parse(String(init.body)) as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(body.messages[0]?.role).toBe("system");
+    expect(body.messages[0]?.content).toContain("Chat system prompt");
+    expect(body.messages[0]?.content).toContain("architecture.md");
+    expect(body.messages[0]?.content).toContain("Our architecture details");
+  });
+
+  it("preserves partial output when a stream fails mid-flight", async () => {
+    seedFastModeConversation();
+    let chunkCount = 0;
+    const errorStream = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (chunkCount === 0) {
+          chunkCount++;
+          const line = `data: ${JSON.stringify({ choices: [{ delta: { content: "Partial answer" } }] })}\n\n`;
+          controller.enqueue(new TextEncoder().encode(line));
+        } else {
+          controller.error(new Error("Stream broke mid-way"));
+        }
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response(errorStream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({ content: "Current question", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    const events = await readSseEvents(response);
+    const failureMessage = "OpenAI-compatible API error: Stream broke mid-way";
+    expect(events).toEqual([
+      { delta: "Partial answer" },
+      { delta: `\n\n${failureMessage}` },
+      { done: true, messageId: "id-123" },
+    ]);
+
+    // Assistant message contains the partial content plus the failure message
+    expect(dbMockState.insertCalls[1]).toMatchObject({
+      role: "assistant",
+      content: `Partial answer\n\n${failureMessage}`,
+    });
+    expect(dbMockState.updateCalls).toContainEqual({ status: "error" });
+  });
+
+  it("resets status to active and saves nothing when the stream is cancelled by the client", async () => {
+    seedFastModeConversation();
+    const hungStream = new ReadableStream<Uint8Array>({
+      start() {
+        // Never produces data; waits for cancellation
+      },
+    });
+    fetchMock.mockResolvedValue(
+      new Response(hungStream, {
+        status: 200,
+        headers: { "Content-Type": "text/event-stream" },
+      }),
+    );
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({ content: "Current question", conversationId: "conv1" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(dbMockState.updateCalls).toContainEqual({ status: "generating" });
+
+    // Cancel the SSE response stream
+    await response.body?.cancel();
+
+    expect(dbMockState.updateCalls).toContainEqual({ status: "active" });
+    // Only the user message was inserted; no assistant message on client cancel
+    expect(dbMockState.insertCalls).toHaveLength(1);
+    expect(dbMockState.insertCalls[0]).toMatchObject({ role: "user" });
   });
 
   it("keeps CLI providers on the CLI path (openai branch is provider-scoped)", async () => {

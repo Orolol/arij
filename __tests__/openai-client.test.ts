@@ -192,6 +192,13 @@ describe("streamOpenAiChatCompletion", () => {
       "OpenAI-compatible API error: connection refused — is the server running.",
     );
   });
+
+  it("throws a readable error for an invalid Base URL without calling fetch", async () => {
+    await expect(
+      collect(streamOpenAiChatCompletion({ ...baseConfig, baseUrl: "not a url" }, messages)),
+    ).rejects.toThrow('OpenAI-compatible API error: invalid Base URL "not a url".');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
 
 describe("testOpenAiConnection", () => {

@@ -126,6 +126,68 @@ describe("Settings page — OpenAI-compatible API section", () => {
     );
     expect(screen.getByTestId("openai-model")).toHaveValue("llama3.1");
   });
+  it("does not overwrite saved API key when Save is clicked with empty API key input", async () => {
+    mockSettings = {
+      openai_base_url: "http://localhost:11434/v1",
+      openai_api_key: { hasToken: true },
+      openai_model: "llama3.1",
+      openai_reasoning_effort: "off",
+    };
+
+    render(<SettingsPage />);
+
+    const section = screen.getByTestId("openai-settings");
+    await waitFor(() => {
+      expect(screen.getByTestId("openai-model")).toHaveValue("llama3.1");
+    });
+
+    fireEvent.change(within(section).getByTestId("openai-model"), {
+      target: { value: "llama3.2" },
+    });
+    fireEvent.click(within(section).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("openai-settings-message")).toHaveTextContent(
+        "OpenAI-compatible settings saved."
+      );
+    });
+
+    expect(patchCalls).toHaveLength(1);
+    expect(patchCalls[0]).toEqual({
+      openai_base_url: "http://localhost:11434/v1",
+      openai_model: "llama3.2",
+      openai_reasoning_effort: "off",
+    });
+  });
+
+  it("allows explicitly clearing the saved API key", async () => {
+    mockSettings = {
+      openai_base_url: "http://localhost:11434/v1",
+      openai_api_key: { hasToken: true },
+      openai_model: "llama3.1",
+    };
+
+    render(<SettingsPage />);
+
+    const section = screen.getByTestId("openai-settings");
+    await waitFor(() => {
+      expect(within(section).getByTestId("openai-clear-key-button")).toBeInTheDocument();
+    });
+
+    fireEvent.click(within(section).getByTestId("openai-clear-key-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("openai-settings-message")).toHaveTextContent(
+        "Saved API key cleared."
+      );
+    });
+
+    expect(patchCalls).toHaveLength(1);
+    expect(patchCalls[0]).toEqual({
+      openai_api_key: "",
+    });
+    expect(within(section).queryByTestId("openai-clear-key-button")).not.toBeInTheDocument();
+  });
 
   it("shows the tested model name on a successful connection test", async () => {
     render(<SettingsPage />);
