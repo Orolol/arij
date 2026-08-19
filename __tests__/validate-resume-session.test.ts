@@ -62,4 +62,46 @@ describe("validateResumeSession", () => {
     const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1" });
     expect(result).toEqual({ cliSessionId: "claude-xyz" });
   });
+
+  it("returns the cliSessionId of a pi session", () => {
+    dbMockState.getQueue = [
+      {
+        cliSessionId: "3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50",
+        claudeSessionId: null,
+        epicId: "epic-1",
+        userStoryId: null,
+        provider: "pi",
+      },
+    ];
+    const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1" });
+    expect(result).toEqual({ cliSessionId: "3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50" });
+  });
+
+  it("returns the cliSessionId of an oh-my-pi session", () => {
+    dbMockState.getQueue = [
+      {
+        cliSessionId: "cli-omp",
+        claudeSessionId: null,
+        epicId: "epic-1",
+        userStoryId: null,
+        provider: "oh-my-pi",
+      },
+    ];
+    const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1" });
+    expect(result).toEqual({ cliSessionId: "cli-omp" });
+  });
+
+  it("returns null for a provider that cannot resume", () => {
+    dbMockState.getQueue = [
+      {
+        cliSessionId: "cli-abc",
+        claudeSessionId: null,
+        epicId: "epic-1",
+        userStoryId: null,
+        provider: "qwen-code",
+      },
+    ];
+    const result = validateResumeSession({ resumeSessionId: "sess-1", epicId: "epic-1" });
+    expect(result).toBeNull();
+  });
 });

@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
-import type { ProviderType } from "@/lib/providers/types";
+import { isResumableProvider } from "./resume-capability";
 
 interface ValidateResumeInput {
   resumeSessionId: string | undefined;
@@ -14,34 +14,9 @@ interface ValidateResumeResult {
   cliSessionId: string;
 }
 
-/**
- * Providers that support session resume.
- *
- * - claude-code: --resume <ID>
- * - gemini-cli: --resume <ID>
- * - mistral-vibe: --resume <ID>
- * - opencode: --session <ID>
- * - kimi: --continue (directory-scoped)
- * - pi / oh-my-pi: --session <ID>
- *
- * Non-resumable: codex, qwen-code, deepseek, zai
- */
-const RESUMABLE_PROVIDERS = new Set<ProviderType>([
-  "claude-code",
-  "gemini-cli",
-  "mistral-vibe",
-  "opencode",
-  "kimi",
-  "pi",
-  "oh-my-pi",
-]);
-
-/**
- * Returns true if the given provider supports session resume.
- */
-export function isResumableProvider(provider: ProviderType | string): boolean {
-  return RESUMABLE_PROVIDERS.has(provider as ProviderType);
-}
+// Re-exported so existing importers keep working; the list itself lives in
+// resume-capability.ts, which dispatch routes and client code share.
+export { isResumableProvider };
 
 /**
  * Validates that a resume session belongs to the same scope (epic/story)

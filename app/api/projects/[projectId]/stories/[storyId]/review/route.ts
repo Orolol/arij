@@ -47,6 +47,10 @@ import {
   enrichPromptWithDocumentMentions,
 } from "@/lib/documents/mentions";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import {
+  isResumableProvider,
+  providerAcceptsAssignedSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
@@ -225,16 +229,14 @@ export async function POST(request: NextRequest, { params }: Params) {
     const logsPath = path.join(logsDir, "logs.json");
 
     const agentMode = reviewType === "feature_review" ? "code" : "plan";
-    const providerSupportsResume =
-      resolvedAgent.provider === "claude-code" ||
-      resolvedAgent.provider === "gemini-cli" ||
-      resolvedAgent.provider === "codex";
-
     // First review session can resume (when provider supports it); subsequent ones start fresh
-    const useResume = idx === 0 && providerSupportsResume && !!resumeCliSessionId;
+    const useResume =
+      idx === 0 &&
+      isResumableProvider(resolvedAgent.provider) &&
+      !!resumeCliSessionId;
     const cliSessionId = useResume
       ? resumeCliSessionId
-      : providerSupportsResume
+      : providerAcceptsAssignedSessionId(resolvedAgent.provider)
         ? crypto.randomUUID()
         : undefined;
 

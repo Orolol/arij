@@ -3,16 +3,19 @@ import { db } from "@/lib/db";
 import { agentSessions, namedAgents } from "@/lib/db/schema";
 import { eq, and, desc, isNotNull, isNull } from "drizzle-orm";
 import { resolveAgent, resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import type { AgentType } from "@/lib/agent-config/constants";
+import { isAgentProvider, type AgentType } from "@/lib/agent-config/constants";
 import type { ProviderType } from "@/lib/providers";
 
 type Params = { params: Promise<{ projectId: string }> };
 
+/**
+ * Any known provider resolves to itself. This must not be a short allowlist:
+ * an unrecognised provider yields null, which drops the provider filter from
+ * the query entirely and hands back other providers' sessions as resume
+ * candidates.
+ */
 function normalizeProvider(value: string | null | undefined): ProviderType | null {
-  if (value === "claude-code" || value === "gemini-cli" || value === "codex") {
-    return value;
-  }
-  return null;
+  return value && isAgentProvider(value) ? value : null;
 }
 
 export async function GET(request: NextRequest, { params }: Params) {
