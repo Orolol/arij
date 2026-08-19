@@ -361,6 +361,95 @@ describe("initDb", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Journal integrity
+// ---------------------------------------------------------------------------
+
+/**
+ * Drizzle's migrator keeps ONE high-water mark — the greatest `created_at` in
+ * `__drizzle_migrations` — and skips every journal entry at or below it. A
+ * migration inserted with a `when` below an already-applied one is therefore
+ * never applied, on any database that is already up to date, forever. These
+ * tests make that mistake fail in CI instead of in someone's data directory.
+ */
+describe("migration journal", () => {
+  const entries = journal.entries;
+
+  it("orders migrations by a strictly increasing `when`", () => {
+    const backdated = entries.filter(
+      (entry, index) => index > 0 && entry.when <= entries[index - 1].when
+    );
+
+    expect(
+      backdated.map((entry) => entry.tag),
+      "a migration must be appended with a `when` above every earlier one, never backdated"
+    ).toEqual([]);
+  });
+
+  it("gives every migration a unique tag, timestamp and file", () => {
+    expect(new Set(entries.map((entry) => entry.tag)).size).toBe(entries.length);
+    expect(new Set(entries.map((entry) => entry.when)).size).toBe(entries.length);
+
+    for (const entry of entries) {
+      expect(
+        fs.existsSync(path.join(MIGRATIONS_FOLDER, `${entry.tag}.sql`)),
+        `${entry.tag}.sql is referenced by the journal but missing on disk`
+      ).toBe(true);
+    }
+  });
+
+  it("re-applies the git_sync_log rebuild without losing rows", () => {
+    // That migration was renumbered (0027 -> 0028 -> 0029) after it had
+    // shipped on a branch, so an early database can legitimately run the
+    // rebuild twice.
+    const entry = entries.find(
+      (candidate) => candidate.tag === "0029_git_sync_log_nullable_project"
+    );
+    expect(entry).toBeDefined();
+
+    const file = tempDbPath();
+    withDb(file, (conn) => {
+      initDb(conn);
+      conn
+        .prepare(
+          "INSERT INTO git_sync_log (id, project_id, operation, status) VALUES ('g1', NULL, 'clone', 'success')"
+        )
+        .run();
+
+      // Drop the bookkeeping row so the migrator's high-water mark falls back
+      // below it, exactly as it does when the entry moves up the journal.
+      conn
+        .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at = ?')
+        .run(entry!.when);
+
+      expect(() => initDb(conn)).not.toThrow();
+
+      expect(appliedMigrationTimestamps(conn)).toContain(entry!.when);
+      expect(
+        conn.prepare("SELECT id FROM git_sync_log").all()
+      ).toHaveLength(1);
+      // Still nullable afterwards.
+      expect(() =>
+        conn
+          .prepare(
+            "INSERT INTO git_sync_log (id, project_id, operation, status) VALUES ('g2', NULL, 'clone', 'success')"
+          )
+          .run()
+      ).not.toThrow();
+    });
+  });
+
+  it("keeps the journal and the migration files in step", () => {
+    const onDisk = fs
+      .readdirSync(MIGRATIONS_FOLDER)
+      .filter((name) => name.endsWith(".sql"))
+      .map((name) => name.replace(/\.sql$/, ""))
+      .sort();
+
+    expect(onDisk).toEqual(entries.map((entry) => entry.tag).sort());
+  });
+});
+
+// ---------------------------------------------------------------------------
 // lib/db/index.ts import behavior
 // ---------------------------------------------------------------------------
 

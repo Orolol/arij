@@ -17,6 +17,7 @@ import {
   AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY,
   DEFAULT_MAX_CONCURRENT_AGENTS,
   agentMaxConcurrentSettingKey,
+  formatMaxConcurrent,
   parseMaxConcurrentSetting,
 } from "@/lib/agents/scheduler-constants";
 import { Badge } from "@/components/ui/badge";
@@ -67,6 +68,11 @@ export function ProviderDefaultsTab({
   } | null>(null);
   const [maxConcurrentInput, setMaxConcurrentInput] = useState("");
   const [savingMaxConcurrent, setSavingMaxConcurrent] = useState(false);
+  // Feedback under the field: the change is invisible otherwise, and a value
+  // typed but never committed used to vanish on the next open.
+  const [maxConcurrentStatus, setMaxConcurrentStatus] = useState<
+    "idle" | "saved" | "error"
+  >("idle");
 
   const projectScoped = scope === "project" && !!projectId;
   const maxConcurrentKey = projectScoped
@@ -80,6 +86,8 @@ export function ProviderDefaultsTab({
   const inheritedMaxConcurrent = projectScoped
     ? maxConcurrent?.global ?? DEFAULT_MAX_CONCURRENT_AGENTS
     : DEFAULT_MAX_CONCURRENT_AGENTS;
+  /** What the scheduler will actually enforce for this scope right now. */
+  const effectiveMaxConcurrent = savedMaxConcurrent ?? inheritedMaxConcurrent;
 
   useEffect(() => {
     let cancelled = false;
@@ -112,9 +120,21 @@ export function ProviderDefaultsTab({
   }, [projectId]);
 
   // Re-seed the input whenever the loaded values or the scope change.
+  // Unlimited round-trips as 0 — "Infinity" is not a number-input value.
   useEffect(() => {
-    setMaxConcurrentInput(savedMaxConcurrent === null ? "" : String(savedMaxConcurrent));
+    setMaxConcurrentInput(
+      savedMaxConcurrent === null
+        ? ""
+        : Number.isFinite(savedMaxConcurrent)
+          ? String(savedMaxConcurrent)
+          : "0"
+    );
   }, [savedMaxConcurrent, maxConcurrentKey]);
+
+  // Switching scope shows a different setting — drop the previous feedback.
+  useEffect(() => {
+    setMaxConcurrentStatus("idle");
+  }, [maxConcurrentKey]);
 
   async function toggleSegregation(next: boolean) {
     const previous = segregation;
@@ -145,28 +165,51 @@ export function ProviderDefaultsTab({
   const maxConcurrentDirty =
     maxConcurrent !== null && parsedMaxConcurrentInput !== savedMaxConcurrent;
 
+  /**
+   * Persists the field. Called by the Save button, by Enter, and on blur —
+   * a number typed and left there is a change the user made, and losing it
+   * silently is what made this setting look like it did nothing.
+   */
   async function saveMaxConcurrent() {
-    if (!maxConcurrent || !maxConcurrentInputValid) return;
+    if (
+      !maxConcurrent ||
+      !maxConcurrentInputValid ||
+      !maxConcurrentDirty ||
+      savingMaxConcurrent
+    ) {
+      return;
+    }
+    const nextValue = parsedMaxConcurrentInput;
     setSavingMaxConcurrent(true);
+    setMaxConcurrentStatus("idle");
     try {
       const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         // null clears the key so the scope falls back to its inherited value.
-        body: JSON.stringify({ [maxConcurrentKey]: parsedMaxConcurrentInput }),
+        // Infinity is not valid JSON, so unlimited is stored as 0.
+        body: JSON.stringify({
+          [maxConcurrentKey]:
+            nextValue === null
+              ? null
+              : Number.isFinite(nextValue)
+                ? nextValue
+                : 0,
+        }),
       });
       if (res.ok) {
         setMaxConcurrent((prev) =>
           prev
-            ? {
-                ...prev,
-                [projectScoped ? "project" : "global"]: parsedMaxConcurrentInput,
-              }
+            ? { ...prev, [projectScoped ? "project" : "global"]: nextValue }
             : prev
         );
+        setMaxConcurrentStatus("saved");
+      } else {
+        setMaxConcurrentStatus("error");
       }
     } catch {
       // keep the dirty input; the user can retry
+      setMaxConcurrentStatus("error");
     }
     setSavingMaxConcurrent(false);
   }
@@ -215,21 +258,43 @@ export function ProviderDefaultsTab({
             </label>
             <p className="text-xs text-muted-foreground">
               {projectScoped
-                ? `How many batch agents (builds, reviews, merges, QA) may run at once for this project. Extra launches wait in a queue. Leave empty to inherit the global default (${inheritedMaxConcurrent}).`
-                : `Default cap on batch agents (builds, reviews, merges, QA) running at once per project. Extra launches wait in a queue. Leave empty for the built-in default (${DEFAULT_MAX_CONCURRENT_AGENTS}).`}
+                ? `How many batch agents (builds, reviews, merges, QA) may run at once for this project. Extra launches wait in a queue. 0 means no limit; leave empty to inherit the global default (${formatMaxConcurrent(inheritedMaxConcurrent)}).`
+                : `Default cap on batch agents (builds, reviews, merges, QA) running at once per project. Extra launches wait in a queue. 0 means no limit; leave empty for the built-in default (${formatMaxConcurrent(DEFAULT_MAX_CONCURRENT_AGENTS)}).`}
+            </p>
+            <p className="text-xs text-muted-foreground" data-testid="agent-max-concurrent-effective">
+              {maxConcurrent === null
+                ? "Loading…"
+                : maxConcurrentStatus === "error"
+                  ? "Could not save — try again."
+                  : `In effect: ${formatMaxConcurrent(effectiveMaxConcurrent)}${
+                      savedMaxConcurrent === null
+                        ? projectScoped
+                          ? " (inherited)"
+                          : " (built-in)"
+                        : ""
+                    }${maxConcurrentStatus === "saved" ? " · saved" : ""}`}
             </p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <input
               id="agent-max-concurrent"
               type="number"
-              min={1}
+              min={0}
               step={1}
               value={maxConcurrentInput}
               onChange={(e) => setMaxConcurrentInput(e.target.value)}
-              placeholder={String(inheritedMaxConcurrent)}
+              // Enter and blur commit too: the Save button alone meant a typed
+              // value could be lost without a word.
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  saveMaxConcurrent();
+                }
+              }}
+              onBlur={() => saveMaxConcurrent()}
+              placeholder={formatMaxConcurrent(inheritedMaxConcurrent)}
               disabled={maxConcurrent === null || savingMaxConcurrent}
-              className="w-20 bg-transparent border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:border-primary"
+              className="w-24 bg-transparent border border-border rounded-md px-2 py-1 text-sm focus:outline-none focus:border-primary"
             />
             <Button
               size="sm"

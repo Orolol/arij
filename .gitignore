@@ -32,6 +32,9 @@
 .DS_Store
 *.pem
 
+# app-managed clone root (see lib/projects/workspace.ts)
+/projects
+
 # test screenshots and debug dumps
 test*.png
 test-snapshot-*.md

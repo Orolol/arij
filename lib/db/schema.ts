@@ -391,12 +391,13 @@ export const reviewComments = sqliteTable(
 
 export const gitSyncLog = sqliteTable("git_sync_log", {
   id: text("id").primaryKey(),
-  // Nullable since 0028: a clone is audited before the project it will belong
-  // to exists, so pre-project operations are recorded with no owner.
+  // Nullable since 0029_git_sync_log_nullable_project: a clone is logged
+  // before the project row exists (POST /api/projects/clone runs ahead of
+  // POST /api/projects), and NOT NULL + FK made those rows un-insertable.
   projectId: text("project_id").references(() => projects.id, {
     onDelete: "cascade",
   }),
-  operation: text("operation").notNull(), // push | pull | fetch | detect | tag_push | pr_create | pr_sync | release
+  operation: text("operation").notNull(), // clone | push | pull | fetch | detect | tag_push | pr_create | pr_sync | release
   branch: text("branch"),
   status: text("status").notNull(), // success | failure
   detail: text("detail"), // JSON payload for error info
