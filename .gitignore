@@ -27,6 +27,9 @@
 .DS_Store
 *.pem
 
+# app-managed clone workspace (GitHub imports) and its worktrees
+/projects
+
 # test screenshots and debug dumps
 test*.png
 test-snapshot-*.md
