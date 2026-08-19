@@ -104,6 +104,7 @@ export function cloneDestinationFor(
   repo: string,
   root: string = resolveProjectsRoot()
 ): string {
+  const resolvedRoot = path.resolve(root);
   const dirName = `${assertSegment(owner, "owner")}-${assertSegment(repo, "repository")}`;
-  return assertInsideRoot(path.join(root, dirName), root);
+  return assertInsideRoot(dirName, resolvedRoot);
 }

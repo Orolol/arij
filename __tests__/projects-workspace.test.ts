@@ -172,6 +172,21 @@ describe("cloneDestinationFor", () => {
       path.join(process.cwd(), "projects", "Orolol-arij")
     );
   });
+  it("resolves an explicitly supplied relative root without duplication", async () => {
+    const { cloneDestinationFor } = await import("@/lib/projects/workspace");
+
+    const dest = cloneDestinationFor("Orolol", "arij", "relative-clones");
+    expect(dest).toBe(path.resolve(process.cwd(), "relative-clones", "Orolol-arij"));
+    expect(dest).not.toContain("relative-clones/relative-clones");
+  });
+
+  it("accepts an explicitly supplied absolute root", async () => {
+    const { cloneDestinationFor } = await import("@/lib/projects/workspace");
+
+    expect(
+      cloneDestinationFor("Orolol", "arij", "/var/custom/clones")
+    ).toBe("/var/custom/clones/Orolol-arij");
+  });
 
   it("is deterministic across owners of the same repo name", async () => {
     storeRoot(JSON.stringify("/srv/clones"));

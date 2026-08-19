@@ -106,6 +106,33 @@ describe("Settings route", () => {
     expect(json.error).toBe("Projects directory must be saved as a string value.");
     expect(dbMockState.insertCalls).toHaveLength(0);
   });
+  it("PATCH rejects mixed valid/invalid payload without persisting any key", async () => {
+    const { PATCH } = await import("@/app/api/settings/route");
+
+    const res = await PATCH(
+      mockJsonRequest({
+        global_prompt: "changed",
+        projects_root: 42,
+      })
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toBe("Projects directory must be saved as a string value.");
+    expect(dbMockState.insertCalls).toHaveLength(0);
+    expect(dbMockState.updateCalls).toHaveLength(0);
+  });
+
+  it("PATCH rejects an array payload with 400", async () => {
+    const { PATCH } = await import("@/app/api/settings/route");
+
+    const res = await PATCH(mockJsonRequest(["not", "an", "object"]));
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toContain("Invalid settings payload");
+    expect(dbMockState.insertCalls).toHaveLength(0);
+  });
 
   it("PATCH persists a projects_root override", async () => {
     dbMockState.getQueue = [null];
