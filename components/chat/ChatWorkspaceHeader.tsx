@@ -57,6 +57,7 @@ export function ChatWorkspaceHeader({
       <NamedAgentSelect
         value={activeConversation?.namedAgentId ?? null}
         onChange={onAgentChange}
+        allowClear
         disabled={!activeConversation || hasMessages || isBusy}
         className="h-[26px] w-40 border-0 bg-transparent text-[12.5px] text-muted-foreground shadow-none"
       />
