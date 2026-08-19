@@ -45,6 +45,19 @@ export async function PATCH(
     }
   }
 
+  // Repointing the project to a different directory invalidates the clone
+  // provenance: the new directory was not created by Arij, so the
+  // clone_source ownership flag — and the remote/default-branch metadata
+  // that describes the *old* directory — must not survive the move. (The
+  // stored path is normalised on insert, so "no change" is an exact string
+  // match; anything else, including nulling the path, counts as a move.)
+  // TODO(workspace-epic): replace this clear with a re-run of the POST
+  // provenance check once lib/projects/workspace.ts anchors the managed
+  // clone destination (see the matching TODO(workspace-epic) there).
+  const cloneMetadataInvalidated =
+    body.gitRepoPath !== undefined &&
+    body.gitRepoPath !== (found.project.gitRepoPath ?? "");
+
   const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
   if (body.name !== undefined) updates.name = body.name;
   if (body.description !== undefined) updates.description = body.description;
@@ -52,6 +65,11 @@ export async function PATCH(
   if (body.gitRepoPath !== undefined) updates.gitRepoPath = body.gitRepoPath;
   if (body.githubOwnerRepo !== undefined) updates.githubOwnerRepo = body.githubOwnerRepo;
   if (body.spec !== undefined) updates.spec = body.spec;
+  if (cloneMetadataInvalidated) {
+    updates.cloneSource = null;
+    updates.gitRemoteUrl = null;
+    updates.defaultBranch = null;
+  }
 
   db.update(projects).set(updates).where(eq(projects.id, projectId)).run();
 
