@@ -3,11 +3,21 @@ import { isAgentProvider } from "@/lib/agent-config/constants";
 
 // --- Project schemas ---
 
+/**
+ * Note what is *not* here: `cloneSource`.
+ *
+ * It is the flag that authorises Arij to delete a directory, so it is never
+ * accepted from a request on either route. The create route derives it from the
+ * clone marker on disk (`lib/git/clone-marker.ts`), and nothing can change it
+ * afterwards — a value a client can set is a request, not provenance.
+ */
 export const createProjectSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
   description: z.string().max(5000).nullish(),
   gitRepoPath: z.string().max(1000).nullish(),
   githubOwnerRepo: z.string().max(200).nullish(),
+  gitRemoteUrl: z.string().max(1000).nullish(),
+  defaultBranch: z.string().max(255).nullish(),
 });
 
 export const updateProjectSchema = z.object({
@@ -15,6 +25,7 @@ export const updateProjectSchema = z.object({
   description: z.string().max(5000).nullish(),
   gitRepoPath: z.string().max(1000).nullish(),
   githubOwnerRepo: z.string().max(200).nullish(),
+  defaultBranch: z.string().max(255).nullish(),
   status: z
     .enum(["ideation", "specifying", "building", "done", "archived"])
     .optional(),
@@ -26,8 +37,14 @@ export const importProjectSchema = z.object({
 });
 
 export const cloneProjectSchema = z.object({
+  /** URL, SSH remote or `owner/repo` shorthand — parsed server-side. */
   url: z.string("url is required").min(1, "url is required").max(500),
-  branch: z.string().max(255).optional(),
+  /**
+   * Only set when re-cloning for a project that already exists, so the audit
+   * row can be attributed to it. A first-time clone leaves it unset and is
+   * logged as an unowned operation.
+   */
+  projectId: z.string().max(64).nullish(),
 });
 
 // --- Epic schemas ---

@@ -86,7 +86,8 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { worktreePath, branchName } = await createWorktree(
     gitRepoPath,
     epic.id,
-    epic.title
+    epic.title,
+    { defaultBranch: project.defaultBranch }
   );
 
   // Start merge in worktree to surface conflicts
@@ -99,7 +100,9 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   // If merge was clean, just do the final merge into main directly
   if (!mergeResult.conflicted) {
-    const finalMerge = await mergeWorktree(gitRepoPath, branchName, worktreePath);
+    const finalMerge = await mergeWorktree(gitRepoPath, branchName, worktreePath, {
+      defaultBranch: project.defaultBranch,
+    });
     if (!finalMerge.merged) {
       return NextResponse.json(
         { error: finalMerge.error || "Final merge failed" },
@@ -248,7 +251,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       const finalMerge = await mergeWorktree(
         gitRepoPath,
         branchName,
-        worktreePath
+        worktreePath,
+        { defaultBranch: project.defaultBranch }
       );
 
       if (finalMerge.merged) {

@@ -246,6 +246,9 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN output_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN total_cost_usd");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN batch_run_id");
+      conn.exec("ALTER TABLE projects DROP COLUMN clone_source");
+      conn.exec("ALTER TABLE projects DROP COLUMN git_remote_url");
+      conn.exec("ALTER TABLE projects DROP COLUMN default_branch");
     });
 
     withDb(file, (conn) => {
@@ -257,8 +260,46 @@ describe("initDb", () => {
       expect(columnNames(conn, "agent_sessions")).toContain("output_tokens");
       expect(columnNames(conn, "agent_sessions")).toContain("total_cost_usd");
       expect(columnNames(conn, "agent_sessions")).toContain("batch_run_id");
+      expect(columnNames(conn, "projects")).toContain("clone_source");
+      expect(columnNames(conn, "projects")).toContain("git_remote_url");
+      expect(columnNames(conn, "projects")).toContain("default_branch");
       expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
       expectFullSchema(conn);
+    });
+  });
+
+  it("leaves git_sync_log.project_id nullable so pre-project clones can be audited", () => {
+    // A first-time import clones before the project row exists. 0029 rebuilds
+    // the table to allow that; the insert is the assertion, since a NOT NULL
+    // left in place would reject it.
+    const file = tempDbPath();
+
+    withDb(file, (conn) => {
+      initDb(conn);
+
+      expect(() =>
+        conn
+          .prepare(
+            `INSERT INTO git_sync_log (id, project_id, operation, status, detail)
+             VALUES (?, NULL, 'clone', 'success', ?)`
+          )
+          .run("log_1", JSON.stringify({ ownerRepo: "owner/repo" }))
+      ).not.toThrow();
+
+      const row = conn
+        .prepare("SELECT project_id, operation FROM git_sync_log WHERE id = ?")
+        .get("log_1") as { project_id: string | null; operation: string };
+
+      expect(row.project_id).toBeNull();
+      expect(row.operation).toBe("clone");
+
+      // The cascade to projects has to survive the rebuild.
+      const foreignKeys = conn
+        .prepare("PRAGMA foreign_key_list(git_sync_log)")
+        .all() as Array<{ table: string; on_delete: string }>;
+      expect(foreignKeys).toHaveLength(1);
+      expect(foreignKeys[0].table).toBe("projects");
+      expect(foreignKeys[0].on_delete.toUpperCase()).toBe("CASCADE");
     });
   });
 
@@ -266,8 +307,8 @@ describe("initDb", () => {
     const file = tempDbPath();
 
     // Simulate a bookkeeping-less database whose schema stops at 0023:
-    // outcome exists; the 0024 usage columns, the 0025 table, and the 0026
-    // batch_run_id column do not.
+    // outcome exists; the 0024 usage columns, the 0025 table, the 0026
+    // batch_run_id column and the 0028 clone columns do not.
     withDb(file, (conn) => {
       initDb(conn);
       conn.exec('DROP TABLE "__drizzle_migrations"');
@@ -275,18 +316,24 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN output_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN total_cost_usd");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN batch_run_id");
+      conn.exec("ALTER TABLE projects DROP COLUMN clone_source");
+      conn.exec("ALTER TABLE projects DROP COLUMN git_remote_url");
+      conn.exec("ALTER TABLE projects DROP COLUMN default_branch");
       conn.exec("DROP TABLE ticket_read_cursors");
     });
 
     withDb(file, (conn) => {
       // 0023's ALTER must be stamped (outcome exists — re-running would
-      // throw) while 0024/0025/0026 actually run.
+      // throw) while 0024/0025/0026/0028 actually run.
       expect(() => initDb(conn)).not.toThrow();
 
       expect(columnNames(conn, "agent_sessions")).toContain("input_tokens");
       expect(columnNames(conn, "agent_sessions")).toContain("output_tokens");
       expect(columnNames(conn, "agent_sessions")).toContain("total_cost_usd");
       expect(columnNames(conn, "agent_sessions")).toContain("batch_run_id");
+      expect(columnNames(conn, "projects")).toContain("clone_source");
+      expect(columnNames(conn, "projects")).toContain("git_remote_url");
+      expect(columnNames(conn, "projects")).toContain("default_branch");
       expect(tableNames(conn)).toContain("ticket_read_cursors");
       expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
       expectFullSchema(conn);

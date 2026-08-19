@@ -16,6 +16,11 @@ export const projects = sqliteTable("projects", {
   status: text("status").default("ideation"), // ideation | specifying | building | done | archived
   gitRepoPath: text("git_repo_path"),
   githubOwnerRepo: text("github_owner_repo"),
+  // "github" when Arij cloned the directory itself and therefore owns it;
+  // NULL for user-supplied paths, which Arij must never delete.
+  cloneSource: text("clone_source"),
+  gitRemoteUrl: text("git_remote_url"),
+  defaultBranch: text("default_branch"),
   spec: text("spec"),
   imported: integer("imported").default(0),
   ticketCounter: integer("ticket_counter").default(0), // shared sequence across epics+bugs
@@ -386,9 +391,11 @@ export const reviewComments = sqliteTable(
 
 export const gitSyncLog = sqliteTable("git_sync_log", {
   id: text("id").primaryKey(),
-  projectId: text("project_id")
-    .notNull()
-    .references(() => projects.id, { onDelete: "cascade" }),
+  // Nullable since 0028: a clone is audited before the project it will belong
+  // to exists, so pre-project operations are recorded with no owner.
+  projectId: text("project_id").references(() => projects.id, {
+    onDelete: "cascade",
+  }),
   operation: text("operation").notNull(), // push | pull | fetch | detect | tag_push | pr_create | pr_sync | release
   branch: text("branch"),
   status: text("status").notNull(), // success | failure

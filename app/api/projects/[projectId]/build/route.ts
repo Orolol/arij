@@ -192,6 +192,9 @@ export async function POST(
   }
 
   const gitRepoPath = project.gitRepoPath;
+  // Captured alongside gitRepoPath: the closures below outlive the narrowing
+  // TypeScript does on `project` here.
+  const projectDefaultBranch = project.defaultBranch;
 
   const isRepo = await isGitRepo(gitRepoPath);
   if (!isRepo) {
@@ -234,7 +237,8 @@ export async function POST(
         const { worktreePath, branchName } = await createWorktree(
           gitRepoPath,
           epic.id,
-          epic.title
+          epic.title,
+          { defaultBranch: projectDefaultBranch }
         );
 
         teamEpics.push({
@@ -449,7 +453,8 @@ export async function POST(
     const { worktreePath, branchName } = await createWorktree(
       gitRepoPath,
       epic.id,
-      epic.title
+      epic.title,
+      { defaultBranch: projectDefaultBranch }
     );
 
     // Compose prompt

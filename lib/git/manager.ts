@@ -1,6 +1,7 @@
 import simpleGit, { type SimpleGit } from "simple-git";
 import path from "path";
 import fs from "fs";
+import { resolveBaseBranch } from "./base-branch";
 
 function slugify(text: string): string {
   return text
@@ -22,13 +23,24 @@ export function epicBranchName(epicId: string, epicTitle: string): string {
 }
 
 /**
+ * Options shared by the operations that need to know the repository's base
+ * branch. `defaultBranch` is `projects.default_branch` — recorded when Arij
+ * cloned the repository, and null for user-supplied paths, where
+ * {@link resolveBaseBranch} falls back to asking git.
+ */
+export interface BaseBranchOptions {
+  defaultBranch?: string | null;
+}
+
+/**
  * Creates a worktree for an epic with a dedicated branch.
  * Returns the worktree path.
  */
 export async function createWorktree(
   repoPath: string,
   epicId: string,
-  epicTitle: string
+  epicTitle: string,
+  options: BaseBranchOptions = {}
 ): Promise<{ worktreePath: string; branchName: string }> {
   const git = getGit(repoPath);
   const branchName = epicBranchName(epicId, epicTitle);
@@ -49,8 +61,10 @@ export async function createWorktree(
   const branches = await git.branchLocal();
   const branchExists = branches.all.includes(branchName);
 
-  // Determine the main branch to base new branches from
-  const mainBranch = branches.all.includes("main") ? "main" : "master";
+  // Determine the branch to base new branches from
+  const mainBranch = await resolveBaseBranch(git, branches.all, {
+    preferred: options.defaultBranch,
+  });
 
   if (branchExists) {
     // Create worktree from existing branch
@@ -77,14 +91,17 @@ export async function createWorktree(
 export async function mergeWorktree(
   repoPath: string,
   branchName: string,
-  worktreePath?: string
+  worktreePath?: string,
+  options: BaseBranchOptions = {}
 ): Promise<{ merged: boolean; commitHash?: string; error?: string }> {
   const git = getGit(repoPath);
 
   try {
-    // Get the main branch name
+    // Get the branch to merge into
     const branches = await git.branchLocal();
-    const mainBranch = branches.all.includes("main") ? "main" : "master";
+    const mainBranch = await resolveBaseBranch(git, branches.all, {
+      preferred: options.defaultBranch,
+    });
 
     // Make sure the branch exists
     if (!branches.all.includes(branchName)) {
