@@ -40,14 +40,41 @@ function git(cwd: string, ...args: string[]): string {
   });
 }
 
-/** A real repository with one commit, at `<projectsRoot>/<name>`. */
-function makeRepo(name: string, root = projectsRoot): string {
+/** Stamps the marker the clone service writes into repositories it creates. */
+function markAsArijClone(repoPath: string, name = "owner/repo"): void {
+  const [owner, repo] = name.split("/");
+  fs.writeFileSync(
+    path.join(repoPath, ".git", "arij-clone.json"),
+    JSON.stringify({
+      version: 1,
+      owner,
+      repo,
+      ownerRepo: name,
+      remoteUrl: `https://github.com/${name}.git`,
+      createdAt: new Date().toISOString(),
+    })
+  );
+}
+
+/**
+ * A real repository with one commit, at `<projectsRoot>/<name>`.
+ *
+ * Marked as an Arij clone by default: removal requires proof Arij created the
+ * directory, so an unmarked repository is the *user's*, and tests that want one
+ * pass `marked: false`.
+ */
+function makeRepo(
+  name: string,
+  root = projectsRoot,
+  options: { marked?: boolean } = {}
+): string {
   const repoPath = path.join(root, name);
   fs.mkdirSync(repoPath, { recursive: true });
   git(repoPath, "init", "--initial-branch=main");
   fs.writeFileSync(path.join(repoPath, "README.md"), "# test\n");
   git(repoPath, "add", ".");
   git(repoPath, "commit", "-m", "initial");
+  if (options.marked !== false) markAsArijClone(repoPath);
   return repoPath;
 }
 
@@ -273,10 +300,12 @@ describe("removeProjectClone", () => {
 
   it("removes a clone whose git metadata is broken", async () => {
     // An interrupted clone can leave a directory git no longer understands;
-    // cleanup must still be able to delete it.
+    // cleanup must still be able to delete it — the marker, not git, is what
+    // proves it is ours.
     const repoPath = path.join(projectsRoot, "owner-broken");
     fs.mkdirSync(path.join(repoPath, ".git"), { recursive: true });
     fs.writeFileSync(path.join(repoPath, "leftover.bin"), "partial");
+    markAsArijClone(repoPath, "owner/broken");
 
     const result = await removeProjectClone(
       { gitRepoPath: repoPath, cloneSource: "github" },
@@ -285,5 +314,46 @@ describe("removeProjectClone", () => {
 
     expect(result.removed).toBe(true);
     expect(fs.existsSync(repoPath)).toBe(false);
+  });
+
+  it("never touches a directory carrying no Arij clone marker", async () => {
+    // `clone_source` is a database column and every column is reachable from
+    // the API, so a row claiming "github" is a request, not evidence. Without
+    // the marker the directory is somebody's own checkout that happens to sit
+    // under the projects root.
+    const repoPath = makeRepo("owner-repo", projectsRoot, { marked: false });
+
+    const result = await removeProjectClone(
+      { gitRepoPath: repoPath, cloneSource: "github" },
+      { projectsRoot }
+    );
+
+    expect(result.removed).toBe(false);
+    expect(result.reason).toBe("not_arij_clone");
+    expect(result.message).toMatch(/no Arij clone marker/i);
+    expect(fs.existsSync(repoPath)).toBe(true);
+  });
+
+  it("leaves a worktree registered outside .arij-worktrees alone", async () => {
+    // Being registered to this clone is not a licence to delete: a worktree the
+    // user added by hand elsewhere is their working directory, and may hold
+    // work that exists nowhere else.
+    const repoPath = makeRepo("owner-repo");
+
+    const handMade = path.join(projectsRoot, "my-own-checkout");
+    git(repoPath, "worktree", "add", "-b", "feature/by-hand", handMade, "main");
+    fs.writeFileSync(path.join(handMade, "uncommitted.txt"), "precious\n");
+
+    const result = await removeProjectClone(
+      { gitRepoPath: repoPath, cloneSource: "github" },
+      { projectsRoot }
+    );
+
+    expect(result.removed).toBe(true);
+    expect(result.worktreesRemoved).toEqual([]);
+    expect(fs.existsSync(handMade)).toBe(true);
+    expect(fs.readFileSync(path.join(handMade, "uncommitted.txt"), "utf-8")).toBe(
+      "precious\n"
+    );
   });
 });

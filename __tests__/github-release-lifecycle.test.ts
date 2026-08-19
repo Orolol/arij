@@ -207,7 +207,8 @@ describe("Release creation with pushToGitHub", () => {
     expect(mockCreateReleaseBranchAndCommitChangelog).toHaveBeenCalledWith(
       "/tmp/repo",
       "1.0.0",
-      expect.any(String)
+      expect.any(String),
+      { defaultBranch: undefined }
     );
 
     // Verify tag was created against the release commit hash, not HEAD

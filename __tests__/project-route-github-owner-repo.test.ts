@@ -44,4 +44,52 @@ describe("PATCH /api/projects/[projectId]", () => {
     );
     expect(json.data.githubOwnerRepo).toBe("octocat/hello-world");
   });
+
+  it("never writes cloneSource, whatever the request asks for", async () => {
+    // `clone_source` authorises deleting a directory. If PATCH could set it,
+    // a user-supplied project sitting under the projects root could be
+    // reclassified as Arij's and then removed with its own contents.
+    dbMockState.getQueue = [
+      { id: "proj-1", name: "Arij", cloneSource: null },
+      { id: "proj-1", name: "Arij", cloneSource: null },
+    ];
+
+    const { PATCH } = await import("@/app/api/projects/[projectId]/route");
+    const res = await PATCH(
+      mockJsonRequest({
+        name: "Arij",
+        cloneSource: "github",
+        gitRemoteUrl: "https://github.com/attacker/repo.git",
+      }),
+      mockRouteContext({ projectId: "proj-1" })
+    );
+
+    expect(res.status).toBe(200);
+    expect(dbMockState.updateCalls[0]).not.toHaveProperty("cloneSource");
+    expect(dbMockState.updateCalls[0]).not.toHaveProperty("gitRemoteUrl");
+  });
+
+  it("refuses to re-point an Arij-managed clone at another directory", async () => {
+    // Its deletion rights are tied to the path recorded at creation; moving the
+    // pointer would carry them to a directory that never earned them.
+    dbMockState.getQueue = [
+      {
+        id: "proj-1",
+        name: "Arij",
+        cloneSource: "github",
+        gitRepoPath: "/workspace/projects/owner-repo",
+      },
+    ];
+
+    const { PATCH } = await import("@/app/api/projects/[projectId]/route");
+    const res = await PATCH(
+      mockJsonRequest({ gitRepoPath: "/workspace/projects/someone-elses" }),
+      mockRouteContext({ projectId: "proj-1" })
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(400);
+    expect(json.error).toMatch(/cloned by Arij/i);
+    expect(dbMockState.updateCalls).toHaveLength(0);
+  });
 });

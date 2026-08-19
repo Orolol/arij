@@ -12,6 +12,7 @@ import {
   removeProjectClone,
   type CloneRemovalResult,
 } from "@/lib/projects/clone-cleanup";
+import { GITHUB_CLONE_SOURCE } from "@/lib/projects/clone-provenance";
 import { perProjectSettingKeys } from "@/lib/projects/project-settings-keys";
 
 export async function GET(
@@ -40,6 +41,26 @@ export async function PATCH(
 
   const body = validated.data;
 
+  // An Arij-managed clone owns its own path. Re-pointing one at another
+  // directory would carry its deletion rights along to a directory that never
+  // earned them, so the path is fixed for as long as the project is a clone.
+  // Checked before the path is validated: "you cannot move this" is the real
+  // answer, and it does not depend on what is at the other end.
+  const isManagedClone = found.project.cloneSource === GITHUB_CLONE_SOURCE;
+  if (
+    isManagedClone &&
+    body.gitRepoPath !== undefined &&
+    body.gitRepoPath !== found.project.gitRepoPath
+  ) {
+    return NextResponse.json(
+      {
+        error:
+          "This project's repository was cloned by Arij; its path cannot be changed. Delete the project and import it again to move it.",
+      },
+      { status: 400 }
+    );
+  }
+
   // Validate gitRepoPath if provided
   if (body.gitRepoPath) {
     const pathResult = await validatePath(body.gitRepoPath);
@@ -51,14 +72,15 @@ export async function PATCH(
     }
   }
 
+  // `cloneSource` and `gitRemoteUrl` are absent from updateProjectSchema and
+  // therefore unreachable here: provenance is established once, from the disk,
+  // by POST /api/projects.
   const updates: Record<string, unknown> = { updatedAt: new Date().toISOString() };
   if (body.name !== undefined) updates.name = body.name;
   if (body.description !== undefined) updates.description = body.description;
   if (body.status !== undefined) updates.status = body.status;
   if (body.gitRepoPath !== undefined) updates.gitRepoPath = body.gitRepoPath;
   if (body.githubOwnerRepo !== undefined) updates.githubOwnerRepo = body.githubOwnerRepo;
-  if (body.cloneSource !== undefined) updates.cloneSource = body.cloneSource;
-  if (body.gitRemoteUrl !== undefined) updates.gitRemoteUrl = body.gitRemoteUrl;
   if (body.defaultBranch !== undefined) updates.defaultBranch = body.defaultBranch;
   if (body.spec !== undefined) updates.spec = body.spec;
 

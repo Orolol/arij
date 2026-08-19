@@ -44,19 +44,59 @@ function calledWith(subcommand: string): string[][] {
   return rawCalls().filter((args) => args.includes(subcommand));
 }
 
+/**
+ * Stands in for git's own side effects: `clone` creates the directory it was
+ * given, with a `.git` inside it. The service stages downloads in a temporary
+ * directory and renames it into place, so a mock that produced nothing would
+ * fail at the rename rather than exercising the path under test.
+ */
+function fakeGit(options: { head?: boolean } = {}) {
+  const { head = true } = options;
+  return async (args: string[]) => {
+    if (args.includes("clone")) {
+      const target = args[args.length - 1];
+      fs.mkdirSync(path.join(target, ".git"), { recursive: true });
+      return "";
+    }
+    if (args.includes("--verify") && !head) throw new Error("unborn HEAD");
+    if (args.includes("--abbrev-ref")) return "main\n";
+    return "";
+  };
+}
+
+/** Stamps the marker the service writes into clones it created. */
+function markAsArijClone(repoPath: string, owner = "owner", repo = "repo") {
+  fs.mkdirSync(path.join(repoPath, ".git"), { recursive: true });
+  fs.writeFileSync(
+    path.join(repoPath, ".git", "arij-clone.json"),
+    JSON.stringify({
+      version: 1,
+      owner,
+      repo,
+      ownerRepo: `${owner}/${repo}`,
+      remoteUrl: `https://github.com/${owner}/${repo}.git`,
+      createdAt: new Date().toISOString(),
+    })
+  );
+}
+
 /** Makes `origin` resolve to the given URL, and HEAD look checked out. */
 function existingCloneOf(remoteUrl: string, options: { head?: boolean } = {}) {
-  const { head = true } = options;
   fs.mkdirSync(destination, { recursive: true });
   fs.writeFileSync(path.join(destination, "README.md"), "x");
   getRemotes.mockResolvedValue([
     { name: "origin", refs: { fetch: remoteUrl, push: remoteUrl } },
   ]);
-  gitRaw.mockImplementation(async (args: string[]) => {
-    if (args.includes("--verify") && !head) throw new Error("unborn HEAD");
-    if (args.includes("--abbrev-ref")) return "main\n";
-    return "";
-  });
+  gitRaw.mockImplementation(fakeGit(options));
+}
+
+/** Staging directories the service leaves behind, if any. */
+function tempDirsInRoot(): string[] {
+  const parent = path.dirname(destination);
+  if (!fs.existsSync(parent)) return [];
+  return fs
+    .readdirSync(parent)
+    .filter((entry) => entry.startsWith(".arij-clone-tmp-"));
 }
 
 beforeEach(() => {
@@ -64,10 +104,7 @@ beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "arij-clone-flow-"));
   destination = path.join(tmpRoot, "projects", "owner-repo");
   getRemotes.mockResolvedValue([]);
-  gitRaw.mockImplementation(async (args: string[]) => {
-    if (args.includes("--abbrev-ref")) return "main\n";
-    return "";
-  });
+  gitRaw.mockImplementation(fakeGit());
 });
 
 afterEach(() => {
@@ -174,34 +211,53 @@ describe("cloneGitHubRepository — resuming an interrupted import", () => {
     expect(fs.existsSync(destination)).toBe(true);
   });
 
-  it("replaces debris left by an interrupted clone instead of reporting a conflict", async () => {
-    // Right origin, but nothing checked out: a clone killed mid-transfer.
+  it("replaces its own marked debris instead of reporting a conflict", async () => {
+    // Right origin, nothing checked out, and Arij's marker: a clone of ours
+    // killed mid-transfer, so replacing it destroys nothing but our own mess.
     existingCloneOf("https://github.com/owner/repo.git", { head: false });
+    markAsArijClone(destination);
 
     const result = await cloneGitHubRepository({
       input: "owner/repo",
       destination,
     });
 
-    expect(result.destinationState).toBe("partial_clone");
+    expect(result.destinationState).toBe("arij_debris");
     expect(result.reused).toBe(false);
     expect(calledWith("clone")).toHaveLength(1);
-    // The debris was cleared before git was asked to clone into it.
     expect(fs.existsSync(path.join(destination, "README.md"))).toBe(false);
   });
 
-  it("replaces a leftover directory that is not a git repository", async () => {
+  it("refuses unmarked debris rather than deleting it", async () => {
+    // Identical on disk to the case above, minus the marker. It is just as
+    // likely to be a repository somebody initialised by hand and has not
+    // committed to yet, and Arij has no way to tell — so it keeps its hands off.
+    existingCloneOf("https://github.com/owner/repo.git", { head: false });
+
+    await expect(
+      cloneGitHubRepository({ input: "owner/repo", destination })
+    ).rejects.toBeInstanceOf(CloneConflictError);
+
+    expect(calledWith("clone")).toHaveLength(0);
+    expect(fs.existsSync(path.join(destination, "README.md"))).toBe(true);
+  });
+
+  it("refuses a leftover directory that is not a git repository", async () => {
     fs.mkdirSync(destination, { recursive: true });
-    fs.writeFileSync(path.join(destination, "half-downloaded"), "x");
+    fs.writeFileSync(path.join(destination, "notes.txt"), "my work");
     getRemotes.mockRejectedValue(new Error("not a git repository"));
 
-    const result = await cloneGitHubRepository({
+    const error: unknown = await cloneGitHubRepository({
       input: "owner/repo",
       destination,
-    });
+    }).catch((e: unknown) => e);
 
-    expect(result.destinationState).toBe("partial_clone");
-    expect(calledWith("clone")).toHaveLength(1);
+    expect(error).toBeInstanceOf(CloneConflictError);
+    expect((error as CloneConflictError).state).toBe("foreign_content");
+    expect(calledWith("clone")).toHaveLength(0);
+    expect(fs.readFileSync(path.join(destination, "notes.txt"), "utf-8")).toBe(
+      "my work"
+    );
   });
 
   it("clones into an existing empty directory", async () => {
@@ -214,6 +270,42 @@ describe("cloneGitHubRepository — resuming an interrupted import", () => {
 
     expect(result.destinationState).toBe("empty");
     expect(calledWith("clone")).toHaveLength(1);
+    expect(fs.existsSync(destination)).toBe(true);
+  });
+
+  it("stamps a fresh clone as Arij-managed", async () => {
+    const result = await cloneGitHubRepository({
+      input: "owner/repo",
+      destination,
+    });
+
+    expect(result.managed).toBe(true);
+    const marker = JSON.parse(
+      fs.readFileSync(path.join(destination, ".git", "arij-clone.json"), "utf-8")
+    );
+    expect(marker).toMatchObject({
+      version: 1,
+      owner: "owner",
+      repo: "repo",
+      remoteUrl: "https://github.com/owner/repo.git",
+    });
+  });
+
+  it("does not claim a pre-existing clone it merely reused", async () => {
+    // The user's own checkout, at the path Arij would have chosen. Reusing it is
+    // free; claiming the right to delete it later is not.
+    existingCloneOf("https://github.com/owner/repo.git");
+
+    const result = await cloneGitHubRepository({
+      input: "owner/repo",
+      destination,
+    });
+
+    expect(result.reused).toBe(true);
+    expect(result.managed).toBe(false);
+    expect(
+      fs.existsSync(path.join(destination, ".git", "arij-clone.json"))
+    ).toBe(false);
   });
 });
 
@@ -245,11 +337,12 @@ describe("cloneGitHubRepository — conflicts and failures", () => {
     expect(conflict.destination).toBe(destination);
   });
 
-  it("deletes a partial clone when git fails, so it is not mistaken for a match later", async () => {
+  it("leaves no debris at the destination when git fails part-way", async () => {
     gitRaw.mockImplementation(async (args: string[]) => {
       if (args.includes("clone")) {
-        fs.mkdirSync(destination, { recursive: true });
-        fs.writeFileSync(path.join(destination, "partial.pack"), "x");
+        const target = args[args.length - 1];
+        fs.mkdirSync(target, { recursive: true });
+        fs.writeFileSync(path.join(target, "partial.pack"), "x");
         throw new Error("early EOF");
       }
       return "";
@@ -259,7 +352,70 @@ describe("cloneGitHubRepository — conflicts and failures", () => {
       cloneGitHubRepository({ input: "owner/repo", destination })
     ).rejects.toBeInstanceOf(CloneFailedError);
 
+    // The download never touched the destination — it happened in a staging
+    // directory, which is cleaned up on the way out.
     expect(fs.existsSync(destination)).toBe(false);
+    expect(tempDirsInRoot()).toEqual([]);
+  });
+
+  it("sweeps a staging directory abandoned by a killed process", async () => {
+    const stale = path.join(
+      path.dirname(destination),
+      ".arij-clone-tmp-owner-repo-deadbeef"
+    );
+    fs.mkdirSync(stale, { recursive: true });
+    fs.writeFileSync(path.join(stale, "half.pack"), "x");
+
+    await cloneGitHubRepository({ input: "owner/repo", destination });
+
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(tempDirsInRoot()).toEqual([]);
+  });
+
+  it("serialises concurrent clones of the same destination", async () => {
+    // Unserialised, both callers classify an absent destination and both clone;
+    // then the loser's failure handler tidies up the winner's directory.
+    let inFlight = 0;
+    let overlapped = false;
+
+    // Once the first clone lands, `origin` reads back like a real one would.
+    getRemotes.mockResolvedValue([
+      {
+        name: "origin",
+        refs: {
+          fetch: "https://github.com/owner/repo.git",
+          push: "https://github.com/owner/repo.git",
+        },
+      },
+    ]);
+
+    gitRaw.mockImplementation(async (args: string[]) => {
+      if (args.includes("clone")) {
+        inFlight += 1;
+        if (inFlight > 1) overlapped = true;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        fs.mkdirSync(path.join(args[args.length - 1], ".git"), {
+          recursive: true,
+        });
+        inFlight -= 1;
+        return "";
+      }
+      if (args.includes("--abbrev-ref")) return "main\n";
+      return "";
+    });
+
+    const results = await Promise.all([
+      cloneGitHubRepository({ input: "owner/repo", destination }),
+      cloneGitHubRepository({ input: "owner/repo", destination }),
+    ]);
+
+    expect(overlapped).toBe(false);
+    // The first call downloads; the second finds a complete clone of the same
+    // repository waiting for it and reuses it rather than racing it.
+    expect(calledWith("clone")).toHaveLength(1);
+    expect(results.map((r) => r.reused).sort()).toEqual([false, true]);
+    expect(fs.existsSync(destination)).toBe(true);
+    expect(tempDirsInRoot()).toEqual([]);
   });
 
   it("redacts the token from a git failure message", async () => {

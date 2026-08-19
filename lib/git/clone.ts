@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import simpleGit, { type SimpleGit } from "simple-git";
 import {
   parseGitHubOwnerRepoFromRemoteUrl,
@@ -8,24 +9,41 @@ import {
   type ParsedGitHubRepoInput,
 } from "./remote";
 import { redactGitCredentials, redactedErrorMessage } from "./redact";
+import { withPathLock } from "./clone-lock";
+import {
+  hasCloneMarkerFor,
+  isArijManagedClone,
+  writeCloneMarker,
+} from "./clone-marker";
 
 /**
  * Cloning a GitHub repository into the app-managed workspace.
  *
- * Two properties matter more than anything else here:
+ * Three properties matter more than anything else here:
  *
  *  1. **The token never touches the disk.** It is passed as a one-shot
  *     `-c http.extraHeader=...` on the command line, so `origin` keeps the
  *     clean URL and `.git/config` never learns the secret. Every error string
  *     leaving this module is redacted (git echoes the failing command).
  *
- *  2. **Re-running an import is cheap and safe.** A destination that already
- *     holds a healthy clone of the same repository is *reused* (fetch only),
- *     which is what makes recovery from an interrupted import instant. A
- *     destination holding a clone of a *different* repository is a conflict and
- *     is never overwritten. A destination holding the debris of an interrupted
- *     clone is neither — it is Arij's own leftover, and is replaced.
+ *  2. **The destination is never destroyed.** The download runs into a
+ *     temporary sibling directory and is moved into place with a single
+ *     `rename` once it is complete and stamped. A destination that already
+ *     holds something Arij cannot positively identify as its own is a conflict,
+ *     reported to the user — never cleaned up on their behalf. The only
+ *     directory this module ever deletes is one it created itself.
+ *
+ *     That also makes an interrupted clone a non-event: the debris is in the
+ *     temp directory, so the destination is either absent (clone again) or a
+ *     complete clone (reuse it). There is no half-clone state to recover from.
+ *
+ *  3. **Re-running an import is cheap.** A destination that already holds a
+ *     healthy clone of the same repository is *reused* (fetch only), which is
+ *     what makes recovery from an interrupted import instant.
  */
+
+/** Prefix of the staging directories this module creates inside the root. */
+const TEMP_CLONE_PREFIX = ".arij-clone-tmp-";
 
 /** How an existing destination directory was classified before we acted on it. */
 export type CloneDestinationState =
@@ -33,7 +51,10 @@ export type CloneDestinationState =
   | "empty"
   | "healthy_match"
   | "remote_mismatch"
-  | "partial_clone";
+  /** A broken clone carrying Arij's marker — provably ours, safe to replace. */
+  | "arij_debris"
+  /** Anything Arij cannot prove it created. Always a conflict, never deleted. */
+  | "foreign_content";
 
 export interface CloneRepoResult {
   /** Absolute path of the clone. */
@@ -46,6 +67,12 @@ export interface CloneRepoResult {
   defaultBranch: string;
   /** True when an existing clone was fetched instead of re-downloaded. */
   reused: boolean;
+  /**
+   * True when the directory carries Arij's marker, i.e. Arij created it and may
+   * later delete it. False for a pre-existing clone Arij merely reused — those
+   * belong to the user.
+   */
+  managed: boolean;
   /** What we found on disk before acting — surfaced for logs and tests. */
   destinationState: CloneDestinationState;
   durationMs: number;
@@ -55,16 +82,22 @@ export class CloneConflictError extends Error {
   readonly code = "clone_destination_conflict";
   readonly destination: string;
   readonly existingRemote: string | null;
+  readonly state: CloneDestinationState;
 
-  constructor(destination: string, existingRemote: string | null) {
+  constructor(
+    destination: string,
+    existingRemote: string | null,
+    state: CloneDestinationState = "foreign_content"
+  ) {
     super(
       existingRemote
-        ? `${destination} already contains a clone of ${existingRemote}.`
-        : `${destination} already exists and is not an Arij clone.`
+        ? `${destination} already contains a clone of ${existingRemote}. Arij will not modify it — remove it or change the projects root.`
+        : `${destination} already exists and was not created by Arij. Arij will not modify it — remove it or change the projects root.`
     );
     this.name = "CloneConflictError";
     this.destination = destination;
     this.existingRemote = existingRemote;
+    this.state = state;
   }
 }
 
@@ -135,10 +168,11 @@ async function hasCheckedOutHead(repoPath: string): Promise<boolean> {
 /**
  * Classifies what is sitting at the destination.
  *
- * `remote_mismatch` is the only state that becomes a user-facing conflict.
- * `partial_clone` covers both "not a git repository at all" and "a git
- * repository with no HEAD / no origin": in an Arij-owned root at a name Arij
- * chose, that is debris from an interrupted run, not somebody's work.
+ * The default answer for anything occupied is `foreign_content`: a conflict the
+ * user is told about. Only two states let the clone proceed over existing
+ * content — `healthy_match`, which is reused without modification, and
+ * `arij_debris`, a broken clone that still carries Arij's own marker and is
+ * therefore provably not the user's work.
  */
 export async function classifyCloneDestination(
   destination: string,
@@ -148,33 +182,45 @@ export async function classifyCloneDestination(
     return { state: "absent", existingRemote: null };
   }
 
+  if (!fs.statSync(destination).isDirectory()) {
+    return { state: "foreign_content", existingRemote: null };
+  }
+
   if (await isEmptyDirectory(destination)) {
     return { state: "empty", existingRemote: null };
   }
 
   const originUrl = await readOriginUrl(destination);
-  if (!originUrl) {
-    return { state: "partial_clone", existingRemote: null };
-  }
-
-  const parsed = parseGitHubOwnerRepoFromRemoteUrl(originUrl);
-  const matches =
+  const parsed = originUrl ? parseGitHubOwnerRepoFromRemoteUrl(originUrl) : null;
+  const remoteMatches =
     parsed !== null &&
     parsed.owner.toLowerCase() === expected.owner.toLowerCase() &&
     parsed.repo.toLowerCase() === expected.repo.toLowerCase();
 
-  if (!matches) {
+  // A complete clone of the repository we were asked for: reuse it. This is
+  // non-destructive, so it does not require the marker — a checkout the user
+  // made by hand is just as reusable, it simply stays theirs.
+  if (remoteMatches && (await hasCheckedOutHead(destination))) {
+    return { state: "healthy_match", existingRemote: parsed.ownerRepo };
+  }
+
+  // Everything below is only reachable by replacing what is there, so it takes
+  // proof of ownership rather than a heuristic.
+  if (hasCloneMarkerFor(destination, expected)) {
+    return {
+      state: "arij_debris",
+      existingRemote: parsed?.ownerRepo ?? null,
+    };
+  }
+
+  if (originUrl && !remoteMatches) {
     return {
       state: "remote_mismatch",
       existingRemote: parsed?.ownerRepo ?? redactGitCredentials(originUrl),
     };
   }
 
-  if (!(await hasCheckedOutHead(destination))) {
-    return { state: "partial_clone", existingRemote: parsed.ownerRepo };
-  }
-
-  return { state: "healthy_match", existingRemote: parsed.ownerRepo };
+  return { state: "foreign_content", existingRemote: parsed?.ownerRepo ?? null };
 }
 
 /**
@@ -228,7 +274,7 @@ async function runFetch(
   await simpleGit(repoPath).raw(withAuth(token, ["fetch", "origin", "--prune"]));
 }
 
-/** Best-effort removal of a directory we are about to replace or gave up on. */
+/** Best-effort removal of a directory this module created. */
 async function discard(directory: string): Promise<void> {
   try {
     await fsp.rm(directory, { recursive: true, force: true });
@@ -239,6 +285,66 @@ async function discard(directory: string): Promise<void> {
       redactedErrorMessage(error)
     );
   }
+}
+
+/** Staging directory for one download, a sibling of the destination. */
+function tempCloneDir(destination: string): string {
+  const resolved = path.resolve(destination);
+  return path.join(
+    path.dirname(resolved),
+    `${TEMP_CLONE_PREFIX}${path.basename(resolved)}-${randomUUID().slice(0, 8)}`
+  );
+}
+
+/**
+ * Removes staging directories abandoned by an earlier attempt at this
+ * destination.
+ *
+ * Safe by construction, and only because of the two facts that bracket it: the
+ * name is one only this module generates, and the caller holds the destination
+ * lock — so no live attempt at this destination can own one.
+ */
+async function sweepStaleTempDirs(destination: string): Promise<void> {
+  const resolved = path.resolve(destination);
+  const parent = path.dirname(resolved);
+  const prefix = `${TEMP_CLONE_PREFIX}${path.basename(resolved)}-`;
+
+  let entries: string[];
+  try {
+    entries = await fsp.readdir(parent);
+  } catch {
+    return;
+  }
+
+  for (const entry of entries) {
+    if (entry.startsWith(prefix)) {
+      await discard(path.join(parent, entry));
+    }
+  }
+}
+
+/**
+ * Moves a finished clone onto the destination.
+ *
+ * `rename` is atomic, so the destination goes from "absent" to "a complete,
+ * stamped clone" with no observable state in between — which is what removes
+ * the half-clone recovery problem entirely.
+ */
+async function swapIntoPlace(
+  temp: string,
+  destination: string,
+  state: CloneDestinationState
+): Promise<void> {
+  if (state === "arij_debris") {
+    // Proven ours by the marker; the only replace path that exists.
+    await fsp.rm(destination, { recursive: true, force: true });
+  } else if (state === "empty") {
+    // rename(2) replaces an empty directory on Linux, but not on every
+    // platform; removing it first keeps the behaviour identical everywhere.
+    await fsp.rmdir(destination).catch(() => {});
+  }
+
+  await fsp.rename(temp, destination);
 }
 
 export interface CloneGitHubRepositoryOptions {
@@ -253,10 +359,11 @@ export interface CloneGitHubRepositoryOptions {
 /**
  * Clones (or reuses) a GitHub repository at `destination`.
  *
- * Throws {@link CloneConflictError} when the destination holds a clone of a
- * different repository, and {@link CloneFailedError} for every git failure.
- * A clone that fails part-way is deleted, so the debris can never be mistaken
- * for a matching repository on the next attempt.
+ * Throws {@link CloneConflictError} when the destination holds anything other
+ * than a healthy clone of the requested repository, and {@link CloneFailedError}
+ * for every git failure. Concurrent calls for the same destination are
+ * serialised, so the second one observes the first one's result rather than
+ * racing it.
  */
 export async function cloneGitHubRepository({
   input,
@@ -270,14 +377,24 @@ export async function cloneGitHubRepository({
     );
   }
 
+  return withPathLock(destination, () =>
+    performClone(parsed, destination, token)
+  );
+}
+
+async function performClone(
+  parsed: ParsedGitHubRepoInput,
+  destination: string,
+  token: string | null | undefined
+): Promise<CloneRepoResult> {
   const startedAt = Date.now();
   const { state, existingRemote } = await classifyCloneDestination(
     destination,
     parsed
   );
 
-  if (state === "remote_mismatch") {
-    throw new CloneConflictError(destination, existingRemote);
+  if (state === "remote_mismatch" || state === "foreign_content") {
+    throw new CloneConflictError(destination, existingRemote, state);
   }
 
   // Reuse: the expensive download already happened. This is the path an
@@ -302,21 +419,31 @@ export async function cloneGitHubRepository({
       remoteUrl: parsed.cloneUrl,
       defaultBranch: await detectDefaultBranch(destination),
       reused: true,
+      // A clone Arij did not create stays the user's, however convenient the
+      // path is. Only the marker grants deletion rights.
+      managed: isArijManagedClone(destination),
       destinationState: state,
       durationMs: Date.now() - startedAt,
     };
   }
 
-  // `empty` and `partial_clone` both mean "Arij's own leftover": clear it so
-  // git has a clean destination, then download.
-  if (state !== "absent") {
-    await discard(destination);
-  }
+  await sweepStaleTempDirs(destination);
+  const temp = tempCloneDir(destination);
 
+  let managed: boolean;
   try {
-    await runClone(parsed.cloneUrl, destination, token);
+    await runClone(parsed.cloneUrl, temp, token);
+    // Stamped before the swap, so the destination is never observable as an
+    // unmarked Arij clone.
+    managed = await writeCloneMarker(temp, {
+      owner: parsed.owner,
+      repo: parsed.repo,
+      ownerRepo: parsed.ownerRepo,
+      remoteUrl: parsed.cloneUrl,
+    });
+    await swapIntoPlace(temp, destination, state);
   } catch (error) {
-    await discard(destination);
+    await discard(temp);
     throw new CloneFailedError(
       redactedErrorMessage(error, `Failed to clone ${parsed.ownerRepo}.`)
     );
@@ -330,6 +457,7 @@ export async function cloneGitHubRepository({
     remoteUrl: parsed.cloneUrl,
     defaultBranch: await detectDefaultBranch(destination),
     reused: false,
+    managed,
     destinationState: state,
     durationMs: Date.now() - startedAt,
   };

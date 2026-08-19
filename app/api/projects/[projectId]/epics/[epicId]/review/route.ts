@@ -165,7 +165,8 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { worktreePath, branchName } = await createWorktree(
     gitRepoPath,
     epic.id,
-    epic.title
+    epic.title,
+    { defaultBranch: project.defaultBranch }
   );
 
   // Resume support — scope-guarded

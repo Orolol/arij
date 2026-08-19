@@ -50,6 +50,21 @@ function makeRepo(
   return repoPath;
 }
 
+/** Stamps the marker the clone service writes into repositories it creates. */
+function markAsArijClone(repoPath: string, owner = "owner", repo = "repo"): void {
+  fs.writeFileSync(
+    path.join(repoPath, ".git", "arij-clone.json"),
+    JSON.stringify({
+      version: 1,
+      owner,
+      repo,
+      ownerRepo: `${owner}/${repo}`,
+      remoteUrl: `https://github.com/${owner}/${repo}.git`,
+      createdAt: new Date().toISOString(),
+    })
+  );
+}
+
 beforeEach(() => {
   tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "arij-clone-resume-"));
 });
@@ -112,9 +127,11 @@ describe("classifyCloneDestination", () => {
     expect(result.existingRemote).toBe("someone-else/other");
   });
 
-  it("treats a matching repository with an unborn HEAD as interrupted debris, not a conflict", async () => {
-    // A clone killed mid-transfer: `.git` exists, origin is right, but nothing
-    // is checked out.
+  it("refuses a matching repository with an unborn HEAD that carries no marker", async () => {
+    // `.git` exists and origin is right, but nothing is checked out. That looks
+    // like a clone killed mid-transfer — and it also looks like a repository
+    // somebody set up by hand and has not committed to yet. Without the marker
+    // the two are indistinguishable, so it is a conflict, not a delete.
     const repoPath = makeRepo("owner-repo", {
       origin: "https://github.com/owner/repo.git",
       commit: false,
@@ -123,25 +140,59 @@ describe("classifyCloneDestination", () => {
 
     const result = await classifyCloneDestination(repoPath, OWNER_REPO);
 
-    expect(result.state).toBe("partial_clone");
-    expect(result.state).not.toBe("remote_mismatch");
+    expect(result.state).toBe("foreign_content");
   });
 
-  it("treats a non-repository directory as interrupted debris, not a conflict", async () => {
+  it("treats a marked broken clone as Arij's own debris", async () => {
+    const repoPath = makeRepo("owner-repo", {
+      origin: "https://github.com/owner/repo.git",
+      commit: false,
+    });
+    markAsArijClone(repoPath);
+
+    const result = await classifyCloneDestination(repoPath, OWNER_REPO);
+
+    expect(result.state).toBe("arij_debris");
+  });
+
+  it("refuses a marked clone of a different repository", async () => {
+    // The marker proves Arij made the directory, not that it made it for *this*
+    // repository — the owner/repo has to match too.
+    const repoPath = makeRepo("owner-repo", {
+      origin: "https://github.com/someone-else/other.git",
+      commit: false,
+    });
+    markAsArijClone(repoPath, "someone-else", "other");
+
+    const result = await classifyCloneDestination(repoPath, OWNER_REPO);
+
+    expect(result.state).toBe("remote_mismatch");
+  });
+
+  it("refuses a non-repository directory", async () => {
     const dest = path.join(tmpRoot, "owner-repo");
     fs.mkdirSync(dest, { recursive: true });
-    fs.writeFileSync(path.join(dest, "half-downloaded"), "x");
+    fs.writeFileSync(path.join(dest, "notes.txt"), "my work");
 
     const result = await classifyCloneDestination(dest, OWNER_REPO);
 
-    expect(result.state).toBe("partial_clone");
+    expect(result.state).toBe("foreign_content");
   });
 
-  it("treats a git repository with no remote as interrupted debris", async () => {
+  it("refuses a git repository with no remote", async () => {
     const repoPath = makeRepo("owner-repo");
 
     expect((await classifyCloneDestination(repoPath, OWNER_REPO)).state).toBe(
-      "partial_clone"
+      "foreign_content"
+    );
+  });
+
+  it("refuses a plain file sitting at the destination", async () => {
+    const dest = path.join(tmpRoot, "owner-repo");
+    fs.writeFileSync(dest, "not a directory");
+
+    expect((await classifyCloneDestination(dest, OWNER_REPO)).state).toBe(
+      "foreign_content"
     );
   });
 });

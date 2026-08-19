@@ -268,6 +268,41 @@ describe("initDb", () => {
     });
   });
 
+  it("leaves git_sync_log.project_id nullable so pre-project clones can be audited", () => {
+    // A first-time import clones before the project row exists. 0028 rebuilds
+    // the table to allow that; the insert is the assertion, since a NOT NULL
+    // left in place would reject it.
+    const file = tempDbPath();
+
+    withDb(file, (conn) => {
+      initDb(conn);
+
+      expect(() =>
+        conn
+          .prepare(
+            `INSERT INTO git_sync_log (id, project_id, operation, status, detail)
+             VALUES (?, NULL, 'clone', 'success', ?)`
+          )
+          .run("log_1", JSON.stringify({ ownerRepo: "owner/repo" }))
+      ).not.toThrow();
+
+      const row = conn
+        .prepare("SELECT project_id, operation FROM git_sync_log WHERE id = ?")
+        .get("log_1") as { project_id: string | null; operation: string };
+
+      expect(row.project_id).toBeNull();
+      expect(row.operation).toBe("clone");
+
+      // The cascade to projects has to survive the rebuild.
+      const foreignKeys = conn
+        .prepare("PRAGMA foreign_key_list(git_sync_log)")
+        .all() as Array<{ table: string; on_delete: string }>;
+      expect(foreignKeys).toHaveLength(1);
+      expect(foreignKeys[0].table).toBe("projects");
+      expect(foreignKeys[0].on_delete.toUpperCase()).toBe("CASCADE");
+    });
+  });
+
   it("stamps up to the newest present column and runs the rest (legacy DB at 0023)", () => {
     const file = tempDbPath();
 

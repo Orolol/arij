@@ -6,6 +6,7 @@ import { createId } from "@/lib/utils/nanoid";
 import { createProjectSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { validatePath } from "@/lib/validation/path";
+import { deriveCloneProvenance } from "@/lib/projects/clone-provenance";
 
 export async function GET() {
   const queryStartedAt = Date.now();
@@ -108,7 +109,6 @@ export async function POST(request: NextRequest) {
     description,
     gitRepoPath,
     githubOwnerRepo,
-    cloneSource,
     gitRemoteUrl,
     defaultBranch,
   } = validated.data;
@@ -124,6 +124,11 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Provenance is read off the disk, not off the request: `clone_source` is what
+  // later authorises deleting this directory, so it may only be granted by a
+  // marker the clone service wrote into a repository it created itself.
+  const provenance = deriveCloneProvenance(gitRepoPath);
+
   const id = createId();
   const now = new Date().toISOString();
 
@@ -133,9 +138,10 @@ export async function POST(request: NextRequest) {
       name,
       description: description || null,
       gitRepoPath: gitRepoPath || null,
-      githubOwnerRepo: githubOwnerRepo || null,
-      cloneSource: cloneSource || null,
-      gitRemoteUrl: gitRemoteUrl || null,
+      githubOwnerRepo:
+        githubOwnerRepo || provenance.githubOwnerRepo || null,
+      cloneSource: provenance.cloneSource,
+      gitRemoteUrl: provenance.gitRemoteUrl || gitRemoteUrl || null,
       defaultBranch: defaultBranch || null,
       status: "ideation",
       createdAt: now,

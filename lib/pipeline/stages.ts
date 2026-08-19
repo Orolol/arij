@@ -455,7 +455,8 @@ async function dispatchPipelineStage(
   const { worktreePath, branchName } = await createWorktree(
     project.gitRepoPath,
     epic.id,
-    epic.title
+    epic.title,
+    { defaultBranch: project.defaultBranch }
   );
 
   let prompt: string;

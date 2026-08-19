@@ -157,8 +157,32 @@ describe("POST /api/projects/clone", () => {
     expect(json.error).toContain("[redacted]");
   });
 
-  it("writes a git_sync_log row only when the clone belongs to a project", async () => {
+  it("audits a first-time clone with no project to attribute it to", async () => {
+    // The common case: the repository is cloned before the project exists. This
+    // used to write nothing at all, so the audit trail missed nearly every
+    // clone it was there to record.
     await post({ url: "owner/repo" });
-    expect(mockLogSyncOperation).not.toHaveBeenCalled();
+
+    expect(mockLogSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: null,
+        operation: "clone",
+        status: "success",
+      })
+    );
+  });
+
+  it("audits a failed clone too", async () => {
+    mockCloneGitHubRepository.mockRejectedValue(new Error("early EOF"));
+
+    await post({ url: "owner/repo" });
+
+    expect(mockLogSyncOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        projectId: null,
+        operation: "clone",
+        status: "failure",
+      })
+    );
   });
 });

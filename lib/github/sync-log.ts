@@ -20,7 +20,11 @@ export type GitSyncOperation =
 export type GitSyncStatus = "success" | "failed" | "failure";
 
 interface LogSyncOperationInput {
-  projectId: string;
+  /**
+   * Null for operations that happen before the project exists — a first-time
+   * clone is audited while the import is still deciding what to create.
+   */
+  projectId: string | null;
   operation: GitSyncOperation;
   status: GitSyncStatus;
   branch?: string | null;

@@ -69,11 +69,11 @@ export async function POST(request: NextRequest) {
       token,
     });
 
-    recordCloneOutcome(projectId, {
-      status: "success",
+    recordCloneOutcome(projectId, "success", {
       ownerRepo: result.ownerRepo,
       destination: result.path,
       reused: result.reused,
+      managed: result.managed,
       destinationState: result.destinationState,
       durationMs: result.durationMs,
       defaultBranch: result.defaultBranch,
@@ -86,15 +86,16 @@ export async function POST(request: NextRequest) {
         remoteUrl: result.remoteUrl,
         defaultBranch: result.defaultBranch,
         reused: result.reused,
+        managed: result.managed,
         projectsRoot,
       },
     });
   } catch (error) {
     if (error instanceof CloneConflictError) {
-      recordCloneOutcome(projectId, {
-        status: "failure",
+      recordCloneOutcome(projectId, "failure", {
         ownerRepo: parsed.ownerRepo,
         destination,
+        destinationState: error.state,
         error: error.message,
       });
 
@@ -116,8 +117,7 @@ export async function POST(request: NextRequest) {
         ? error.message
         : redactedErrorMessage(error, `Failed to clone ${parsed.ownerRepo}.`);
 
-    recordCloneOutcome(projectId, {
-      status: "failure",
+    recordCloneOutcome(projectId, "failure", {
       ownerRepo: parsed.ownerRepo,
       destination,
       error: message,
@@ -130,30 +130,29 @@ export async function POST(request: NextRequest) {
 /**
  * Writes the clone audit trail.
  *
- * `git_sync_log.project_id` is a foreign key, so a first-time clone — which
- * happens before the project row exists — has nothing to attach to; those are
- * recorded on the server console instead. Passing `projectId` (re-clone of an
- * existing project) upgrades it to a real `operation = "clone"` row.
+ * Every clone is recorded, including the first-time import that has no project
+ * yet — `git_sync_log.project_id` is nullable since migration 0028 precisely so
+ * that the common case stops falling through the audit trail. It is still a
+ * foreign key, though, so an id that names no existing project is logged as an
+ * unowned operation rather than losing the row to a constraint failure.
  */
 function recordCloneOutcome(
   projectId: string | null | undefined,
+  status: "success" | "failure",
   detail: Record<string, unknown>
 ): void {
-  console.info("[clone]", detail);
-
-  if (!projectId) return;
-
-  const project = db
-    .select({ id: projects.id })
-    .from(projects)
-    .where(eq(projects.id, projectId))
-    .get();
-  if (!project) return;
+  const owner = projectId
+    ? (db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .get()?.id ?? null)
+    : null;
 
   logSyncOperation({
-    projectId,
+    projectId: owner,
     operation: "clone",
-    status: detail.status === "success" ? "success" : "failure",
-    detail,
+    status,
+    detail: { ...detail, status },
   });
 }

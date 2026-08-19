@@ -3,23 +3,37 @@ import fsp from "node:fs/promises";
 import simpleGit from "simple-git";
 import { listWorktrees } from "@/lib/git/worktrees";
 import { redactedErrorMessage } from "@/lib/git/redact";
+import { isArijManagedClone } from "@/lib/git/clone-marker";
+import { GITHUB_CLONE_SOURCE } from "./clone-provenance";
 import {
   containsPathOnDisk,
   isInsideProjectsRoot,
   resolveProjectsRoot,
+  worktreesRootFor,
 } from "./workspace";
 
 /**
  * Removal of an app-managed clone from disk.
  *
  * The rule this module exists to enforce: **Arij only deletes directories Arij
- * created.** Two independent gates have to pass before a single file is
- * touched — the project must be flagged `clone_source = "github"` (Arij cloned
- * it), and the resolved path must still be a strict descendant of the *current*
- * projects root (it is still where Arij puts clones). A user-supplied
- * `gitRepoPath` fails the first gate and is untouchable no matter what.
+ * created.** Three independent gates have to pass before a single file is
+ * touched:
  *
- * Neither gate is a request error: the project is deleted either way, and the
+ *  1. the project is flagged `clone_source = "github"` — Arij is being *asked*
+ *     to treat this as its own clone;
+ *  2. the resolved path is still a strict descendant of the *current* projects
+ *     root — it is still where Arij puts clones;
+ *  3. the directory itself carries Arij's clone marker — it really is one Arij
+ *     created.
+ *
+ * The third gate is the one that cannot be talked into a lie. The first is a
+ * database column, and every column is reachable from the API; the second is a
+ * statement about location, and users may keep their own checkouts under the
+ * root. Only the marker is written by the clone service into a directory it
+ * made itself, so only the marker is evidence. A user-supplied `gitRepoPath` is
+ * untouchable no matter what the other two say.
+ *
+ * No gate is a request error: the project is deleted either way, and the
  * response reports why the directory was left alone.
  */
 
@@ -31,7 +45,9 @@ export type CloneRemovalSkipReason =
   /** The path is outside the configured projects root (moved root, hand-edited row). */
   | "outside_projects_root"
   /** Flagged and in-root, but already gone from disk. */
-  | "missing";
+  | "missing"
+  /** Flagged and in-root, but the directory carries no Arij clone marker. */
+  | "not_arij_clone";
 
 export const CLONE_REMOVAL_SKIP_MESSAGES: Record<CloneRemovalSkipReason, string> = {
   no_path: "Project has no repository path; nothing to remove.",
@@ -40,6 +56,8 @@ export const CLONE_REMOVAL_SKIP_MESSAGES: Record<CloneRemovalSkipReason, string>
   outside_projects_root:
     "Directory left untouched: it is outside the configured projects root.",
   missing: "Directory was already gone; nothing to remove.",
+  not_arij_clone:
+    "Directory left untouched: it carries no Arij clone marker, so Arij cannot confirm it created it.",
 };
 
 export interface ProjectClonePointer {
@@ -51,8 +69,7 @@ export type RemovableCloneCheck =
   | { ok: true; path: string }
   | { ok: false; reason: CloneRemovalSkipReason };
 
-/** The `clone_source` value that marks a directory as Arij-created. */
-export const GITHUB_CLONE_SOURCE = "github";
+export { GITHUB_CLONE_SOURCE };
 
 /**
  * Decides whether a project's directory may be removed, without touching it.
@@ -116,11 +133,18 @@ function skip(reason: CloneRemovalSkipReason, path: string | null): CloneRemoval
  * name would otherwise be indistinguishable inside `.arij-worktrees`. The
  * shared `.arij-worktrees` directory itself is never removed — it belongs to
  * every clone under the root, not to this one.
+ *
+ * Removal is confined to that `.arij-worktrees` directory, which is the only
+ * place `createWorktree()` puts them. Being registered to this clone is not on
+ * its own a licence to delete: a worktree the user added by hand somewhere else
+ * under the projects root is their working directory, quite possibly holding
+ * uncommitted work, and is reported instead.
  */
 async function removeWorktrees(
   repoPath: string,
   projectsRoot: string
 ): Promise<{ removed: string[]; pruned: number }> {
+  const worktreesRoot = worktreesRootFor(repoPath);
   // simple-git throws synchronously from its factory for a missing directory,
   // so every use sits inside a guard — the repo can vanish under us at any point.
   const runGit = async (args: string[]): Promise<void> => {
@@ -153,11 +177,15 @@ async function removeWorktrees(
   const removed: string[] = [];
   for (const worktree of entries) {
     if (worktree.isMain) continue;
-    // Same containment rule as the clone itself: a worktree that somehow points
-    // outside the projects root is reported, never deleted.
-    if (!containsPathOnDisk(worktree.path, projectsRoot)) {
+    // Must be one of Arij's own worktrees: a strict descendant of the shared
+    // `.arij-worktrees` directory (and, transitively, of the projects root).
+    // Anything else is the user's, wherever git has it registered.
+    if (
+      !containsPathOnDisk(worktree.path, worktreesRoot) ||
+      !containsPathOnDisk(worktree.path, projectsRoot)
+    ) {
       console.warn(
-        "[clone-cleanup] skipping worktree outside projects root:",
+        "[clone-cleanup] skipping worktree outside .arij-worktrees:",
         worktree.path
       );
       continue;
@@ -210,6 +238,15 @@ export async function removeProjectClone(
 
   if (!fs.existsSync(check.path)) {
     return skip("missing", check.path);
+  }
+
+  // Third gate, and the only one backed by evidence rather than intent: the
+  // directory must carry the marker the clone service stamps into repositories
+  // it created. Checked here rather than in `resolveRemovableClonePath` so that
+  // function stays a pure decision over the project row, and so a path that is
+  // simply gone reports `missing` instead of an unmarked-directory refusal.
+  if (!isArijManagedClone(check.path)) {
+    return skip("not_arij_clone", check.path);
   }
 
   const worktrees = await removeWorktrees(check.path, projectsRoot);
