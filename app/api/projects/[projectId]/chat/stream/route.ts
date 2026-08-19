@@ -266,19 +266,66 @@ export async function POST(
     controller.close();
   }
 
+  // Full history including the user message just saved above, required by
+  // prompt builders so the agent answers the current question.
+  const fullHistory = [
+    ...messageHistory,
+    { role: "user" as const, content: userContent },
+  ];
+
+  let prompt: string;
+  let chatSystemPrompt = "";
+  const isEpicCreation = isEpicCreationConversationAgentType(conversationType);
+
+  if (isEpicCreation) {
+    const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
+    const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+    const existingEpics = db
+      .select({
+        title: epics.title,
+        description: epics.description,
+      })
+      .from(epics)
+      .where(eq(epics.projectId, projectId))
+      .orderBy(epics.position)
+      .all();
+
+    prompt = finalize
+      ? buildEpicFinalizationPrompt(
+          project,
+          [],
+          fullHistory,
+          globalPrompt,
+          existingEpics,
+        )
+      : buildEpicRefinementPrompt(
+          project,
+          [],
+          fullHistory,
+          globalPrompt,
+          existingEpics,
+        );
+  } else {
+    chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
+    prompt = buildChatPrompt(project, [], fullHistory, chatSystemPrompt);
+  }
+
   // ---------------------------------------------------------------------
   // OpenAI-compatible fast mode: dedicated HTTP path ahead of the CLI
   // branches. History travels in the messages array (no session resume),
   // and upstream SSE chunks are re-emitted as token-by-token delta events.
   // ---------------------------------------------------------------------
   if (resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER && openAiConfig) {
-    let chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
+    let fastModeSystemPrompt = isEpicCreation ? prompt : chatSystemPrompt;
+
     try {
-      chatSystemPrompt = enrichPromptWithDocumentMentions({
-        projectId,
-        prompt: chatSystemPrompt,
-        textSources: [body.content, ...messageHistory.map((m) => m.content)],
-      }).prompt;
+      if (fastModeSystemPrompt.trim()) {
+        fastModeSystemPrompt = enrichPromptWithDocumentMentions({
+          projectId,
+          prompt: fastModeSystemPrompt,
+          textSources: [body.content, ...messageHistory.map((m) => m.content)],
+        }).prompt;
+      }
     } catch (error) {
       if (error instanceof MentionResolutionError) {
         return NextResponse.json({ error: error.message }, { status: 400 });
@@ -287,8 +334,8 @@ export async function POST(
     }
 
     const openAiMessages: OpenAiChatMessage[] = [];
-    if (chatSystemPrompt.trim()) {
-      openAiMessages.push({ role: "system", content: chatSystemPrompt });
+    if (fastModeSystemPrompt.trim()) {
+      openAiMessages.push({ role: "system", content: fastModeSystemPrompt });
     }
     for (const message of messageHistory) {
       openAiMessages.push({
@@ -398,48 +445,6 @@ export async function POST(
 
     return sseResponse(sseStream);
   }
-
-  // Full history including the user message just saved above, required by
-  // prompt builders so the agent answers the current question.
-  const fullHistory = [
-    ...messageHistory,
-    { role: "user" as const, content: userContent },
-  ];
-
-  let prompt: string;
-  if (isEpicCreationConversationAgentType(conversationType)) {
-    const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
-    const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
-    const existingEpics = db
-      .select({
-        title: epics.title,
-        description: epics.description,
-      })
-      .from(epics)
-      .where(eq(epics.projectId, projectId))
-      .orderBy(epics.position)
-      .all();
-
-    prompt = finalize
-      ? buildEpicFinalizationPrompt(
-          project,
-          [],
-          fullHistory,
-          globalPrompt,
-          existingEpics,
-        )
-      : buildEpicRefinementPrompt(
-          project,
-          [],
-          fullHistory,
-          globalPrompt,
-          existingEpics,
-        );
-  } else {
-    const chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
-    prompt = buildChatPrompt(project, [], fullHistory, chatSystemPrompt);
-  }
-
   try {
     prompt = enrichPromptWithDocumentMentions({
       projectId,
@@ -452,7 +457,6 @@ export async function POST(
     }
     throw error;
   }
-
   const providerSupportsResume = isResumableProvider(resolvedAgent.provider);
   // Legacy-row fallback handled inside resolveCliSessionId().
   let cliSessionId = conversation

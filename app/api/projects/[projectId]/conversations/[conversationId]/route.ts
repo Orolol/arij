@@ -101,15 +101,7 @@ export async function PATCH(
 
   const updates: Record<string, string | null> = {};
 
-  if (
-    typeof body.provider === "string" &&
-    body.provider.trim() === OPENAI_COMPATIBLE_PROVIDER
-  ) {
-    updates.provider = OPENAI_COMPATIBLE_PROVIDER;
-    updates.namedAgentId = null;
-    updates.cliSessionId = null;
-    updates.claudeSessionId = null;
-  } else if (Object.prototype.hasOwnProperty.call(body, "namedAgentId")) {
+  if (Object.prototype.hasOwnProperty.call(body, "namedAgentId")) {
     const namedAgentIdInput =
       typeof body.namedAgentId === "string" ? body.namedAgentId.trim() : "";
 
@@ -153,7 +145,7 @@ export async function PATCH(
     typeof body.provider === "string" &&
     isChatProvider(body.provider.trim())
   ) {
-    // Legacy compatibility: provider patching clears named-agent linkage.
+    // Provider patching clears named-agent linkage.
     updates.provider = body.provider.trim();
     updates.namedAgentId = null;
     updates.cliSessionId = null;

@@ -254,6 +254,7 @@ describe("UnifiedChatPanel named-agent toggle", () => {
     });
 
     await waitFor(() => {
+      expect(mockFetch).toHaveBeenCalledTimes(1);
       expect(mockFetch).toHaveBeenCalledWith(
         "/api/projects/proj1/conversations/conv1",
         expect.objectContaining({

@@ -38,13 +38,4 @@ export function isEpicCreationConversationAgentType(type: string | null | undefi
   return normalizeConversationAgentType(type) === EPIC_CREATION_AGENT_TYPE;
 }
 
-/**
- * Returns false for all conversation types — OpenAI-compatible fast mode
- * is eligible for all chat conversations.
- */
-export function isOpenAiIneligibleConversationAgentType(
-  _type: string | null | undefined
-): boolean {
-  return false;
-}
 

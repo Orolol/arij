@@ -294,19 +294,6 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       [activeId, rawSendMessage],
     );
 
-    async function handleAgentChange(namedAgentId: string) {
-      if (!activeId || hasMessages) {
-        return;
-      }
-      await updateConversation(activeId, { namedAgentId });
-    }
-
-    async function handleProviderChange(provider: string) {
-      if (!activeId || hasMessages) {
-        return;
-      }
-      await updateConversation(activeId, { provider });
-    }
 
     async function handleSelectAgentOrProvider({
       namedAgentId,
@@ -326,7 +313,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       } else if (namedAgentId) {
         await updateConversation(activeId, { namedAgentId, provider });
       } else {
-        await updateConversation(activeId, { provider });
+        await updateConversation(activeId, { provider, namedAgentId: null });
       }
     }
 
@@ -360,8 +347,6 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
               activeProvider={activeProvider}
               hasMessages={hasMessages}
               isBusy={isCurrentConversationBusy}
-              onAgentChange={handleAgentChange}
-              onProviderChange={handleProviderChange}
               onSelectAgentOrProvider={handleSelectAgentOrProvider}
             />
           }

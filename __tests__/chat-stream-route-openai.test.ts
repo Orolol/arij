@@ -9,6 +9,7 @@ import {
 const mockPromptBuilder = vi.hoisted(() => ({
   buildChatPrompt: vi.fn(() => "CHAT_PROMPT"),
   buildEpicRefinementPrompt: vi.fn(() => "EPIC_PROMPT"),
+  buildEpicFinalizationPrompt: vi.fn(() => "EPIC_FINALIZATION_PROMPT"),
   buildTitleGenerationPrompt: vi.fn(() => "TITLE_PROMPT"),
 }));
 
@@ -28,6 +29,7 @@ vi.mock("@/lib/utils/nanoid", () => ({
 vi.mock("@/lib/claude/prompt-builder", () => ({
   buildChatPrompt: mockPromptBuilder.buildChatPrompt,
   buildEpicRefinementPrompt: mockPromptBuilder.buildEpicRefinementPrompt,
+  buildEpicFinalizationPrompt: mockPromptBuilder.buildEpicFinalizationPrompt,
   buildTitleGenerationPrompt: mockPromptBuilder.buildTitleGenerationPrompt,
 }));
 
@@ -279,31 +281,82 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     expect(body.messages.some((m) => m.role === "system")).toBe(false);
   });
 
-  it("supports epic_creation and brainstorm conversations with OpenAI-compatible fast mode", async () => {
-    for (const type of ["epic_creation", "brainstorm"]) {
-      seedFastModeConversation({
-        conversation: {
-          id: "conv1",
-          type,
-          provider: "openai-compatible",
-          label: type === "epic_creation" ? "New Epic" : "Brainstorm",
-          status: "active",
-          namedAgentId: null,
-        },
-        settings: {},
-      });
-      fetchMock.mockReset();
-      fetchMock.mockResolvedValue(sseResponse(["ok"]));
+  it("supports epic_creation refinement and finalization prompts in OpenAI-compatible fast mode", async () => {
+    // Refinement prompt when finalize is false
+    seedFastModeConversation({
+      conversation: {
+        id: "conv-epic",
+        type: "epic_creation",
+        provider: "openai-compatible",
+        label: "New Epic",
+        status: "active",
+        namedAgentId: null,
+      },
+      settings: {},
+    });
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(sseResponse(["ok"]));
 
-      const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
-      const response = await POST(
-        mockJsonRequest({ content: "Hello", conversationId: "conv1" }),
-        mockRouteContext({ projectId: "proj1" }),
-      );
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const resRefine = await POST(
+      mockJsonRequest({ content: "Refine epic idea", conversationId: "conv-epic", finalize: false }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
 
-      expect(response.status).toBe(200);
-      expect(fetchMock).toHaveBeenCalled();
-    }
+    expect(resRefine.status).toBe(200);
+    expect(mockPromptBuilder.buildEpicRefinementPrompt).toHaveBeenCalled();
+    const refineReqBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+    expect(refineReqBody.messages[0]).toEqual({ role: "system", content: "EPIC_PROMPT" });
+
+    // Finalization prompt when finalize is true
+    seedFastModeConversation({
+      conversation: {
+        id: "conv-epic",
+        type: "epic_creation",
+        provider: "openai-compatible",
+        label: "New Epic",
+        status: "active",
+        namedAgentId: null,
+      },
+      settings: {},
+    });
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(sseResponse(["```json\n{\"title\": \"Epic\"}\n```"]));
+
+    const resFinalize = await POST(
+      mockJsonRequest({ content: "Generate stories", conversationId: "conv-epic", finalize: true }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    expect(resFinalize.status).toBe(200);
+    expect(mockPromptBuilder.buildEpicFinalizationPrompt).toHaveBeenCalled();
+    const finalizeReqBody = JSON.parse(fetchMock.mock.calls[0][1]?.body as string);
+    expect(finalizeReqBody.messages[0]).toEqual({ role: "system", content: "EPIC_FINALIZATION_PROMPT" });
+  });
+
+  it("supports brainstorm conversations with OpenAI-compatible fast mode", async () => {
+    seedFastModeConversation({
+      conversation: {
+        id: "conv-brainstorm",
+        type: "brainstorm",
+        provider: "openai-compatible",
+        label: "Brainstorm",
+        status: "active",
+        namedAgentId: null,
+      },
+      settings: {},
+    });
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(sseResponse(["ok"]));
+
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    const response = await POST(
+      mockJsonRequest({ content: "Hello", conversationId: "conv-brainstorm" }),
+      mockRouteContext({ projectId: "proj1" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalled();
   });
 
   it("rejects image attachments with 400", async () => {

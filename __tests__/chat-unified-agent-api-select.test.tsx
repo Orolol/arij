@@ -93,7 +93,7 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
     expect(dropdowns[0]).not.toBeDisabled();
   });
 
-  it("includes Direct API (OpenAI-compatible) and all configured Named Agents in the single dropdown", () => {
+  it("includes Direct API, Named Agents, and CLI Providers in the single dropdown", () => {
     render(
       <ChatProviderSelect
         activeConversation={createConversation()}
@@ -113,11 +113,15 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
     expect(optionValues).toContain("agent-2");
     expect(optionValues).toContain("agent-3");
 
+    // CLI providers are present
+    expect(optionValues).toContain("codex");
+    expect(optionValues).toContain("gemini-cli");
+    expect(optionValues).toContain("pi");
+
     // Check label for OpenAI-compatible
     const openAiOption = Array.from(select.options).find((opt) => opt.value === "openai-compatible");
     expect(openAiOption?.textContent).toBe("OpenAI-compatible");
   });
-
   it("is enabled for both Named Agent conversations and OpenAI-compatible conversations when fresh", () => {
     // With Named Agent assigned
     const { unmount } = render(
@@ -185,6 +189,26 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
 
     expect(onSelect).toHaveBeenCalledWith({
       namedAgentId: "agent-3",
+      provider: "gemini-cli",
+    });
+  });
+  it("dispatches correct selection payload when switching to a CLI Provider", () => {
+    const onSelect = vi.fn();
+    render(
+      <ChatProviderSelect
+        activeConversation={createConversation({ namedAgentId: "agent-1", provider: "claude-code" })}
+        activeProvider="claude-code"
+        onSelect={onSelect}
+      />,
+    );
+
+    fireEvent.change(screen.getByTestId("chat-agent-select"), {
+      target: { value: "gemini-cli" },
+    });
+
+    expect(onSelect).toHaveBeenCalledTimes(1);
+    expect(onSelect).toHaveBeenCalledWith({
+      namedAgentId: null,
       provider: "gemini-cli",
     });
   });

@@ -13,45 +13,39 @@ import { useNamedAgentsList } from "@/hooks/useNamedAgentsList";
 import {
   OPENAI_COMPATIBLE_PROVIDER,
   PROVIDER_LABELS,
+  PROVIDER_OPTIONS,
+  type AgentProvider,
   type ChatModeProvider,
 } from "@/lib/agent-config/constants";
 import type { Conversation } from "@/hooks/useConversations";
 
 export interface ChatAgentSelection {
   namedAgentId: string | null;
-  provider: string;
+  provider: ChatModeProvider;
 }
 
 interface ChatProviderSelectProps {
-  /** Active conversation object or provider string. */
-  activeConversation?: Conversation | null;
-  activeProvider?: string;
-  value?: string;
-  onChange?: (provider: string) => void;
-  onSelect?: (selection: ChatAgentSelection) => void;
-  onAgentChange?: (namedAgentId: string) => void;
-  onProviderChange?: (provider: string) => void;
+  activeConversation: Conversation | null;
+  activeProvider: string;
+  onSelect: (selection: ChatAgentSelection) => void;
   disabled?: boolean;
-  conversationType?: string | null;
   className?: string;
 }
 
 /**
  * Single unified chat agent and provider selector:
- * Offers Direct API (OpenAI-compatible fast mode) and all configured Named Agents.
+ * Offers Direct API (OpenAI-compatible fast mode), configured Named Agents,
+ * and raw CLI Providers.
  */
 export function ChatProviderSelect({
   activeConversation,
   activeProvider,
-  value,
-  onChange,
   onSelect,
-  onAgentChange,
-  onProviderChange,
   disabled = false,
   className,
 }: ChatProviderSelectProps) {
   const { agents, loading } = useNamedAgentsList();
+  const safeAgents = Array.isArray(agents) ? agents : [];
 
   if (loading) {
     return (
@@ -69,11 +63,12 @@ export function ChatProviderSelect({
     );
   }
 
-  // Determine selected value
-  let selectedValue: string = "";
-  if (value) {
-    selectedValue = value;
-  } else if (activeConversation) {
+  // Determine selected value:
+  // 1. Direct API (OpenAI-compatible)
+  // 2. Named Agent ID
+  // 3. Raw CLI Provider string
+  let selectedValue = "";
+  if (activeConversation) {
     if (
       activeConversation.provider === OPENAI_COMPATIBLE_PROVIDER ||
       activeProvider === OPENAI_COMPATIBLE_PROVIDER
@@ -81,40 +76,42 @@ export function ChatProviderSelect({
       selectedValue = OPENAI_COMPATIBLE_PROVIDER;
     } else if (activeConversation.namedAgentId) {
       selectedValue = activeConversation.namedAgentId;
-    } else {
-      const matchingAgent = agents.find(
-        (a) => a.provider === (activeProvider ?? activeConversation.provider)
-      );
-      selectedValue = matchingAgent ? matchingAgent.id : (agents[0]?.id ?? "");
+    } else if (activeConversation.provider) {
+      selectedValue = activeConversation.provider;
+    } else if (activeProvider) {
+      selectedValue = activeProvider;
     }
   } else if (activeProvider === OPENAI_COMPATIBLE_PROVIDER) {
     selectedValue = OPENAI_COMPATIBLE_PROVIDER;
+  } else if (activeProvider) {
+    selectedValue = activeProvider;
   }
 
   function handleValueChange(nextValue: string) {
     if (nextValue === OPENAI_COMPATIBLE_PROVIDER) {
-      onSelect?.({
+      onSelect({
         namedAgentId: null,
         provider: OPENAI_COMPATIBLE_PROVIDER,
       });
-      onProviderChange?.(OPENAI_COMPATIBLE_PROVIDER);
-      onChange?.(OPENAI_COMPATIBLE_PROVIDER);
     } else {
-      const selectedAgent = agents.find((a) => a.id === nextValue);
-      const provider = selectedAgent?.provider ?? "claude-code";
-      onSelect?.({
-        namedAgentId: nextValue,
-        provider,
-      });
-      onAgentChange?.(nextValue);
-      onProviderChange?.(provider);
-      onChange?.(provider);
+      const selectedAgent = safeAgents.find((a) => a.id === nextValue);
+      if (selectedAgent) {
+        onSelect({
+          namedAgentId: selectedAgent.id,
+          provider: selectedAgent.provider,
+        });
+      } else if (PROVIDER_OPTIONS.includes(nextValue as AgentProvider)) {
+        onSelect({
+          namedAgentId: null,
+          provider: nextValue as AgentProvider,
+        });
+      }
     }
   }
 
   return (
     <Select
-      value={selectedValue || undefined}
+      value={selectedValue || ""}
       onValueChange={handleValueChange}
       disabled={disabled}
     >
@@ -139,12 +136,12 @@ export function ChatProviderSelect({
             {PROVIDER_LABELS[OPENAI_COMPATIBLE_PROVIDER]}
           </SelectItem>
         </SelectGroup>
-        {agents.length > 0 && (
+        {safeAgents.length > 0 && (
           <SelectGroup>
             <SelectLabel className="text-[11px] font-semibold text-muted-foreground px-2 py-1">
               Named Agents
             </SelectLabel>
-            {agents.map((agent) => (
+            {safeAgents.map((agent) => (
               <SelectItem
                 key={agent.id}
                 value={agent.id}
@@ -155,6 +152,20 @@ export function ChatProviderSelect({
             ))}
           </SelectGroup>
         )}
+        <SelectGroup>
+          <SelectLabel className="text-[11px] font-semibold text-muted-foreground px-2 py-1">
+            CLI Providers
+          </SelectLabel>
+          {PROVIDER_OPTIONS.map((provider) => (
+            <SelectItem
+              key={provider}
+              value={provider}
+              data-testid={`chat-option-provider-${provider}`}
+            >
+              {PROVIDER_LABELS[provider]}
+            </SelectItem>
+          ))}
+        </SelectGroup>
       </SelectContent>
     </Select>
   );

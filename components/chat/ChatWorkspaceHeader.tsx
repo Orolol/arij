@@ -15,9 +15,9 @@ interface ChatWorkspaceHeaderProps {
   activeProvider: string;
   hasMessages: boolean;
   isBusy: boolean;
+  onSelectAgentOrProvider?: (selection: ChatAgentSelection) => void;
   onAgentChange?: (namedAgentId: string) => void;
   onProviderChange?: (provider: string) => void;
-  onSelectAgentOrProvider?: (selection: ChatAgentSelection) => void;
 }
 
 /**
@@ -30,20 +30,17 @@ export function ChatWorkspaceHeader({
   activeProvider,
   hasMessages,
   isBusy,
+  onSelectAgentOrProvider,
   onAgentChange,
   onProviderChange,
-  onSelectAgentOrProvider,
 }: ChatWorkspaceHeaderProps) {
   function handleSelect(selection: ChatAgentSelection) {
     if (onSelectAgentOrProvider) {
       onSelectAgentOrProvider(selection);
-    } else {
-      if (selection.namedAgentId) {
-        onAgentChange?.(selection.namedAgentId);
-      }
-      if (selection.provider) {
-        onProviderChange?.(selection.provider);
-      }
+    } else if (selection.namedAgentId) {
+      onAgentChange?.(selection.namedAgentId);
+    } else if (selection.provider) {
+      onProviderChange?.(selection.provider);
     }
   }
 
@@ -64,8 +61,6 @@ export function ChatWorkspaceHeader({
         activeConversation={activeConversation}
         activeProvider={activeProvider}
         onSelect={handleSelect}
-        onAgentChange={onAgentChange}
-        onProviderChange={onProviderChange}
         disabled={!activeConversation || hasMessages || isBusy}
       />
     </div>
