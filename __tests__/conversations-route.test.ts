@@ -4,8 +4,15 @@ import {
   resetDbMockState,
 } from "@/__tests__/helpers/db-mock";
 
-const { runCutoverMigrationOnce } = vi.hoisted(() => ({
+const {
+  runCutoverMigrationOnce,
+  resolveAgent: mockResolveAgent,
+} = vi.hoisted(() => ({
   runCutoverMigrationOnce: vi.fn(),
+  resolveAgent: vi.fn(() => ({
+    provider: "claude-code",
+    namedAgentId: null,
+  })),
 }));
 
 vi.mock("@/lib/db", async () => {
@@ -18,10 +25,7 @@ vi.mock("@/lib/utils/nanoid", () => ({
 }));
 
 vi.mock("@/lib/agent-config/agent-resolution", () => ({
-  resolveAgent: vi.fn(() => ({
-    provider: "claude-code",
-    namedAgentId: null,
-  })),
+  resolveAgent: mockResolveAgent,
 }));
 
 vi.mock("@/lib/chat/unified-cutover-migration", () => ({
@@ -32,6 +36,11 @@ describe("conversations route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     resetDbMockState();
+    mockResolveAgent.mockReset();
+    mockResolveAgent.mockReturnValue({
+      provider: "claude-code",
+      namedAgentId: null,
+    });
   });
 
   it("runs cutover migration and normalizes legacy type/status order", async () => {
@@ -79,5 +88,125 @@ describe("conversations route", () => {
       id: "conv-newer",
       status: "active",
     });
+  });
+
+  it("POST persists the openai-compatible provider on the conversation", async () => {
+    dbMockState.getQueue.push({ id: "proj-1" }); // project exists
+    dbMockState.getQueue.push({ id: "conv-created" }); // created row read-back
+
+    const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
+    const response = await POST(
+      {
+        json: async () => ({
+          type: "chat",
+          label: "Chat",
+          provider: "openai-compatible",
+        }),
+      } as never,
+      { params: Promise.resolve({ projectId: "proj-1" }) },
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    // The fast-mode provider is a known chat provider: no fallback resolution.
+    expect(mockResolveAgent).not.toHaveBeenCalled();
+    expect(dbMockState.insertCalls).toContainEqual(
+      expect.objectContaining({
+        id: "conv-created",
+        type: "chat",
+        provider: "openai-compatible",
+        namedAgentId: null,
+      })
+    );
+    expect(json.data).toMatchObject({ id: "conv-created" });
+  });
+
+  it("POST falls back to the configured default for unknown providers", async () => {
+    dbMockState.getQueue.push({ id: "proj-1" });
+    dbMockState.getQueue.push({ id: "conv-created" });
+
+    const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
+    await POST(
+      {
+        json: async () => ({ type: "chat", provider: "carrier-pigeon" }),
+      } as never,
+      { params: Promise.resolve({ projectId: "proj-1" }) },
+    );
+
+    expect(mockResolveAgent).toHaveBeenCalledWith("chat", "proj-1");
+    expect(dbMockState.insertCalls).toContainEqual(
+      expect.objectContaining({ provider: "claude-code" })
+    );
+  });
+
+  it("PATCH accepts the openai-compatible provider and clears named-agent linkage", async () => {
+    dbMockState.getQueue.push({
+      id: "conv-1",
+      projectId: "proj-1",
+      type: "chat",
+      provider: "claude-code",
+      namedAgentId: null,
+      cliSessionId: null,
+    });
+    dbMockState.getQueue.push({
+      id: "conv-1",
+      projectId: "proj-1",
+      type: "chat",
+      provider: "openai-compatible",
+      namedAgentId: null,
+      cliSessionId: null,
+    });
+
+    const { PATCH } = await import(
+      "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
+    );
+    const response = await PATCH(
+      {
+        json: async () => ({ provider: "openai-compatible" }),
+      } as never,
+      { params: Promise.resolve({ projectId: "proj-1", conversationId: "conv-1" }) },
+    );
+    const json = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(dbMockState.updateCalls).toContainEqual(
+      expect.objectContaining({
+        provider: "openai-compatible",
+        namedAgentId: null,
+        cliSessionId: null,
+      })
+    );
+    expect(json.data).toMatchObject({ provider: "openai-compatible" });
+  });
+
+  it("PATCH ignores unknown provider values", async () => {
+    dbMockState.getQueue.push({
+      id: "conv-1",
+      projectId: "proj-1",
+      type: "chat",
+      provider: "claude-code",
+      namedAgentId: null,
+      cliSessionId: null,
+    });
+    dbMockState.getQueue.push({
+      id: "conv-1",
+      projectId: "proj-1",
+      type: "chat",
+      provider: "claude-code",
+      namedAgentId: null,
+      cliSessionId: null,
+    });
+
+    const { PATCH } = await import(
+      "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
+    );
+    await PATCH(
+      {
+        json: async () => ({ provider: "carrier-pigeon" }),
+      } as never,
+      { params: Promise.resolve({ projectId: "proj-1", conversationId: "conv-1" }) },
+    );
+
+    expect(dbMockState.updateCalls).toHaveLength(0);
   });
 });

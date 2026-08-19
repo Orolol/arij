@@ -31,21 +31,23 @@ const mockCreateConversation = vi.fn(async (opts: { type?: string; label?: strin
   createdAt: "2024-01-01",
 }));
 
+let mockConversations: Array<Record<string, unknown>> = [
+  {
+    id: "conv1",
+    projectId: "proj1",
+    type: "brainstorm",
+    label: "Brainstorm",
+    status: "active",
+    epicId: null,
+    provider: "claude-code",
+    namedAgentId: null,
+    createdAt: "2024-01-01",
+  },
+];
+
 vi.mock("@/hooks/useConversations", () => ({
   useConversations: () => ({
-    conversations: [
-      {
-        id: "conv1",
-        projectId: "proj1",
-        type: "brainstorm",
-        label: "Brainstorm",
-        status: "active",
-        epicId: null,
-        provider: "claude-code",
-        namedAgentId: null,
-        createdAt: "2024-01-01",
-      },
-    ],
+    conversations: mockConversations,
     activeId: "conv1",
     setActiveId: vi.fn(),
     createConversation: mockCreateConversation,
@@ -85,6 +87,19 @@ describe("New conversation dropdown menu", () => {
     vi.restoreAllMocks();
     mockCreateConversation.mockClear();
     window.localStorage.clear();
+    mockConversations = [
+      {
+        id: "conv1",
+        projectId: "proj1",
+        type: "brainstorm",
+        label: "Brainstorm",
+        status: "active",
+        epicId: null,
+        provider: "claude-code",
+        namedAgentId: null,
+        createdAt: "2024-01-01",
+      },
+    ];
 
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
@@ -159,5 +174,46 @@ describe("New conversation dropdown menu", () => {
         label: "New Epic",
       });
     });
+  });
+
+  it("offers a plain Chat tab for OpenAI-compatible fast mode", async () => {
+    renderExpandedPanel();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("new-conversation-tab"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("new-tab-chat")).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByTestId("new-tab-chat"));
+
+    await waitFor(() => {
+      expect(mockCreateConversation).toHaveBeenCalledWith({
+        type: "chat",
+        label: "Chat",
+      });
+    });
+  });
+
+  it("marks a chat-type conversation tab with data-agent-type=chat", () => {
+    mockConversations = [
+      {
+        id: "conv1",
+        projectId: "proj1",
+        type: "chat",
+        label: "Chat",
+        status: "active",
+        epicId: null,
+        provider: "openai-compatible",
+        namedAgentId: null,
+        createdAt: "2024-01-01",
+      },
+    ];
+
+    renderExpandedPanel();
+
+    expect(
+      document.querySelector('[data-agent-type="chat"]')
+    ).toBeInTheDocument();
   });
 });

@@ -9,7 +9,15 @@ import { buildChatPrompt, buildEpicRefinementPrompt, buildEpicFinalizationPrompt
 import { getProvider, type ProviderType } from "@/lib/providers";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { isEpicCreationConversationAgentType } from "@/lib/chat/conversation-agent";
+import {
+  isEpicCreationConversationAgentType,
+  isOpenAiIneligibleConversationAgentType,
+} from "@/lib/chat/conversation-agent";
+import {
+  getOpenAiConfigFromSettings,
+  streamOpenAiChatCompletion,
+  type OpenAiChatMessage,
+} from "@/lib/openai/client";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import { activityRegistry } from "@/lib/activity-registry";
 import {
@@ -18,9 +26,10 @@ import {
   validateMentionsExist,
 } from "@/lib/documents/mentions";
 import {
-  isAgentProvider,
+  isChatProvider,
+  OPENAI_COMPATIBLE_PROVIDER,
   PROVIDER_LABELS,
-  type AgentProvider,
+  type ChatModeProvider,
 } from "@/lib/agent-config/constants";
 import {
   isResumableProvider,
@@ -31,14 +40,16 @@ import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { chatMessageSchema } from "@/lib/validation/chat-schemas";
 
 /**
- * The stored conversation provider, honoured for any provider the app knows.
+ * The stored conversation provider, honoured for any provider the app
+ * knows — including the OpenAI-compatible fast mode, which is not a CLI
+ * provider (the fast-mode branch below handles it before any CLI spawn).
  * A short allowlist here silently discards the user's choice: the
- * conversation create/update routes accept every `isAgentProvider()` value,
+ * conversation create/update routes accept every `isChatProvider()` value,
  * so a Pi conversation would normalize to null and fall back to the
  * configured chat default — running a different CLI than the one shown.
  */
-function normalizeProvider(value: string | null | undefined): ProviderType | null {
-  return value && isAgentProvider(value) ? (value as ProviderType) : null;
+function normalizeProvider(value: string | null | undefined): ChatModeProvider | null {
+  return value && isChatProvider(value) ? value : null;
 }
 
 function isResumeSessionExpiredError(error: string | null | undefined): boolean {
@@ -57,6 +68,8 @@ export async function POST(
   const validated = await validateBody(chatMessageSchema, request);
   if (isValidationError(validated)) return validated;
   const body = validated.data;
+
+  const encoder = new TextEncoder();
 
   if (!body.content && (!body.attachmentIds || body.attachmentIds.length === 0)) {
     return NextResponse.json(
@@ -189,6 +202,128 @@ export async function POST(
       ? { ...resolvedByNamedAgent, provider: conversationProvider }
       : resolvedByNamedAgent;
 
+  // ---------------------------------------------------------------------
+  // OpenAI-compatible fast mode: dedicated HTTP path ahead of the CLI
+  // branches. History travels in the messages array (no session resume),
+  // and upstream SSE chunks are re-emitted as token-by-token delta events.
+  // ---------------------------------------------------------------------
+  if (resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER) {
+    if (isOpenAiIneligibleConversationAgentType(conversationType)) {
+      return NextResponse.json(
+        {
+          error:
+            "OpenAI-compatible mode is not available for epic-creation or brainstorm conversations.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (attachmentIds.length > 0) {
+      return NextResponse.json(
+        { error: "Image attachments are not supported in OpenAI-compatible mode." },
+        { status: 400 }
+      );
+    }
+
+    const openAiConfig = getOpenAiConfigFromSettings();
+    if (!openAiConfig.baseUrl || !openAiConfig.model) {
+      return NextResponse.json(
+        {
+          error:
+            "OpenAI-compatible mode is not configured. Set the Base URL and Model in Settings.",
+        },
+        { status: 400 }
+      );
+    }
+
+    const chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
+    const openAiMessages: OpenAiChatMessage[] = [];
+    if (chatSystemPrompt.trim()) {
+      openAiMessages.push({ role: "system", content: chatSystemPrompt });
+    }
+    // recentMessages already includes the user message saved above.
+    for (const message of recentMessages) {
+      openAiMessages.push({
+        role: message.role as OpenAiChatMessage["role"],
+        content: message.content,
+      });
+    }
+
+    const activityLabel = conversation?.label
+      ? `Chat: ${conversation.label}`
+      : "Chat";
+    const activityId = `chat-${createId()}`;
+
+    setConversationStatus("generating");
+
+    const abortController = new AbortController();
+    activityRegistry.register({
+      id: activityId,
+      projectId,
+      type: "chat",
+      label: activityLabel,
+      provider: OPENAI_COMPATIBLE_PROVIDER,
+      namedAgentName: resolvedAgent.name ?? null,
+      startedAt: new Date().toISOString(),
+      kill: () => abortController.abort(),
+    });
+
+    let fullContent = "";
+    const sseStream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const delta of streamOpenAiChatCompletion(
+            openAiConfig,
+            openAiMessages,
+            abortController.signal,
+          )) {
+            fullContent += delta;
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`)
+            );
+          }
+          activityRegistry.unregister(activityId);
+          // saveAssistantAndTitle is hoisted from below; it also emits the
+          // { done: true, messageId } event and closes the stream.
+          saveAssistantAndTitle(controller, fullContent, "active");
+        } catch (error) {
+          if (abortController.signal.aborted) {
+            // Client disconnected or the activity was killed — nothing to persist.
+            activityRegistry.unregister(activityId);
+            setConversationStatus("active");
+            return;
+          }
+          const failureMessage =
+            error instanceof Error &&
+            error.message.startsWith("OpenAI-compatible API error:")
+              ? error.message
+              : `OpenAI-compatible API error: ${
+                  error instanceof Error ? error.message : "request failed"
+                }`;
+          fullContent = failureMessage;
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify({ delta: failureMessage })}\n\n`)
+          );
+          activityRegistry.unregister(activityId);
+          saveAssistantAndTitle(controller, failureMessage, "error");
+        }
+      },
+      cancel() {
+        activityRegistry.unregister(activityId);
+        abortController.abort();
+        setConversationStatus("active");
+      },
+    });
+
+    return new Response(sseStream, {
+      headers: {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
   try {
     prompt = enrichPromptWithDocumentMentions({
       projectId,
@@ -228,8 +363,6 @@ export async function POST(
   const activityLabel =
     conversation?.label ? `Chat: ${conversation.label}` : "Chat";
   const activityId = `chat-${createId()}`;
-
-  const encoder = new TextEncoder();
 
   /**
    * Helper: save assistant message and generate title after stream completes.
@@ -298,7 +431,8 @@ export async function POST(
 
   // Every non-Claude provider: non-streaming, spawned through its own provider
   if (resolvedAgent.provider !== "claude-code") {
-    const dynamicProvider = getProvider(resolvedAgent.provider);
+    // "openai-compatible" is not a CLI provider: that branch returned above.
+    const dynamicProvider = getProvider(resolvedAgent.provider as ProviderType);
     let activeProviderSession = dynamicProvider.spawn({
       sessionId: `chat-${createId()}`,
       prompt: effectivePrompt,
@@ -327,8 +461,7 @@ export async function POST(
           encoder.encode(
             `data: ${JSON.stringify({
               status: `${
-                PROVIDER_LABELS[resolvedAgent.provider as AgentProvider] ??
-                resolvedAgent.provider
+                PROVIDER_LABELS[resolvedAgent.provider]
               } processing...`,
             })}\n\n`
           )

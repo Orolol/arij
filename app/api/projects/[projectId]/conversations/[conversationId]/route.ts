@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { chatConversations, namedAgents } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { resolveAgent } from "@/lib/agent-config/agent-resolution";
-import { isAgentProvider } from "@/lib/agent-config/constants";
+import { isChatProvider } from "@/lib/agent-config/constants";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { updateConversationSchema } from "@/lib/validation/chat-schemas";
@@ -135,7 +135,7 @@ export async function PATCH(
     }
   } else if (
     typeof body.provider === "string" &&
-    isAgentProvider(body.provider)
+    isChatProvider(body.provider)
   ) {
     // Legacy compatibility: provider patching clears named-agent linkage.
     updates.provider = body.provider;
