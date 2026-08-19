@@ -1,4 +1,8 @@
 import simpleGit, { type SimpleGit } from "simple-git";
+import {
+  isSafeRepoSegment,
+  matchGitHubRemoteUrl,
+} from "@/lib/git/github-url";
 
 export interface ParsedGitHubRemote {
   owner: string;
@@ -49,31 +53,21 @@ export function parseGitHubOwnerRepoFromRemoteUrl(
   const value = normalizeRemoteUrl(remoteUrl);
   if (!value) return null;
 
-  const patterns = [
-    /^git@github\.com:(?<owner>[^/]+)\/(?<repo>[^/]+?)(?:\.git)?\/?$/i,
-    /^ssh:\/\/git@github\.com\/(?<owner>[^/]+)\/(?<repo>[^/]+?)(?:\.git)?\/?$/i,
-    /^https?:\/\/(?:www\.)?github\.com\/(?<owner>[^/]+)\/(?<repo>[^/]+?)(?:\.git)?\/?$/i,
-    /^git:\/\/github\.com\/(?<owner>[^/]+)\/(?<repo>[^/]+?)(?:\.git)?\/?$/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = value.match(pattern);
-    if (!match?.groups?.owner || !match.groups.repo) {
-      continue;
-    }
-
-    const owner = match.groups.owner;
-    const repo = match.groups.repo;
-    if (!owner || !repo) continue;
-
-    return {
-      owner,
-      repo,
-      ownerRepo: `${owner}/${repo}`,
-    };
+  // The grammar (patterns + segment safety) lives in lib/git/github-url.ts so
+  // the server-side and client-side parsers share one source of truth. The
+  // safety check matters here too: a remote whose owner/repo fails it (e.g.
+  // `..` or a leading `-`) is not a usable GitHub reference.
+  const matched = matchGitHubRemoteUrl(value);
+  if (!matched) return null;
+  if (!isSafeRepoSegment(matched.owner) || !isSafeRepoSegment(matched.repo)) {
+    return null;
   }
 
-  return null;
+  return {
+    owner: matched.owner,
+    repo: matched.repo,
+    ownerRepo: `${matched.owner}/${matched.repo}`,
+  };
 }
 
 function getGit(repoPath: string): SimpleGit {

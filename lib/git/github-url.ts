@@ -9,9 +9,11 @@
  * dependency, following the same client-safe split as
  * `lib/agents/scheduler-constants.ts` and `lib/night/constants.ts`.
  *
- * The server-side `parseGitHubRepoInput` in `lib/git/remote.ts` implements the
- * same grammar; it should re-export from this module rather than keep a second
- * copy.
+ * This module also owns the remote-URL grammar: `lib/git/remote.ts`
+ * composes `parseGitHubOwnerRepoFromRemoteUrl` from `REMOTE_URL_PATTERNS`
+ * and `isSafeRepoSegment` exported here, so the server-side parser and the
+ * client-side one can never drift (pinned by
+ * __tests__/github-remote-grammar-parity.test.ts).
  */
 
 export interface ParsedGitHubRepoInput {
@@ -22,8 +24,15 @@ export interface ParsedGitHubRepoInput {
   cloneUrl: string;
 }
 
-/** The shapes `git remote -v` can hand back, plus what a user pastes. */
-const REMOTE_URL_PATTERNS = [
+/**
+ * The shapes `git remote -v` can hand back, plus what a user pastes.
+ *
+ * This module owns the grammar: `lib/git/remote.ts` composes its
+ * `parseGitHubOwnerRepoFromRemoteUrl` from these patterns plus the segment
+ * safety check below, so the server-side and client-side parsers can never
+ * drift apart (enforced by __tests__/github-remote-grammar-parity.test.ts).
+ */
+export const REMOTE_URL_PATTERNS = [
   /^git@github\.com:(?<owner>[^/]+)\/(?<repo>[^/]+?)(?:\.git)?\/?$/i,
   /^ssh:\/\/git@github\.com\/(?<owner>[^/]+)\/(?<repo>[^/]+?)(?:\.git)?\/?$/i,
   /^https?:\/\/(?:www\.)?github\.com\/(?<owner>[^/]+)\/(?<repo>[^/]+?)(?:\.git)?\/?$/i,
@@ -34,16 +43,17 @@ const REMOTE_URL_PATTERNS = [
  * GitHub allows letters, digits, `.`, `-` and `_` in owner and repo names.
  * Anything else — separators, NUL bytes, whitespace — is rejected here so a
  * crafted URL can never reach the filesystem layer. A leading `-` is refused as
- * well: `git clone` would read it as an option.
+ * well: `git clone` would read it as an option. Only the segments that are
+ * exactly `.` or `..` are rejected for traversal: an embedded `..` inside an
+ * already-isolated segment (e.g. `repo..v2`) cannot escape a directory and
+ * GitHub allows such names.
  */
 const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 
-function isSafeRepoSegment(segment: string): boolean {
+export function isSafeRepoSegment(segment: string): boolean {
   if (!segment) return false;
   if (segment.startsWith("-")) return false;
-  // Rejects `.`, `..` and any embedded traversal component, matching the
-  // posture of validatePath() in lib/validation/path.ts.
-  if (segment === "." || segment.includes("..")) return false;
+  if (segment === "." || segment === "..") return false;
   return REPO_SEGMENT_PATTERN.test(segment);
 }
 
@@ -64,7 +74,12 @@ function buildRepoInput(
   };
 }
 
-function matchRemoteUrl(
+/**
+ * Matches a value against the remote-URL grammar. The matched owner/repo are
+ * NOT yet safety-checked — callers must run them through `isSafeRepoSegment`
+ * (as `buildRepoInput` and `remote.ts` both do).
+ */
+export function matchGitHubRemoteUrl(
   value: string
 ): { owner: string; repo: string } | null {
   for (const pattern of REMOTE_URL_PATTERNS) {
@@ -116,7 +131,7 @@ export function parseGitHubRepoInput(
 
   for (const candidate of [withScheme, stripBrowserSuffix(withScheme)]) {
     if (!candidate) continue;
-    const matched = matchRemoteUrl(candidate);
+    const matched = matchGitHubRemoteUrl(candidate);
     if (!matched) continue;
     // A `?query` or `#anchor` is swallowed by the patterns' `[^/]+?` repo
     // group, so a rejected candidate falls through to the stripped one rather
