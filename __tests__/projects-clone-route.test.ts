@@ -7,6 +7,7 @@ import {
 
 const mockCloneRepository = vi.hoisted(() => vi.fn());
 const mockGetToken = vi.hoisted(() => vi.fn());
+const mockValidateToken = vi.hoisted(() => vi.fn());
 const mockEnsureProjectsRoot = vi.hoisted(() => vi.fn(() => "/workspace/projects"));
 const mockCloneDestination = vi.hoisted(() =>
   vi.fn((owner: string, repo: string, root: string) => `${root}/${owner}-${repo}`)
@@ -28,6 +29,7 @@ vi.mock("@/lib/git/clone", async (importOriginal) => ({
 
 vi.mock("@/lib/github/client", () => ({
   getGitHubTokenFromSettings: mockGetToken,
+  validateGitHubToken: mockValidateToken,
 }));
 
 vi.mock("@/lib/projects/workspace", () => ({
@@ -56,6 +58,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   resetDbMockState();
   mockGetToken.mockReturnValue(null);
+  mockValidateToken.mockResolvedValue({ valid: true, login: "octocat", status: 200 });
   mockEnsureProjectsRoot.mockReturnValue("/workspace/projects");
   mockCloneDestination.mockImplementation(
     (owner: string, repo: string, root: string) => `${root}/${owner}-${repo}`
@@ -174,7 +177,7 @@ describe("POST /api/projects/clone — success", () => {
       branch: "main",
     });
     // The clone runs before any project row exists, so the audit row cannot
-    // reference one (migration 0027_git_sync_log_nullable_project).
+    // reference one (migration 0028_git_sync_log_nullable_project).
     const detail = JSON.parse(syncLogRows()[0].detail as string);
     expect(detail).toMatchObject({
       ownerRepo: "octocat/hello-world",
@@ -202,6 +205,79 @@ describe("POST /api/projects/clone — credentials", () => {
     expect(mockCloneRepository).toHaveBeenCalledWith(
       expect.objectContaining({ token: null })
     );
+  });
+
+  it("returns 401 when GitHub turns out to have rejected the stored PAT", async () => {
+    // git cannot tell "you may not see this repo" from "your token is junk":
+    // both come back as `Repository not found`. The API can.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGetToken.mockReturnValue(PAT);
+    mockValidateToken.mockResolvedValue({
+      valid: false,
+      status: 401,
+      error: "GitHub rejected the token. Verify it and try again.",
+    });
+    mockCloneRepository.mockRejectedValue(
+      new CloneError("not_found", "Repository not found: acme/private.")
+    );
+
+    const response = await POST(cloneRequest({ url: "acme/private" }));
+    const body = await response.json();
+
+    expect(mockValidateToken).toHaveBeenCalledWith(PAT);
+    expect(response.status).toBe(401);
+    expect(body.code).toBe("auth_failed");
+    expect(body.error).toContain("Settings → GitHub PAT");
+    consoleError.mockRestore();
+  });
+
+  it("keeps the 404 when the PAT is valid but simply has no access", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGetToken.mockReturnValue(PAT);
+    mockCloneRepository.mockRejectedValue(
+      new CloneError(
+        "not_found",
+        "Repository not found: acme/private. It does not exist, or the GitHub PAT in Settings does not grant access to it."
+      )
+    );
+
+    const response = await POST(cloneRequest({ url: "acme/private" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(404);
+    expect(body.error).toContain("does not grant access");
+    consoleError.mockRestore();
+  });
+
+  it("keeps the 404 when GitHub itself cannot be reached", async () => {
+    // An unreachable API must not turn a working PAT into a bogus 401.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGetToken.mockReturnValue(PAT);
+    mockValidateToken.mockResolvedValue({
+      valid: false,
+      error: "Could not reach GitHub to validate this token.",
+    });
+    mockCloneRepository.mockRejectedValue(
+      new CloneError("not_found", "Repository not found: acme/private.")
+    );
+
+    const response = await POST(cloneRequest({ url: "acme/private" }));
+
+    expect(response.status).toBe(404);
+    consoleError.mockRestore();
+  });
+
+  it("does not call GitHub at all when no PAT is configured", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockCloneRepository.mockRejectedValue(
+      new CloneError("not_found", "Repository not found: acme/private.")
+    );
+
+    const response = await POST(cloneRequest({ url: "acme/private" }));
+
+    expect(response.status).toBe(404);
+    expect(mockValidateToken).not.toHaveBeenCalled();
+    consoleError.mockRestore();
   });
 
   it("never leaks the PAT into the response, the log row or the console", async () => {
@@ -300,7 +376,7 @@ describe("POST /api/projects/clone — failures", () => {
     consoleError.mockRestore();
   });
 
-  it("returns 500 when the workspace root cannot be prepared", async () => {
+  it("returns 500 and audits the failure when the workspace root cannot be prepared", async () => {
     const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     mockEnsureProjectsRoot.mockImplementation(() => {
       throw new Error("EACCES: permission denied, mkdir '/workspace/projects'");
@@ -311,6 +387,33 @@ describe("POST /api/projects/clone — failures", () => {
 
     expect(response.status).toBe(500);
     expect(body.error).toContain("EACCES");
+    expect(body.code).toBe("workspace_unavailable");
+    expect(mockCloneRepository).not.toHaveBeenCalled();
+
+    // Setup failures are audited like every other one — the attempt happened.
+    expect(syncLogRows()).toHaveLength(1);
+    expect(syncLogRows()[0]).toMatchObject({ operation: "clone", status: "failure" });
+    expect(JSON.parse(syncLogRows()[0].detail as string)).toMatchObject({
+      ownerRepo: "octocat/hello-world",
+      code: "workspace_unavailable",
+    });
+    consoleError.mockRestore();
+  });
+
+  it("keeps a failing settings read inside the sanitized boundary", async () => {
+    // The PAT lookup hits the database too; an error there must not escape as
+    // an unstructured framework 500.
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    mockGetToken.mockImplementation(() => {
+      throw new Error("SQLITE_BUSY: database is locked");
+    });
+
+    const response = await POST(cloneRequest({ url: "octocat/hello-world" }));
+    const body = await response.json();
+
+    expect(response.status).toBe(500);
+    expect(body.code).toBe("workspace_unavailable");
+    expect(body.error).toContain("SQLITE_BUSY");
     expect(mockCloneRepository).not.toHaveBeenCalled();
     consoleError.mockRestore();
   });

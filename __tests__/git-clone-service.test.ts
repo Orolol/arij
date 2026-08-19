@@ -60,6 +60,13 @@ function destinationIn(root: string, name = "owner-repo"): string {
   return path.join(root, name);
 }
 
+/** Staging directories the clone service failed to clean up. */
+function leftoverStaging(dest: string): string[] {
+  return fs
+    .readdirSync(path.dirname(dest))
+    .filter((entry) => entry.startsWith(".arij-clone-"));
+}
+
 /** Every file under `.git`, read as text — used to prove no secret landed. */
 function readGitDirFiles(repoPath: string): string[] {
   const contents: string[] = [];
@@ -98,6 +105,8 @@ describe("cloneRepository — fresh clone", () => {
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
     expect(await isGitRepo(dest)).toBe(true);
     expect(fs.existsSync(path.join(dest, "README.md"))).toBe(true);
+    // The clone is staged next to the destination and renamed into it.
+    expect(leftoverStaging(dest)).toEqual([]);
   });
 
   it("keeps the full history — no shallow clone, no single branch", async () => {
@@ -154,7 +163,7 @@ describe("cloneRepository — fresh clone", () => {
     expect(await isGitRepo(dest)).toBe(true);
   });
 
-  it("never writes the token to disk", async () => {
+  it("never writes the token to disk, even when one is configured", async () => {
     const source = await createSourceRepo();
     const dest = destinationIn(tempDir("arij-clone-root-"));
     const token = `ghp_${"S3CRETtoken".repeat(2)}`;
@@ -286,24 +295,29 @@ describe("cloneRepository — conflicts", () => {
     expect(error.code).toBe("conflict");
   });
 
-  it("reuses a clone whose GitHub owner/repo matches even when the URL differs", async () => {
-    // An `ssh://` clone made by hand and an `https://` import URL are the same
-    // repository: identity is owner/repo, not the literal remote string.
+  it("refuses a destination whose origin differs, even when another remote matches", async () => {
+    // Reuse fetches `origin`, so approving on the strength of a secondary
+    // remote would hand back a checkout that updates from somewhere else.
     const source = await createSourceRepo();
     const dest = destinationIn(tempDir("arij-clone-root-"));
 
     await cloneRepository({ cloneUrl: source.url, dest });
-    // Keep origin on the local fixture (so the fetch stays offline) and add
-    // the GitHub identity on a second remote, as a hand-made clone often has.
     await simpleGit(dest).addRemote("github", "git@github.com:octocat/hello-world.git");
 
-    const result = await cloneRepository({
+    const error = await cloneRepository({
       cloneUrl: "https://github.com/octocat/hello-world.git",
       dest,
       expectedOwnerRepo: "octocat/hello-world",
-    });
+    }).catch((e) => e);
 
-    expect(result).toMatchObject({ path: dest, reused: true });
+    expect(error).toBeInstanceOf(CloneError);
+    expect(error.code).toBe("conflict");
+    expect(error.message).toContain(source.url);
+    // Untouched — including the remote that tempted the match.
+    expect(await isGitRepo(dest)).toBe(true);
+    expect((await simpleGit(dest).getRemotes(true)).map((r) => r.name).sort()).toEqual(
+      ["github", "origin"]
+    );
   });
 });
 
@@ -321,6 +335,28 @@ describe("cloneRepository — failures", () => {
     expect(error.code).toBe("not_found");
     expect(error.message).toContain("GitHub PAT");
     expect(fs.existsSync(dest)).toBe(false);
+    expect(leftoverStaging(dest)).toEqual([]);
+  });
+
+  it("retries a refused clone with the token, and git accepts the credential argv", async () => {
+    // Proof against real git that `-c http.extraHeader=...` is a valid prefix:
+    // an invalid argv would fail with 'unknown option', not with the
+    // repository-not-found message the token branch produces.
+    const root = tempDir("arij-clone-root-");
+    const dest = destinationIn(root);
+
+    const error = await cloneRepository({
+      cloneUrl: `file://${path.join(root, "does-not-exist")}`,
+      dest,
+      token: `ghp_${"S3CRETtoken".repeat(2)}`,
+    }).catch((e) => e);
+
+    expect(error.code).toBe("not_found");
+    // The message only takes this shape once the authenticated attempt ran.
+    expect(error.message).toContain("does not grant access");
+    expect(error.message).not.toContain("S3CRETtoken");
+    expect(fs.existsSync(dest)).toBe(false);
+    expect(leftoverStaging(dest)).toEqual([]);
   });
 
   it("names the branch when it does not exist, and cleans up", async () => {
@@ -352,6 +388,26 @@ describe("cloneRepository — failures", () => {
     expect(error).toBeInstanceOf(CloneError);
     expect(error.code).toBe("timeout");
     expect(fs.existsSync(dest)).toBe(false);
+    expect(leftoverStaging(dest)).toEqual([]);
+  });
+
+  it("bounds the reuse fetch too, without harming the existing clone", async () => {
+    const source = await createSourceRepo();
+    const dest = destinationIn(tempDir("arij-clone-root-"));
+
+    await cloneRepository({ cloneUrl: source.url, dest });
+
+    const error = await cloneRepository({
+      cloneUrl: source.url,
+      dest,
+      timeoutMs: 1,
+    }).catch((e) => e);
+
+    expect(error).toBeInstanceOf(CloneError);
+    expect(error.code).toBe("timeout");
+    // The clone that was already there survives the aborted fetch.
+    expect(await isGitRepo(dest)).toBe(true);
+    expect(fs.existsSync(path.join(dest, "README.md"))).toBe(true);
   });
 
   it("rejects option-shaped input instead of passing it to git", async () => {

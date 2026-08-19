@@ -594,7 +594,7 @@ const NULLABLE: [string, string][] = [
   ["gitSyncLog", "branch"],
   ["gitSyncLog", "detail"],
   // A clone is logged before any project row exists — see migration
-  // 0027_git_sync_log_nullable_project.
+  // 0028_git_sync_log_nullable_project.
   ["gitSyncLog", "projectId"],
   ["githubIssues", "importedEpicId"],
   ["githubIssues", "importedAt"],

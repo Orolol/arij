@@ -10,9 +10,17 @@
 -- SQLite cannot drop a NOT NULL constraint in place, so the table is rebuilt.
 -- No other table references git_sync_log, so the drop/rename is safe.
 --
--- Journal `when` deliberately sits between 0026 and the 0027 project-columns
--- migration of the same feature: whichever of the two is merged second still
--- sorts after this one, so no database can end up skipping a migration.
+-- ORDERING CONTRACT — drizzle's migrator keeps a single high-water mark (the
+-- greatest applied `created_at`) and silently skips any migration whose
+-- journal `when` sits below it. This one therefore takes the LAST slot,
+-- 1786712500000, above every released migration; idx 26 / `when`
+-- 1786712400000 / tag 0027_project_clone_source is left free for the sibling
+-- epic that adds the projects columns. Whoever merges next must keep the same
+-- rule: append, never backdate.
+--
+-- Re-running this migration is harmless (a database that applied it under its
+-- previous 0027 numbering rebuilds an already-nullable table and keeps its
+-- rows), so the renumbering costs nothing but a repeated rebuild.
 CREATE TABLE `git_sync_log_new` (
 	`id` text PRIMARY KEY NOT NULL,
 	`project_id` text,

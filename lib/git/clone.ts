@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import simpleGit, { CheckRepoActions, type SimpleGit } from "simple-git";
+import { createId } from "@/lib/utils/nanoid";
 import {
-  detectGitHubRemote,
-  fetchGitRemote,
   getCurrentGitBranch,
+  parseGitHubOwnerRepoFromRemoteUrl,
 } from "./remote";
 import { DEFAULT_CLONE_TIMEOUT_MS } from "./clone-constants";
 
@@ -12,23 +12,31 @@ import { DEFAULT_CLONE_TIMEOUT_MS } from "./clone-constants";
  * Git clone service.
  *
  * Clones a repository into an app-managed directory, authenticating with the
- * PAT stored in settings when one is available. Three invariants drive the
- * implementation:
+ * PAT stored in settings only when the anonymous attempt proves it necessary.
+ * Four invariants drive the implementation:
  *
  *  1. **Full clones only.** No `--depth`, no `--single-branch`: Arij creates
  *     worktrees off `main`, merges epic branches and tags releases, all of
  *     which need complete history.
- *  2. **The token never touches disk.** It is passed as an `http.extraHeader`
- *     via `-c`, so it stays out of `.git/config` and `origin` keeps the clean
- *     URL — `fetch`/`pull`/`push` afterwards behave like a hand-made clone.
- *  3. **Nothing existing is ever destroyed.** A destination that already holds
- *     the same repository is reused (fetch only); anything else is a conflict.
- *     Only a directory this service created is removed, and only when its own
- *     clone failed.
+ *  2. **The token is a last resort, and never touches disk.** Public
+ *     repositories are cloned anonymously; the PAT is only replayed when the
+ *     anonymous attempt fails for a credential reason. It is then passed as an
+ *     `http.extraHeader` via `-c`, so it stays out of `.git/config` and
+ *     `origin` keeps the clean URL — `fetch`/`pull`/`push` afterwards behave
+ *     like a hand-made clone.
+ *  3. **Nothing existing is ever destroyed.** A destination whose `origin`
+ *     already points at the requested repository is reused (fetch only);
+ *     anything else is a conflict. The clone is assembled in a private staging
+ *     directory and moved into place at the end, so cleanup can only ever
+ *     delete a directory this service created.
+ *  4. **Every remote call is bounded.** Clone and reuse-fetch alike run under
+ *     one deadline and with credential prompts disabled, so a stalled
+ *     connection fails with a message instead of hanging the request.
  */
 
 export type CloneErrorCode =
   | "invalid_input"
+  | "workspace_unavailable"
   | "conflict"
   | "not_found"
   | "auth_failed"
@@ -60,14 +68,14 @@ export interface CloneRepositoryOptions {
   dest: string;
   /** Optional branch to check out instead of the remote's default. */
   branch?: string | null;
-  /** GitHub PAT, injected as an Authorization header for this command only. */
+  /** GitHub PAT, replayed as an Authorization header for a single command. */
   token?: string | null;
   /**
-   * `owner/repo` an existing destination must already point at to be reused.
-   * When omitted, reuse falls back to comparing `origin` with `cloneUrl`.
+   * `owner/repo` an existing destination's `origin` must already point at to
+   * be reused. When omitted, reuse compares `origin` with `cloneUrl`.
    */
   expectedOwnerRepo?: string | null;
-  /** Wall-clock budget; the clone is aborted past it. */
+  /** Wall-clock budget for the whole operation; git is aborted past it. */
   timeoutMs?: number;
 }
 
@@ -82,6 +90,20 @@ export interface CloneRepositoryResult {
 }
 
 const REDACTED = "[REDACTED]";
+
+/** The only remote a reused clone is validated against, and fetched from. */
+const ORIGIN = "origin";
+
+/**
+ * Prefix of the staging directory a fresh clone is assembled in. Hidden, and a
+ * sibling of the destination so the final move is a same-filesystem rename.
+ *
+ * Every code path removes its own staging directory; only a hard kill mid-clone
+ * can leave one behind. Those are deliberately NOT swept on the next clone —
+ * another process may be cloning into one right now, and no local check can
+ * tell the two apart. They sit inert under the (gitignored) clone root.
+ */
+const STAGING_PREFIX = ".arij-clone-";
 
 /**
  * Strips credentials from a git error before it reaches the UI, a log line or
@@ -124,9 +146,9 @@ export function redactGitError(value: unknown, secrets: string[] = []): string {
 
 /**
  * One clone at a time per destination. Two concurrent imports of the same
- * repository would otherwise race: both see an empty destination, both clone
- * into it, and the loser corrupts the winner's work tree. The second caller
- * waits and then takes the reuse path.
+ * repository would otherwise race: both stage a clone, and the loser's rename
+ * would land on the winner's work tree. The second caller waits and then takes
+ * the reuse path.
  */
 const destinationLocks = new Map<string, Promise<void>>();
 
@@ -152,6 +174,36 @@ async function withDestinationLock<T>(
       destinationLocks.delete(key);
     }
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* Deadline                                                            */
+/* ------------------------------------------------------------------ */
+
+interface Deadline {
+  readonly signal: AbortSignal;
+  readonly timeoutMs: number;
+  expired(): boolean;
+  dispose(): void;
+}
+
+function startDeadline(timeoutMs: number): Deadline {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return {
+    signal: controller.signal,
+    timeoutMs,
+    expired: () => controller.signal.aborted,
+    dispose: () => clearTimeout(timer),
+  };
+}
+
+function timeoutError(deadline: Deadline): CloneError {
+  return new CloneError(
+    "timeout",
+    `Clone aborted after ${Math.round(deadline.timeoutMs / 1000)}s. The repository may be very large or the connection stalled — raise the clone timeout in Settings or retry.`,
+    { timeoutMs: deadline.timeoutMs }
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -185,65 +237,124 @@ export async function cloneRepository(
   );
 }
 
+type ResolvedCloneOptions = CloneRepositoryOptions & {
+  dest: string;
+  branch: string | null;
+};
+
 async function runClone(
-  options: CloneRepositoryOptions & { dest: string; branch: string | null }
+  options: ResolvedCloneOptions
 ): Promise<CloneRepositoryResult> {
-  const { cloneUrl, dest, branch, token } = options;
   const startedAt = Date.now();
-
-  if (fs.existsSync(dest)) {
-    return reuseExistingClone(options, startedAt);
-  }
-
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-
-  const timeoutMs = options.timeoutMs ?? DEFAULT_CLONE_TIMEOUT_MS;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const deadline = startDeadline(
+    options.timeoutMs ?? DEFAULT_CLONE_TIMEOUT_MS
+  );
 
   try {
-    const git = simpleGit({
-      baseDir: path.dirname(dest),
-      abort: controller.signal,
-    }).env(nonInteractiveEnv());
+    return fs.existsSync(options.dest)
+      ? await reuseExistingClone(options, startedAt, deadline)
+      : await cloneIntoDestination(options, startedAt, deadline);
+  } finally {
+    deadline.dispose();
+  }
+}
 
-    await git.raw(buildCloneArgs({ cloneUrl, dest, branch, token }));
+async function cloneIntoDestination(
+  options: ResolvedCloneOptions,
+  startedAt: number,
+  deadline: Deadline
+): Promise<CloneRepositoryResult> {
+  const { cloneUrl, dest, branch, token } = options;
+  const parent = path.dirname(dest);
+  fs.mkdirSync(parent, { recursive: true });
 
-    const defaultBranch = await getCurrentGitBranch(dest);
+  // Clone into a staging directory and move it into place at the very end. The
+  // destination is therefore created by a single rename: a failure leaves no
+  // half-written tree to be "reused" later, and the cleanup below can only
+  // ever delete a directory this call created — never one that another process
+  // dropped at `dest` while git was running.
+  const staging = path.join(parent, `${STAGING_PREFIX}${createId()}`);
+
+  try {
+    await runGitWithOptionalAuth({
+      baseDir: parent,
+      deadline,
+      token,
+      context: { cloneUrl, branch },
+      buildArgs: (auth) => [
+        ...auth,
+        "clone",
+        ...(branch ? ["--branch", branch] : []),
+        // Deliberately no --depth / --single-branch: worktrees, merge-base and
+        // release tagging all need the full history.
+        "--",
+        cloneUrl,
+        staging,
+      ],
+      // The failed attempt left a partial tree in the way of the retry.
+      beforeRetry: () => discardStaging(staging),
+    });
+
+    claimDestination(staging, dest);
+
     return {
       path: dest,
-      defaultBranch,
+      defaultBranch: await getCurrentGitBranch(dest),
       reused: false,
       durationMs: Date.now() - startedAt,
     };
   } catch (error) {
-    // The directory is ours (it did not exist a moment ago) and the clone
-    // failed, so a half-written tree must not survive to be "reused" later.
-    removeFailedClone(dest);
-
-    if (controller.signal.aborted) {
-      throw new CloneError(
-        "timeout",
-        `Clone aborted after ${Math.round(timeoutMs / 1000)}s. The repository may be very large or the connection stalled — raise the clone timeout or retry.`,
-        { timeoutMs }
-      );
-    }
-    throw toCloneError(error, { cloneUrl, branch, token });
-  } finally {
-    clearTimeout(timer);
+    discardStaging(staging);
+    throw error instanceof CloneError
+      ? error
+      : toCloneError(error, { cloneUrl, branch, token });
   }
 }
 
 /**
- * A destination that already exists is never overwritten: either it holds the
- * requested repository (fetch and reuse) or the caller gets a conflict naming
- * what is in the way.
+ * Moves a finished staging clone onto the destination. The destination is only
+ * ever taken by `rename`, which refuses to clobber a non-empty directory, so a
+ * directory that appeared while git was running is reported as a conflict
+ * rather than overwritten.
+ */
+function claimDestination(staging: string, dest: string): void {
+  if (fs.existsSync(dest)) {
+    throw new CloneError(
+      "conflict",
+      `${dest} appeared while the clone was running and was left untouched. Move or remove it, then retry.`,
+      { path: dest }
+    );
+  }
+
+  try {
+    fs.renameSync(staging, dest);
+  } catch (error) {
+    if (fs.existsSync(dest)) {
+      throw new CloneError(
+        "conflict",
+        `${dest} appeared while the clone was running and was left untouched. Move or remove it, then retry.`,
+        { path: dest }
+      );
+    }
+    throw new CloneError(
+      "clone_failed",
+      `Could not move the finished clone into ${dest}: ${redactGitError(error)}`,
+      { path: dest }
+    );
+  }
+}
+
+/**
+ * A destination that already exists is never overwritten: either its `origin`
+ * points at the requested repository (fetch and reuse) or the caller gets a
+ * conflict naming what is in the way.
  */
 async function reuseExistingClone(
-  options: CloneRepositoryOptions & { dest: string; branch: string | null },
-  startedAt: number
+  options: ResolvedCloneOptions,
+  startedAt: number,
+  deadline: Deadline
 ): Promise<CloneRepositoryResult> {
-  const { dest, cloneUrl, expectedOwnerRepo, token } = options;
+  const { dest, cloneUrl, branch, expectedOwnerRepo, token } = options;
 
   if (!fs.statSync(dest).isDirectory()) {
     throw new CloneError(
@@ -261,36 +372,52 @@ async function reuseExistingClone(
     );
   }
 
-  const remote = await detectGitHubRemote(dest).catch(() => null);
-  const originUrl = remote?.remoteUrl ?? (await readOriginUrl(dest));
-  const matchesOwnerRepo =
-    !!expectedOwnerRepo &&
-    !!remote &&
-    remote.ownerRepo.toLowerCase() === expectedOwnerRepo.toLowerCase();
-  const matchesUrl =
-    !!originUrl && sameRemote(originUrl, cloneUrl);
-
-  if (!matchesOwnerRepo && !matchesUrl) {
+  // Only `origin` counts: it is the remote the reuse path goes on to fetch, so
+  // validating any other remote would approve a clone that then updates from
+  // somewhere else entirely.
+  const originUrl = await readRemoteUrl(dest, ORIGIN);
+  if (!originUrl) {
     throw new CloneError(
       "conflict",
-      `${dest} already holds a different repository (${originUrl || "no remote configured"}). Move or remove it, then retry.`,
-      { path: dest, remoteUrl: originUrl ?? null }
+      `${dest} already exists and has no '${ORIGIN}' remote. Move or remove it, then retry.`,
+      { path: dest, remoteUrl: null }
     );
   }
 
-  try {
-    await fetchGitRemote(dest);
-  } catch (error) {
-    throw toCloneError(error, { cloneUrl, branch: options.branch, token });
+  const originOwnerRepo =
+    parseGitHubOwnerRepoFromRemoteUrl(originUrl)?.ownerRepo ?? null;
+  // Identity is owner/repo when both sides are GitHub — an `ssh://` clone made
+  // by hand and an `https://` import URL are the same repository.
+  const matches =
+    sameRemote(originUrl, cloneUrl) ||
+    (!!expectedOwnerRepo &&
+      !!originOwnerRepo &&
+      originOwnerRepo.toLowerCase() === expectedOwnerRepo.toLowerCase());
+
+  if (!matches) {
+    throw new CloneError(
+      "conflict",
+      `${dest} already holds a different repository (${ORIGIN}: ${originUrl}). Move or remove it, then retry.`,
+      { path: dest, remoteUrl: originUrl }
+    );
   }
+
+  // Fetched through the same credential path as the clone: a private clone
+  // Arij made carries no stored credentials of its own, and an unbounded fetch
+  // would sit here waiting for some until the request itself died.
+  await runGitWithOptionalAuth({
+    baseDir: dest,
+    deadline,
+    token,
+    context: { cloneUrl, branch },
+    buildArgs: (auth) => [...auth, "fetch", ORIGIN],
+  });
 
   // The existing checkout belongs to the user; a requested branch does not
   // justify switching it out from under them. Report what is actually there.
-  const defaultBranch = await getCurrentGitBranch(dest);
-
   return {
     path: dest,
-    defaultBranch,
+    defaultBranch: await getCurrentGitBranch(dest),
     reused: true,
     durationMs: Date.now() - startedAt,
   };
@@ -300,31 +427,77 @@ async function reuseExistingClone(
 /* Git plumbing                                                        */
 /* ------------------------------------------------------------------ */
 
-function buildCloneArgs(input: {
-  cloneUrl: string;
-  dest: string;
-  branch: string | null;
+interface AuthenticatedRunOptions {
+  baseDir: string;
+  deadline: Deadline;
   token?: string | null;
-}): string[] {
-  const args: string[] = [];
-  const token = input.token?.trim();
+  /** Builds the argv from the `-c` prefix to place before the subcommand. */
+  buildArgs: (authArgs: string[]) => string[];
+  /** Cleanup between the anonymous attempt and the authenticated retry. */
+  beforeRetry?: () => void;
+  context: { cloneUrl: string; branch?: string | null };
+}
 
-  if (token) {
-    // `-c` keeps the header out of .git/config: origin stays clean and the
-    // clone carries no secret on disk.
-    const basic = Buffer.from(`x-access-token:${token}`).toString("base64");
-    args.push("-c", `http.extraHeader=Authorization: Basic ${basic}`);
+/**
+ * Runs a git command anonymously, and replays it with the PAT only if the
+ * anonymous attempt failed for a credential reason.
+ *
+ * Anonymous-first is what keeps a public clone free of the token: sending it
+ * unconditionally would both contradict that guarantee and let an expired PAT
+ * break a clone that needs no credentials at all.
+ */
+async function runGitWithOptionalAuth(
+  options: AuthenticatedRunOptions
+): Promise<void> {
+  const { baseDir, deadline, token, buildArgs, beforeRetry, context } = options;
+
+  try {
+    await runGit(buildArgs([]), baseDir, deadline);
+    return;
+  } catch (error) {
+    if (deadline.expired()) throw timeoutError(deadline);
+
+    // Classified as if no credentials existed — because none were sent.
+    const anonymous = toCloneError(error, { ...context, token: null });
+    if (!token?.trim() || !isCredentialRecoverable(anonymous.code)) {
+      throw anonymous;
+    }
+    beforeRetry?.();
   }
 
-  args.push("clone");
-  if (input.branch) {
-    args.push("--branch", input.branch);
+  try {
+    await runGit(buildArgs(authConfigArgs(token)), baseDir, deadline);
+  } catch (error) {
+    if (deadline.expired()) throw timeoutError(deadline);
+    throw toCloneError(error, { ...context, token });
   }
-  // Deliberately no --depth / --single-branch: worktrees, merge-base and
-  // release tagging all need the full history.
-  args.push("--", input.cloneUrl, input.dest);
+}
 
-  return args;
+/** Failures a stored PAT could plausibly fix. */
+function isCredentialRecoverable(code: CloneErrorCode): boolean {
+  return code === "not_found" || code === "auth_failed";
+}
+
+function runGit(
+  args: string[],
+  baseDir: string,
+  deadline: Deadline
+): Promise<string> {
+  return simpleGit({ baseDir, abort: deadline.signal })
+    .env(nonInteractiveEnv())
+    .raw(args);
+}
+
+/**
+ * `-c` scopes the header to this one invocation: it never reaches
+ * `.git/config`, so `origin` stays clean and the clone carries no secret.
+ */
+function authConfigArgs(token?: string | null): string[] {
+  const clean = token?.trim();
+  if (!clean) return [];
+
+  const basic = Buffer.from(`x-access-token:${clean}`).toString("base64");
+  return ["-c", `http.extraHeader=Authorization: Basic ${basic}`];
 }
 
 /**
@@ -359,12 +532,14 @@ async function isRepositoryRoot(dest: string): Promise<boolean> {
   }
 }
 
-async function readOriginUrl(repoPath: string): Promise<string | null> {
+async function readRemoteUrl(
+  repoPath: string,
+  name: string
+): Promise<string | null> {
   try {
     const remotes = await getGit(repoPath).getRemotes(true);
-    const origin =
-      remotes.find((remote) => remote.name === "origin") ?? remotes[0];
-    return origin?.refs?.fetch || origin?.refs?.push || null;
+    const remote = remotes.find((candidate) => candidate.name === name);
+    return remote?.refs?.fetch || remote?.refs?.push || null;
   } catch {
     return null;
   }
@@ -384,12 +559,13 @@ function normalizeForComparison(url: string): string {
     .toLowerCase();
 }
 
-function removeFailedClone(dest: string): void {
+/** Removes a staging directory. Only ever called on a path this service made. */
+function discardStaging(staging: string): void {
   try {
-    fs.rmSync(dest, { recursive: true, force: true });
+    fs.rmSync(staging, { recursive: true, force: true });
   } catch (error) {
-    console.warn("[git/clone] could not clean up failed clone", {
-      dest,
+    console.warn("[git/clone] could not clean up the staging directory", {
+      staging,
       error: redactGitError(error),
     });
   }

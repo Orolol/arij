@@ -21,7 +21,7 @@ interface LogSyncOperationInput {
   /**
    * Null for operations that run before any project row exists — a clone
    * happens ahead of POST /api/projects (see migration
-   * 0027_git_sync_log_nullable_project).
+   * 0028_git_sync_log_nullable_project).
    */
   projectId: string | null;
   operation: GitSyncOperation;

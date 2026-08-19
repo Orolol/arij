@@ -14,7 +14,10 @@ import {
   parseCloneTimeoutSetting,
 } from "@/lib/git/clone-constants";
 import { parseGitHubRepoInput } from "@/lib/git/remote";
-import { getGitHubTokenFromSettings } from "@/lib/github/client";
+import {
+  getGitHubTokenFromSettings,
+  validateGitHubToken,
+} from "@/lib/github/client";
 import { writeGitSyncLog } from "@/lib/github/sync-log";
 import { cloneDestination, ensureProjectsRoot } from "@/lib/projects/workspace";
 import { cloneProjectSchema } from "@/lib/validation/schemas";
@@ -37,6 +40,7 @@ const STATUS_BY_CODE: Record<CloneErrorCode, number> = {
   not_found: 404,
   conflict: 409,
   clone_failed: 500,
+  workspace_unavailable: 500,
   network: 502,
   timeout: 504,
 };
@@ -55,6 +59,38 @@ function resolveCloneTimeoutMs(): number {
   } catch {
     return DEFAULT_CLONE_TIMEOUT_MS;
   }
+}
+
+/**
+ * `Repository not found` is what GitHub answers both for a repository a token
+ * may not see and for a token it will not accept at all, so git alone cannot
+ * tell the two apart. Ask the API which it is, so an expired PAT surfaces as
+ * 401 instead of a misleading 404.
+ *
+ * Only an authoritative 401 flips the verdict: a network failure or a
+ * rate-limited 403 must leave the original 404 — and its actionable message —
+ * intact.
+ */
+async function disambiguateNotFound(
+  error: CloneError,
+  token: string | null
+): Promise<CloneError> {
+  if (error.code !== "not_found" || !token) return error;
+
+  try {
+    const check = await validateGitHubToken(token);
+    if (!check.valid && check.status === 401) {
+      return new CloneError(
+        "auth_failed",
+        "GitHub rejected the stored PAT, so the repository could not be reached. Update it in Settings → GitHub PAT and retry.",
+        { ...error.details, tokenRejected: true }
+      );
+    }
+  } catch {
+    // Best effort only — an unreachable API must not rewrite the verdict.
+  }
+
+  return error;
 }
 
 export async function POST(request: NextRequest) {
@@ -76,31 +112,34 @@ export async function POST(request: NextRequest) {
 
   const { owner, repo, ownerRepo, cloneUrl } = parsed;
   const cleanBranch = branch?.trim() || null;
-
-  let dest: string;
-  try {
-    dest = cloneDestination(owner, repo, ensureProjectsRoot());
-  } catch (error) {
-    const message = redactGitError(error);
-    console.error("[projects/clone] workspace root unavailable:", message);
-    return NextResponse.json(
-      { error: `Could not prepare the clone directory: ${message}` },
-      { status: 500 }
-    );
-  }
-
-  // Read once so the same value drives the command and the failure message.
-  const token = getGitHubTokenFromSettings();
   const startedAt = Date.now();
 
+  // Set outside the boundary so the failure log can still name the destination
+  // and redact against the token when setup itself is what failed.
+  let dest: string | null = null;
+  let token: string | null = null;
+
   try {
+    let timeoutMs: number;
+    try {
+      dest = cloneDestination(owner, repo, ensureProjectsRoot());
+      // Read once so the same value drives the command and the failure message.
+      token = getGitHubTokenFromSettings();
+      timeoutMs = resolveCloneTimeoutMs();
+    } catch (error) {
+      throw new CloneError(
+        "workspace_unavailable",
+        `Could not prepare the clone directory: ${redactGitError(error)}`
+      );
+    }
+
     const result = await cloneRepository({
       cloneUrl,
       dest,
       branch: cleanBranch,
       token,
       expectedOwnerRepo: ownerRepo,
-      timeoutMs: resolveCloneTimeoutMs(),
+      timeoutMs,
     });
 
     writeGitSyncLog({
@@ -133,11 +172,13 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     // Every string leaving this block goes through the redactor: the PAT must
     // reach neither the response, nor the console, nor git_sync_log.
-    const cloneError =
+    const secrets = token ? [token] : [];
+    const raised =
       error instanceof CloneError
         ? error
-        : new CloneError("clone_failed", redactGitError(error, token ? [token] : []));
-    const message = redactGitError(cloneError.message, token ? [token] : []);
+        : new CloneError("clone_failed", redactGitError(error, secrets));
+    const cloneError = await disambiguateNotFound(raised, token);
+    const message = redactGitError(cloneError.message, secrets);
     const status = STATUS_BY_CODE[cloneError.code] ?? 500;
 
     writeGitSyncLog({
