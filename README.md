@@ -63,7 +63,7 @@ Use whichever AI coding tool you prefer:
 | **OpenCode** | `opencode` CLI — open-source, supports any model |
 | **Qwen Code** | `qwen` CLI — Alibaba's coding agent |
 | **Pi** | `pi` CLI — minimal terminal harness, runs any provider's models |
-| **Oh My Pi** | `pi` CLI with the `oh-my-pi` orchestrator extension loaded |
+| **Oh My Pi** | `omp` CLI — standalone multi-agent orchestrator (fork of pi) |
 | **Any CLI agent** | Any tool that accepts a `--prompt` flag works out of the box |
 
 Arij's provider system is designed to be extensible — if your favorite AI coding CLI accepts a prompt and outputs results, it can plug into Arij. Create "Named Agents" to mix and match providers and models — e.g., use Claude Opus for complex builds, Gemini Flash for quick bug fixes, or a local model via OpenCode for privacy-sensitive tasks.
