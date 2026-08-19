@@ -409,15 +409,15 @@ async function dispatchPipelineStage(
   let cliSessionId: string | undefined;
   let resumeSession = false;
   if (resumeTarget && isResumableProvider(resolved.provider)) {
+    // validateResumeSession enforces the cross-provider guard itself: the
+    // stored cliSessionId only means something to the CLI that created it.
     const validated = validateResumeSession({
       resumeSessionId: resumeTarget,
       epicId,
       ...(scope === "story" && userStoryId ? { userStoryId } : {}),
+      expectedProvider: resolved.provider,
     });
-    // Guard against cross-provider resume: the stored cliSessionId only
-    // means something to the CLI that created it.
-    const targetRow = readSessionProvider(resumeTarget);
-    if (validated && targetRow?.provider === resolved.provider) {
+    if (validated) {
       cliSessionId = validated.cliSessionId;
       resumeSession = true;
     }

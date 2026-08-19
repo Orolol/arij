@@ -181,6 +181,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       resumeSessionId: body.resumeSessionId,
       epicId: epic.id,
       userStoryId: storyId,
+      expectedProvider: resolvedAgent.provider,
     });
     if (validated) {
       cliSessionId = validated.cliSessionId;

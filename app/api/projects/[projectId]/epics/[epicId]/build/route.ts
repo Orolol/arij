@@ -218,6 +218,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     const validated = validateResumeSession({
       resumeSessionId: body.resumeSessionId,
       epicId: epicId,
+      expectedProvider: resolvedAgent.provider,
     });
     if (validated) {
       cliSessionId = validated.cliSessionId;

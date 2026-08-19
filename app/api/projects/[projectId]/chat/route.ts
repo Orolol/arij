@@ -162,7 +162,9 @@ export async function POST(
 
   try {
     let result;
-    if (resolvedAgent.provider === "codex" || resolvedAgent.provider === "gemini-cli") {
+    // Same rule as generate-spec: anything that is not Claude Code is spawned
+    // through its own provider, not silently through spawnClaude().
+    if (resolvedAgent.provider !== "claude-code") {
       const dynamicProvider = getProvider(resolvedAgent.provider);
       const session = dynamicProvider.spawn({
         sessionId: `chat-${createId()}`,
