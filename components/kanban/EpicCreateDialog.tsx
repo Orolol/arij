@@ -333,7 +333,11 @@ export function EpicCreateDialog({
             data-testid="epic-create-submit"
           >
             {submitting && (
-              <Loader2 className="mr-1 h-3 w-3 animate-spin motion-reduce:animate-none" />
+              <Loader2
+                className="mr-1 h-3 w-3 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+                data-testid="epic-create-spinner"
+              />
             )}
             Create Epic
           </Button>
