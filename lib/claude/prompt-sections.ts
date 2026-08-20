@@ -106,17 +106,26 @@ export const TICKET_IMAGES_HEADING = "Attached Screenshots";
  * Empty string when the ticket has no usable image, so a ticket without a
  * screenshot produces a prompt byte-identical to before this section existed.
  * Because this is plain prompt text, every CLI provider gets the same thing.
+ *
+ * `headingLevel` exists for the one builder that lists several tickets at once:
+ * the team build renders each epic as `### Epic N`, so an `##` heading would
+ * close that block and leave "this ticket" pointing at nothing in particular.
+ * Nesting deeper binds the paths to the epic they were reported against.
  */
-export function ticketImagesSection(epic: PromptEpic): string {
+export function ticketImagesSection(
+  epic: PromptEpic,
+  options: { headingLevel?: number } = {},
+): string {
   if (!epic.projectId) return "";
 
   const paths = ticketImageAbsolutePaths(epic.images, epic.projectId);
   if (paths.length === 0) return "";
 
+  const { headingLevel = 2 } = options;
   const noun = paths.length === 1 ? "screenshot" : "screenshots";
   const lines = paths.map((absolutePath) => `- ${absolutePath}`).join("\n");
 
-  return `## ${TICKET_IMAGES_HEADING}
+  return `${"#".repeat(headingLevel)} ${TICKET_IMAGES_HEADING}
 
 The reporter attached ${paths.length} ${noun} to this ticket, showing what was actually observed. Read ${
     paths.length === 1 ? "it" : "them"

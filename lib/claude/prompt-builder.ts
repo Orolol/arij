@@ -622,7 +622,13 @@ export function buildTitleGenerationPrompt(
  * The prompt includes the full project context, the target epic, and its
  * user stories with acceptance criteria.
  */
-export interface TeamEpic {
+/**
+ * Unlike the solo builders, which take a Drizzle epic row whole, a team epic is
+ * a hand-built projection — so it has to name every field it forwards.
+ * `projectId`/`images` are picked from `PromptEpic` rather than redeclared so a
+ * batch build cannot silently drop a bug's screenshots the way it once did.
+ */
+export interface TeamEpic extends Pick<PromptEpic, "projectId" | "images"> {
   title: string;
   description?: string | null;
   worktreePath: string;
@@ -665,6 +671,10 @@ export function buildTeamBuildPrompt(
     if (epic.description) {
       parts.push(`${epic.description.trim()}\n`);
     }
+
+    // Nested a level below `### Epic N` so the paths stay attached to the epic
+    // they belong to — the team lead is reading several tickets at once.
+    parts.push(ticketImagesSection(epic, { headingLevel: 4 }));
 
     parts.push(userStoriesSection(epic.userStories));
   }

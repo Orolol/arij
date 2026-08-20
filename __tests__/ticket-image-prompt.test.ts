@@ -18,10 +18,12 @@ import {
   buildBuildPrompt,
   buildEpicReviewPrompt,
   buildReviewPrompt,
+  buildTeamBuildPrompt,
   buildTicketBuildPrompt,
   type PromptEpic,
   type PromptProject,
   type PromptUserStory,
+  type TeamEpic,
 } from "@/lib/claude/prompt-builder";
 
 const projectId = "proj-1";
@@ -208,5 +210,83 @@ describe.each(BUILDERS)("$name", ({ build }) => {
     // A path this project cannot serve is not a path an agent can read: it
     // must produce no section at all, not an empty one.
     expect(build(bugRow(JSON.stringify(["/etc/passwd"])))).toBe(withoutFields);
+  });
+});
+
+/**
+ * The fifth dispatch — "Build as Team" — is the odd one out: it hands the
+ * builder a hand-written projection instead of the epic row, so it is the only
+ * path that can drop the screenshots while every other one carries them. It
+ * did exactly that until `TeamEpic` was widened.
+ */
+describe("buildTeamBuildPrompt", () => {
+  const screenshot = JSON.stringify([`data/uploads/${projectId}/abc-shot.png`]);
+
+  /** A batched bug as the build route assembles it from the Drizzle row. */
+  function teamEpic(images: unknown, title = "Board renders blank"): TeamEpic {
+    return {
+      title,
+      description: "Opening the board shows nothing after login",
+      worktreePath: `/repos/.arij-worktrees/bug-${title.length}`,
+      userStories: [story],
+      projectId,
+      images,
+    };
+  }
+
+  it("references the screenshots of a bug batched into the build", () => {
+    const prompt = buildTeamBuildPrompt(
+      project,
+      [],
+      [teamEpic(screenshot)],
+      "system"
+    );
+
+    expect(prompt).toContain(TICKET_IMAGES_HEADING);
+    expect(prompt).toContain(absoluteUpload("abc-shot.png"));
+  });
+
+  it("keeps the paths inside the block of the epic they belong to", () => {
+    // The team lead reads several tickets in one prompt and delegates each to
+    // a different sub-agent. Screenshots that drift out of their epic are
+    // worse than absent ones — they send the wrong agent looking at them.
+    const prompt = buildTeamBuildPrompt(
+      project,
+      [],
+      [teamEpic(screenshot), teamEpic(null, "Login is slow")],
+      "system"
+    );
+
+    const pathAt = prompt.indexOf(absoluteUpload("abc-shot.png"));
+    expect(pathAt).toBeGreaterThan(prompt.indexOf("### Epic 1:"));
+    expect(pathAt).toBeLessThan(prompt.indexOf("### Epic 2:"));
+    // Nested under `### Epic N`, not a sibling `##` that would close it.
+    expect(prompt).toMatch(new RegExp(`^#### ${TICKET_IMAGES_HEADING}$`, "m"));
+    expect(prompt).not.toMatch(
+      new RegExp(`^## ${TICKET_IMAGES_HEADING}$`, "m")
+    );
+  });
+
+  it("leaves a batch without screenshots byte-identical to before the feature", () => {
+    const withoutFields = buildTeamBuildPrompt(
+      project,
+      [],
+      [
+        {
+          title: "Board renders blank",
+          description: "Opening the board shows nothing after login",
+          worktreePath: "/repos/.arij-worktrees/bug-19",
+          userStories: [story],
+        },
+      ],
+      "system"
+    );
+
+    expect(buildTeamBuildPrompt(project, [], [teamEpic(null)], "system")).toBe(
+      withoutFields
+    );
+    expect(buildTeamBuildPrompt(project, [], [teamEpic("[]")], "system")).toBe(
+      withoutFields
+    );
   });
 });
