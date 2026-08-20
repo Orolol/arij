@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -26,6 +27,35 @@ describe("EpicCreateDialog", () => {
     );
 
     return { onOpenChange, onCreated };
+  }
+
+  /**
+   * Wires `open` to real state the way `app/projects/[projectId]/page.tsx`
+   * does, so closing actually unmounts the form. `renderDialog` pins `open`,
+   * which cannot show what the *next* open of the dialog contains.
+   */
+  function renderReopenableDialog() {
+    const onCreated = vi.fn();
+
+    function Harness() {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button data-testid="reopen" onClick={() => setOpen(true)}>
+            New Epic
+          </button>
+          <EpicCreateDialog
+            projectId="proj-1"
+            open={open}
+            onOpenChange={setOpen}
+            onCreated={onCreated}
+          />
+        </>
+      );
+    }
+
+    render(<Harness />);
+    return { onCreated };
   }
 
   function mockFetchOk() {
@@ -353,5 +383,109 @@ describe("EpicCreateDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalled();
     expect(onCreated).not.toHaveBeenCalled();
     expect(screen.getByTestId("epic-title-input")).toHaveValue("Direct epic");
+  });
+
+  it("opens empty after a successful create instead of reoffering the epic just filed", async () => {
+    const fetchMock = mockFetchOk();
+    const user = userEvent.setup();
+    renderReopenableDialog();
+
+    fireEvent.change(screen.getByTestId("epic-title-input"), {
+      target: { value: "Direct epic" },
+    });
+    await user.click(screen.getByTestId("add-user-story"));
+    fireEvent.change(screen.getByTestId("user-story-title-input"), {
+      target: { value: "First story" },
+    });
+    fireEvent.click(screen.getByTestId("epic-create-submit"));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(screen.queryByTestId("epic-create-dialog")).not.toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("reopen"));
+
+    // The success path closes by calling `onOpenChange(false)` directly, so the
+    // reset on close never runs for it. Without its own reset the form would
+    // reopen holding the epic that was just created, and one more Create files
+    // a duplicate epic with duplicate stories.
+    await waitFor(() =>
+      expect(screen.getByTestId("epic-title-input")).toHaveValue(""),
+    );
+    expect(screen.queryAllByTestId("user-story-block")).toHaveLength(0);
+  });
+
+  it("opens empty after a cancel instead of restoring the abandoned draft", async () => {
+    const user = userEvent.setup();
+    renderReopenableDialog();
+
+    fireEvent.change(screen.getByTestId("epic-title-input"), {
+      target: { value: "Abandoned epic" },
+    });
+    await user.click(screen.getByTestId("add-user-story"));
+
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await waitFor(() =>
+      expect(screen.queryByTestId("epic-create-dialog")).not.toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByTestId("reopen"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("epic-title-input")).toHaveValue(""),
+    );
+    expect(screen.queryAllByTestId("user-story-block")).toHaveLength(0);
+  });
+
+  it("ignores Escape while the create is in flight", async () => {
+    let settleFetch: (value: unknown) => void = () => {};
+    const fetchMock = vi
+      .fn()
+      .mockReturnValue(new Promise((resolve) => (settleFetch = resolve)));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderReopenableDialog();
+
+    fireEvent.change(screen.getByTestId("epic-title-input"), {
+      target: { value: "Direct epic" },
+    });
+    fireEvent.click(screen.getByTestId("epic-create-submit"));
+    await waitFor(() =>
+      expect(screen.getByTestId("epic-create-submit")).toBeDisabled(),
+    );
+
+    // Cancel is disabled while submitting, but Escape does not go through it —
+    // it reaches the dialog directly, so the lock has to live in the handler.
+    // Closing here would wipe the draft under a request that is still going to
+    // land, and the epic would be created behind a dialog the user dismissed.
+    fireEvent.keyDown(document.body, { key: "Escape", code: "Escape" });
+
+    expect(screen.getByTestId("epic-create-dialog")).toBeInTheDocument();
+    expect(screen.getByTestId("epic-title-input")).toHaveValue("Direct epic");
+
+    settleFetch({ ok: true, json: async () => ({ data: { id: "epic-1" } }) });
+    await waitFor(() =>
+      expect(screen.queryByTestId("epic-create-dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("puts the caret in the story block it just added", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByTestId("add-user-story"));
+    await waitFor(() =>
+      expect(screen.getByTestId("user-story-title-input")).toHaveFocus(),
+    );
+
+    await user.click(screen.getByTestId("add-user-story"));
+    await user.click(screen.getByTestId("add-user-story"));
+
+    // The new block appends to the bottom of the scrolling body. Focus is what
+    // brings it into view; landing on the first block would leave the user
+    // typing into a story they already filled in.
+    const titles = screen.getAllByTestId("user-story-title-input");
+    expect(titles).toHaveLength(3);
+    await waitFor(() => expect(titles[2]).toHaveFocus());
   });
 });

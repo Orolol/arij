@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -52,6 +52,8 @@ export function EpicCreateDialog({
   const [error, setError] = useState<string | null>(null);
   /** Field errors stay hidden until the first submit attempt. */
   const [showErrors, setShowErrors] = useState(false);
+  /** Story whose title input should take focus once it has been rendered. */
+  const [pendingFocusKey, setPendingFocusKey] = useState<string | null>(null);
 
   const titleRef = useRef<HTMLInputElement>(null);
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
@@ -59,11 +61,29 @@ export function EpicCreateDialog({
 
   const validation = validateManualEpicDraft(draft);
 
+  /**
+   * Sends the caret into a freshly added story block.
+   *
+   * New blocks append to the bottom of the same scrolling body that made a
+   * blocked submit invisible: past a few stories, "Add user story" pushes the
+   * block below the fold and the only visible change is the counter, so the
+   * button reads as dead. Focus scrolls the block into view and puts the caret
+   * where the user was going to type anyway. Deferred to an effect because the
+   * input does not exist until the render that adds it has committed.
+   */
+  useEffect(() => {
+    if (!pendingFocusKey) return;
+    storyTitleRefs.current.get(pendingFocusKey)?.focus();
+    setPendingFocusKey(null);
+  }, [pendingFocusKey]);
+
   function resetForm() {
     setDraft(createEmptyEpicDraft());
     setCollapsedStories({});
     setError(null);
     setShowErrors(false);
+    setPendingFocusKey(null);
+    storyTitleRefs.current.clear();
   }
 
   function handleOpenChange(next: boolean) {
@@ -75,6 +95,7 @@ export function EpicCreateDialog({
   function addUserStory() {
     const story = createEmptyUserStory(createId());
     setDraft((prev) => ({ ...prev, userStories: [...prev.userStories, story] }));
+    setPendingFocusKey(story.key);
   }
 
   function removeUserStory(key: string) {
