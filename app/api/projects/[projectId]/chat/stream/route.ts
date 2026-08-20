@@ -686,6 +686,15 @@ export async function POST(
     conversationType,
   });
 
+  // Claude chat turns run in "chat" mode (permission mode "default" with a
+  // read-only repo allowlist): plan mode refuses allowlisted mutating MCP
+  // tools AND nudges the model into presenting plans it cannot exit from in
+  // a headless spawn. Epic-creation flows keep plan mode — they are prompt
+  // contracts with no tool channel.
+  const claudeChatMode = isEpicCreationConversationAgentType(conversationType)
+    ? ("plan" as const)
+    : ("chat" as const);
+
   // Every non-Claude provider: non-streaming, spawned through its own provider
   if (resolvedAgent.provider !== "claude-code") {
     // "openai-compatible" is not a CLI provider: that branch returned above.
@@ -815,7 +824,7 @@ export async function POST(
         try {
           let resultSessionId = cliSessionId;
           let attempt = spawnClaude({
-            mode: "plan",
+            mode: claudeChatMode,
             prompt: effectivePrompt,
             model: resolvedAgent.model,
             cwd: project.gitRepoPath || undefined,
@@ -830,7 +839,7 @@ export async function POST(
           if (!result.success && isResumeSessionExpiredError(result.error)) {
             resultSessionId = crypto.randomUUID();
             attempt = spawnClaude({
-              mode: "plan",
+              mode: claudeChatMode,
               prompt,
               model: resolvedAgent.model,
               cwd: project.gitRepoPath || undefined,
@@ -883,7 +892,7 @@ export async function POST(
 
   // Claude Code fresh-session path: preserve stream-json UX.
   const { stream: claudeStream, kill } = spawnClaudeStream({
-    mode: "plan",
+    mode: claudeChatMode,
     prompt: effectivePrompt,
     model: resolvedAgent.model,
     cwd: project.gitRepoPath || undefined,

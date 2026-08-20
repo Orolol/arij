@@ -165,6 +165,35 @@ describe("buildClaudeArgs — MCP config injection", () => {
     expect(args.slice(args.indexOf("--allowedTools") + 1)).toEqual(["Edit"]);
   });
 
+  it("chat mode: permission mode default with a read-only repo allowlist plus the MCP names", () => {
+    const args = buildClaudeArgs(
+      { mode: "chat", prompt: "p", mcp: sampleMcp },
+      "json",
+      FAKE_CONFIG_PATH,
+    );
+
+    // Plan mode refuses allowlisted mutating MCP tools headlessly — chat
+    // turns need "default" so the board tools actually run.
+    expect(args.slice(0, 2)).toEqual(["--permission-mode", "default"]);
+    const allowed = args.slice(args.indexOf("--allowedTools") + 1);
+    expect(allowed.slice(0, 3)).toEqual(["Read", "Glob", "Grep"]);
+    expect(allowed).toContain("mcp__arij__get_ticket");
+    // The repo stays read-only: no Bash, no Write, no Edit.
+    expect(allowed).not.toContain("Bash");
+    expect(allowed).not.toContain("Write");
+    expect(allowed).not.toContain("Edit");
+  });
+
+  it("chat mode without MCP still pins the read-only allowlist", () => {
+    const args = buildClaudeArgs({ mode: "chat", prompt: "p" }, "json");
+    expect(args.slice(0, 2)).toEqual(["--permission-mode", "default"]);
+    expect(args.slice(args.indexOf("--allowedTools") + 1)).toEqual([
+      "Read",
+      "Glob",
+      "Grep",
+    ]);
+  });
+
   it("adds --allowedTools with only the MCP names when no base tools exist (plan mode)", () => {
     const args = buildClaudeArgs(
       { mode: "plan", prompt: "p", mcp: sampleMcp },
