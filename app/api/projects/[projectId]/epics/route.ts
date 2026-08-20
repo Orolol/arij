@@ -228,12 +228,6 @@ export async function POST(
 
   const id = createId();
 
-  const readableId = generateReadableId(
-    projectId,
-    project.name,
-    (body.type as "feature" | "bug") || "feature"
-  );
-
   const storiesToInsert = normalizedUserStories.map((story, index) => ({
     id: createId(),
     epicId: id,
@@ -314,6 +308,15 @@ export async function POST(
 
   try {
     db.transaction((tx) => {
+      // Inside the transaction on purpose: this bumps `projects.ticket_counter`,
+      // so run outside it the increment would survive a rolled-back insert and
+      // burn a readable id on an epic that never existed — a permanent gap in
+      // E-<slug>-NNN. `generateReadableId` asks its callers for exactly this.
+      const readableId = generateReadableId(
+        projectId,
+        project.name,
+        (body.type as "feature" | "bug") || "feature"
+      );
       tx.insert(epics)
         .values({
           id,
