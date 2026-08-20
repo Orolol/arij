@@ -138,16 +138,55 @@ describe("project layout chrome", () => {
     expect(nav.push).toHaveBeenCalledWith("/projects/proj-1?night=start");
   });
 
-  it("opens the new-epic and new-bug panels from the New menu", async () => {
+  it("offers manual epic, chat epic and bug in the New menu", async () => {
+    const user = userEvent.setup();
+    await renderLayout();
+
+    await user.click(screen.getByTestId("header-new-button"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("header-new-epic-manual")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("menuitem", { name: /New Epic \(manual\)/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("menuitem", { name: /New Epic \(via chat\)/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("menuitem", { name: /New Bug/i })).toBeInTheDocument();
+  });
+
+  it("opens the manual epic dialog through its own panel param", async () => {
     const user = userEvent.setup();
     await renderLayout();
 
     await user.click(screen.getByTestId("header-new-button"));
     await waitFor(() => {
-      expect(screen.getByTestId("header-new-epic")).toBeInTheDocument();
+      expect(screen.getByTestId("header-new-epic-manual")).toBeInTheDocument();
     });
-    await user.click(screen.getByTestId("header-new-epic"));
+    await user.click(screen.getByTestId("header-new-epic-manual"));
+
+    expect(nav.push).toHaveBeenCalledWith(
+      "/projects/proj-1?panel=new-epic-manual",
+    );
+  });
+
+  it("keeps the chat epic entry on the untouched new-epic panel", async () => {
+    const user = userEvent.setup();
+    await renderLayout();
+
+    await user.click(screen.getByTestId("header-new-button"));
+    await waitFor(() => {
+      expect(screen.getByTestId("header-new-epic-chat")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("header-new-epic-chat"));
+
     expect(nav.push).toHaveBeenCalledWith("/projects/proj-1?panel=new-epic");
+  });
+
+  it("opens the new-bug panel from the New menu", async () => {
+    const user = userEvent.setup();
+    await renderLayout();
 
     await user.click(screen.getByTestId("header-new-button"));
     await waitFor(() => {
@@ -155,6 +194,49 @@ describe("project layout chrome", () => {
     });
     await user.click(screen.getByTestId("header-new-bug"));
     expect(nav.push).toHaveBeenCalledWith("/projects/proj-1?panel=new-bug");
+  });
+
+  it("drives the New menu from the keyboard", async () => {
+    const user = userEvent.setup();
+    await renderLayout();
+
+    screen.getByTestId("header-new-button").focus();
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => {
+      expect(screen.getByTestId("header-new-epic-manual")).toBeInTheDocument();
+    });
+
+    // Radix focuses the first item on open; Escape must close without acting.
+    await user.keyboard("{Escape}");
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("header-new-epic-manual"),
+      ).not.toBeInTheDocument();
+    });
+    expect(nav.push).not.toHaveBeenCalled();
+
+    // Reopen: Radix lands on the first item, so one ArrowDown reaches the
+    // chat entry and Enter activates it — no pointer involved anywhere.
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(screen.getByTestId("header-new-epic-manual")).toBeInTheDocument();
+    });
+    await user.keyboard("{ArrowDown}");
+    await user.keyboard("{Enter}");
+
+    expect(nav.push).toHaveBeenCalledWith("/projects/proj-1?panel=new-epic");
+
+    // And Enter straight after opening picks the manual entry.
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      expect(screen.getByTestId("header-new-epic-manual")).toBeInTheDocument();
+    });
+    await user.keyboard("{Enter}");
+
+    expect(nav.push).toHaveBeenCalledWith(
+      "/projects/proj-1?panel=new-epic-manual",
+    );
   });
 
   it("mounts the ambient bands on the board route only", async () => {
