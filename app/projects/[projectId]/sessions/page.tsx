@@ -10,6 +10,7 @@ import {
   Clock,
   LoaderCircle,
   MessageSquare,
+  Moon,
   Search,
   Sparkles,
   TriangleAlert,
@@ -17,8 +18,15 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 import { SessionOutcomeBadge } from "@/components/shared/SessionOutcomeBadge";
+import { NightRunSummaryDialog } from "@/components/night/NightRunSummaryDialog";
+import {
+  formatNightRunCounts,
+  formatNightRunDuration,
+} from "@/components/night/night-run-format";
+import { useNightRuns } from "@/hooks/useNightRuns";
 import { formatCostUsd } from "@/lib/utils/format-usage";
-import { isNightRunId } from "@/lib/night/constants";
+import { formatTime } from "@/lib/utils/format-date";
+import { isNightRunId, type NightRunListEntry } from "@/lib/night/constants";
 import { cn } from "@/lib/utils";
 
 // --- Discriminated union types ---
@@ -129,6 +137,21 @@ export default function SessionsPage() {
   const [stateFilter, setStateFilter] = useState<StateFilter>("all");
   const [providerFilter, setProviderFilter] = useState<ProviderFilter>(null);
   const [ticketQuery, setTicketQuery] = useState("");
+  const [summaryRunId, setSummaryRunId] = useState<string | null>(null);
+
+  /**
+   * Night-run history. Since the cockpit band was removed this list is the
+   * only durable way back into a past run's morning summary — the "Night run
+   * finished" notification deep link (`?nightRun=`) is transient.
+   *
+   * Polled only while the "Night run" chip is active: the default Sessions
+   * view must not pay for a surface it is not showing.
+   */
+  const nightFilterActive = stateFilter === "night";
+  const { runs: nightRuns, loading: nightRunsLoading } = useNightRuns(
+    projectId,
+    nightFilterActive
+  );
 
   useEffect(() => {
     loadSessions();
@@ -338,6 +361,48 @@ export default function SessionsPage() {
         </label>
       </div>
 
+      {/* Run-level night history, above the session-level rows the same chip
+          filters to. Hidden until the chip is on, so the default view keeps
+          its shape. */}
+      {nightFilterActive && (
+        <div
+          data-testid="night-runs-list"
+          className="shrink-0 border-b border-border bg-band px-[22px] py-[14px]"
+        >
+          <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+            Night runs
+          </span>
+          {nightRuns.length === 0 ? (
+            <p className="pt-[8px] text-[13px] text-muted-foreground">
+              {nightRunsLoading
+                ? "Loading night runs…"
+                : "No night runs recorded yet."}
+            </p>
+          ) : (
+            <div className="mt-[8px] flex max-h-[180px] flex-col overflow-y-auto">
+              {nightRuns.map((run) => (
+                <NightRunRow
+                  key={run.runId}
+                  run={run}
+                  onOpen={() => setSummaryRunId(run.runId)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Same dialog the `?nightRun=` deep link opens on the board, driven by
+          the same hook — opening a run from here is the identical surface. */}
+      <NightRunSummaryDialog
+        projectId={projectId}
+        runId={summaryRunId}
+        open={summaryRunId !== null}
+        onOpenChange={(open) => {
+          if (!open) setSummaryRunId(null);
+        }}
+      />
+
       {items.length === 0 ? (
         <p className="p-6 text-sm text-muted-foreground">No sessions yet</p>
       ) : (
@@ -421,6 +486,59 @@ function BandCell({
         {value}
       </span>
     </div>
+  );
+}
+
+/**
+ * One past (or live) night run, opening the morning summary.
+ *
+ * Cost is deliberately absent: the list payload has `totalCostUsd` but not
+ * `costIsPartial`, so it cannot say whether the number is exact or a lower
+ * bound. The dialog has both and prints it honestly — better than a figure
+ * here that silently drops the `≥`.
+ */
+function NightRunRow({
+  run,
+  onOpen,
+}: {
+  run: NightRunListEntry;
+  onOpen: () => void;
+}) {
+  const isLive = run.state === "running" && !run.interrupted;
+  const subline = [
+    run.runId,
+    formatTime(run.startedAt),
+    formatNightRunDuration(run.startedAt, run.endedAt),
+    run.interrupted ? "interrupted by a restart" : null,
+    run.abortReason,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <button
+      type="button"
+      data-testid={`night-run-row-${run.runId}`}
+      onClick={onOpen}
+      className="flex items-center gap-[10px] border-t border-border-soft py-[9px] text-left transition-colors first:border-t-0 hover:text-primary"
+    >
+      {isLive ? (
+        <span className="breathing-dot h-[7px] w-[7px] shrink-0" />
+      ) : (
+        <Moon className="h-[14px] w-[14px] shrink-0 text-meta" />
+      )}
+      <div className="flex min-w-0 flex-col">
+        <span className="truncate text-[13.5px]">
+          {formatNightRunCounts(run.counts)}
+        </span>
+        <span className="truncate font-mono text-[11px] text-meta">
+          {subline}
+        </span>
+      </div>
+      <span className="ml-auto shrink-0 pl-[10px] text-[12.5px] text-muted-foreground">
+        {isLive ? "Running" : "Summary"}
+      </span>
+    </button>
   );
 }
 
