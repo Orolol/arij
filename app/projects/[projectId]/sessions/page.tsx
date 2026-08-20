@@ -140,9 +140,9 @@ export default function SessionsPage() {
   const [summaryRunId, setSummaryRunId] = useState<string | null>(null);
 
   /**
-   * Night-run history. Since the cockpit band was removed this list is the
-   * only durable way back into a past run's morning summary — the "Night run
-   * finished" notification deep link (`?nightRun=`) is transient.
+   * Night-run history. This list is the only durable way back into a past
+   * run's morning summary — the "Night run finished" notification carrying
+   * the `?nightRun=` deep link is transient.
    *
    * Polled only while the "Night run" chip is active: the default Sessions
    * view must not pay for a surface it is not showing.

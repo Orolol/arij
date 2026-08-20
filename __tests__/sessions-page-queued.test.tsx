@@ -270,9 +270,8 @@ describe("SessionsPage — filters", () => {
 });
 
 /**
- * Since the cockpit band was removed, this list is the only durable entry
- * point to a past run's morning summary — the "Night run finished"
- * notification deep link is transient.
+ * This list is the only durable entry point to a past run's morning summary
+ * — the "Night run finished" notification deep link is transient.
  */
 describe("SessionsPage — night-run history", () => {
   beforeEach(() => {
