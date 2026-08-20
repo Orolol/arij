@@ -242,6 +242,96 @@ describe("EpicCreateDialog", () => {
     expect(submit).not.toBeDisabled();
   });
 
+  // The fields scroll inside the dialog body while Create sits in the footer
+  // outside it. Without focus management a blocked submit can render its only
+  // feedback off-screen, and the button reads as dead.
+  it("sends the caret to the empty epic title when submit is blocked", async () => {
+    const fetchMock = mockFetchOk();
+    const user = userEvent.setup();
+    renderDialog();
+
+    // Move focus off the autofocused title first, the way typing anywhere else
+    // would — otherwise the assertion would pass without any focus call.
+    const description = screen.getByTestId("epic-description-input");
+    await user.click(description);
+    expect(description).toHaveFocus();
+
+    fireEvent.click(screen.getByTestId("epic-create-submit"));
+
+    await waitFor(() => expect(screen.getByTestId("epic-title-input")).toHaveFocus());
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("sends the caret to the first untitled story, not merely to some story", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    fireEvent.change(screen.getByTestId("epic-title-input"), {
+      target: { value: "Direct epic" },
+    });
+    await user.click(screen.getByTestId("add-user-story"));
+    await user.click(screen.getByTestId("add-user-story"));
+    await user.click(screen.getByTestId("add-user-story"));
+
+    const titles = screen.getAllByTestId("user-story-title-input");
+    fireEvent.change(titles[0], { target: { value: "Titled" } });
+    fireEvent.change(titles[2], { target: { value: "Also titled" } });
+
+    fireEvent.click(screen.getByTestId("epic-create-submit"));
+
+    // The middle one is the offender: landing on the first or last block would
+    // leave the user hunting for the message.
+    await waitFor(() => expect(titles[1]).toHaveFocus());
+  });
+
+  it("names the failing field to a screen reader instead of only colouring it", async () => {
+    const user = userEvent.setup();
+    renderDialog();
+
+    await user.click(screen.getByTestId("add-user-story"));
+    fireEvent.click(screen.getByTestId("epic-create-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("epic-title-error")).toBeInTheDocument(),
+    );
+
+    // aria-invalid says "wrong" but not why; the description link carries the
+    // sentence, and role=alert is what makes it announced at all.
+    for (const [input, message] of [
+      [screen.getByTestId("epic-title-input"), "Title is required"],
+      [
+        screen.getByTestId("user-story-title-input"),
+        "User story title is required",
+      ],
+    ] as const) {
+      const describedBy = input.getAttribute("aria-describedby");
+      expect(describedBy).toBeTruthy();
+      const errorNode = document.getElementById(describedBy as string);
+      expect(errorNode).toHaveTextContent(message);
+      expect(errorNode).toHaveAttribute("role", "alert");
+    }
+  });
+
+  it("keeps a rejected request's message out of the scrolling body", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({ error: "Failed to create epic" }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderDialog();
+
+    fireEvent.change(screen.getByTestId("epic-title-input"), {
+      target: { value: "Direct epic" },
+    });
+    fireEvent.click(screen.getByTestId("epic-create-submit"));
+
+    const error = await screen.findByTestId("epic-create-error");
+    expect(error).toHaveAttribute("role", "alert");
+    // Inside the scroll container it would sit under however many story blocks
+    // the user added, i.e. below the fold, while Create looks unresponsive.
+    expect(screen.getByTestId("epic-create-body")).not.toContainElement(error);
+  });
+
   it("keeps the dialog open with the draft intact when the request fails", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,

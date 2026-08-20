@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -53,6 +53,10 @@ export function EpicCreateDialog({
   /** Field errors stay hidden until the first submit attempt. */
   const [showErrors, setShowErrors] = useState(false);
 
+  const titleRef = useRef<HTMLInputElement>(null);
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+  const storyTitleRefs = useRef(new Map<string, HTMLInputElement | null>());
+
   const validation = validateManualEpicDraft(draft);
 
   function resetForm() {
@@ -83,6 +87,34 @@ export function EpicCreateDialog({
       delete next[key];
       return next;
     });
+    storyTitleRefs.current.delete(key);
+  }
+
+  /**
+   * Puts the caret on the first thing the user has to fix.
+   *
+   * The fields scroll inside the dialog body while Create sits in the footer
+   * outside it, so a blocked submit can otherwise render its message off-screen
+   * and read as a dead button. Focusing brings the field into view and names it
+   * to a screen reader, which `aria-invalid` alone does not.
+   */
+  function focusFirstInvalidField() {
+    if (validation.titleError) {
+      titleRef.current?.focus();
+      return;
+    }
+    if (validation.descriptionError) {
+      descriptionRef.current?.focus();
+      return;
+    }
+    // Draft order, not object order: the user is sent to the topmost offender.
+    const firstInvalid = draft.userStories.find(
+      (story) => validation.storyErrors[story.key]
+    );
+    if (!firstInvalid) return;
+    // The story title input lives in the block header, so it is reachable even
+    // when the block is collapsed — no need to expand it first.
+    storyTitleRefs.current.get(firstInvalid.key)?.focus();
   }
 
   function updateUserStory(
@@ -102,6 +134,7 @@ export function EpicCreateDialog({
     if (submitting) return;
     if (!validation.valid) {
       setShowErrors(true);
+      focusFirstInvalidField();
       return;
     }
 
@@ -147,7 +180,10 @@ export function EpicCreateDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="max-h-[60vh] space-y-4 overflow-y-auto py-2 pr-1">
+        <div
+          className="max-h-[60vh] space-y-4 overflow-y-auto py-2 pr-1"
+          data-testid="epic-create-body"
+        >
           <div>
             <label
               htmlFor="epic-title"
@@ -157,15 +193,24 @@ export function EpicCreateDialog({
             </label>
             <Input
               id="epic-title"
+              ref={titleRef}
               value={draft.title}
               onChange={(e) => setDraft((prev) => ({ ...prev, title: e.target.value }))}
               placeholder="Epic title..."
               aria-invalid={showErrors && validation.titleError !== null}
+              aria-describedby={
+                showErrors && validation.titleError ? "epic-title-error" : undefined
+              }
               data-testid="epic-title-input"
               autoFocus
             />
             {showErrors && validation.titleError && (
-              <p className="mt-1 text-[12px] text-destructive" data-testid="epic-title-error">
+              <p
+                id="epic-title-error"
+                role="alert"
+                className="mt-1 text-[12px] text-destructive"
+                data-testid="epic-title-error"
+              >
                 {validation.titleError}
               </p>
             )}
@@ -180,6 +225,7 @@ export function EpicCreateDialog({
             </label>
             <Textarea
               id="epic-description"
+              ref={descriptionRef}
               value={draft.description}
               onChange={(e) =>
                 setDraft((prev) => ({ ...prev, description: e.target.value }))
@@ -187,10 +233,17 @@ export function EpicCreateDialog({
               placeholder="Context, goals, constraints... (markdown)"
               rows={4}
               aria-invalid={showErrors && validation.descriptionError !== null}
+              aria-describedby={
+                showErrors && validation.descriptionError
+                  ? "epic-description-error"
+                  : undefined
+              }
               data-testid="epic-description-input"
             />
             {showErrors && validation.descriptionError && (
               <p
+                id="epic-description-error"
+                role="alert"
                 className="mt-1 text-[12px] text-destructive"
                 data-testid="epic-description-error"
               >
@@ -227,6 +280,7 @@ export function EpicCreateDialog({
             {draft.userStories.map((story, index) => {
               const collapsed = collapsedStories[story.key] ?? false;
               const storyError = showErrors ? validation.storyErrors[story.key] : undefined;
+              const storyErrorId = `user-story-error-${story.key}`;
 
               return (
                 <div
@@ -263,10 +317,14 @@ export function EpicCreateDialog({
                     <span className="shrink-0 text-[12px] text-meta">#{index + 1}</span>
                     <Input
                       value={story.title}
+                      ref={(node) => {
+                        storyTitleRefs.current.set(story.key, node);
+                      }}
                       onChange={(e) => updateUserStory(story.key, "title", e.target.value)}
                       placeholder="As a user, I want..."
                       aria-label={`User story ${index + 1} title`}
                       aria-invalid={Boolean(storyError)}
+                      aria-describedby={storyError ? storyErrorId : undefined}
                       className="h-[30px] text-[13px]"
                       data-testid="user-story-title-input"
                     />
@@ -284,7 +342,11 @@ export function EpicCreateDialog({
                   </div>
 
                   {storyError && (
-                    <p className="mt-1 pl-[28px] text-[12px] text-destructive">
+                    <p
+                      id={storyErrorId}
+                      role="alert"
+                      className="mt-1 pl-[28px] text-[12px] text-destructive"
+                    >
                       {storyError}
                     </p>
                   )}
@@ -320,12 +382,22 @@ export function EpicCreateDialog({
             })}
           </div>
 
-          {error && (
-            <p className="text-xs text-destructive" data-testid="epic-create-error">
-              {error}
-            </p>
-          )}
         </div>
+
+        {/*
+          Outside the scrolling body on purpose: a rejection concerns the whole
+          submit, so it belongs next to the button that triggered it rather than
+          below however many story blocks the user added.
+        */}
+        {error && (
+          <p
+            role="alert"
+            className="text-xs text-destructive"
+            data-testid="epic-create-error"
+          >
+            {error}
+          </p>
+        )}
 
         <DialogFooter>
           <Button
