@@ -366,6 +366,139 @@ describe("BugCreateDialog attachments", () => {
     });
   });
 
+  it("keeps creation blocked until the slower of two overlapping uploads lands", async () => {
+    // Paste and drop stay live during a transfer, so two batches overlap as
+    // soon as the user pastes a second screenshot without waiting.
+    const heldUploads: Array<() => void> = [];
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).endsWith("/chat/upload")) {
+        uploadCount += 1;
+        const index = uploadCount;
+        if (index === 1) {
+          await new Promise<void>((resolve) => heldUploads.push(resolve));
+        }
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              id: `att-${index}`,
+              fileName: `shot-${index}.png`,
+              filePath: `data/uploads/proj-1/att-${index}.png`,
+              mimeType: "image/png",
+              sizeBytes: 2048,
+            },
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ data: { id: "bug-1" } }) };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderDialog();
+
+    fireEvent.change(screen.getByPlaceholderText("Bug title..."), {
+      target: { value: "Two screenshots" },
+    });
+    pasteFiles([imageFile("slow.png")]);
+    pasteFiles([imageFile("fast.png")]);
+
+    // The second paste has landed while the first is still on the wire.
+    await waitFor(() =>
+      expect(screen.getByAltText("shot-2.png")).toBeInTheDocument()
+    );
+
+    const createButton = screen.getByRole("button", { name: "Create Bug" });
+    expect(createButton).toBeDisabled();
+    fireEvent.click(createButton);
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/bugs"))
+    ).toHaveLength(0);
+
+    heldUploads.forEach((release) => release());
+    await waitFor(() => expect(createButton).not.toBeDisabled());
+
+    fireEvent.click(createButton);
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith("/bugs")
+      );
+      expect(createCall).toBeTruthy();
+      const body = JSON.parse(String((createCall![1] as RequestInit).body));
+      expect(body.images).toEqual([
+        "data/uploads/proj-1/att-2.png",
+        "data/uploads/proj-1/att-1.png",
+      ]);
+    });
+  });
+
+  it("drops an upload that lands after the form was cleared", async () => {
+    let releaseUpload: (() => void) | null = null;
+    let releaseFirstCreate: (() => void) | null = null;
+    let creates = 0;
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).endsWith("/chat/upload")) {
+        await new Promise<void>((resolve) => {
+          releaseUpload = resolve;
+        });
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              id: "att-late",
+              fileName: "late.png",
+              filePath: "data/uploads/proj-1/att-late.png",
+              mimeType: "image/png",
+              sizeBytes: 2048,
+            },
+          }),
+        };
+      }
+      creates += 1;
+      if (creates === 1) {
+        await new Promise<void>((resolve) => {
+          releaseFirstCreate = resolve;
+        });
+      }
+      return { ok: true, json: async () => ({ data: { id: `bug-${creates}` } }) };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { onOpenChange } = renderDialog();
+
+    fireEvent.change(screen.getByPlaceholderText("Bug title..."), {
+      target: { value: "First bug" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Bug" }));
+    await waitFor(() => expect(releaseFirstCreate).toBeTruthy());
+
+    // Pasted after the user committed: the create request is already in flight.
+    pasteFiles([imageFile("late.png")]);
+    await waitFor(() => expect(releaseUpload).toBeTruthy());
+
+    releaseFirstCreate!();
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+
+    // The upload now answers into a form that has been reset. Staging it would
+    // put a screenshot the user never sees on the *next* bug they file.
+    releaseUpload!();
+
+    const createButton = screen.getByRole("button", { name: "Create Bug" });
+    fireEvent.change(screen.getByPlaceholderText("Bug title..."), {
+      target: { value: "Second bug" },
+    });
+    await waitFor(() => expect(createButton).not.toBeDisabled());
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      const createCalls = fetchMock.mock.calls.filter(([url]) =>
+        String(url).endsWith("/bugs")
+      );
+      expect(createCalls).toHaveLength(2);
+      const body = JSON.parse(String((createCalls[1]![1] as RequestInit).body));
+      expect(body.title).toBe("Second bug");
+      expect("images" in body).toBe(false);
+    });
+    expect(screen.queryByTestId("image-attachment-strip")).toBeNull();
+  });
+
   it("clears staged attachments once the bug is created", async () => {
     mockFetch();
     renderDialog();

@@ -44,10 +44,17 @@ export function useImageAttachments({
   disabled = false,
 }: UseImageAttachmentsOptions) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
-  const [uploading, setUploading] = useState(false);
+  // Counted rather than a flag: paste and drop stay live during a transfer, so
+  // batches overlap as soon as the user pastes twice without waiting.
+  const [pendingUploads, setPendingUploads] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Bumped by `clear()`. Everything still in flight belongs to the staging area
+  // that just ended, and must not land in the empty one that replaced it.
+  const stagingSessionRef = useRef(0);
+
+  const uploading = pendingUploads > 0;
 
   const uploadFile = useCallback(
     async (file: File): Promise<UploadOutcome> => {
@@ -89,9 +96,24 @@ export function useImageAttachments({
     async (accepted: File[]) => {
       if (accepted.length === 0) return;
 
-      setUploading(true);
-      const outcomes = await Promise.all(accepted.map(uploadFile));
-      setUploading(false);
+      const session = stagingSessionRef.current;
+      setPendingUploads((pending) => pending + 1);
+
+      let outcomes: UploadOutcome[] = [];
+      try {
+        outcomes = await Promise.all(accepted.map(uploadFile));
+      } finally {
+        // A cleared session already zeroed the counter; decrementing on its
+        // behalf would drive the next transfer's count negative.
+        if (stagingSessionRef.current === session) {
+          setPendingUploads((pending) => pending - 1);
+        }
+      }
+
+      // Answered into a form the caller has since submitted and reset. Staging
+      // it now would attach a screenshot the user never sees to whatever they
+      // write next.
+      if (stagingSessionRef.current !== session) return;
 
       const uploaded = outcomes
         .map((outcome) => outcome.attachment)
@@ -193,6 +215,8 @@ export function useImageAttachments({
   }, []);
 
   const clear = useCallback(() => {
+    stagingSessionRef.current += 1;
+    setPendingUploads(0);
     setAttachments([]);
     setError(null);
   }, []);
