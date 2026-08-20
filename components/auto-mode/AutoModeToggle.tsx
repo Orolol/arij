@@ -72,14 +72,21 @@ export function AutoModeToggle({
       aria-pressed={active}
       title="Full Auto Mode — build, review and merge continuously"
       className={cn(
-        "flex shrink-0 items-center gap-[6px] rounded-[7px] border px-[9px] py-[3px] text-[12px] transition-colors",
+        "flex shrink-0 items-center gap-[6px] rounded-[7px] border px-[10px] py-[4px] text-[12px] font-medium transition-colors",
         active
           ? "border-agent-border bg-agent-bg text-agent"
-          : "border-border text-muted-foreground hover:text-foreground"
+          : "border-border bg-background text-foreground shadow-sm hover:border-agent-border hover:bg-agent-bg/40 hover:text-agent"
       )}
     >
       <InfinityIcon className="h-[13px] w-[13px]" aria-hidden />
-      Auto
+      Full Auto
+      <span
+        aria-hidden
+        className={cn(
+          "h-[7px] w-[7px] rounded-full",
+          active ? "bg-agent" : "bg-muted-foreground/40"
+        )}
+      />
       {badge && (
         <span
           data-testid="auto-mode-toggle-badge"

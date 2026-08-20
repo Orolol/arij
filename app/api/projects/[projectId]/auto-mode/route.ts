@@ -69,7 +69,12 @@ function buildStatus(projectId: string): AutoModeStatus {
     buildConcurrency: config.buildConcurrency,
     reviewAgent: config.reviewAgent,
     reviewConcurrency: config.reviewConcurrency,
-    effectiveSchedulerBudget: resolveMaxConcurrentForProject(projectId),
+    effectiveSchedulerBudget: (() => {
+      // Unlimited is Infinity in-process, which JSON would silently turn
+      // into null anyway — send the null contract explicitly.
+      const budget = resolveMaxConcurrentForProject(projectId);
+      return Number.isFinite(budget) ? budget : null;
+    })(),
     running: snapshot.enabled,
     lastSweepAt: snapshot.lastSweepAt,
     inFlight: snapshot.inFlight,

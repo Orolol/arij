@@ -22,8 +22,9 @@ export interface AutoModeStatus {
    * The scheduler's per-project `agent_max_concurrent` budget. Build + review
    * concurrency live ABOVE it: when their sum exceeds this the dialog warns
    * that the excess will queue. The mode never raises it silently.
+   * `null` means unlimited (Infinity does not survive JSON serialization).
    */
-  effectiveSchedulerBudget: number;
+  effectiveSchedulerBudget: number | null;
   /** True while the in-process supervisor is tracking this project. */
   running: boolean;
   lastSweepAt: string | null;

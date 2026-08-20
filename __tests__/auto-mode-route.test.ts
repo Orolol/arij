@@ -27,10 +27,9 @@ const { GET, PUT } = await import(
   "@/app/api/projects/[projectId]/auto-mode/route"
 );
 const { autoModeRegistry } = await import("@/lib/auto-mode/registry");
-const {
-  AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY,
-  DEFAULT_MAX_CONCURRENT_AGENTS,
-} = await import("@/lib/agents/scheduler-constants");
+const { AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY } = await import(
+  "@/lib/agents/scheduler-constants"
+);
 const {
   autoModeBuildConcurrencySettingKey,
   autoModeEnabledSettingKey,
@@ -87,7 +86,8 @@ describe("GET /auto-mode", () => {
       buildConcurrency: 2,
       reviewAgent: null,
       reviewConcurrency: 1,
-      effectiveSchedulerBudget: DEFAULT_MAX_CONCURRENT_AGENTS,
+      // Unlimited (Infinity in-process) crosses JSON as an explicit null.
+      effectiveSchedulerBudget: null,
       running: false,
       inFlight: { build: 0, review: 0 },
       candidates: { build: 0, review: 0, merge: 0 },
