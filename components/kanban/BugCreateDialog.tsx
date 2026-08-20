@@ -18,8 +18,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { ImageAttachmentStrip } from "@/components/shared/ImageAttachmentStrip";
+import { useImageAttachments } from "@/hooks/useImageAttachments";
 import { PRIORITY_LABELS } from "@/lib/types/kanban";
-import { Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ImagePlus, Loader2 } from "lucide-react";
 
 interface BugCreateDialogProps {
   projectId: string;
@@ -43,16 +46,34 @@ export function BugCreateDialog({
   const [error, setError] = useState<string | null>(null);
   const submitting = submitMode !== null;
 
+  const {
+    attachments,
+    uploading,
+    error: attachmentError,
+    dragActive,
+    fileInputProps,
+    openFilePicker,
+    handlePaste,
+    handleDragOver,
+    handleDragLeave,
+    handleDrop,
+    remove: removeAttachment,
+    clear: clearAttachments,
+  } = useImageAttachments({ projectId });
+
   function resetForm() {
     setTitle("");
     setDescription("");
     setPriority("2");
+    clearAttachments();
   }
 
   async function handleSubmit(mode: "create" | "create_and_fix" = "create") {
-    if (!title.trim()) return;
+    if (!title.trim() || uploading) return;
     setSubmitMode(mode);
     setError(null);
+
+    const images = attachments.map((a) => a.filePath).filter(Boolean);
 
     try {
       const createRes = await fetch(`/api/projects/${projectId}/bugs`, {
@@ -62,6 +83,9 @@ export function BugCreateDialog({
           title: title.trim(),
           description: description.trim() || null,
           priority: Number(priority),
+          // Omitted entirely when nothing is attached, so a bug without a
+          // screenshot posts exactly the payload it posted before.
+          ...(images.length > 0 ? { images } : {}),
         }),
       });
 
@@ -119,7 +143,17 @@ export function BugCreateDialog({
           <DialogTitle className="text-[16px] font-semibold">New Bug</DialogTitle>
         </DialogHeader>
 
-        <div className="space-y-4 py-2">
+        <div
+          className={cn(
+            "space-y-4 rounded-[10px] py-2 transition-colors",
+            dragActive && "bg-muted/40 outline-2 outline-dashed outline-primary/60"
+          )}
+          onPaste={handlePaste}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          data-testid="bug-create-drop-zone"
+        >
           <div>
             <label className="mb-1 block text-[12.5px] text-muted-foreground">
               Title *
@@ -143,6 +177,43 @@ export function BugCreateDialog({
               placeholder="Steps to reproduce, expected vs actual behavior..."
               rows={4}
             />
+          </div>
+
+          <div>
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <label className="text-[12.5px] text-muted-foreground">
+                Screenshots
+              </label>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={openFilePicker}
+                disabled={submitting || uploading}
+                className="h-[26px] rounded-[7px] px-2 text-[12px]"
+              >
+                <ImagePlus className="mr-1 h-3 w-3" />
+                Attach image
+              </Button>
+            </div>
+
+            <ImageAttachmentStrip
+              attachments={attachments}
+              onRemove={removeAttachment}
+              uploading={uploading}
+              className="mb-2"
+            />
+
+            <p className="text-[11.5px] text-muted-foreground">
+              Paste a screenshot with Ctrl/Cmd+V, drop an image here, or attach one.
+            </p>
+
+            {attachmentError && (
+              <p className="mt-1 text-xs text-destructive" role="alert">
+                {attachmentError}
+              </p>
+            )}
+
+            <input {...fileInputProps} />
           </div>
 
           <div>
@@ -178,7 +249,7 @@ export function BugCreateDialog({
           </Button>
           <Button
             onClick={() => handleSubmit("create")}
-            disabled={!title.trim() || submitting}
+            disabled={!title.trim() || submitting || uploading}
             variant="destructive"
           >
             {submitMode === "create" && (
@@ -188,7 +259,7 @@ export function BugCreateDialog({
           </Button>
           <Button
             onClick={() => handleSubmit("create_and_fix")}
-            disabled={!title.trim() || submitting}
+            disabled={!title.trim() || submitting || uploading}
             variant="destructive"
           >
             {submitMode === "create_and_fix" && (

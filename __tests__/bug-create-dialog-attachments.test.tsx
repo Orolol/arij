@@ -1,0 +1,346 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
+
+/**
+ * Image attachments in the bug creation modal: clipboard paste, the attach
+ * button, drag and drop, refusal of what the chat upload route would refuse,
+ * per-thumbnail removal, and what ends up in the create payload.
+ */
+describe("BugCreateDialog attachments", () => {
+  let uploadCount = 0;
+
+  function imageFile(name: string, type = "image/png", size = 2048): File {
+    const file = new File(["fake-image"], name, { type });
+    Object.defineProperty(file, "size", { value: size });
+    return file;
+  }
+
+  /** Answers uploads with a distinct attachment each time. */
+  function mockFetch() {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).endsWith("/chat/upload")) {
+        uploadCount += 1;
+        const id = `att-${uploadCount}`;
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              id,
+              fileName: `shot-${uploadCount}.png`,
+              filePath: `data/uploads/proj-1/${id}-shot-${uploadCount}.png`,
+              mimeType: "image/png",
+              sizeBytes: 2048,
+            },
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ data: { id: "bug-1" } }) };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  function renderDialog() {
+    const onOpenChange = vi.fn();
+    const onCreated = vi.fn();
+    render(
+      <BugCreateDialog
+        projectId="proj-1"
+        open={true}
+        onOpenChange={onOpenChange}
+        onCreated={onCreated}
+      />
+    );
+    return { onOpenChange, onCreated };
+  }
+
+  function descriptionField() {
+    return screen.getByPlaceholderText(
+      "Steps to reproduce, expected vs actual behavior..."
+    );
+  }
+
+  function fileInput() {
+    return document.querySelector('input[type="file"]') as HTMLInputElement;
+  }
+
+  function pasteFiles(files: File[]) {
+    fireEvent.paste(descriptionField(), {
+      clipboardData: {
+        items: files.map((file) => ({ type: file.type, getAsFile: () => file })),
+      },
+    });
+  }
+
+  function uploadCalls(fetchMock: ReturnType<typeof mockFetch>) {
+    return fetchMock.mock.calls.filter(([url]) =>
+      String(url).endsWith("/chat/upload")
+    );
+  }
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    uploadCount = 0;
+  });
+
+  it("attaches the clipboard image on Ctrl/Cmd+V", async () => {
+    const fetchMock = mockFetch();
+    renderDialog();
+
+    pasteFiles([imageFile("screenshot.png")]);
+
+    await waitFor(() => {
+      expect(uploadCalls(fetchMock)).toHaveLength(1);
+    });
+    expect(uploadCalls(fetchMock)[0]![0]).toBe("/api/projects/proj-1/chat/upload");
+    expect(
+      (uploadCalls(fetchMock)[0]![1] as RequestInit).method
+    ).toBe("POST");
+    expect(
+      (uploadCalls(fetchMock)[0]![1] as RequestInit).body
+    ).toBeInstanceOf(FormData);
+
+    await waitFor(() => {
+      expect(screen.getByAltText("shot-1.png")).toBeInTheDocument();
+    });
+  });
+
+  it("leaves a text-only paste alone", () => {
+    const fetchMock = mockFetch();
+    renderDialog();
+
+    fireEvent.paste(descriptionField(), {
+      clipboardData: { items: [{ type: "text/plain", getAsFile: () => null }] },
+    });
+
+    expect(uploadCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("attaches an image picked through the Attach image button", async () => {
+    const fetchMock = mockFetch();
+    const clickSpy = vi.spyOn(HTMLInputElement.prototype, "click");
+    renderDialog();
+
+    fireEvent.click(screen.getByRole("button", { name: "Attach image" }));
+    expect(clickSpy).toHaveBeenCalledTimes(1);
+
+    fireEvent.change(fileInput(), { target: { files: [imageFile("from-disk.png")] } });
+
+    await waitFor(() => expect(uploadCalls(fetchMock)).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByAltText("shot-1.png")).toBeInTheDocument()
+    );
+  });
+
+  it("attaches a dropped image", async () => {
+    const fetchMock = mockFetch();
+    renderDialog();
+
+    fireEvent.drop(screen.getByTestId("bug-create-drop-zone"), {
+      dataTransfer: { files: [imageFile("dropped.png")] },
+    });
+
+    await waitFor(() => expect(uploadCalls(fetchMock)).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByAltText("shot-1.png")).toBeInTheDocument()
+    );
+  });
+
+  it("refuses a non-image file with a message naming the allowed types", async () => {
+    const fetchMock = mockFetch();
+    renderDialog();
+
+    fireEvent.drop(screen.getByTestId("bug-create-drop-zone"), {
+      dataTransfer: { files: [imageFile("trace.pdf", "application/pdf")] },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "trace.pdf: Unsupported file type: application/pdf. Allowed: png, jpg, jpeg, gif, webp"
+      )
+    );
+    expect(uploadCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("refuses a file over the chat upload size limit", async () => {
+    const fetchMock = mockFetch();
+    renderDialog();
+
+    fireEvent.drop(screen.getByTestId("bug-create-drop-zone"), {
+      dataTransfer: {
+        files: [imageFile("huge.png", "image/png", 11 * 1024 * 1024)],
+      },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "huge.png: File too large (11.0MB). Max: 10MB"
+      )
+    );
+    expect(uploadCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("keeps the valid image of a mixed batch and reports the refused one", async () => {
+    const fetchMock = mockFetch();
+    renderDialog();
+
+    fireEvent.drop(screen.getByTestId("bug-create-drop-zone"), {
+      dataTransfer: {
+        files: [imageFile("good.png"), imageFile("notes.txt", "text/plain")],
+      },
+    });
+
+    await waitFor(() => expect(uploadCalls(fetchMock)).toHaveLength(1));
+    expect(screen.getByRole("alert")).toHaveTextContent("notes.txt");
+    await waitFor(() =>
+      expect(screen.getByAltText("shot-1.png")).toBeInTheDocument()
+    );
+  });
+
+  it("surfaces an upload the server refuses", async () => {
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).endsWith("/chat/upload")) {
+        return { ok: false, json: async () => ({ error: "Disk is full" }) };
+      }
+      return { ok: true, json: async () => ({ data: { id: "bug-1" } }) };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderDialog();
+
+    pasteFiles([imageFile("screenshot.png")]);
+
+    await waitFor(() =>
+      expect(screen.getByRole("alert")).toHaveTextContent("Disk is full")
+    );
+    expect(screen.queryByTestId("image-attachment-strip")).toBeNull();
+  });
+
+  it("removes attachments one at a time, keeping the others", async () => {
+    mockFetch();
+    renderDialog();
+
+    pasteFiles([imageFile("first.png")]);
+    await waitFor(() => expect(screen.getByAltText("shot-1.png")).toBeInTheDocument());
+    pasteFiles([imageFile("second.png")]);
+    await waitFor(() => expect(screen.getByAltText("shot-2.png")).toBeInTheDocument());
+    pasteFiles([imageFile("third.png")]);
+    await waitFor(() => expect(screen.getByAltText("shot-3.png")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove shot-2.png" }));
+
+    expect(screen.queryByAltText("shot-2.png")).toBeNull();
+    expect(screen.getByAltText("shot-1.png")).toBeInTheDocument();
+    expect(screen.getByAltText("shot-3.png")).toBeInTheDocument();
+  });
+
+  it("sends the attached image paths when the bug is created", async () => {
+    const fetchMock = mockFetch();
+    renderDialog();
+
+    pasteFiles([imageFile("first.png")]);
+    await waitFor(() => expect(screen.getByAltText("shot-1.png")).toBeInTheDocument());
+    pasteFiles([imageFile("second.png")]);
+    await waitFor(() => expect(screen.getByAltText("shot-2.png")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: "Remove shot-1.png" }));
+
+    fireEvent.change(screen.getByPlaceholderText("Bug title..."), {
+      target: { value: "Avatar renders upside down" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Bug" }));
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith("/bugs")
+      );
+      expect(createCall).toBeTruthy();
+      const body = JSON.parse(String((createCall![1] as RequestInit).body));
+      expect(body.images).toEqual(["data/uploads/proj-1/att-2-shot-2.png"]);
+    });
+  });
+
+  it("omits images entirely when no screenshot is attached", async () => {
+    const fetchMock = mockFetch();
+    renderDialog();
+
+    fireEvent.change(screen.getByPlaceholderText("Bug title..."), {
+      target: { value: "Plain text bug" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Bug" }));
+
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith("/bugs")
+      );
+      expect(createCall).toBeTruthy();
+      const body = JSON.parse(String((createCall![1] as RequestInit).body));
+      expect("images" in body).toBe(false);
+    });
+  });
+
+  it("blocks creation while an upload is still in flight", async () => {
+    let releaseUpload: (() => void) | null = null;
+    const fetchMock = vi.fn(async (url: string, _init?: RequestInit) => {
+      if (String(url).endsWith("/chat/upload")) {
+        await new Promise<void>((resolve) => {
+          releaseUpload = resolve;
+        });
+        return {
+          ok: true,
+          json: async () => ({
+            data: {
+              id: "att-1",
+              fileName: "shot-1.png",
+              filePath: "data/uploads/proj-1/att-1-shot-1.png",
+              mimeType: "image/png",
+              sizeBytes: 2048,
+            },
+          }),
+        };
+      }
+      return { ok: true, json: async () => ({ data: { id: "bug-1" } }) };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderDialog();
+
+    fireEvent.change(screen.getByPlaceholderText("Bug title..."), {
+      target: { value: "Screenshot bug" },
+    });
+    pasteFiles([imageFile("screenshot.png")]);
+
+    const createButton = screen.getByRole("button", { name: "Create Bug" });
+    await waitFor(() => expect(createButton).toBeDisabled());
+
+    fireEvent.click(createButton);
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/bugs"))
+    ).toHaveLength(0);
+
+    releaseUpload!();
+    await waitFor(() => expect(createButton).not.toBeDisabled());
+
+    fireEvent.click(createButton);
+    await waitFor(() => {
+      const createCall = fetchMock.mock.calls.find(([url]) =>
+        String(url).endsWith("/bugs")
+      );
+      const body = JSON.parse(String((createCall![1] as RequestInit).body));
+      expect(body.images).toEqual(["data/uploads/proj-1/att-1-shot-1.png"]);
+    });
+  });
+
+  it("clears staged attachments once the bug is created", async () => {
+    mockFetch();
+    renderDialog();
+
+    pasteFiles([imageFile("screenshot.png")]);
+    await waitFor(() => expect(screen.getByAltText("shot-1.png")).toBeInTheDocument());
+
+    fireEvent.change(screen.getByPlaceholderText("Bug title..."), {
+      target: { value: "Bug with a screenshot" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Bug" }));
+
+    await waitFor(() => expect(screen.queryByAltText("shot-1.png")).toBeNull());
+  });
+});
