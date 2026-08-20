@@ -152,6 +152,11 @@ export function useImageAttachments({
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     e.preventDefault();
+    // dragleave also fires when the pointer crosses from one child to the
+    // next, so dropping the highlight on those would make it flicker all the
+    // way across the drop zone. Only a leave that lands outside counts.
+    const movingTo = e.relatedTarget;
+    if (movingTo instanceof Node && e.currentTarget.contains(movingTo)) return;
     setDragActive(false);
   }, []);
 

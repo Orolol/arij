@@ -147,6 +147,43 @@ describe("BugCreateDialog attachments", () => {
     );
   });
 
+  it("attaches an image dropped on the modal chrome, away from the fields", async () => {
+    const fetchMock = mockFetch();
+    renderDialog();
+
+    // The footer sits outside the field stack. A near-miss drop there must be
+    // swallowed by the modal: left to the browser, the default action
+    // navigates to the dropped file and the typed report is gone.
+    const reachedTheBrowser = fireEvent.drop(
+      screen.getByRole("button", { name: "Cancel" }),
+      { dataTransfer: { files: [imageFile("near-miss.png")] } }
+    );
+
+    expect(reachedTheBrowser).toBe(false);
+    await waitFor(() => expect(uploadCalls(fetchMock)).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByAltText("shot-1.png")).toBeInTheDocument()
+    );
+  });
+
+  it("attaches the clipboard image when focus is on the modal, not a field", async () => {
+    const fetchMock = mockFetch();
+    renderDialog();
+
+    // Clicking the modal's chrome parks focus on the dialog container itself,
+    // so this is where Ctrl/Cmd+V lands — no field involved.
+    fireEvent.paste(screen.getByRole("dialog"), {
+      clipboardData: {
+        items: [{ type: "image/png", getAsFile: () => imageFile("screenshot.png") }],
+      },
+    });
+
+    await waitFor(() => expect(uploadCalls(fetchMock)).toHaveLength(1));
+    await waitFor(() =>
+      expect(screen.getByAltText("shot-1.png")).toBeInTheDocument()
+    );
+  });
+
   it("refuses a non-image file with a message naming the allowed types", async () => {
     const fetchMock = mockFetch();
     renderDialog();

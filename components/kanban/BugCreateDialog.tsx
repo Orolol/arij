@@ -138,22 +138,26 @@ export function BugCreateDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="rounded-[14px] shadow-[0_18px_40px_rgba(58,48,44,.14)] sm:max-w-[480px]">
+      {/* The whole modal is the paste and drop target, not just the fields:
+          a screenshot dropped on the header or the footer must not fall
+          through to the browser, which would navigate away to the file and
+          take the half-written report with it. */}
+      <DialogContent
+        className={cn(
+          "rounded-[14px] shadow-[0_18px_40px_rgba(58,48,44,.14)] transition-colors sm:max-w-[480px]",
+          dragActive && "outline-2 outline-dashed outline-primary/60"
+        )}
+        onPaste={handlePaste}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        data-testid="bug-create-drop-zone"
+      >
         <DialogHeader>
           <DialogTitle className="text-[16px] font-semibold">New Bug</DialogTitle>
         </DialogHeader>
 
-        <div
-          className={cn(
-            "space-y-4 rounded-[10px] py-2 transition-colors",
-            dragActive && "bg-muted/40 outline-2 outline-dashed outline-primary/60"
-          )}
-          onPaste={handlePaste}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          data-testid="bug-create-drop-zone"
-        >
+        <div className="space-y-4 py-2">
           <div>
             <label className="mb-1 block text-[12.5px] text-muted-foreground">
               Title *
