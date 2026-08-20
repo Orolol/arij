@@ -151,6 +151,46 @@ describe("createEpicSchema", () => {
     const result = createEpicSchema.safeParse({ title: "T", confidence: 2.0 });
     expect(result.success).toBe(false);
   });
+
+  it("rejects a whitespace-only title", () => {
+    const result = createEpicSchema.safeParse({ title: "   " });
+    expect(result.success).toBe(false);
+  });
+
+  it("measures the title cap on the trimmed value", () => {
+    const atMax = "A".repeat(200);
+    expect(createEpicSchema.safeParse({ title: `  ${atMax}  ` }).success).toBe(true);
+    expect(createEpicSchema.safeParse({ title: `  ${atMax}A  ` }).success).toBe(false);
+  });
+
+  it("hands the route trimmed title and description", () => {
+    const result = createEpicSchema.safeParse({
+      title: "  Account Security  ",
+      description: "  Improve auth  ",
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.title).toBe("Account Security");
+    expect(result.data?.description).toBe("Improve auth");
+  });
+
+  it("rejects a whitespace-only user story title", () => {
+    // The route used to accept this, drop the story, and still answer 201 —
+    // a partial write reported as a success.
+    const result = createEpicSchema.safeParse({
+      title: "Account Security",
+      userStories: [{ title: "Ships" }, { title: "   " }],
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("trims the user story titles it hands the route", () => {
+    const result = createEpicSchema.safeParse({
+      title: "Account Security",
+      userStories: [{ title: "  As a user, I want 2FA  " }],
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.userStories?.[0].title).toBe("As a user, I want 2FA");
+  });
 });
 
 describe("updateEpicSchema", () => {

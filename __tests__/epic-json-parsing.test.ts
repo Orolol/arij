@@ -3,6 +3,7 @@ import {
   parseEpicFromConversation,
   extractJsonCandidates,
 } from "@/lib/epic-parsing";
+import { createEpicSchema } from "@/lib/validation/schemas";
 
 describe("extractJsonCandidates", () => {
   it("extracts JSON from standard code fence", () => {
@@ -256,5 +257,51 @@ describe("parseEpicFromConversation", () => {
     expect(result!.userStories[0].acceptanceCriteria).toBe(
       "- [ ] Captcha after retries\n- [ ] Brute-force lockout",
     );
+  });
+});
+
+/**
+ * The chat path posts `parseEpicFromConversation`'s output straight to
+ * `POST /api/projects/:id/epics` (`hooks/useEpicCreate.ts`). Tightening
+ * `createEpicSchema` to reject blank titles is only safe because the parser
+ * already drops them — these pin that agreement, so a future loosening of the
+ * parser shows up here instead of as a 400 on a working flow.
+ */
+describe("chat-parsed epics satisfy createEpicSchema", () => {
+  const parsedPayload = (assistant: string) => {
+    const parsed = parseEpicFromConversation([
+      { role: "user", content: "Generate the final epic" },
+      { role: "assistant", content: assistant },
+    ]);
+    expect(parsed).not.toBeNull();
+    return {
+      title: parsed!.title,
+      description: parsed!.description,
+      status: "backlog",
+      userStories: parsed!.userStories,
+    };
+  };
+
+  it("accepts a normal agent-generated epic", () => {
+    const payload = parsedPayload(
+      '```json\n{"title":"Auth","description":"Harden login","userStories":[{"title":"As a user, I want 2FA so that my account is secure","acceptanceCriteria":"- [ ] toggle"}]}\n```',
+    );
+    expect(createEpicSchema.safeParse(payload).success).toBe(true);
+  });
+
+  it("still validates when the agent pads titles with whitespace", () => {
+    const payload = parsedPayload(
+      '```json\n{"title":"   Auth   ","userStories":[{"title":"   As a user, I want 2FA so that my account is secure   "}]}\n```',
+    );
+    expect(payload.title).toBe("Auth");
+    expect(createEpicSchema.safeParse(payload).success).toBe(true);
+  });
+
+  it("drops a blank story title before it can reach the schema", () => {
+    const payload = parsedPayload(
+      '```json\n{"title":"Auth","userStories":[{"title":"As a user, I want 2FA so that my account is secure"},{"title":"   "}]}\n```',
+    );
+    expect(payload.userStories).toHaveLength(1);
+    expect(createEpicSchema.safeParse(payload).success).toBe(true);
   });
 });

@@ -49,8 +49,14 @@ export const cloneProjectSchema = z.object({
 
 // --- Epic schemas ---
 
+/**
+ * Nested story for `createEpicSchema`. The title is trimmed *before* it is
+ * checked, so `"   "` is a 400 for the whole request rather than a member the
+ * route drops on its way to a `201` — a success status that persisted only part
+ * of the array is data loss the caller never hears about.
+ */
 const userStoryInput = z.object({
-  title: z.string().min(1),
+  title: z.string().trim().min(1, "User story title is required"),
   description: z.string().nullish(),
   acceptanceCriteria: z.string().nullish(),
 });
@@ -61,8 +67,11 @@ const dependencyInput = z.object({
 });
 
 export const createEpicSchema = z.object({
-  title: z.string().min(1, "Title is required").max(200),
-  description: z.string().max(10000).nullish(),
+  // Trimmed before both checks: `"   "` is not a title, and the caps are
+  // measured on the value that actually gets stored — which is also what the
+  // manual form measures client-side, so the two agree on the boundary.
+  title: z.string().trim().min(1, "Title is required").max(200),
+  description: z.string().trim().max(10000).nullish(),
   priority: z.number().int().min(0).max(3).optional(),
   status: z
     .enum(["backlog", "todo", "in_progress", "review", "done"])
