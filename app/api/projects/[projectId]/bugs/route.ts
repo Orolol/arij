@@ -4,6 +4,32 @@ import { epics } from "@/lib/db/schema";
 import { eq, sql, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
+import { uploadFileNameFromPath } from "@/lib/uploads/ticket-images";
+
+/**
+ * `images` is stored verbatim as JSON and read back by the ticket panel, which
+ * can only display this project's own uploads. Accepting anything else would
+ * leave the column holding a path that renders as nothing — so the write side
+ * is held to exactly what the read side can serve.
+ */
+function invalidImagesReason(images: unknown, projectId: string): string | null {
+  if (images === undefined || images === null) return null;
+
+  if (!Array.isArray(images)) {
+    return "images must be an array of upload paths";
+  }
+
+  // findIndex, not find: a literal `undefined` member is itself invalid, and
+  // find() would report it as "nothing wrong here".
+  const offender = images.findIndex(
+    (image) => uploadFileNameFromPath(image, projectId) === null
+  );
+  if (offender !== -1) {
+    return `Not an upload of this project: ${JSON.stringify(images[offender])}`;
+  }
+
+  return null;
+}
 
 export async function POST(
   request: NextRequest,
@@ -15,6 +41,11 @@ export async function POST(
 
   if (!body.title) {
     return NextResponse.json({ error: "Title is required" }, { status: 400 });
+  }
+
+  const imagesError = invalidImagesReason(body.images, projectId);
+  if (imagesError) {
+    return NextResponse.json({ error: imagesError }, { status: 400 });
   }
 
   const maxPos = db
