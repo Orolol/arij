@@ -19,6 +19,7 @@ import {
   buildManualEpicPayload,
   createEmptyEpicDraft,
   createEmptyUserStory,
+  formatEpicCreateError,
   validateManualEpicDraft,
   type ManualEpicDraft,
   type ManualUserStoryDraft,
@@ -118,7 +119,7 @@ export function EpicCreateDialog({
       if (!res.ok || json.error) {
         // The dialog stays open with the draft intact so a failed request
         // never costs the user what they typed.
-        setError(json.error || "Failed to create epic");
+        setError(formatEpicCreateError(json));
         return;
       }
 
@@ -185,8 +186,17 @@ export function EpicCreateDialog({
               }
               placeholder="Context, goals, constraints... (markdown)"
               rows={4}
+              aria-invalid={showErrors && validation.descriptionError !== null}
               data-testid="epic-description-input"
             />
+            {showErrors && validation.descriptionError && (
+              <p
+                className="mt-1 text-[12px] text-destructive"
+                data-testid="epic-description-error"
+              >
+                {validation.descriptionError}
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">

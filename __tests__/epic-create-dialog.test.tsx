@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { EpicCreateDialog } from "@/components/kanban/EpicCreateDialog";
+import {
+  EPIC_TITLE_MAX_LENGTH,
+  EPIC_TITLE_TOO_LONG,
+} from "@/lib/epics/manual-epic-form";
 
 describe("EpicCreateDialog", () => {
   beforeEach(() => {
@@ -111,6 +115,55 @@ describe("EpicCreateDialog", () => {
     );
     expect(fetchMock).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("blocks submit on an over-long title instead of spending a round trip on a 400", async () => {
+    const fetchMock = mockFetchOk();
+    renderDialog();
+
+    fireEvent.change(screen.getByTestId("epic-title-input"), {
+      target: { value: "x".repeat(EPIC_TITLE_MAX_LENGTH + 1) },
+    });
+    fireEvent.click(screen.getByTestId("epic-create-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("epic-title-error")).toHaveTextContent(
+        EPIC_TITLE_TOO_LONG,
+      ),
+    );
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Trimming back under the cap clears the error and lets the epic through.
+    fireEvent.change(screen.getByTestId("epic-title-input"), {
+      target: { value: "Direct epic" },
+    });
+    expect(screen.queryByTestId("epic-title-error")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId("epic-create-submit"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+  });
+
+  it("shows which field the server rejected rather than a bare 'Validation failed'", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        error: "Validation failed",
+        details: { title: ["Too big: expected string to have <=200 characters"] },
+      }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    renderDialog();
+
+    fireEvent.change(screen.getByTestId("epic-title-input"), {
+      target: { value: "Direct epic" },
+    });
+    fireEvent.click(screen.getByTestId("epic-create-submit"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("epic-create-error")).toHaveTextContent(
+        "Validation failed — title: Too big: expected string to have <=200 characters",
+      ),
+    );
   });
 
   it("blocks submit when an added user story has no title", async () => {
