@@ -21,6 +21,7 @@ import {
 import { ImageAttachmentStrip } from "@/components/shared/ImageAttachmentStrip";
 import { useImageAttachments } from "@/hooks/useImageAttachments";
 import { PRIORITY_LABELS } from "@/lib/types/kanban";
+import { apiErrorMessage } from "@/lib/validation/error-message";
 import { cn } from "@/lib/utils";
 import { ImagePlus, Loader2 } from "lucide-react";
 
@@ -64,13 +65,36 @@ export function BugCreateDialog({
     handleDrop,
     remove: removeAttachment,
     clear: clearAttachments,
+    discardAll: discardAttachments,
   } = useImageAttachments({ projectId });
 
   function resetForm() {
     setTitle("");
     setDescription("");
     setPriority("2");
+    // `clear`, not `discardAll`: this runs after the report was filed, and the
+    // bug now owns those uploads. Discarding them here would delete the
+    // screenshots off the ticket that was just created with them.
     clearAttachments();
+  }
+
+  /**
+   * Closing without filing anything. The screenshots were uploaded the moment
+   * they were pasted, so an abandoned form leaves real files on disk unless
+   * they are thrown away here.
+   *
+   * The typed title and description are left alone — a draft has always
+   * survived a cancel, and that is unrelated to the uploads.
+   *
+   * Nothing is discarded while a submit is in flight: those uploads are on
+   * their way to becoming a ticket's, and Escape during the request must not
+   * race the claim for them.
+   */
+  function handleOpenChange(next: boolean) {
+    if (!next && !submitting) {
+      discardAttachments();
+    }
+    onOpenChange(next);
   }
 
   async function handleSubmit(mode: "create" | "create_and_fix" = "create") {
@@ -97,7 +121,9 @@ export function BugCreateDialog({
 
       const createData = await createRes.json().catch(() => ({}));
       if (!createRes.ok || createData.error) {
-        setError(createData.error || "Failed to create bug");
+        // Through apiErrorMessage so a rejected field says which one and why,
+        // instead of the schema layer's bare "Validation failed".
+        setError(apiErrorMessage(createData, "Failed to create bug"));
         return;
       }
 
@@ -144,7 +170,7 @@ export function BugCreateDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       {/* The whole modal is the paste and drop target, not just the fields:
           a screenshot dropped on the header or the footer must not fall
           through to the browser, which would navigate away to the file and
@@ -253,7 +279,7 @@ export function BugCreateDialog({
         <DialogFooter>
           <Button
             variant="outline"
-            onClick={() => onOpenChange(false)}
+            onClick={() => handleOpenChange(false)}
             disabled={submitting}
           >
             Cancel

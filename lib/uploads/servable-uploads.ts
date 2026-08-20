@@ -44,6 +44,21 @@ export type ServableUploadLookup =
       relativePath: string;
       absolutePath: string;
       mimeType: string;
+      /** Row id — the handle the staging UI holds for a pending upload. */
+      attachmentId: string;
+      /**
+       * The ticket or chat message that already owns this upload, or `null`
+       * when it is still staged.
+       *
+       * The serving route ignores this — a claimed upload is the normal case,
+       * it is exactly what a bug's thumbnail points at. It matters to the two
+       * sides that *take* ownership: filing a bug with an upload another
+       * ticket already owns would make one ticket's delete take the other's
+       * screenshot away, and discarding a claimed upload would do the same
+       * from the staging UI.
+       */
+      claimedByEpicId: string | null;
+      claimedByChatMessageId: string | null;
     }
   | { servable: false; reason: UnservableUploadReason };
 
@@ -86,5 +101,8 @@ export function lookupServableUpload(
     relativePath,
     absolutePath,
     mimeType: attachment.mimeType,
+    attachmentId: attachment.id,
+    claimedByEpicId: attachment.epicId ?? null,
+    claimedByChatMessageId: attachment.chatMessageId ?? null,
   };
 }

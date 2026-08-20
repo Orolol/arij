@@ -42,11 +42,20 @@ describe("bug create route images", () => {
   /**
    * Puts a path on record the way `POST /chat/upload` would: one
    * `chat_attachments` row, answering the lookup the route now performs.
+   *
+   * `epicId`/`chatMessageId` null is what makes it a *staged* upload — the
+   * only kind a new bug is allowed to take.
    */
-  function registerUpload(filePath: string, mimeType = "image/png") {
+  function registerUpload(
+    filePath: string,
+    mimeType = "image/png",
+    owner: { epicId?: string | null; chatMessageId?: string | null } = {}
+  ) {
     dbMockState.getQueue.push({
       id: filePath.split("/").pop(),
-      chatMessageId: null,
+      chatMessageId: owner.chatMessageId ?? null,
+      projectId: "proj-1",
+      epicId: owner.epicId ?? null,
       fileName: "screenshot.png",
       filePath,
       mimeType,
@@ -55,15 +64,24 @@ describe("bug create route images", () => {
     });
   }
 
+  /** Rows the claim reports as taken; anything less is a conflict. */
+  function claimTakes(count: number) {
+    dbMockState.runResult.changes = count;
+  }
+
   beforeEach(() => {
     vi.clearAllMocks();
     resetDbMockState();
     fsMock.existsSync.mockReturnValue(true);
+    // The route resolves the project before anything else now, so its row is
+    // the first `.get()` every request makes.
+    dbMockState.getQueue.push({ id: "proj-1", name: "Project 1" });
   });
 
   it("attaches the uploaded paths to the bug as JSON", async () => {
     registerUpload(shot);
     registerUpload(secondShot);
+    claimTakes(2);
 
     const res = await createBug({
       title: "Board renders blank",

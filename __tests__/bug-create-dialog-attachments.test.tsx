@@ -79,6 +79,13 @@ describe("BugCreateDialog attachments", () => {
     );
   }
 
+  /** Uploads the modal asked the server to throw away, in call order. */
+  function discardedUploadIds(fetchMock: ReturnType<typeof mockFetch>) {
+    return fetchMock.mock.calls
+      .filter(([, init]) => (init as RequestInit | undefined)?.method === "DELETE")
+      .map(([url]) => String(url).split("/").pop());
+  }
+
   beforeEach(() => {
     vi.restoreAllMocks();
     uploadCount = 0;
@@ -512,5 +519,103 @@ describe("BugCreateDialog attachments", () => {
     fireEvent.click(screen.getByRole("button", { name: "Create Bug" }));
 
     await waitFor(() => expect(screen.queryByAltText("shot-1.png")).toBeNull());
+  });
+
+  /**
+   * A screenshot is uploaded the moment it is pasted, so anything that leaves
+   * the staging area without being submitted leaves a real file behind unless
+   * the modal says so.
+   */
+  describe("uploads nobody ends up owning", () => {
+    it("throws away the screenshot behind a removed thumbnail", async () => {
+      const fetchMock = mockFetch();
+      renderDialog();
+
+      pasteFiles([imageFile("first.png")]);
+      await waitFor(() => expect(screen.getByAltText("shot-1.png")).toBeInTheDocument());
+      pasteFiles([imageFile("second.png")]);
+      await waitFor(() => expect(screen.getByAltText("shot-2.png")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: "Remove shot-1.png" }));
+
+      await waitFor(() => expect(discardedUploadIds(fetchMock)).toEqual(["att-1"]));
+    });
+
+    it("throws away everything still staged when the form is cancelled", async () => {
+      const fetchMock = mockFetch();
+      const { onOpenChange } = renderDialog();
+
+      pasteFiles([imageFile("first.png")]);
+      await waitFor(() => expect(screen.getByAltText("shot-1.png")).toBeInTheDocument());
+      pasteFiles([imageFile("second.png")]);
+      await waitFor(() => expect(screen.getByAltText("shot-2.png")).toBeInTheDocument());
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+      await waitFor(() =>
+        expect(discardedUploadIds(fetchMock)).toEqual(["att-1", "att-2"])
+      );
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(screen.queryByTestId("image-attachment-strip")).toBeNull();
+    });
+
+    it("keeps the screenshots of a bug that was actually filed", async () => {
+      const fetchMock = mockFetch();
+      renderDialog();
+
+      pasteFiles([imageFile("screenshot.png")]);
+      await waitFor(() => expect(screen.getByAltText("shot-1.png")).toBeInTheDocument());
+
+      fireEvent.change(screen.getByPlaceholderText("Bug title..."), {
+        target: { value: "Bug with a screenshot" },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Create Bug" }));
+
+      // The reset that empties the strip after a successful submit must not be
+      // the same reset that deletes files — the bug owns them now.
+      await waitFor(() => expect(screen.queryByAltText("shot-1.png")).toBeNull());
+      expect(discardedUploadIds(fetchMock)).toEqual([]);
+    });
+
+    it("throws away an upload that lands after the form was cleared", async () => {
+      let releaseUpload: (() => void) | null = null;
+      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+        if (String(url).endsWith("/chat/upload")) {
+          await new Promise<void>((resolve) => {
+            releaseUpload = resolve;
+          });
+          return {
+            ok: true,
+            json: async () => ({
+              data: {
+                id: "att-late",
+                fileName: "late.png",
+                filePath: "data/uploads/proj-1/att-late.png",
+                mimeType: "image/png",
+                sizeBytes: 2048,
+              },
+            }),
+          };
+        }
+        void init;
+        return { ok: true, json: async () => ({ data: { id: "bug-1" } }) };
+      });
+      global.fetch = fetchMock as unknown as typeof fetch;
+      renderDialog();
+
+      pasteFiles([imageFile("late.png")]);
+      await waitFor(() => expect(releaseUpload).toBeTruthy());
+
+      fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      releaseUpload!();
+
+      // Nothing that survives the cancel knows this upload exists, so the
+      // transfer that answers into the closed form has to clean up after it.
+      await waitFor(() =>
+        expect(
+          discardedUploadIds(fetchMock as unknown as ReturnType<typeof mockFetch>)
+        ).toContain("att-late")
+      );
+    });
   });
 });

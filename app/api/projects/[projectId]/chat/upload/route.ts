@@ -44,7 +44,13 @@ export async function POST(
     db.insert(chatAttachments)
       .values({
         id,
+        // Staged: no owner yet. Sending the chat message sets `chatMessageId`,
+        // filing a bug with it sets `epicId`, and until one of those happens
+        // the row is what lets the upload be discarded again. `projectId` is
+        // known now and is what makes deleting the project reach these files.
         chatMessageId: null,
+        projectId,
+        epicId: null,
         fileName: file.name,
         filePath: relativePath,
         mimeType: file.type,

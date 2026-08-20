@@ -68,19 +68,32 @@ describe("bug screenshot round trip", () => {
     const attachmentRow = dbMockState.insertCalls[0] as {
       filePath: string;
       mimeType: string;
+      projectId: string;
+      epicId: string | null;
     };
     expect(attachmentRow.filePath).toBe(uploaded.filePath);
+    // Owned by the project from the moment the bytes land, claimed by nobody
+    // until something is submitted with it.
+    expect(attachmentRow.projectId).toBe(projectId);
+    expect(attachmentRow.epicId).toBeNull();
 
     // 2. The modal posts that path with the bug. The row step 1 wrote is what
     //    lets it through — the bug route accepts a path only if the upload is
     //    on record, so these two steps agree on one string or neither works.
     resetDbMockState();
+    dbMockState.getQueue.push({ id: projectId, name: "Project 1" });
     dbMockState.getQueue.push(attachmentRow);
     const bugRes = await createBug(
       mockJsonRequest({ title: "Board renders blank", images: [uploaded.filePath] }),
       mockRouteContext({ projectId })
     );
     expect(bugRes.status).toBe(201);
+
+    // The upload the modal staged is now the ticket's: the same row the panel
+    // will read back is the one a project or ticket delete now reaches.
+    expect(dbMockState.updateCalls).toContainEqual(
+      expect.objectContaining({ projectId })
+    );
 
     const storedImages = (dbMockState.insertCalls[0] as { images: string }).images;
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { isAgentProvider } from "@/lib/agent-config/constants";
+import { MAX_TICKET_IMAGES } from "@/lib/uploads/image-attachments";
 
 // --- Project schemas ---
 
@@ -113,6 +114,32 @@ export const createEpicSchema = z.object({
   images: z.array(z.string()).nullish(),
   userStories: z.array(userStoryInput).optional(),
   dependencies: z.array(dependencyInput).optional(),
+});
+
+/**
+ * `POST /api/projects/:id/bugs`.
+ *
+ * A bug is an epic row (`type = 'bug'`), so the caps are the epic's caps —
+ * anything this route stores has to stay editable through `updateEpicSchema`,
+ * and a title that only one of the two accepts is a ticket nobody can rename.
+ *
+ * `images` is checked for *shape* here only. Whether a path is an upload this
+ * project actually holds needs the database and the disk, so the route asks
+ * `lookupServableUpload` — a JSON array of strings is the most a schema can
+ * honestly promise.
+ */
+export const createBugSchema = z.object({
+  title: z.string().trim().min(1, "Title is required").max(200),
+  description: z.string().trim().max(10000).nullish(),
+  priority: z.number().int().min(0).max(3).optional(),
+  linkedEpicId: z.string().min(1).max(64).nullish(),
+  images: z
+    .array(z.string(), "images must be an array of upload paths")
+    .max(
+      MAX_TICKET_IMAGES,
+      `A bug may carry at most ${MAX_TICKET_IMAGES} screenshots`
+    )
+    .nullish(),
 });
 
 export const updateEpicSchema = z.object({

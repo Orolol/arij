@@ -23,6 +23,15 @@ export const MAX_IMAGE_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 export const MAX_IMAGE_UPLOAD_LABEL = "10MB";
 
+/**
+ * How many screenshots one ticket may carry.
+ *
+ * Every entry becomes a thumbnail in the panel and a file path in the agent's
+ * prompt, so an unbounded array is unbounded prompt. Ten is far above what a
+ * bug report needs and low enough that neither surface can be flooded.
+ */
+export const MAX_TICKET_IMAGES = 10;
+
 const ALLOWED_EXTENSIONS_LABEL = ALLOWED_IMAGE_MIME_TYPES.map((type) =>
   type.slice("image/".length)
 ).join(", ");

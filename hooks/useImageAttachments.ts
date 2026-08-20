@@ -56,6 +56,23 @@ export function useImageAttachments({
 
   const uploading = pendingUploads > 0;
 
+  /**
+   * Tells the server the upload is not wanted after all.
+   *
+   * Fire-and-forget: the thumbnail is already gone from the strip and the user
+   * has nothing to do about a failure. The route refuses anything a ticket or
+   * a message has since claimed, so the worst case is a file that outlives its
+   * form — never one deleted out from under a report that was filed with it.
+   */
+  const discardUpload = useCallback(
+    (id: string) => {
+      void fetch(`/api/projects/${projectId}/chat/uploads/${id}`, {
+        method: "DELETE",
+      }).catch(() => {});
+    },
+    [projectId]
+  );
+
   const uploadFile = useCallback(
     async (file: File): Promise<UploadOutcome> => {
       const formData = new FormData();
@@ -112,8 +129,14 @@ export function useImageAttachments({
 
       // Answered into a form the caller has since submitted and reset. Staging
       // it now would attach a screenshot the user never sees to whatever they
-      // write next.
-      if (stagingSessionRef.current !== session) return;
+      // write next — and leaving it alone would strand the file, since nothing
+      // that survives this call knows it exists.
+      if (stagingSessionRef.current !== session) {
+        for (const outcome of outcomes) {
+          if (outcome.attachment) discardUpload(outcome.attachment.id);
+        }
+        return;
+      }
 
       const uploaded = outcomes
         .map((outcome) => outcome.attachment)
@@ -129,7 +152,7 @@ export function useImageAttachments({
         setError((prev) => [prev, ...failures].filter(Boolean).join(" · "));
       }
     },
-    [uploadFile]
+    [discardUpload, uploadFile]
   );
 
   const addFiles = useCallback(
@@ -210,16 +233,38 @@ export function useImageAttachments({
     fileInputRef.current?.click();
   }, [disabled]);
 
-  const remove = useCallback((id: string) => {
-    setAttachments((prev) => prev.filter((attachment) => attachment.id !== id));
-  }, []);
+  const remove = useCallback(
+    (id: string) => {
+      setAttachments((prev) => prev.filter((attachment) => attachment.id !== id));
+      // Taking a thumbnail out of the strip is the user saying they do not
+      // want the screenshot. Nothing else ever refers to it again, so the file
+      // has to go now or it never will.
+      discardUpload(id);
+    },
+    [discardUpload]
+  );
 
+  /**
+   * Empties the staging area for a form that has *succeeded*: the uploads are
+   * now owned by whatever was submitted, so the files stay.
+   */
   const clear = useCallback(() => {
     stagingSessionRef.current += 1;
     setPendingUploads(0);
     setAttachments([]);
     setError(null);
   }, []);
+
+  /**
+   * Empties the staging area for a form that has been *abandoned*: nothing was
+   * submitted, so nothing claimed these uploads and they are deleted.
+   */
+  const discardAll = useCallback(() => {
+    for (const attachment of attachments) {
+      discardUpload(attachment.id);
+    }
+    clear();
+  }, [attachments, clear, discardUpload]);
 
   const fileInputProps = {
     ref: fileInputRef,
@@ -243,5 +288,6 @@ export function useImageAttachments({
     handleDrop,
     remove,
     clear,
+    discardAll,
   };
 }
