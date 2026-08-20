@@ -148,10 +148,12 @@ export default function SessionsPage() {
    * view must not pay for a surface it is not showing.
    */
   const nightFilterActive = stateFilter === "night";
-  const { runs: nightRuns, loading: nightRunsLoading } = useNightRuns(
-    projectId,
-    nightFilterActive
-  );
+  const {
+    runs: nightRuns,
+    loading: nightRunsLoading,
+    error: nightRunsError,
+    refresh: refreshNightRuns,
+  } = useNightRuns(projectId, nightFilterActive);
 
   useEffect(() => {
     loadSessions();
@@ -372,7 +374,26 @@ export default function SessionsPage() {
           <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
             Night runs
           </span>
-          {nightRuns.length === 0 ? (
+          {nightRuns.length === 0 && nightRunsError ? (
+            /* Never let a dead request read as "you have no night runs" —
+               this list is the only durable way back into a past summary. */
+            <div className="flex items-center gap-[10px] pt-[8px]">
+              <p
+                data-testid="night-runs-error"
+                className="text-[13px] text-priority-yellow"
+              >
+                {nightRunsError}
+              </p>
+              <button
+                type="button"
+                data-testid="night-runs-retry"
+                onClick={() => void refreshNightRuns()}
+                className="text-[12.5px] text-muted-foreground underline underline-offset-2 transition-colors hover:text-primary"
+              >
+                Retry
+              </button>
+            </div>
+          ) : nightRuns.length === 0 ? (
             <p className="pt-[8px] text-[13px] text-muted-foreground">
               {nightRunsLoading
                 ? "Loading night runs…"
@@ -496,6 +517,12 @@ function BandCell({
  * `costIsPartial`, so it cannot say whether the number is exact or a lower
  * bound. The dialog has both and prints it honestly — better than a figure
  * here that silently drops the `≥`.
+ *
+ * `interrupted` is reported as provenance, not as a cause. The server sets it
+ * on every run it rebuilds from session rows (`detailFromDb`), and the registry
+ * that would say otherwise is in-memory and ring-capped — so a *cleanly
+ * finished* run earns the flag simply by outliving a restart or falling off the
+ * ring. "Rebuilt from history" is all the flag actually supports.
  */
 function NightRunRow({
   run,
@@ -509,7 +536,7 @@ function NightRunRow({
     run.runId,
     formatTime(run.startedAt),
     formatNightRunDuration(run.startedAt, run.endedAt),
-    run.interrupted ? "interrupted by a restart" : null,
+    run.interrupted ? "rebuilt from history" : null,
     run.abortReason,
   ]
     .filter(Boolean)

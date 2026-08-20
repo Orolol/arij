@@ -37,11 +37,17 @@ function agentSession(overrides: Record<string, unknown>) {
   };
 }
 
+/**
+ * A run the registry still knows. `source` and `interrupted` are correlated on
+ * the server — `detailFromRegistry` pairs "registry"/false, `detailFromDb`
+ * pairs "db"/true — so the two must be overridden together to stay a payload
+ * the API could actually produce.
+ */
 function nightRun(overrides: Record<string, unknown>) {
   return {
     runId: "night_a41c",
     projectId: "proj-1",
-    source: "db",
+    source: "registry",
     interrupted: false,
     state: "finished",
     startedAt: new Date("2026-08-19T23:04:00Z").toISOString(),
@@ -75,6 +81,30 @@ function mockEndpoints({
 
 function mockSessions(data: unknown[]) {
   mockEndpoints({ sessions: data });
+}
+
+/**
+ * Sessions load, night runs do not. The page has to keep serving the session
+ * rows while being honest about the list it could not fetch.
+ */
+function mockNightRunsFailure(
+  failure: { throws: true } | { status: number; error?: string },
+  sessions: unknown[] = []
+) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: unknown) => {
+      if (!String(url).includes("/build/night-runs")) {
+        return { ok: true, json: async () => ({ data: sessions }) };
+      }
+      if ("throws" in failure) throw new Error("network down");
+      return {
+        ok: false,
+        status: failure.status,
+        json: async () => ({ error: failure.error }),
+      };
+    })
+  );
 }
 
 async function renderPage() {
@@ -344,5 +374,74 @@ describe("SessionsPage — night-run history", () => {
     expect(
       await screen.findByText("No night runs recorded yet.")
     ).toBeInTheDocument();
+  });
+
+  /**
+   * The server flags every run it rebuilds from session rows as `interrupted`,
+   * and the registry that would say otherwise is in-memory and ring-capped —
+   * so a clean run earns the flag just by outliving a restart. The row reports
+   * where the record came from, and stops short of alleging why.
+   */
+  it("calls a DB-derived run rebuilt, not interrupted", async () => {
+    await openNightHistory([
+      nightRun({ runId: "night_old", source: "db", interrupted: true }),
+    ]);
+
+    const row = await screen.findByTestId("night-run-row-night_old");
+    expect(row).toHaveTextContent("rebuilt from history");
+    expect(row).not.toHaveTextContent(/interrupted/i);
+  });
+
+  it("does not pass a failed request off as an empty history", async () => {
+    mockNightRunsFailure({ throws: true });
+    await renderPage();
+    fireEvent.click(screen.getByTestId("sessions-filter-night"));
+
+    expect(await screen.findByTestId("night-runs-error")).toBeInTheDocument();
+    expect(
+      screen.queryByText("No night runs recorded yet.")
+    ).not.toBeInTheDocument();
+  });
+
+  it("surfaces the server's message when the list route errors", async () => {
+    mockNightRunsFailure({ status: 500, error: "Night run registry is down" });
+    await renderPage();
+    fireEvent.click(screen.getByTestId("sessions-filter-night"));
+
+    expect(await screen.findByTestId("night-runs-error")).toHaveTextContent(
+      "Night run registry is down"
+    );
+    expect(
+      screen.queryByText("No night runs recorded yet.")
+    ).not.toBeInTheDocument();
+  });
+
+  it("recovers the history when Retry succeeds", async () => {
+    let failing = true;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: unknown) => {
+        if (!String(url).includes("/build/night-runs")) {
+          return { ok: true, json: async () => ({ data: [] }) };
+        }
+        if (failing) throw new Error("network down");
+        return {
+          ok: true,
+          json: async () => ({ data: [nightRun({ runId: "night_a41c" })] }),
+        };
+      })
+    );
+
+    await renderPage();
+    fireEvent.click(screen.getByTestId("sessions-filter-night"));
+    await screen.findByTestId("night-runs-error");
+
+    failing = false;
+    fireEvent.click(screen.getByTestId("night-runs-retry"));
+
+    expect(
+      await screen.findByTestId("night-run-row-night_a41c")
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId("night-runs-error")).not.toBeInTheDocument();
   });
 });
