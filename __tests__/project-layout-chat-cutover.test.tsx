@@ -17,13 +17,8 @@ vi.mock("@/components/github/GitHubConnectBanner", () => ({
   GitHubConnectBanner: () => <div data-testid="github-connect-banner" />,
 }));
 
-// The two ambient bands are covered by their own tests; stub them here so the
-// layout test stays about the chrome and not about their pollers.
-vi.mock("@/components/layout/CockpitBar", () => ({
-  CockpitBar: ({ projectId }: { projectId: string }) => (
-    <div data-testid="cockpit-bar" data-project={projectId} />
-  ),
-}));
+// The repo bar is covered by its own test; stub it here so the layout test
+// stays about the chrome and not about its pollers.
 vi.mock("@/components/layout/RepoStatusBar", () => ({
   RepoStatusBar: ({ ownerRepo }: { ownerRepo: string | null }) => (
     <div data-testid="repo-status-bar" data-owner-repo={ownerRepo ?? ""} />
@@ -157,21 +152,19 @@ describe("project layout chrome", () => {
     expect(nav.push).toHaveBeenCalledWith("/projects/proj-1?panel=new-bug");
   });
 
-  it("mounts the ambient bands on the board route only", async () => {
+  it("mounts the repo bar on the board route only", async () => {
     await renderLayout();
 
-    expect(screen.getByTestId("cockpit-bar")).toBeInTheDocument();
     expect(screen.getByTestId("repo-status-bar")).toHaveAttribute(
       "data-owner-repo",
       "owner/repo",
     );
   });
 
-  it("hides the ambient bands on secondary pages", async () => {
+  it("hides the repo bar on secondary pages", async () => {
     nav.pathname = "/projects/proj-1/sessions";
     await renderLayout();
 
-    expect(screen.queryByTestId("cockpit-bar")).not.toBeInTheDocument();
     expect(screen.queryByTestId("repo-status-bar")).not.toBeInTheDocument();
   });
 
