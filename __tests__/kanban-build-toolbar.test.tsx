@@ -183,6 +183,32 @@ describe("Kanban Build Toolbar", () => {
     expect(mockPanelOpenNewEpic).not.toHaveBeenCalled();
   });
 
+  it("reopens the manual epic dialog when the entry is picked a second time", async () => {
+    // Writing several epics back to back is the whole point of the manual
+    // path, and the New menu can only reach this page through ?panel=, which
+    // is consumed once per value. So the strip landing has to *release* the
+    // guard: without that, the second pick of the same entry is silently dead
+    // for the life of the mount — the menu navigates, nothing opens, and the
+    // chat entry still works, so it reads as a bug in manual creation alone.
+    searchParams = new URLSearchParams("panel=new-epic-manual");
+    const { rerender } = render(<KanbanPage />);
+    await screen.findByTestId("epic-create-dialog");
+
+    // The user cancels, and the replace() asserted above lands: no param.
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    searchParams = new URLSearchParams();
+    rerender(<KanbanPage />);
+    await waitFor(() =>
+      expect(screen.queryByTestId("epic-create-dialog")).not.toBeInTheDocument()
+    );
+
+    // Same entry, same param string, same board mount.
+    searchParams = new URLSearchParams("panel=new-epic-manual");
+    rerender(<KanbanPage />);
+
+    await screen.findByTestId("epic-create-dialog");
+  });
+
   it("does not touch the panel without a panel param", async () => {
     render(<KanbanPage />);
     await screen.findByTestId("board");
