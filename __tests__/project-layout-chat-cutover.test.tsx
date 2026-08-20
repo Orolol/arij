@@ -171,6 +171,30 @@ describe("project layout chrome", () => {
     );
   });
 
+  it("emits no agent-provider call when the manual epic entry is chosen", async () => {
+    const user = userEvent.setup();
+    await renderLayout();
+
+    await waitFor(() => {
+      expect(global.fetch).toHaveBeenCalledWith("/api/projects/proj-1");
+    });
+    (global.fetch as ReturnType<typeof vi.fn>).mockClear();
+
+    await user.click(screen.getByTestId("header-new-button"));
+    await waitFor(() => {
+      expect(screen.getByTestId("header-new-epic-manual")).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId("header-new-epic-manual"));
+
+    // The whole point of the manual entry is that it costs nothing: picking it
+    // must stay a pure navigation. Asserting the exact call set rather than a
+    // denylist of agent routes means any request added here — an agent warm-up,
+    // a conversation prefetch, a model probe — fails this test.
+    expect(
+      (global.fetch as ReturnType<typeof vi.fn>).mock.calls.map(([url]) => url),
+    ).toEqual([]);
+  });
+
   it("keeps the chat epic entry on the untouched new-epic panel", async () => {
     const user = userEvent.setup();
     await renderLayout();
