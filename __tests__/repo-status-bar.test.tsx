@@ -244,7 +244,7 @@ describe("RepoStatusBar", () => {
     expect(screen.getByTestId("repo-push-button")).toBeDisabled();
   });
 
-  it("never reports agent or session activity — that belongs to the cockpit", async () => {
+  it("never reports agent or session activity — that belongs to the board and Sessions tab", async () => {
     prs.rows = [
       { id: "pr1", number: 128, url: "https://gh/pr/128", status: "open" },
     ];
