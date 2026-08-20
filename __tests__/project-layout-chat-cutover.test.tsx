@@ -220,6 +220,32 @@ describe("project layout chrome", () => {
     expect(nav.push).toHaveBeenCalledWith("/projects/proj-1?panel=new-bug");
   });
 
+  it("sends every New menu entry to the board even from a secondary tab", async () => {
+    // The menu lives in the chrome, which outlives the board page, so an entry
+    // only works if it navigates to the *board* URL — nothing on Spec or
+    // Sessions consumes ?panel=. Every other menu test runs at the board
+    // pathname, where the current route and the board href are the same string,
+    // so none of them can tell the two apart: routing through the pathname
+    // instead leaves the manual entry silently dead on five of the eight tabs.
+    nav.pathname = "/projects/proj-1/spec";
+    const user = userEvent.setup();
+    await renderLayout();
+
+    for (const [testId, panel] of [
+      ["header-new-epic-manual", "new-epic-manual"],
+      ["header-new-epic-chat", "new-epic"],
+      ["header-new-bug", "new-bug"],
+    ]) {
+      await user.click(screen.getByTestId("header-new-button"));
+      await waitFor(() => {
+        expect(screen.getByTestId(testId)).toBeInTheDocument();
+      });
+      await user.click(screen.getByTestId(testId));
+
+      expect(nav.push).toHaveBeenCalledWith(`/projects/proj-1?panel=${panel}`);
+    }
+  });
+
   it("drives the New menu from the keyboard", async () => {
     const user = userEvent.setup();
     await renderLayout();
