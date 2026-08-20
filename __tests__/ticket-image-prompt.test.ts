@@ -135,27 +135,47 @@ describe("ticketImagesSection()", () => {
           `data/uploads/${projectId}/one.png`,
           `data/uploads/${projectId}/two.png`,
         ])
-      )
+      ),
+      { headingLevel: 3 }
     );
 
-    expect(section).toContain(`## ${TICKET_IMAGES_HEADING}`);
+    expect(section).toContain(`### ${TICKET_IMAGES_HEADING}`);
     expect(section).toContain(`- ${absoluteUpload("one.png")}`);
     expect(section).toContain(`- ${absoluteUpload("two.png")}`);
     expect(section).toContain("2 screenshots");
   });
 
+  it("renders the heading at exactly the level the caller asked for", () => {
+    // There is no safe default: a level that closes the surrounding block
+    // instead of joining it re-parents every section that follows, and nothing
+    // else in the prompt says so.
+    for (const headingLevel of [2, 3, 4]) {
+      expect(
+        ticketImagesSection(
+          bugRow(JSON.stringify([`data/uploads/${projectId}/one.png`])),
+          { headingLevel }
+        )
+      ).toMatch(
+        new RegExp(`^#{${headingLevel}} ${TICKET_IMAGES_HEADING}$`, "m")
+      );
+    }
+  });
+
   it("is empty for a ticket with no images", () => {
-    expect(ticketImagesSection(bugRow(null))).toBe("");
+    expect(ticketImagesSection(bugRow(null), { headingLevel: 3 })).toBe("");
   });
 
   it("is empty for a projection that carries no project id", () => {
     // Chat/spec builders pass `{ title }` projections; they must not throw or
     // guess which project an upload path belongs to.
     expect(
-      ticketImagesSection({
-        title: "Board renders blank",
-        images: JSON.stringify([`data/uploads/${projectId}/shot.png`]),
-      })
+      ticketImagesSection(
+        {
+          title: "Board renders blank",
+          images: JSON.stringify([`data/uploads/${projectId}/shot.png`]),
+        },
+        { headingLevel: 3 }
+      )
     ).toBe("");
   });
 });
@@ -192,8 +212,12 @@ describe.each(BUILDERS)("$name", ({ build }) => {
       bugRow(JSON.stringify([`data/uploads/${projectId}/abc-shot.png`]))
     );
 
-    expect(prompt).toContain(`## ${TICKET_IMAGES_HEADING}`);
     expect(prompt).toContain(absoluteUpload("abc-shot.png"));
+    // Anchored: `toContain("## …")` also matches `### …`, which is how the
+    // solo builders' heading level went unpinned while team mode's was not.
+    expect(prompt).toMatch(new RegExp(`^### ${TICKET_IMAGES_HEADING}$`, "m"));
+    // Every block around it is `###`; an `##` here would close the epic's.
+    expect(prompt).not.toMatch(new RegExp(`^## ${TICKET_IMAGES_HEADING}$`, "m"));
   });
 
   it("leaves a ticket without images byte-identical to before the feature", () => {

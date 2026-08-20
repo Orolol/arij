@@ -183,8 +183,10 @@ describe("a bug's screenshots reach the agent that is dispatched on it", () => {
 
     const prompt = await dispatchBuild();
 
-    expect(prompt).toContain("## Attached Screenshots");
     expect(prompt).toContain(absoluteScreenshot);
+    // Nested inside `## Epic to Implement`, not a sibling that closes it.
+    expect(prompt).toMatch(/^### Attached Screenshots$/m);
+    expect(prompt).not.toMatch(/^## Attached Screenshots$/m);
   });
 
   it("stores that same prompt on the session row", async () => {

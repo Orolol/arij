@@ -740,7 +740,7 @@ export function buildBuildPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
-  parts.push(ticketImagesSection(epic));
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
 
   // User stories
   parts.push(userStoriesSection(userStories));
@@ -812,7 +812,7 @@ export function buildTicketBuildPrompt(
     parts.push(`${epic.description.trim()}\n`);
   }
 
-  parts.push(ticketImagesSection(epic));
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
 
   // Ticket details
   parts.push(`## Ticket to Implement\n`);
@@ -1016,7 +1016,7 @@ export function buildReviewPrompt(
     parts.push(`${epic.description.trim()}\n`);
   }
 
-  parts.push(ticketImagesSection(epic));
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
 
   // Ticket details
   parts.push(`## Ticket Under Review\n`);
@@ -1177,7 +1177,7 @@ export function buildEpicReviewPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
-  parts.push(ticketImagesSection(epic));
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
 
   // Skip user stories section for bug tickets (they have none)
   if (!isBug) {

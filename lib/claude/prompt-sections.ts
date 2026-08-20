@@ -107,21 +107,27 @@ export const TICKET_IMAGES_HEADING = "Attached Screenshots";
  * screenshot produces a prompt byte-identical to before this section existed.
  * Because this is plain prompt text, every CLI provider gets the same thing.
  *
- * `headingLevel` exists for the one builder that lists several tickets at once:
- * the team build renders each epic as `### Epic N`, so an `##` heading would
- * close that block and leave "this ticket" pointing at nothing in particular.
- * Nesting deeper binds the paths to the epic they were reported against.
+ * `headingLevel` is required rather than defaulted because no level is right
+ * everywhere and the wrong one fails silently: the paths belong *inside* the
+ * block describing the ticket they were attached to, and each builder nests
+ * that block differently. `## Epic to Implement`, `## Epic Context` and
+ * `## Bug Under Review` hold their parts at `###`, so the paths go at `###`
+ * too — an `##` would close the block and adopt whatever `###` follows it,
+ * which is how `### User Stories` ends up reading as part of the screenshots.
+ * The team build lists each ticket as `### Epic N` and goes one deeper again:
+ * with N tickets in one prompt, paths that drift out of their epic send the
+ * wrong sub-agent looking at them.
  */
 export function ticketImagesSection(
   epic: PromptEpic,
-  options: { headingLevel?: number } = {},
+  options: { headingLevel: number },
 ): string {
   if (!epic.projectId) return "";
 
   const paths = ticketImageAbsolutePaths(epic.images, epic.projectId);
   if (paths.length === 0) return "";
 
-  const { headingLevel = 2 } = options;
+  const { headingLevel } = options;
   const noun = paths.length === 1 ? "screenshot" : "screenshots";
   const lines = paths.map((absolutePath) => `- ${absolutePath}`).join("\n");
 
