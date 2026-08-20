@@ -321,6 +321,25 @@ describe("upload ownership", () => {
       expect(exists(staged)).toBe(true);
     });
 
+    it("removes the rows even on a connection with foreign keys off", async () => {
+      // The files are unlinked unconditionally, so a cascade that silently did
+      // not fire would leave rows pointing at bytes that no longer exist — a
+      // permanently broken thumbnail. The delete states it rather than
+      // inheriting it from a pragma set somewhere else.
+      sqlite.pragma("foreign_keys = OFF");
+      sqlite
+        .prepare("INSERT INTO epics (id, project_id, title) VALUES ('bug-1', ?, 'Blank')")
+        .run(projectId);
+      stageUpload("att-1", { epicId: "bug-1" });
+
+      const { deleteEpicPermanently } = await import(
+        "@/lib/planning/permanent-delete"
+      );
+      deleteEpicPermanently(projectId, "bug-1");
+
+      expect(rowExists("att-1")).toBe(false);
+    });
+
     it("leaves a bug with no screenshots exactly as it was", async () => {
       sqlite
         .prepare("INSERT INTO epics (id, project_id, title) VALUES ('bug-1', ?, 'No shots')")

@@ -112,6 +112,35 @@ describe("BugCreateDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
+  it("names the refused field instead of repeating the schema's summary", async () => {
+    // `validateBody` answers `{ error: "Validation failed", details }`. Showing
+    // `error` alone would tell the reporter their bug was refused and nothing
+    // whatsoever about what to change.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      json: async () => ({
+        error: "Validation failed",
+        details: { description: ["Too big: expected string to have <=10000 characters"] },
+      }),
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { onOpenChange, onCreated } = renderDialog();
+
+    fireEvent.change(screen.getByPlaceholderText("Bug title..."), {
+      target: { value: "Very long report" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create Bug" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Too big: expected string to have <=10000 characters")
+      ).toBeInTheDocument()
+    );
+    expect(screen.queryByText("Validation failed")).toBeNull();
+    expect(onCreated).not.toHaveBeenCalled();
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
   it("ignores a second Enter while the create request is in flight", async () => {
     // The buttons go disabled, but the title field stays live and Enter calls
     // handleSubmit directly — so nothing but a synchronous lock stops the same

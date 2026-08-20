@@ -121,14 +121,21 @@ describe("POST /bugs request contract", () => {
     });
 
     it("more screenshots than a ticket may carry", async () => {
-      const images = Array.from(
-        { length: MAX_TICKET_IMAGES + 1 },
-        (_, index) => `data/uploads/${projectId}/att-${index}-shot.png`
+      // Every one of them genuinely uploaded and servable, so the count is the
+      // only thing left that can refuse the request.
+      const images = Array.from({ length: MAX_TICKET_IMAGES + 1 }, (_, index) =>
+        stageUpload(`att-${index}`)
       );
 
       const res = await createBug({ title: "Bug", images });
 
       expect(res.status).toBe(400);
+      await expect(res.json()).resolves.toEqual({
+        error: "Validation failed",
+        details: expect.objectContaining({
+          images: [`A bug may carry at most ${MAX_TICKET_IMAGES} screenshots`],
+        }),
+      });
       expect(bugCount()).toBe(0);
     });
 
@@ -139,6 +146,17 @@ describe("POST /bugs request contract", () => {
       await expect(res.json()).resolves.toEqual({ error: "Invalid JSON body" });
       expect(bugCount()).toBe(0);
     });
+  });
+
+  it("files a bug carrying exactly the screenshot cap", async () => {
+    const images = Array.from({ length: MAX_TICKET_IMAGES }, (_, index) =>
+      stageUpload(`att-${index}`)
+    );
+
+    const res = await createBug({ title: "Bug", images });
+
+    expect(res.status).toBe(201);
+    expect(bugCount()).toBe(1);
   });
 
   it("says which field was refused instead of only that one was", async () => {
