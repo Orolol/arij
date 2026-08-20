@@ -159,11 +159,36 @@ describe("Kanban Build Toolbar", () => {
     expect(mockPanelOpenChat).not.toHaveBeenCalled();
   });
 
+  it("?panel=new-epic-manual opens the manual epic dialog and strips the param", async () => {
+    searchParams = new URLSearchParams("panel=new-epic-manual");
+    render(<KanbanPage />);
+
+    // The menu that pushes this param lives in the project chrome, a layout
+    // that outlives this page, so the param string is the only contract
+    // between them. Without this, either side could be renamed and the whole
+    // manual entry would go dead with every other test still green.
+    await screen.findByTestId("epic-create-dialog");
+    expect(routerReplace).toHaveBeenCalledWith("/projects/proj1");
+  });
+
+  it("?panel=new-epic-manual never reaches for the chat panel", async () => {
+    searchParams = new URLSearchParams("panel=new-epic-manual");
+    render(<KanbanPage />);
+    await screen.findByTestId("epic-create-dialog");
+
+    // Manual creation exists to skip the agent round-trip: touching the chat
+    // panel here — even to warm it up or pre-create a conversation — is the
+    // exact cost this path promises not to pay.
+    expect(mockPanelOpenChat).not.toHaveBeenCalled();
+    expect(mockPanelOpenNewEpic).not.toHaveBeenCalled();
+  });
+
   it("does not touch the panel without a panel param", async () => {
     render(<KanbanPage />);
     await screen.findByTestId("board");
     expect(mockPanelOpenChat).not.toHaveBeenCalled();
     expect(mockPanelOpenNewEpic).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("epic-create-dialog")).not.toBeInTheDocument();
   });
 
   it("does not show build toolbar when no epics selected", () => {
