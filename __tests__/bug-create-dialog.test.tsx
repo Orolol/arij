@@ -112,6 +112,69 @@ describe("BugCreateDialog", () => {
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
+  it("ignores a second Enter while the create request is in flight", async () => {
+    // The buttons go disabled, but the title field stays live and Enter calls
+    // handleSubmit directly — so nothing but a synchronous lock stops the same
+    // report being filed twice.
+    let releaseCreate: (() => void) | null = null;
+    const fetchMock = vi.fn(async () => {
+      await new Promise<void>((resolve) => {
+        releaseCreate = resolve;
+      });
+      return { ok: true, json: async () => ({ data: { id: "bug-1" } }) };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { onOpenChange, onCreated } = renderDialog();
+
+    const titleField = screen.getByPlaceholderText("Bug title...");
+    fireEvent.change(titleField, { target: { value: "Duplicate on Enter" } });
+
+    fireEvent.keyDown(titleField, { key: "Enter" });
+    fireEvent.keyDown(titleField, { key: "Enter" });
+    fireEvent.keyDown(titleField, { key: "Enter" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    releaseCreate!();
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onCreated).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores Enter while Create And Fix is in flight, so no bug is left undispatched", async () => {
+    // The damage here is worse than a duplicate: the first bug gets the agent
+    // and the second is filed with nobody working on it.
+    let releaseCreate: (() => void) | null = null;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith("/bugs")) {
+        await new Promise<void>((resolve) => {
+          releaseCreate = resolve;
+        });
+        return { ok: true, json: async () => ({ data: { id: "bug-1" } }) };
+      }
+      return { ok: true, json: async () => ({ data: { sessionId: "sess-1" } }) };
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    const { onOpenChange } = renderDialog();
+
+    const titleField = screen.getByPlaceholderText("Bug title...");
+    fireEvent.change(titleField, { target: { value: "Crash on export" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create And Fix" }));
+
+    fireEvent.keyDown(titleField, { key: "Enter" });
+
+    const bugCalls = () =>
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/bugs"));
+    expect(bugCalls()).toHaveLength(1);
+
+    releaseCreate!();
+    await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+    expect(bugCalls()).toHaveLength(1);
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).endsWith("/build"))
+    ).toHaveLength(1);
+  });
+
   it("passes namedAgentId when creating and fixing a bug", async () => {
     const fetchMock = vi
       .fn()

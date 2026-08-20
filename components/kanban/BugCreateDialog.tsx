@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -45,6 +45,11 @@ export function BugCreateDialog({
   const [submitMode, setSubmitMode] = useState<"create" | "create_and_fix" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const submitting = submitMode !== null;
+  // Enter in the title field calls handleSubmit straight through, and a
+  // disabled button does not stand in its way. `submitting` only turns true a
+  // render later, so the guard that keeps a second press from filing the same
+  // report twice has to be synchronous.
+  const submitLockRef = useRef(false);
 
   const {
     attachments,
@@ -69,7 +74,8 @@ export function BugCreateDialog({
   }
 
   async function handleSubmit(mode: "create" | "create_and_fix" = "create") {
-    if (!title.trim() || uploading) return;
+    if (submitLockRef.current || !title.trim() || uploading) return;
+    submitLockRef.current = true;
     setSubmitMode(mode);
     setError(null);
 
@@ -132,6 +138,7 @@ export function BugCreateDialog({
           : "Failed to create bug"
       );
     } finally {
+      submitLockRef.current = false;
       setSubmitMode(null);
     }
   }
