@@ -6,6 +6,8 @@
  * `prompt-builder.ts`.
  */
 
+import { ticketImageAbsolutePaths } from "@/lib/uploads/ticket-image-paths";
+
 import type {
   PromptDocument,
   PromptEpic,
@@ -87,6 +89,41 @@ export const PROJECT_MEMORY_HEADING =
  */
 export function memorySection(memory: string | null | undefined): string {
   return section(PROJECT_MEMORY_HEADING, memory);
+}
+
+/** Heading under which a ticket's attached screenshots are listed. */
+export const TICKET_IMAGES_HEADING = "Attached Screenshots";
+
+/**
+ * The screenshots attached to a ticket, as absolute paths the agent can read.
+ *
+ * A bug reported with a screenshot is usually *only* describable by that
+ * screenshot, so the paths go in the prompt body rather than being left for
+ * the agent to discover. They are absolute on purpose: the agent's cwd is a
+ * worktree of the user's project, while the uploads live under Arij's own
+ * directory — a relative path would silently resolve to nothing.
+ *
+ * Empty string when the ticket has no usable image, so a ticket without a
+ * screenshot produces a prompt byte-identical to before this section existed.
+ * Because this is plain prompt text, every CLI provider gets the same thing.
+ */
+export function ticketImagesSection(epic: PromptEpic): string {
+  if (!epic.projectId) return "";
+
+  const paths = ticketImageAbsolutePaths(epic.images, epic.projectId);
+  if (paths.length === 0) return "";
+
+  const noun = paths.length === 1 ? "screenshot" : "screenshots";
+  const lines = paths.map((absolutePath) => `- ${absolutePath}`).join("\n");
+
+  return `## ${TICKET_IMAGES_HEADING}
+
+The reporter attached ${paths.length} ${noun} to this ticket, showing what was actually observed. Read ${
+    paths.length === 1 ? "it" : "them"
+  } from disk — these are absolute paths on this machine, outside the repository you are working in:
+
+${lines}
+`;
 }
 
 // ---------------------------------------------------------------------------

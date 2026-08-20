@@ -17,6 +17,7 @@ import {
   projectHeader,
   descriptionSection,
   projectContextSections,
+  ticketImagesSection,
 } from "./prompt-sections";
 import { getProjectMemoryContent } from "@/lib/documents/memory";
 import { PROJECT_MEMORY_MAX_CHARS } from "@/lib/documents/memory-constants";
@@ -57,6 +58,18 @@ export interface PromptEpic {
   title: string;
   description?: string | null;
   type?: string | null;
+  /**
+   * Owning project id — present when callers pass a full Drizzle epic row
+   * (every dispatch route does). Required to read `images`, whose stored
+   * paths are namespaced per project.
+   */
+  projectId?: string | null;
+  /**
+   * `epics.images` verbatim — a JSON array of upload paths written by the bug
+   * creation modal, or null. Left as `unknown` because the column is
+   * free-form text: the normaliser, not the type, decides what is usable.
+   */
+  images?: unknown;
 }
 
 export interface PromptUserStory {
@@ -717,6 +730,7 @@ export function buildBuildPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
+  parts.push(ticketImagesSection(epic));
 
   // User stories
   parts.push(userStoriesSection(userStories));
@@ -787,6 +801,8 @@ export function buildTicketBuildPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
+
+  parts.push(ticketImagesSection(epic));
 
   // Ticket details
   parts.push(`## Ticket to Implement\n`);
@@ -990,6 +1006,8 @@ export function buildReviewPrompt(
     parts.push(`${epic.description.trim()}\n`);
   }
 
+  parts.push(ticketImagesSection(epic));
+
   // Ticket details
   parts.push(`## Ticket Under Review\n`);
   parts.push(`### ${story.title}\n`);
@@ -1149,6 +1167,7 @@ export function buildEpicReviewPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
+  parts.push(ticketImagesSection(epic));
 
   // Skip user stories section for bug tickets (they have none)
   if (!isBug) {
