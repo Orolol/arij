@@ -4,15 +4,13 @@ const PORT = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : 3100;
 const BASE_URL = `http://127.0.0.1:${PORT}`;
 
 /**
- * Playwright refuses to install its bundled chromium on this host
- * ("Playwright does not support chromium on ubuntu26.04-x64"), so the suite
- * drives the system Chrome instead. `PLAYWRIGHT_CHANNEL=""` opts back into the
- * bundled build wherever it *is* installable, e.g. CI.
+ * The bundled chromium by default — that is what `npx playwright install`
+ * puts on a machine, so a plain `npm run test:e2e` works with no system
+ * browser. Hosts where Playwright refuses to install it ("Playwright does not
+ * support chromium on ubuntu26.04-x64") opt into a system browser explicitly:
+ * `PLAYWRIGHT_CHANNEL=chrome npm run test:e2e`.
  */
-const CHANNEL =
-  process.env.PLAYWRIGHT_CHANNEL === undefined
-    ? "chrome"
-    : process.env.PLAYWRIGHT_CHANNEL || undefined;
+const CHANNEL = process.env.PLAYWRIGHT_CHANNEL || undefined;
 
 export default defineConfig({
   testDir: "./e2e",
