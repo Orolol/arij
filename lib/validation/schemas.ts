@@ -47,18 +47,47 @@ export const cloneProjectSchema = z.object({
   projectId: z.string().max(64).nullish(),
 });
 
+// --- Story field rules ---
+
+/**
+ * One set of caps for every path that writes a user story.
+ *
+ * Stories are created two ways — nested in `createEpicSchema` (manual form and
+ * chat both post the whole epic at once) or on their own via
+ * `/api/projects/:id/user-stories` — and edited through the story schemas
+ * below. While the nested input was uncapped the create route accepted a title
+ * the edit routes then refused, so the story landed in the database renamable
+ * only to a shorter title. Same numbers on every path means anything this route
+ * stores is something the edit routes still accept.
+ */
+const STORY_TITLE_MAX_LENGTH = 500;
+const STORY_TEXT_MAX_LENGTH = 10000;
+
+const STORY_TITLE_TOO_LONG = `User story title must be ${STORY_TITLE_MAX_LENGTH} characters or fewer`;
+const STORY_DESCRIPTION_TOO_LONG = `User story description must be ${STORY_TEXT_MAX_LENGTH} characters or fewer`;
+const STORY_CRITERIA_TOO_LONG = `User story acceptance criteria must be ${STORY_TEXT_MAX_LENGTH} characters or fewer`;
+
 // --- Epic schemas ---
 
 /**
- * Nested story for `createEpicSchema`. The title is trimmed *before* it is
- * checked, so `"   "` is a 400 for the whole request rather than a member the
+ * Nested story for `createEpicSchema`. Every field is trimmed *before* it is
+ * checked: `"   "` is a 400 for the whole request rather than a member the
  * route drops on its way to a `201` — a success status that persisted only part
- * of the array is data loss the caller never hears about.
+ * of the array is data loss the caller never hears about — and the caps are
+ * measured on the value that actually gets stored.
  */
 const userStoryInput = z.object({
-  title: z.string().trim().min(1, "User story title is required"),
-  description: z.string().nullish(),
-  acceptanceCriteria: z.string().nullish(),
+  title: z
+    .string()
+    .trim()
+    .min(1, "User story title is required")
+    .max(STORY_TITLE_MAX_LENGTH, STORY_TITLE_TOO_LONG),
+  description: z.string().trim().max(STORY_TEXT_MAX_LENGTH, STORY_DESCRIPTION_TOO_LONG).nullish(),
+  acceptanceCriteria: z
+    .string()
+    .trim()
+    .max(STORY_TEXT_MAX_LENGTH, STORY_CRITERIA_TOO_LONG)
+    .nullish(),
 });
 
 const dependencyInput = z.object({
@@ -101,16 +130,16 @@ export const updateEpicSchema = z.object({
 
 export const createStorySchema = z.object({
   epicId: z.string().min(1, "epicId is required"),
-  title: z.string().min(1, "title is required").max(500),
-  description: z.string().max(10000).nullish(),
-  acceptanceCriteria: z.string().max(10000).nullish(),
+  title: z.string().min(1, "title is required").max(STORY_TITLE_MAX_LENGTH),
+  description: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
+  acceptanceCriteria: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
   status: z.enum(["todo", "in_progress", "review", "done"]).optional(),
 });
 
 export const updateStorySchema = z.object({
-  title: z.string().min(1).max(500).optional(),
-  description: z.string().max(10000).nullish(),
-  acceptanceCriteria: z.string().max(10000).nullish(),
+  title: z.string().min(1).max(STORY_TITLE_MAX_LENGTH).optional(),
+  description: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
+  acceptanceCriteria: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
   status: z.enum(["todo", "in_progress", "review", "done"]).optional(),
   position: z.number().int().min(0).optional(),
 });
@@ -118,9 +147,9 @@ export const updateStorySchema = z.object({
 // Bulk story PATCH uses `id` in the body
 export const updateStoryByIdSchema = z.object({
   id: z.string().min(1, "id is required"),
-  title: z.string().min(1).max(500).optional(),
-  description: z.string().max(10000).nullish(),
-  acceptanceCriteria: z.string().max(10000).nullish(),
+  title: z.string().min(1).max(STORY_TITLE_MAX_LENGTH).optional(),
+  description: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
+  acceptanceCriteria: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
   status: z.enum(["todo", "in_progress", "review", "done"]).optional(),
   position: z.number().int().min(0).optional(),
 });

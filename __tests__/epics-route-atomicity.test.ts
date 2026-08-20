@@ -165,4 +165,45 @@ describe("POST /api/projects/[projectId]/epics — atomicity on real SQLite", ()
     expect(countRows("user_stories")).toBe(0);
     expect(ticketCounter()).toBe(0);
   });
+
+  /**
+   * An over-cap story is rejected whole rather than stored: the story edit
+   * routes cap titles at 500 and prose at 10 000, so a story past that would be
+   * written here and then be un-editable for good.
+   */
+  it("refuses an over-cap story instead of storing one that can't be edited", async () => {
+    const response = await post({
+      title: "Epic with a novel for a story title",
+      userStories: [
+        { title: "As a user, I want a real story" },
+        { title: "T".repeat(501) },
+      ],
+    });
+
+    expect(response.status).toBe(400);
+    expect((await response.json()).error).toBeDefined();
+    expect(countRows("epics")).toBe(0);
+    expect(countRows("user_stories")).toBe(0);
+    expect(ticketCounter()).toBe(0);
+  });
+
+  it("stores a story sitting exactly on the caps", async () => {
+    const title = "S".repeat(500);
+    const prose = "p".repeat(10000);
+
+    const response = await post({
+      title: "Epic at the boundary",
+      userStories: [{ title, description: prose, acceptanceCriteria: prose }],
+    });
+
+    expect(response.status).toBe(201);
+
+    const stored = sqlite
+      .prepare("SELECT title, description, acceptance_criteria FROM user_stories")
+      .all() as Array<{ title: string; description: string; acceptance_criteria: string }>;
+    expect(stored).toHaveLength(1);
+    expect(stored[0].title).toBe(title);
+    expect(stored[0].description).toBe(prose);
+    expect(stored[0].acceptance_criteria).toBe(prose);
+  });
 });

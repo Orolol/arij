@@ -304,4 +304,29 @@ describe("chat-parsed epics satisfy createEpicSchema", () => {
     expect(payload.userStories).toHaveLength(1);
     expect(createEpicSchema.safeParse(payload).success).toBe(true);
   });
+
+  /**
+   * The story caps (500 for a title, 10 000 for prose) apply to this path too,
+   * so they have to sit well clear of what an agent actually writes: a verbose
+   * "As a … I want … so that …" title with a full checklist behind it is the
+   * worst realistic case, and it is nowhere near the boundary.
+   */
+  it("leaves a verbose agent story comfortably inside the caps", () => {
+    const title =
+      "As a returning customer who has already linked a payment method, I want the checkout to remember my preferred card and shipping address so that I can complete a repeat order without retyping details I have entered before";
+    const criteria = Array.from(
+      { length: 12 },
+      (_, i) => `- [ ] Criterion ${i + 1} covering one branch of the checkout flow`,
+    ).join("\n");
+    const payload = parsedPayload(
+      `\`\`\`json\n${JSON.stringify({
+        title: "Checkout",
+        description: "Reduce friction on repeat orders",
+        userStories: [{ title, description: "Repeat orders stall on data entry.", acceptanceCriteria: criteria }],
+      })}\n\`\`\``,
+    );
+
+    expect(payload.userStories[0].title.length).toBeLessThan(500);
+    expect(createEpicSchema.safeParse(payload).success).toBe(true);
+  });
 });

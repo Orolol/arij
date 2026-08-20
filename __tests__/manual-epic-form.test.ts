@@ -5,13 +5,19 @@ import {
   EPIC_TITLE_MAX_LENGTH,
   EPIC_TITLE_REQUIRED,
   EPIC_TITLE_TOO_LONG,
+  STORY_CRITERIA_TOO_LONG,
+  STORY_DESCRIPTION_TOO_LONG,
+  STORY_TEXT_MAX_LENGTH,
+  STORY_TITLE_MAX_LENGTH,
   STORY_TITLE_REQUIRED,
+  STORY_TITLE_TOO_LONG,
   buildManualEpicPayload,
   createEmptyEpicDraft,
   createEmptyUserStory,
   formatEpicCreateError,
   validateManualEpicDraft,
   type ManualEpicDraft,
+  type ManualUserStoryDraft,
 } from "@/lib/epics/manual-epic-form";
 import { createEpicSchema } from "@/lib/validation/schemas";
 
@@ -77,6 +83,66 @@ describe("validateManualEpicDraft", () => {
     expect(tooLong.titleError).toBeNull();
   });
 
+  it("rejects a story title past the cap the server enforces", () => {
+    const atMax = "s".repeat(STORY_TITLE_MAX_LENGTH);
+    const draftWithStoryTitle = (title: string) =>
+      validateManualEpicDraft(
+        draftWith({
+          title: "Ship it",
+          userStories: [{ ...createEmptyUserStory("a"), title }],
+        }),
+      );
+
+    expect(draftWithStoryTitle(atMax).valid).toBe(true);
+
+    // Trimmed before measuring, because that is what the payload sends.
+    const overByOne = draftWithStoryTitle(`  ${atMax}s  `);
+    expect(overByOne.valid).toBe(false);
+    expect(overByOne.storyErrors.a).toBe(STORY_TITLE_TOO_LONG);
+  });
+
+  it("rejects story prose past the caps the server enforces", () => {
+    const atMax = "d".repeat(STORY_TEXT_MAX_LENGTH);
+    const storyDraft = (fields: Partial<ManualUserStoryDraft>) =>
+      validateManualEpicDraft(
+        draftWith({
+          title: "Ship it",
+          userStories: [
+            { ...createEmptyUserStory("a"), title: "As a user, I want it", ...fields },
+          ],
+        }),
+      );
+
+    expect(storyDraft({ description: atMax }).valid).toBe(true);
+    expect(storyDraft({ description: `${atMax}d` }).storyErrors.a).toBe(
+      STORY_DESCRIPTION_TOO_LONG,
+    );
+
+    expect(storyDraft({ acceptanceCriteria: atMax }).valid).toBe(true);
+    expect(storyDraft({ acceptanceCriteria: `${atMax}d` }).storyErrors.a).toBe(
+      STORY_CRITERIA_TOO_LONG,
+    );
+  });
+
+  it("reports the missing story title before its length problems", () => {
+    // One error line per story block, so an untitled story names the field the
+    // user still has to fill rather than one they can fix later.
+    const result = validateManualEpicDraft(
+      draftWith({
+        title: "Ship it",
+        userStories: [
+          {
+            ...createEmptyUserStory("a"),
+            title: "  ",
+            description: "d".repeat(STORY_TEXT_MAX_LENGTH + 1),
+          },
+        ],
+      }),
+    );
+
+    expect(result.storyErrors.a).toBe(STORY_TITLE_REQUIRED);
+  });
+
   /**
    * The caps are copied into the client-safe helper rather than imported, so
    * this asserts the copies still match what the route really rejects. Drift in
@@ -96,6 +162,43 @@ describe("validateManualEpicDraft", () => {
       createEpicSchema.safeParse({ title: "ok", description: `${descriptionAtMax}d` })
         .success,
     ).toBe(false);
+
+    const storyTitleAtMax = "s".repeat(STORY_TITLE_MAX_LENGTH);
+    const storyProseAtMax = "p".repeat(STORY_TEXT_MAX_LENGTH);
+    const epicWithStory = (story: Record<string, unknown>) =>
+      createEpicSchema.safeParse({ title: "ok", userStories: [story] }).success;
+
+    expect(epicWithStory({ title: storyTitleAtMax })).toBe(true);
+    expect(epicWithStory({ title: `${storyTitleAtMax}s` })).toBe(false);
+    expect(epicWithStory({ title: "ok", description: storyProseAtMax })).toBe(true);
+    expect(epicWithStory({ title: "ok", description: `${storyProseAtMax}p` })).toBe(false);
+    expect(epicWithStory({ title: "ok", acceptanceCriteria: storyProseAtMax })).toBe(true);
+    expect(epicWithStory({ title: "ok", acceptanceCriteria: `${storyProseAtMax}p` })).toBe(
+      false,
+    );
+  });
+
+  /**
+   * The form is the only thing between the user and a 400 that would reject the
+   * whole epic — including the stories that were fine. A draft it calls valid
+   * has to be one the route accepts, boundary values included.
+   */
+  it("hands the route a payload it accepts at every cap", () => {
+    const draft = draftWith({
+      title: "x".repeat(EPIC_TITLE_MAX_LENGTH),
+      description: "d".repeat(EPIC_DESCRIPTION_MAX_LENGTH),
+      userStories: [
+        {
+          key: "a",
+          title: "s".repeat(STORY_TITLE_MAX_LENGTH),
+          description: "p".repeat(STORY_TEXT_MAX_LENGTH),
+          acceptanceCriteria: "c".repeat(STORY_TEXT_MAX_LENGTH),
+        },
+      ],
+    });
+
+    expect(validateManualEpicDraft(draft).valid).toBe(true);
+    expect(createEpicSchema.safeParse(buildManualEpicPayload(draft)).success).toBe(true);
   });
 
   it("reports the epic title and story errors together", () => {
