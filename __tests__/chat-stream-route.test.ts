@@ -63,6 +63,13 @@ vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentByNamedId: mockResolveAgentByNamedId,
 }));
 
+// The per-turn CLI MCP tool channel reads settings from the db and mints
+// real tokens; disabled here so the legacy streaming behavior stays
+// byte-identical. Its wiring is covered by chat-stream-route-mcp.test.ts.
+vi.mock("@/lib/chat/cli-tool-channel", () => ({
+  createChatCliToolChannel: vi.fn(() => null),
+}));
+
 async function readSseEvents(response: Response): Promise<Array<Record<string, unknown>>> {
   const body = response.body;
   if (!body) return [];

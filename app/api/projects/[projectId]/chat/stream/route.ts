@@ -15,9 +15,20 @@ import {
 } from "@/lib/chat/conversation-agent";
 import {
   getOpenAiConfigFromSettings,
-  streamOpenAiChatCompletion,
+  streamOpenAiChatEvents,
   type OpenAiChatMessage,
+  type OpenAiToolCall,
 } from "@/lib/openai/client";
+import {
+  buildBoardToolsSystemSection,
+  CHAT_BOARD_TOOL_DEFINITIONS,
+  executeChatBoardTool,
+  type ChatBoardToolContext,
+} from "@/lib/chat/board-tools";
+import { mintMcpToken, revokeMcpTokensForSession } from "@/lib/mcp/token-store";
+import { createChatCliToolChannel } from "@/lib/chat/cli-tool-channel";
+import { isMcpToolsEnabled } from "@/lib/claude/mcp-injection";
+import { getAppBaseUrl } from "@/lib/webhooks/send";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import { activityRegistry } from "@/lib/activity-registry";
 import {
@@ -58,6 +69,32 @@ function isResumeSessionExpiredError(error: string | null | undefined): boolean 
   return /(session|resume).*(expired|not found|invalid|unknown|does not exist)|invalid.*(session|resume)/i.test(
     error
   );
+}
+
+/**
+ * Upper bound on fast-mode tool rounds per turn (each round is one upstream
+ * completion request). Keeps a confused model from looping forever and the
+ * messages array from growing without bound.
+ */
+const MAX_TOOL_ROUNDS = 8;
+
+/**
+ * Upper bound on tool calls executed within one round. The overflow still
+ * gets a `role:"tool"` reply (the protocol requires one per call id), but
+ * an error payload instead of an execution.
+ */
+const MAX_TOOL_CALLS_PER_ROUND = 8;
+
+/**
+ * Whether a first-round upstream failure looks like the endpoint rejecting
+ * the `tools` field itself (older OpenAI-compatible servers): client errors
+ * only — a generic 500 is usually a transient upstream hiccup, and retrying
+ * it without tools would silently strip the board tools for the turn.
+ */
+function isLikelyToolsRejection(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (!error.message.startsWith("OpenAI-compatible API error:")) return false;
+  return /\b(400|404|422|501)\b/.test(error.message) || /tool/i.test(error.message);
 }
 
 function sseResponse(stream: ReadableStream) {
@@ -299,10 +336,16 @@ export async function POST(
       throw error;
     }
 
-    const openAiMessages: OpenAiChatMessage[] = [];
-    if (chatSystemPrompt.trim()) {
-      openAiMessages.push({ role: "system", content: chatSystemPrompt });
-    }
+    // Same global toggle as the CLI agents' MCP injection: off means the
+    // model gets neither the tools nor a system prompt promising them.
+    const chatToolsEnabled = isMcpToolsEnabled();
+    const systemSections = [
+      chatSystemPrompt.trim(),
+      chatToolsEnabled ? buildBoardToolsSystemSection(project) : "",
+    ].filter(Boolean);
+    const openAiMessages: OpenAiChatMessage[] = [
+      { role: "system", content: systemSections.join("\n\n") },
+    ];
     for (const message of messageHistory) {
       openAiMessages.push({
         role: message.role,
@@ -333,21 +376,150 @@ export async function POST(
       kill: () => abortController.abort(),
     });
 
+    // Per-turn agent identity for the MCP-backed board tools: status
+    // changes land attributed to `agent`, scoped to this project. The
+    // fetch base is the app's own constant base URL (never the request's
+    // Host header, which a DNS-rebound origin could control and would then
+    // receive the bearer token).
+    const toolSessionId = `chat-tools-${activityId}`;
+    const toolContext: ChatBoardToolContext | null = chatToolsEnabled
+      ? {
+          projectId,
+          baseUrl: getAppBaseUrl(),
+          mcpToken: mintMcpToken({
+            sessionId: toolSessionId,
+            projectId,
+            epicId: null,
+            userStoryId: null,
+            agentType: "chat",
+          }),
+          signal: abortController.signal,
+        }
+      : null;
+    let toolChannelReleased = false;
+    const releaseToolChannel = () => {
+      if (toolChannelReleased) return;
+      toolChannelReleased = true;
+      if (toolContext) revokeMcpTokensForSession(toolSessionId);
+    };
+
     let clientCancelled = false;
     let fullContent = "";
     const sseStream = new ReadableStream({
       async start(controller) {
         try {
-          for await (const delta of streamOpenAiChatCompletion(
-            openAiConfig,
-            openAiMessages,
-            abortController.signal,
-          )) {
-            fullContent += delta;
-            controller.enqueue(
-              encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`)
-            );
+          const messages = [...openAiMessages];
+          let toolsEnabled = chatToolsEnabled;
+          let round = 0;
+          while (round < MAX_TOOL_ROUNDS) {
+            round += 1;
+            let roundText = "";
+            let toolCalls: OpenAiToolCall[] = [];
+            try {
+              for await (const event of streamOpenAiChatEvents(
+                openAiConfig,
+                messages,
+                {
+                  tools: toolsEnabled ? CHAT_BOARD_TOOL_DEFINITIONS : undefined,
+                  signal: abortController.signal,
+                },
+              )) {
+                if (event.type === "text") {
+                  // Separate this round's text from the previous round's.
+                  const delta =
+                    roundText === "" && fullContent.length > 0
+                      ? `\n\n${event.text}`
+                      : event.text;
+                  roundText += event.text;
+                  fullContent += delta;
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`)
+                  );
+                } else {
+                  toolCalls = event.toolCalls;
+                }
+              }
+            } catch (error) {
+              if (
+                toolsEnabled &&
+                round === 1 &&
+                fullContent === "" &&
+                isLikelyToolsRejection(error)
+              ) {
+                // Retry the turn without tools — and without the system
+                // section promising them, so the model does not answer
+                // board questions from imagination.
+                toolsEnabled = false;
+                round = 0;
+                if (messages[0]?.role === "system") {
+                  const noToolsSystemContent = chatSystemPrompt.trim();
+                  if (noToolsSystemContent) {
+                    messages[0] = { role: "system", content: noToolsSystemContent };
+                  } else {
+                    messages.shift();
+                  }
+                }
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      status:
+                        "Board tools unavailable on this endpoint — continuing without them.",
+                    })}\n\n`
+                  )
+                );
+                continue;
+              }
+              throw error;
+            }
+
+            if (abortController.signal.aborted) break;
+            if (toolCalls.length === 0) break;
+
+            messages.push({
+              role: "assistant",
+              content: roundText,
+              tool_calls: toolCalls,
+            });
+            if (round === MAX_TOOL_ROUNDS) {
+              const note = `${fullContent ? "\n\n" : ""}[Stopped: tool budget of ${MAX_TOOL_ROUNDS} rounds exhausted.]`;
+              fullContent += note;
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ delta: note })}\n\n`)
+              );
+              break;
+            }
+            if (!toolContext) {
+              // A server emitted tool_calls although none were advertised —
+              // treat the round as final rather than execute anything.
+              break;
+            }
+            for (const [callIndex, call] of toolCalls.entries()) {
+              // The protocol wants one tool reply per call id; overflow
+              // calls get an error payload instead of an execution.
+              if (callIndex >= MAX_TOOL_CALLS_PER_ROUND) {
+                messages.push({
+                  role: "tool",
+                  tool_call_id: call.id,
+                  content: JSON.stringify({
+                    error: `Skipped: more than ${MAX_TOOL_CALLS_PER_ROUND} tool calls in one round.`,
+                  }),
+                });
+                continue;
+              }
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ status: `Using ${call.function.name}...` })}\n\n`
+                )
+              );
+              const resultJson = await executeChatBoardTool(call, toolContext);
+              messages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: resultJson,
+              });
+            }
           }
+          releaseToolChannel();
           activityRegistry.unregister(activityId);
           if (abortController.signal.aborted) {
             if (!clientCancelled) {
@@ -364,6 +536,7 @@ export async function POST(
           }
           saveAssistantAndTitle(controller, fullContent, "active");
         } catch (error) {
+          releaseToolChannel();
           if (abortController.signal.aborted) {
             // Client disconnected or the activity was killed.
             activityRegistry.unregister(activityId);
@@ -403,6 +576,7 @@ export async function POST(
       },
       cancel() {
         clientCancelled = true;
+        releaseToolChannel();
         activityRegistry.unregister(activityId);
         abortController.abort();
         setConversationStatus("active");
@@ -500,6 +674,17 @@ export async function POST(
     conversation?.label ? `Chat: ${conversation.label}` : "Chat";
   const activityId = `chat-${createId()}`;
 
+  // Per-turn Arij MCP tool channel for CLI chat providers (claude-code,
+  // codex): the spawned CLI gets the chat toolset of mcp__arij__* board
+  // tools — parity with the fast-mode board tools above. Null when the
+  // provider has no MCP surface, the toggle is off, or the conversation is
+  // an epic-creation/brainstorm prompt contract. The token must be revoked
+  // on every completion path below (success, error, client cancel).
+  const cliToolChannel = createChatCliToolChannel({
+    projectId,
+    provider: resolvedAgent.provider,
+    conversationType,
+  });
 
   // Every non-Claude provider: non-streaming, spawned through its own provider
   if (resolvedAgent.provider !== "claude-code") {
@@ -514,6 +699,7 @@ export async function POST(
       logIdentifier: conversationId || `chat-${projectId}`,
       cliSessionId,
       resumeSession,
+      mcp: cliToolChannel?.mcp,
     });
 
     activityRegistry.register({
@@ -560,9 +746,12 @@ export async function POST(
               logIdentifier: conversationId || `chat-${projectId}`,
               cliSessionId,
               resumeSession: false,
+              mcp: cliToolChannel?.mcp,
             });
             result = await activeProviderSession.promise;
           }
+
+          cliToolChannel?.release();
 
           const fullContent = result.success
             ? parseClaudeOutput(result.result || "").content || "(empty response)"
@@ -580,6 +769,7 @@ export async function POST(
           activityRegistry.unregister(activityId);
           saveAssistantAndTitle(controller, fullContent, result.success ? "active" : "error");
         } catch (error) {
+          cliToolChannel?.release();
           const failureMessage =
             error instanceof Error ? `Error: ${error.message}` : "Error: Provider request failed";
 
@@ -591,6 +781,7 @@ export async function POST(
         }
       },
       cancel() {
+        cliToolChannel?.release();
         activityRegistry.unregister(activityId);
         activeProviderSession.kill();
         setConversationStatus("active");
@@ -631,6 +822,7 @@ export async function POST(
             logIdentifier: conversationId || `chat-${projectId}`,
             cliSessionId: resultSessionId,
             resumeSession: true,
+            mcp: cliToolChannel?.mcp,
           });
           currentKill = attempt.kill;
           let result = await attempt.promise;
@@ -644,10 +836,13 @@ export async function POST(
               cwd: project.gitRepoPath || undefined,
               logIdentifier: conversationId || `chat-${projectId}`,
               cliSessionId: resultSessionId,
+              mcp: cliToolChannel?.mcp,
             });
             currentKill = attempt.kill;
             result = await attempt.promise;
           }
+
+          cliToolChannel?.release();
 
           const fullContent = result.success
             ? parseClaudeOutput(result.result || "").content || "(empty response)"
@@ -665,6 +860,7 @@ export async function POST(
           activityRegistry.unregister(activityId);
           saveAssistantAndTitle(controller, fullContent, result.success ? "active" : "error");
         } catch (error) {
+          cliToolChannel?.release();
           const failureMessage =
             error instanceof Error ? `Error: ${error.message}` : "Error: Provider request failed";
           controller.enqueue(
@@ -675,6 +871,7 @@ export async function POST(
         }
       },
       cancel() {
+        cliToolChannel?.release();
         activityRegistry.unregister(activityId);
         currentKill();
         setConversationStatus("active");
@@ -692,6 +889,7 @@ export async function POST(
     cwd: project.gitRepoPath || undefined,
     logIdentifier: conversationId || `chat-${projectId}`,
     cliSessionId,
+    mcp: cliToolChannel?.mcp,
   });
 
   activityRegistry.register({
@@ -737,6 +935,7 @@ export async function POST(
         hasStreamError = true;
       }
 
+      cliToolChannel?.release();
       activityRegistry.unregister(activityId);
       if (!hasStreamError) {
         persistConversationSessionId(cliSessionId);
@@ -745,6 +944,7 @@ export async function POST(
       saveAssistantAndTitle(controller, fullContent, hasStreamError ? "error" : "active");
     },
     cancel() {
+      cliToolChannel?.release();
       activityRegistry.unregister(activityId);
       kill();
       setConversationStatus("active");

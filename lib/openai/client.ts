@@ -29,9 +29,35 @@ export interface OpenAiConfig {
 }
 
 export interface OpenAiChatMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /** Present on assistant messages that requested tool calls. */
+  tool_calls?: OpenAiToolCall[];
+  /** Present on role:"tool" messages, echoing the call being answered. */
+  tool_call_id?: string;
 }
+
+/** One function-call request emitted by the model. */
+export interface OpenAiToolCall {
+  id: string;
+  type: "function";
+  function: { name: string; arguments: string };
+}
+
+/** A function tool advertised to the endpoint. */
+export interface OpenAiToolDefinition {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+/** Structured event from the tool-aware streaming generator. */
+export type OpenAiStreamEvent =
+  | { type: "text"; text: string }
+  | { type: "tool_calls"; toolCalls: OpenAiToolCall[] };
 
 const ERROR_PREFIX = "OpenAI-compatible API error:";
 
@@ -97,6 +123,7 @@ export function buildChatCompletionsBody(
   config: Pick<OpenAiConfig, "model" | "reasoningEffort">,
   messages: OpenAiChatMessage[],
   stream: boolean,
+  tools?: OpenAiToolDefinition[],
 ): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model: config.model,
@@ -105,6 +132,9 @@ export function buildChatCompletionsBody(
   };
   if (config.reasoningEffort !== "off") {
     body.reasoning_effort = config.reasoningEffort;
+  }
+  if (tools && tools.length > 0) {
+    body.tools = tools;
   }
   return body;
 }
@@ -305,15 +335,87 @@ export async function testOpenAiConnection(
 const DONE = Symbol("sse-done");
 
 /**
- * Extracts the content delta from one SSE line.
+ * Accumulates streamed `delta.tool_calls` fragments (keyed by their `index`)
+ * into complete OpenAiToolCall objects. Non-streaming `message.tool_calls`
+ * arrive as already-complete fragments and assemble identically.
+ */
+class ToolCallAssembler {
+  private fragments = new Map<number, { id: string; name: string; args: string }>();
+
+  add(rawCalls: unknown): void {
+    if (!Array.isArray(rawCalls)) return;
+    for (const raw of rawCalls) {
+      if (!raw || typeof raw !== "object") continue;
+      const fragment = raw as {
+        index?: unknown;
+        id?: unknown;
+        function?: unknown;
+      };
+      const fn =
+        fragment.function && typeof fragment.function === "object"
+          ? (fragment.function as { name?: unknown; arguments?: unknown })
+          : null;
+      // Index-less fragments: a fragment that carries an id or a name opens
+      // a new call; a bare arguments fragment continues the latest one
+      // (servers that omit `index` stream arguments that way).
+      const opensCall = Boolean(fragment.id) || Boolean(fn?.name);
+      const index =
+        typeof fragment.index === "number"
+          ? fragment.index
+          : !opensCall && this.fragments.size > 0
+            ? Math.max(...this.fragments.keys())
+            : this.fragments.size;
+      const acc = this.fragments.get(index) ?? { id: "", name: "", args: "" };
+      if (typeof fragment.id === "string" && fragment.id) acc.id = fragment.id;
+      if (fragment.function && typeof fragment.function === "object") {
+        const fn = fragment.function as { name?: unknown; arguments?: unknown };
+        if (typeof fn.name === "string") acc.name += fn.name;
+        if (typeof fn.arguments === "string") acc.args += fn.arguments;
+      }
+      this.fragments.set(index, acc);
+    }
+  }
+
+  get hasAny(): boolean {
+    return this.fragments.size > 0;
+  }
+
+  finalize(): OpenAiToolCall[] {
+    const fragments = [...this.fragments.entries()]
+      .sort(([a], [b]) => a - b)
+      .map(([, fragment]) => fragment)
+      .filter((fragment) => fragment.name.length > 0);
+    // Fallback ids are assigned after the name filter (so they stay dense)
+    // and dodge any explicit ids the server did send.
+    const used = new Set(fragments.map((fragment) => fragment.id).filter(Boolean));
+    return fragments.map((fragment, i) => {
+      let id = fragment.id;
+      if (!id) {
+        id = `call_${i}`;
+        while (used.has(id)) id = `${id}_`;
+        used.add(id);
+      }
+      return {
+        id,
+        type: "function" as const,
+        function: { name: fragment.name, arguments: fragment.args || "{}" },
+      };
+    });
+  }
+}
+
+/**
+ * Parses one SSE line into its useful parts.
  *
  * - `data: [DONE]` → the DONE sentinel
- * - `data: {json}` → the `choices[0].delta.content` string (or
- *   `choices[0].message.content` for a non-streaming chunk)
- * - plain non-JSON `data:` payload → the payload itself
+ * - `data: {json}` → `{ text, toolCallDeltas }` from choices[0] (delta for
+ *   streaming chunks, message for a non-streaming completion)
+ * - plain non-JSON `data:` payload → treated as text
  * - anything else (comments, `event:`/`id:` lines, empty) → null
  */
-function parseSseDataLine(line: string): string | typeof DONE | null {
+function parseSseDataLine(
+  line: string,
+): { text: string | null; toolCallDeltas: unknown } | typeof DONE | null {
   if (!line.startsWith("data:")) return null;
   const payload = line.slice("data:".length).trimStart();
   if (payload === "[DONE]") return DONE;
@@ -335,7 +437,10 @@ function parseSseDataLine(line: string): string | typeof DONE | null {
         throw new Error(`${ERROR_PREFIX} ${msg}`);
       }
     }
-    return extractDelta(parsed);
+    return {
+      text: extractDelta(parsed),
+      toolCallDeltas: extractToolCallDeltas(parsed),
+    };
   } catch (error) {
     if (error instanceof Error && error.message.startsWith(ERROR_PREFIX)) {
       throw error;
@@ -343,15 +448,19 @@ function parseSseDataLine(line: string): string | typeof DONE | null {
     if (payload.startsWith("{") || payload.startsWith("[")) {
       return null;
     }
-    return payload;
+    return { text: payload, toolCallDeltas: null };
   }
 }
 
-function extractDelta(json: unknown): string | null {
+function firstChoice(json: unknown): { delta?: unknown; message?: unknown } | null {
   if (!json || typeof json !== "object") return null;
   const choices = (json as { choices?: unknown }).choices;
   if (!Array.isArray(choices) || choices.length === 0) return null;
-  const choice = choices[0] as { delta?: unknown; message?: unknown } | undefined;
+  return choices[0] as { delta?: unknown; message?: unknown };
+}
+
+function extractDelta(json: unknown): string | null {
+  const choice = firstChoice(json);
   const content =
     choice?.delta && typeof choice.delta === "object"
       ? (choice.delta as { content?: unknown }).content
@@ -361,22 +470,43 @@ function extractDelta(json: unknown): string | null {
   return typeof content === "string" ? content : null;
 }
 
+/** `choices[0].delta.tool_calls` (streaming) or `message.tool_calls`. */
+function extractToolCallDeltas(json: unknown): unknown {
+  const choice = firstChoice(json);
+  const calls =
+    choice?.delta && typeof choice.delta === "object"
+      ? (choice.delta as { tool_calls?: unknown }).tool_calls
+      : choice?.message && typeof choice.message === "object"
+        ? (choice.message as { tool_calls?: unknown }).tool_calls
+        : undefined;
+  return Array.isArray(calls) ? calls : null;
+}
+
+export interface OpenAiStreamOptions {
+  /** Function tools to advertise; omitted → plain text completion. */
+  tools?: OpenAiToolDefinition[];
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 /**
- * Streams a chat completion and yields content deltas as they arrive.
+ * Streams a chat completion and yields structured events as they arrive:
+ * `{type:"text"}` for each content delta, then at most one
+ * `{type:"tool_calls"}` event once the stream ends with assembled calls.
  *
  * Parses the SSE wire format: `data: {json}` lines separated by newlines,
  * `data: [DONE]` ending the stream. Tolerates servers that ignore
  * `stream: true` and answer with a single JSON completion (emits the whole
- * `message.content` as one delta).
+ * `message.content` as one text event, and `message.tool_calls` whole).
  *
  * Throws an Error with a readable message on HTTP or network failure.
  */
-export async function* streamOpenAiChatCompletion(
+export async function* streamOpenAiChatEvents(
   config: OpenAiConfig,
   messages: OpenAiChatMessage[],
-  signal?: AbortSignal,
-  timeoutMs = 60000,
-): AsyncGenerator<string, void, unknown> {
+  options: OpenAiStreamOptions = {},
+): AsyncGenerator<OpenAiStreamEvent, void, unknown> {
+  const { tools, signal, timeoutMs = 60000 } = options;
   let url: string;
   try {
     url = buildChatCompletionsUrl(config.baseUrl);
@@ -405,7 +535,7 @@ export async function* streamOpenAiChatCompletion(
     response = await fetch(url, {
       method: "POST",
       headers: buildOpenAiHeaders(config.apiKey),
-      body: JSON.stringify(buildChatCompletionsBody(config, messages, true)),
+      body: JSON.stringify(buildChatCompletionsBody(config, messages, true, tools)),
       signal: fetchSignal,
     });
   } catch (error) {
@@ -432,12 +562,14 @@ export async function* streamOpenAiChatCompletion(
   }
 
   const decoder = new TextDecoder();
+  const assembler = new ToolCallAssembler();
   let buffer = "";
   let rawText = "";
   let sawSseDataLine = false;
+  let sawDone = false;
 
   try {
-    while (true) {
+    while (!sawDone) {
       if (fetchSignal?.aborted) break;
       const { done, value } = await reader.read();
       resetTimer();
@@ -453,13 +585,18 @@ export async function* streamOpenAiChatCompletion(
         const line = buffer.slice(0, newlineIndex).replace(/\r$/, "");
         buffer = buffer.slice(newlineIndex + 1);
         if (line.startsWith("data:")) sawSseDataLine = true;
-        const delta = parseSseDataLine(line);
-        if (delta === DONE) return;
-        if (delta) yield delta;
+        const parsed = parseSseDataLine(line);
+        if (parsed === DONE) {
+          sawDone = true;
+          break;
+        }
+        if (!parsed) continue;
+        if (parsed.toolCallDeltas) assembler.add(parsed.toolCallDeltas);
+        if (parsed.text) yield { type: "text", text: parsed.text };
       }
     }
 
-    if (!fetchSignal?.aborted) {
+    if (!sawDone && !fetchSignal?.aborted) {
       const lastChunk = decoder.decode();
       if (lastChunk) {
         if (!sawSseDataLine) rawText += lastChunk;
@@ -467,9 +604,11 @@ export async function* streamOpenAiChatCompletion(
       }
       const tail = buffer.replace(/\r$/, "");
       if (tail.startsWith("data:")) sawSseDataLine = true;
-      const tailDelta = parseSseDataLine(tail);
-      if (tailDelta === DONE) return;
-      if (tailDelta) yield tailDelta;
+      const parsed = parseSseDataLine(tail);
+      if (parsed && parsed !== DONE) {
+        if (parsed.toolCallDeltas) assembler.add(parsed.toolCallDeltas);
+        if (parsed.text) yield { type: "text", text: parsed.text };
+      }
     }
   } finally {
     clearTimeout(timer);
@@ -481,13 +620,39 @@ export async function* streamOpenAiChatCompletion(
   }
 
   // A server that ignored `stream: true` answered with one JSON completion
-  // instead of an SSE stream — emit it as a single delta.
+  // instead of an SSE stream — emit its content and tool calls whole.
   if (!sawSseDataLine && !fetchSignal?.aborted) {
     try {
-      const delta = extractDelta(JSON.parse(rawText.trim()));
-      if (delta) yield delta;
+      const parsed: unknown = JSON.parse(rawText.trim());
+      const text = extractDelta(parsed);
+      if (text) yield { type: "text", text };
+      assembler.add(extractToolCallDeltas(parsed));
     } catch {
       // Empty or unparseable body: nothing to emit.
+    }
+  }
+
+  if (!fetchSignal?.aborted && assembler.hasAny) {
+    const toolCalls = assembler.finalize();
+    if (toolCalls.length > 0) {
+      yield { type: "tool_calls", toolCalls };
+    }
+  }
+}
+
+/**
+ * Text-only view over streamOpenAiChatEvents: yields content deltas as
+ * plain strings. Kept for callers that never advertise tools.
+ */
+export async function* streamOpenAiChatCompletion(
+  config: OpenAiConfig,
+  messages: OpenAiChatMessage[],
+  signal?: AbortSignal,
+  timeoutMs = 60000,
+): AsyncGenerator<string, void, unknown> {
+  for await (const event of streamOpenAiChatEvents(config, messages, { signal, timeoutMs })) {
+    if (event.type === "text") {
+      yield event.text;
     }
   }
 }

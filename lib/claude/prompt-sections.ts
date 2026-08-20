@@ -125,7 +125,10 @@ export function projectContextSections(
  * section is appended centrally by processManager.start() — and only when
  * MCP injection is active for that spawn — so prompts stay byte-identical
  * when the toggle is off, for unsupported providers, and for direct
- * spawnClaude call sites (generate-spec, import, chat) that never inject.
+ * spawnClaude call sites (generate-spec, import) that never inject. CLI
+ * chat turns (lib/chat/cli-tool-channel.ts) get no prompt section either:
+ * the chat toolset's tool descriptions carry their own usage guidance, so
+ * chat prompts stay byte-identical with and without the channel.
  *
  * Review agents (agentType `review_*`) get an extra sentence pointing at
  * submit_findings while keeping the prose "**Overall Verdict: …**" line the

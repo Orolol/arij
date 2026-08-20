@@ -23,8 +23,10 @@ export interface ClaudeOptions {
    * Arij MCP tool-channel injection. When set, the spawn writes the config
    * to a 0600 temp file and buildClaudeArgs adds `--mcp-config <file>` +
    * `--strict-mcp-config`, merging the exact tool names into --allowedTools.
-   * Set centrally by processManager.start() — direct spawnClaude call sites
-   * (generate-spec, import, chat) never pass it.
+   * Set centrally by processManager.start() for agent sessions, and by the
+   * chat stream route (lib/chat/cli-tool-channel.ts) for chat turns — the
+   * remaining direct call sites (generate-spec, import, title generation)
+   * never pass it.
    */
   mcp?: McpSpawnConfig;
 }

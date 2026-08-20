@@ -49,6 +49,8 @@ export interface McpSpawnConfig {
   env: {
     ARIJ_BASE_URL: string;
     ARIJ_MCP_TOKEN: string;
+    /** Selects the shim's toolset; absent = the default agent toolset. */
+    ARIJ_MCP_TOOLSET?: "chat";
   };
   /** Exact tool names merged into the allowlist (no wildcards). */
   allowedToolNames: string[];

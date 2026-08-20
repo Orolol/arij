@@ -51,6 +51,18 @@ export async function POST(request: NextRequest) {
   const auth = requireMcpToken(request);
   if (isErrorResponse(auth)) return auth;
 
+  // Review-session tool: chat tokens (fast-mode board tools and CLI chat
+  // turns) have no launch ticket and no review to file against.
+  if (auth.agentType === "chat") {
+    return NextResponse.json(
+      {
+        error: "submit_findings is only available to review sessions.",
+        code: "FORBIDDEN",
+      },
+      { status: 403 }
+    );
+  }
+
   const validated = await validateBody(bodySchema, request);
   if (isErrorResponse(validated)) return validated;
   const body = validated.data;

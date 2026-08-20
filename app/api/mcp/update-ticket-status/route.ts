@@ -15,6 +15,7 @@ import { isErrorResponse } from "@/lib/api/route-helpers";
 import { validateBody } from "@/lib/validation/validate";
 import { requireMcpToken, resolveTicketForToken } from "@/lib/mcp/http-auth";
 import { applyTransition } from "@/lib/workflow/transition-service";
+import { tryExportArjiJson } from "@/lib/sync/export";
 import type { KanbanStatus } from "@/lib/types/kanban";
 
 const bodySchema = z
@@ -60,6 +61,10 @@ export async function POST(request: NextRequest) {
       { status: 409 }
     );
   }
+
+  // Every other mutating route mirrors the board into arji.json; a status
+  // moved through the agent tool channel must not leave the export stale.
+  tryExportArjiJson(auth.projectId);
 
   return NextResponse.json({
     data: { ticketId: epic.id, fromStatus, toStatus },

@@ -218,13 +218,22 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     };
     expect(body.model).toBe("llama3.1");
     expect(body.stream).toBe(true);
-    // System prompt first, then the history in chronological order (the
-    // just-saved user message included).
-    expect(body.messages).toEqual([
-      { role: "system", content: "Chat system prompt" },
+    // System prompt first (configured prompt + board-tools section), then
+    // the history in chronological order (the just-saved user message
+    // included).
+    expect(body.messages).toHaveLength(3);
+    expect(body.messages[0].role).toBe("system");
+    expect(body.messages[0].content).toMatch(/^Chat system prompt\n\n/);
+    expect(body.messages[0].content).toContain("project assistant");
+    expect(body.messages.slice(1)).toEqual([
       { role: "assistant", content: "Previous message" },
       { role: "user", content: "Current question" },
     ]);
+    // The board tools ride along on every fast-mode request.
+    const tools = (JSON.parse(String(init.body)) as {
+      tools?: Array<{ function: { name: string } }>;
+    }).tools;
+    expect(tools?.map((t) => t.function.name)).toContain("list_tickets");
   });
 
   it("sends the Bearer key only when one is configured", async () => {
@@ -260,7 +269,7 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     expect(body.reasoning_effort).toBe("medium");
   });
 
-  it("omits the system message when no chat system prompt is configured", async () => {
+  it("still sends the board-tools system section when no chat system prompt is configured", async () => {
     mockResolveAgentPrompt.mockResolvedValue("   ");
     seedFastModeConversation();
     fetchMock.mockResolvedValue(sseResponse(["ok"]));
@@ -274,9 +283,13 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
 
     const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
     const body = JSON.parse(String(init.body)) as {
-      messages: Array<{ role: string }>;
+      messages: Array<{ role: string; content: string }>;
     };
-    expect(body.messages.some((m) => m.role === "system")).toBe(false);
+    const system = body.messages.filter((m) => m.role === "system");
+    expect(system).toHaveLength(1);
+    // The empty configured prompt is dropped; only the board section rides.
+    expect(system[0].content).not.toMatch(/^\s/);
+    expect(system[0].content).toContain("project assistant");
   });
 
   it("rejects epic_creation and brainstorm conversations with 400", async () => {
