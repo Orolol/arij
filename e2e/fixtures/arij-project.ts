@@ -1,4 +1,4 @@
-import { test as base, expect } from "@playwright/test";
+import { test as base, expect, type APIRequestContext } from "@playwright/test";
 import Database from "better-sqlite3";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
@@ -118,39 +118,97 @@ function assertSharedDatabase(projectId: string): void {
   }
 }
 
+/** What `DELETE /api/projects/:id` should have removed and didn't. */
+interface UploadResidue {
+  /** `chat_attachments` rows still naming this project's upload directory. */
+  rows: number;
+  /** Whether `data/uploads/<projectId>/` was still on disk. */
+  directory: boolean;
+}
+
 /**
- * Remove what `DELETE /api/projects/:id` cannot.
+ * Reports what the project delete left behind — and removes it.
  *
- * A `chat_attachments` row is written with `chat_message_id = NULL` and carries
- * no project column, so nothing cascades it — the row and the bytes under
- * `data/uploads/<projectId>/` outlive every board row the test created. Left
- * alone, each run of the bug spec adds one of each to the developer's own
- * instance, permanently.
+ * This used to be a workaround: before migration `0030` a `chat_attachments`
+ * row carried no project column, so nothing cascaded it and the fixture had to
+ * delete the rows itself. `0030` gave every upload a cascading `project_id`,
+ * and `DELETE /api/projects/:id` now unlinks the bytes through
+ * `deleteProjectUploads()`. So the cleanup is the *app's* job, and what is
+ * useful here is checking that it did it — on real rows and real files, which
+ * no unit test reaches.
+ *
+ * Residue is still removed, not just counted: a regression should fail the run
+ * that caused it rather than leak into the developer's instance and every run
+ * afterwards. Measuring before removing is what keeps the assertion honest —
+ * cleaning first would make it pass by construction, which is exactly the
+ * vacuity this function used to have.
+ *
+ * Matched on `file_path` rather than on `project_id`: the column whose cascade
+ * is under test cannot also be the probe that decides whether it worked. GLOB
+ * rather than LIKE — nanoid ids routinely contain `_`, which LIKE reads as a
+ * single-character wildcard, while none of GLOB's metacharacters (`*`, `?`,
+ * `[`) occur in the nanoid alphabet.
  */
-function purgeProjectUploads(projectId: string): void {
+function takeUploadResidue(projectId: string): UploadResidue {
   const uploadsDir = path.join(DATA_ROOT, "uploads", projectId);
+  const directory = existsSync(uploadsDir);
   rmSync(uploadsDir, { recursive: true, force: true });
 
   // A wrong data root is `assertSharedDatabase`'s to report; opening a database
   // that isn't there would only replace its message with a driver error.
-  if (!existsSync(DATABASE_FILE)) return;
+  if (!existsSync(DATABASE_FILE)) return { rows: 0, directory };
 
   const pattern = uploadPathPattern(projectId);
   const db = openDatabase();
-  let remaining: number;
   try {
-    db.prepare("DELETE FROM chat_attachments WHERE file_path GLOB ?").run(pattern);
-    remaining = (
+    const rows = (
       db
         .prepare("SELECT COUNT(*) AS count FROM chat_attachments WHERE file_path GLOB ?")
         .get(pattern) as { count: number }
     ).count;
+
+    if (rows > 0) {
+      db.prepare("DELETE FROM chat_attachments WHERE file_path GLOB ?").run(pattern);
+    }
+
+    return { rows, directory };
   } finally {
     db.close();
   }
+}
 
-  expect(remaining, `${remaining} chat_attachments row(s) left behind for ${projectId}`).toBe(0);
-  expect(existsSync(uploadsDir), `${uploadsDir} left behind`).toBe(false);
+/** Whether the project row survived its own delete. */
+function projectRowExists(projectId: string): boolean {
+  if (!existsSync(DATABASE_FILE)) return false;
+
+  const db = openDatabase();
+  try {
+    return db.prepare("SELECT 1 FROM projects WHERE id = ?").get(projectId) !== undefined;
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Deletes the project, reporting failure instead of throwing it.
+ *
+ * The teardown has disk cleanup left to do after this call, and a request that
+ * threw here would skip it — leaving behind the scratch repo and uploads of the
+ * very run that already went wrong. The verdict is asserted once everything
+ * else has been cleaned.
+ */
+async function deleteProject(
+  request: APIRequestContext,
+  projectId: string
+): Promise<{ ok: boolean; detail: string }> {
+  try {
+    const response = await request.delete(`/api/projects/${projectId}`);
+    if (response.ok()) return { ok: true, detail: String(response.status()) };
+
+    return { ok: false, detail: `${response.status()} ${await response.text()}` };
+  } catch (error) {
+    return { ok: false, detail: `request failed: ${String(error)}` };
+  }
 }
 
 export const test = base.extend<{ project: ArijProject }>({
@@ -185,9 +243,28 @@ export const test = base.extend<{ project: ArijProject }>({
       //
       // No `removeDirectory=true`: this project was never cloned by Arij, so the
       // route would decline anyway — the scratch repo is ours to remove.
-      await request.delete(`/api/projects/${project.id}`);
+      const deleted = await deleteProject(request, project.id);
       rmSync(repoPath, { recursive: true, force: true });
-      purgeProjectUploads(project.id);
+      const residue = takeUploadResidue(project.id);
+
+      // Asserted only once every removal above has run, so a teardown that
+      // fails still fails clean.
+      expect(
+        deleted.ok,
+        `DELETE /api/projects/${project.id} failed: ${deleted.detail}`
+      ).toBe(true);
+      expect(
+        projectRowExists(project.id),
+        `project ${project.id} is still in ${DATABASE_FILE} after a delete that reported success`
+      ).toBe(false);
+      expect(
+        residue.rows,
+        `the project delete left ${residue.rows} chat_attachments row(s) for ${project.id}`
+      ).toBe(0);
+      expect(
+        residue.directory,
+        `the project delete left ${path.join(DATA_ROOT, "uploads", project.id)} on disk`
+      ).toBe(false);
     }
   },
 });
