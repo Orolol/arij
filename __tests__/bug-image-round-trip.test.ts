@@ -71,8 +71,11 @@ describe("bug screenshot round trip", () => {
     };
     expect(attachmentRow.filePath).toBe(uploaded.filePath);
 
-    // 2. The modal posts that path with the bug.
+    // 2. The modal posts that path with the bug. The row step 1 wrote is what
+    //    lets it through — the bug route accepts a path only if the upload is
+    //    on record, so these two steps agree on one string or neither works.
     resetDbMockState();
+    dbMockState.getQueue.push(attachmentRow);
     const bugRes = await createBug(
       mockJsonRequest({ title: "Board renders blank", images: [uploaded.filePath] }),
       mockRouteContext({ projectId })

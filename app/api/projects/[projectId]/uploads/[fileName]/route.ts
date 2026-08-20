@@ -1,13 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { chatAttachments } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { isAllowedImageMimeType } from "@/lib/uploads/image-attachments";
-import {
-  isServableUploadFileName,
-  uploadsDirectoryFor,
-} from "@/lib/uploads/ticket-images";
-import path from "path";
+import { lookupServableUpload } from "@/lib/uploads/servable-uploads";
 import fs from "fs";
 
 /**
@@ -19,11 +11,9 @@ import fs from "fs";
  * disk name (`<id>-<name>` where both halves may contain `-`), hence this
  * second entry point rather than a lookup the caller cannot perform.
  *
- * Only files that went through `POST /chat/upload` are servable: the name must
- * match a `chat_attachments` row for *this* project's upload directory, and
- * the recorded MIME type must still be an allowed image. A hand-edited
- * `epics.images` therefore cannot turn this into a read-any-file endpoint, and
- * a row whose type is not an image cannot be served back as one.
+ * What is servable is decided by `lookupServableUpload()`, which the bug route
+ * also writes against — so a path this returns 404 for cannot be stored on a
+ * ticket in the first place.
  */
 export async function GET(
   _request: NextRequest,
@@ -31,33 +21,25 @@ export async function GET(
 ) {
   const { projectId, fileName } = await params;
 
-  if (!isServableUploadFileName(fileName)) {
-    return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
+  const upload = lookupServableUpload(projectId, fileName);
+
+  if (!upload.servable) {
+    return NextResponse.json(
+      {
+        error:
+          upload.reason === "missing-on-disk"
+            ? "File not found on disk"
+            : "Attachment not found",
+      },
+      { status: 404 }
+    );
   }
 
-  const relativePath = `${uploadsDirectoryFor(projectId)}/${fileName}`;
-
-  const attachment = db
-    .select()
-    .from(chatAttachments)
-    .where(eq(chatAttachments.filePath, relativePath))
-    .get();
-
-  if (!attachment || !isAllowedImageMimeType(attachment.mimeType)) {
-    return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
-  }
-
-  const absolutePath = path.join(process.cwd(), relativePath);
-
-  if (!fs.existsSync(absolutePath)) {
-    return NextResponse.json({ error: "File not found on disk" }, { status: 404 });
-  }
-
-  const fileBuffer = fs.readFileSync(absolutePath);
+  const fileBuffer = fs.readFileSync(upload.absolutePath);
 
   return new NextResponse(fileBuffer, {
     headers: {
-      "Content-Type": attachment.mimeType,
+      "Content-Type": upload.mimeType,
       "Content-Length": String(fileBuffer.length),
       // The name carries a nanoid, so the bytes behind a URL never change.
       "Cache-Control": "public, max-age=31536000, immutable",

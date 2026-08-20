@@ -5,12 +5,17 @@ import { eq, sql, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import { uploadFileNameFromPath } from "@/lib/uploads/ticket-images";
+import { lookupServableUpload } from "@/lib/uploads/servable-uploads";
 
 /**
  * `images` is stored verbatim as JSON and read back by the ticket panel, which
- * can only display this project's own uploads. Accepting anything else would
- * leave the column holding a path that renders as nothing — so the write side
- * is held to exactly what the read side can serve.
+ * displays a path only if the uploads route will serve it. Accepting anything
+ * else would leave the column holding a reference that renders as a broken
+ * thumbnail and points an agent at a file that is not there — so the write side
+ * is held to exactly what the read side can serve, by asking the read side.
+ *
+ * A well-formed path is not enough: `data/uploads/<projectId>/never-uploaded.png`
+ * has the right shape and no bytes behind it. Only a registered upload passes.
  */
 function invalidImagesReason(images: unknown, projectId: string): string | null {
   if (images === undefined || images === null) return null;
@@ -19,13 +24,20 @@ function invalidImagesReason(images: unknown, projectId: string): string | null 
     return "images must be an array of upload paths";
   }
 
-  // findIndex, not find: a literal `undefined` member is itself invalid, and
-  // find() would report it as "nothing wrong here".
-  const offender = images.findIndex(
-    (image) => uploadFileNameFromPath(image, projectId) === null
-  );
-  if (offender !== -1) {
-    return `Not an upload of this project: ${JSON.stringify(images[offender])}`;
+  // A plain loop, not .find(): a literal `undefined` member is itself invalid,
+  // and find() would report it as "nothing wrong here".
+  for (const image of images) {
+    const fileName = uploadFileNameFromPath(image, projectId);
+    if (fileName === null) {
+      return `Not an upload of this project: ${JSON.stringify(image)}`;
+    }
+
+    const upload = lookupServableUpload(projectId, fileName);
+    if (!upload.servable) {
+      return upload.reason === "missing-on-disk"
+        ? `Upload is no longer on disk: ${JSON.stringify(image)}`
+        : `No such upload: ${JSON.stringify(image)}`;
+    }
   }
 
   return null;
