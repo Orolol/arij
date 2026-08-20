@@ -87,8 +87,10 @@ import type {
  * Retry ladder per stage (deterministic by attempt index):
  *   attempt 1  — as-configured resolution: build/fix via resolveAgentByNamedId
  *                with the run's ORIGINAL namedAgentId; review via
- *                resolveAgentForDispatch purpose 'review' (namedAgentId null,
- *                so reviewer segregation can act).
+ *                resolveAgentForDispatch purpose 'review' with the run's
+ *                reviewNamedAgentId — null for every caller but Full Auto
+ *                Mode, so reviewer segregation can act as before; an explicit
+ *                review agent, when set, wins over segregation.
  *   attempt 2  — RESUME the failed attempt's session when the machinery
  *                allows (validateResumeSession — failed sessions keep their
  *                cliSessionId; status is not checked), same provider/agent;
@@ -123,6 +125,16 @@ export interface PipelineStageDriverInit {
   userStoryId: string | null;
   /** The run's original request-level namedAgentId (attempt-1 code stages). */
   buildNamedAgentId: string | null;
+  /**
+   * Named agent for attempt-1 review stages. NULL — the default, and what
+   * every pre-existing caller gets — keeps the historical behaviour: the
+   * review stage resolves through `resolveAgentForDispatch(..., null, {purpose:
+   * 'review'})` so reviewer segregation can pick a provider different from the
+   * builder's. Full Auto Mode sets it because the user picked a review agent
+   * explicitly, and an explicit choice always beats segregation
+   * (lib/agent-config/agent-resolution.ts:428).
+   */
+  reviewNamedAgentId?: string | null;
   /**
    * Batch/night run that owns this pipeline; stamped on every stage session
    * row (agent_sessions.batch_run_id). Null for standalone runs.
@@ -310,14 +322,19 @@ async function resolveStageAgent(
 ): Promise<ResolvedStageAgent> {
   const resolveConfigured = async (): Promise<ResolvedAgent> => {
     if (request.stage === "review") {
-      return resolveAgentForDispatch(reviewAgentType, init.projectId, null, {
-        purpose: "review",
-        projectId: init.projectId,
-        epicId: init.epicId,
-        ...(init.scope === "story" && init.userStoryId
-          ? { storyId: init.userStoryId }
-          : {}),
-      });
+      return resolveAgentForDispatch(
+        reviewAgentType,
+        init.projectId,
+        init.reviewNamedAgentId ?? null,
+        {
+          purpose: "review",
+          projectId: init.projectId,
+          epicId: init.epicId,
+          ...(init.scope === "story" && init.userStoryId
+            ? { storyId: init.userStoryId }
+            : {}),
+        }
+      );
     }
     return resolveAgentByNamedId(
       codeAgentType,

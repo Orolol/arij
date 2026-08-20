@@ -1,0 +1,93 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { Infinity as InfinityIcon } from "lucide-react";
+import { cn } from "@/lib/utils";
+import type { AutoModeStatus } from "@/lib/auto-mode/status";
+
+interface AutoModeToggleProps {
+  projectId: string;
+  /** Opens the configuration dialog. */
+  onOpen: () => void;
+  /** Bumped by the page whenever the board changes, to re-read the status. */
+  refreshTrigger?: number;
+  /** Poll cadence; 0 disables polling (tests drive refreshTrigger instead). */
+  pollIntervalMs?: number;
+}
+
+/**
+ * Board-toolbar entry point for Full Auto Mode: a button that opens the
+ * dialog and, while the mode is running, carries a live badge of what it is
+ * doing right now ("2 building · 1 reviewing"). Off, it is just a quiet
+ * label — the mode should be invisible until it is armed.
+ */
+export function AutoModeToggle({
+  projectId,
+  onOpen,
+  refreshTrigger = 0,
+  pollIntervalMs = 5000,
+}: AutoModeToggleProps) {
+  const [status, setStatus] = useState<AutoModeStatus | null>(null);
+
+  // One effect owns both the initial read and the poll, and every setState
+  // happens in a fetch callback rather than in the effect body (the board is
+  // the external system being subscribed to here).
+  useEffect(() => {
+    let cancelled = false;
+
+    const load = (): void => {
+      fetch(`/api/projects/${projectId}/auto-mode`)
+        .then((r) => r.json())
+        .then((d) => {
+          if (cancelled || !d?.data) return;
+          setStatus(d.data as AutoModeStatus);
+        })
+        .catch(() => {
+          // A failed status read must never break the board toolbar.
+        });
+    };
+
+    load();
+    if (!pollIntervalMs) return () => {
+      cancelled = true;
+    };
+
+    const timer = setInterval(load, pollIntervalMs);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [projectId, refreshTrigger, pollIntervalMs]);
+
+  const active = status?.enabled === true;
+  const badge = active
+    ? `${status.inFlight.build} building · ${status.inFlight.review} reviewing`
+    : null;
+
+  return (
+    <button
+      type="button"
+      onClick={onOpen}
+      data-testid="auto-mode-toggle"
+      aria-pressed={active}
+      title="Full Auto Mode — build, review and merge continuously"
+      className={cn(
+        "flex shrink-0 items-center gap-[6px] rounded-[7px] border px-[9px] py-[3px] text-[12px] transition-colors",
+        active
+          ? "border-agent-border bg-agent-bg text-agent"
+          : "border-border text-muted-foreground hover:text-foreground"
+      )}
+    >
+      <InfinityIcon className="h-[13px] w-[13px]" aria-hidden />
+      Auto
+      {badge && (
+        <span
+          data-testid="auto-mode-toggle-badge"
+          className="rounded-full bg-agent/10 px-[6px] py-[1px] text-[11px] tabular-nums"
+        >
+          {badge}
+        </span>
+      )}
+    </button>
+  );
+}

@@ -113,6 +113,12 @@ Set dependencies between epics. Arij builds a DAG and schedules agent work in th
 
 For large features, enable Team Mode to have a single Claude Code session orchestrate multiple sub-agents working on different tickets simultaneously.
 
+### Full Auto Mode
+
+Arm the board and walk away. Full Auto Mode is a standing supervisor, enabled per project from the **Auto** button on the board toolbar: it keeps building everything in To Do, reviewing everything in Review, and **merging each ticket into `main` as soon as its review comes back clean** — with separate concurrency budgets for builds and reviews.
+
+It refuses to touch a ticket another agent already has, and it never overrides a review: an epic with open review findings is left alone until you resolve them. If a merge conflicts, a resolution agent is dispatched and the merge is retried once; a second failure parks the ticket and notifies you. See [docs/architecture/full-auto-mode.md](docs/architecture/full-auto-mode.md) for the full behaviour, the settings keys, and the unattended merge path.
+
 ---
 
 ## Getting Started

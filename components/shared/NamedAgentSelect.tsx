@@ -23,6 +23,15 @@ interface NamedAgentSelectProps {
   disabled?: boolean;
   className?: string;
   /**
+   * Accessible name for the trigger. A visible label sitting next to the
+   * control is not programmatically associated with it (the trigger is a
+   * button, not an input), so screen readers otherwise announce it as an
+   * unlabeled combobox — worth passing wherever several of these sit in one
+   * form.
+   */
+  "aria-label"?: string;
+  "aria-labelledby"?: string;
+  /**
    * Adds a "No agent" row so an already-attached agent can be detached.
    * Dispatch dialogs require an agent and leave this off; the chat header
    * turns it on, because a conversation whose agent cannot be cleared can
@@ -38,15 +47,21 @@ export function NamedAgentSelect({
   onChange,
   disabled = false,
   className,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledBy,
   allowClear = false,
   clearLabel = "No agent",
 }: NamedAgentSelectProps) {
   const { agents, loading } = useNamedAgentsList();
+  const labelProps = {
+    ...(ariaLabel ? { "aria-label": ariaLabel } : {}),
+    ...(ariaLabelledBy ? { "aria-labelledby": ariaLabelledBy } : {}),
+  };
 
   if (loading) {
     return (
       <Select disabled>
-        <SelectTrigger className={className ?? "w-44 h-7 text-xs"}>
+        <SelectTrigger {...labelProps} className={className ?? "w-44 h-7 text-xs"}>
           <SelectValue placeholder="Loading..." />
         </SelectTrigger>
       </Select>
@@ -56,7 +71,7 @@ export function NamedAgentSelect({
   if (agents.length === 0) {
     return (
       <Select disabled>
-        <SelectTrigger className={className ?? "w-44 h-7 text-xs"}>
+        <SelectTrigger {...labelProps} className={className ?? "w-44 h-7 text-xs"}>
           <SelectValue placeholder="No agents configured" />
         </SelectTrigger>
       </Select>
@@ -71,7 +86,7 @@ export function NamedAgentSelect({
       }
       disabled={disabled}
     >
-      <SelectTrigger className={className ?? "w-44 h-7 text-xs"}>
+      <SelectTrigger {...labelProps} className={className ?? "w-44 h-7 text-xs"}>
         <SelectValue placeholder="Select agent" />
       </SelectTrigger>
       <SelectContent>

@@ -85,17 +85,142 @@ export async function createWorktree(
 }
 
 /**
+ * Attaches a worktree to an EXISTING branch, by exact name.
+ *
+ * `createWorktree` derives the branch from the epic title, which is the right
+ * thing when creating one but wrong when re-attaching: a title edited since
+ * the branch was cut would produce a different name and silently start work
+ * on a fresh branch off main. Callers that already know the branch (it is
+ * persisted on `epics.branch_name`) use this instead.
+ */
+export async function attachWorktree(
+  repoPath: string,
+  branchName: string
+): Promise<{ worktreePath: string; branchName: string }> {
+  const git = getGit(repoPath);
+
+  const worktreeBase = path.join(repoPath, "..", ".arij-worktrees");
+  if (!fs.existsSync(worktreeBase)) {
+    fs.mkdirSync(worktreeBase, { recursive: true });
+  }
+  const worktreePath = path.join(worktreeBase, branchName.replace(/\//g, "-"));
+
+  if (fs.existsSync(worktreePath)) {
+    return { worktreePath, branchName };
+  }
+
+  const branches = await git.branchLocal();
+  if (!branches.all.includes(branchName)) {
+    throw new Error(`Branch ${branchName} not found`);
+  }
+
+  await git.raw(["worktree", "add", worktreePath, branchName]);
+  return { worktreePath, branchName };
+}
+
+/** Why a merge did not happen — callers react very differently to each. */
+export type MergeFailureReason =
+  /** Real content conflict: a resolution agent can fix this. */
+  | "conflict"
+  /** The branch is gone (already merged, or deleted). No agent can help. */
+  | "branch-missing"
+  /** Anything else — worktree removal, checkout, a broken repo. */
+  | "error";
+
+export interface MergeWorktreeResult {
+  merged: boolean;
+  commitHash?: string;
+  error?: string;
+  /** Present only when `merged` is false. */
+  reason?: MergeFailureReason;
+}
+
+/**
+ * Enough state to undo a merge: where `main` and the branch pointed before it.
+ * Captured by `captureMergeCheckpoint`, consumed by `rollbackMerge`.
+ */
+export interface MergeCheckpoint {
+  mainBranch: string;
+  mainHead: string;
+  branchName: string;
+  branchHead: string;
+}
+
+/** Resolves the repo's integration branch — "main", else "master". */
+async function resolveMainBranch(git: SimpleGit): Promise<string> {
+  const branches = await git.branchLocal();
+  return branches.all.includes("main") ? "main" : "master";
+}
+
+/**
+ * Records where `main` and the epic branch point right now, so a merge that
+ * turns out to have been unwanted can be undone. Returns null when the state
+ * cannot be captured — the caller then simply has no rollback available.
+ */
+export async function captureMergeCheckpoint(
+  repoPath: string,
+  branchName: string
+): Promise<MergeCheckpoint | null> {
+  try {
+    const git = getGit(repoPath);
+    const mainBranch = await resolveMainBranch(git);
+    const mainHead = (await git.revparse([mainBranch])).trim();
+    const branchHead = (await git.revparse([branchName])).trim();
+    return { mainBranch, mainHead, branchName, branchHead };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Undoes a merge captured by {@link captureMergeCheckpoint}: resets `main`
+ * back to its pre-merge commit and restores the branch `mergeWorktree`
+ * deleted. Used by unattended callers that must not leave `main` changed when
+ * a post-merge check refuses the transition.
+ */
+export async function rollbackMerge(
+  repoPath: string,
+  checkpoint: MergeCheckpoint
+): Promise<{ restored: boolean; error?: string }> {
+  const git = getGit(repoPath);
+  try {
+    await git.checkout(checkpoint.mainBranch);
+    await git.reset(["--hard", checkpoint.mainHead]);
+
+    const branches = await git.branchLocal();
+    if (!branches.all.includes(checkpoint.branchName)) {
+      await git.raw(["branch", checkpoint.branchName, checkpoint.branchHead]);
+    }
+    return { restored: true };
+  } catch (e) {
+    return {
+      restored: false,
+      error: e instanceof Error ? e.message : "Rollback failed",
+    };
+  }
+}
+
+/**
  * Merges an epic branch into the main branch, then removes the worktree.
  * Returns the merge commit hash on success.
+ *
+ * Error handling is split at the point of no return. Everything up to and
+ * including `git merge` can fail without `main` having changed, so those
+ * failures report `merged: false` with a reason the caller can act on. Once
+ * the merge command succeeds `main` HAS changed, and a later hiccup — the
+ * `git log` lookup, or deleting the merged branch — must NOT be reported as
+ * "not merged": a caller told that would go on to dispatch a
+ * conflict-resolution agent for a merge that already landed.
  */
 export async function mergeWorktree(
   repoPath: string,
   branchName: string,
   worktreePath?: string,
   options: BaseBranchOptions = {}
-): Promise<{ merged: boolean; commitHash?: string; error?: string }> {
+): Promise<MergeWorktreeResult> {
   const git = getGit(repoPath);
 
+  // ---- Pre-merge: nothing here can have modified main. -------------------
   try {
     // Get the branch to merge into
     const branches = await git.branchLocal();
@@ -103,9 +228,12 @@ export async function mergeWorktree(
       preferred: options.defaultBranch,
     });
 
-    // Make sure the branch exists
     if (!branches.all.includes(branchName)) {
-      return { merged: false, error: `Branch ${branchName} not found` };
+      return {
+        merged: false,
+        error: `Branch ${branchName} not found`,
+        reason: "branch-missing",
+      };
     }
 
     // Remove the worktree first (git can't merge while worktree is active)
@@ -114,30 +242,52 @@ export async function mergeWorktree(
       await git.raw(["worktree", "prune"]);
     }
 
-    // Checkout main
     await git.checkout(mainBranch);
-
-    // Merge the epic branch
-    const result = await git.merge([branchName, "--no-ff", "-m", `Merge ${branchName}`]);
-
-    // Get the merge commit hash
-    const log = await git.log({ maxCount: 1 });
-    const commitHash = log.latest?.hash;
-
-    // Delete the merged branch
-    await git.deleteLocalBranch(branchName, true);
-
-    return { merged: true, commitHash };
   } catch (e) {
-    const errorMsg = e instanceof Error ? e.message : "Merge failed";
-    // If merge failed with conflicts, abort it
+    return {
+      merged: false,
+      error: e instanceof Error ? e.message : "Merge failed",
+      reason: "error",
+    };
+  }
+
+  // ---- The merge itself: the only step that can conflict. ----------------
+  try {
+    await git.merge([branchName, "--no-ff", "-m", `Merge ${branchName}`]);
+  } catch (e) {
     try {
       await git.merge(["--abort"]);
     } catch {
       // ignore abort errors
     }
-    return { merged: false, error: errorMsg };
+    return {
+      merged: false,
+      error: e instanceof Error ? e.message : "Merge failed",
+      reason: "conflict",
+    };
   }
+
+  // ---- Post-merge: main has changed. Cleanup is best-effort. -------------
+  let commitHash: string | undefined;
+  try {
+    commitHash = (await git.log({ maxCount: 1 })).latest?.hash;
+  } catch (e) {
+    console.warn(
+      "[git] Merge landed but the commit hash lookup failed:",
+      e instanceof Error ? e.message : e
+    );
+  }
+
+  try {
+    await git.deleteLocalBranch(branchName, true);
+  } catch (e) {
+    console.warn(
+      `[git] Merge landed but deleting ${branchName} failed:`,
+      e instanceof Error ? e.message : e
+    );
+  }
+
+  return { merged: true, commitHash };
 }
 
 /**
