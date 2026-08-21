@@ -38,16 +38,21 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
-  try {
-    validateMentionsExist({
-      projectId,
-      textSources: [body.content],
-    });
-  } catch (error) {
-    if (error instanceof MentionResolutionError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
+  // User input only: an agent comment naming a codebase file (@src/foo.ts) is
+  // not an Arij document reference and must not bounce. Same rule as
+  // app/api/mcp/post-comment, which agents use directly.
+  if (body.author !== "agent") {
+    try {
+      validateMentionsExist({
+        projectId,
+        textSources: [body.content],
+      });
+    } catch (error) {
+      if (error instanceof MentionResolutionError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      throw error;
     }
-    throw error;
   }
 
   const found = getEpicOr404(projectId, epicId);

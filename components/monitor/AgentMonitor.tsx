@@ -18,6 +18,10 @@ import {
   Square,
   Workflow,
 } from "lucide-react";
+import {
+  isChatProvider,
+  PROVIDER_LABELS,
+} from "@/lib/agent-config/constants";
 import { isNightRunId } from "@/lib/night/constants";
 import { stopNightRun } from "@/hooks/useNightRuns";
 import { Button } from "@/components/ui/button";
@@ -39,10 +43,15 @@ interface AgentMonitorProps {
   highlightedActivityId?: string | null;
 }
 
+/**
+ * Compact provider chip. Claude Code and Gemini keep their abbreviations
+ * because they dominate the monitor; everything else shows its real label
+ * rather than being lumped in as "CC".
+ */
 function providerLabel(provider: string): string {
+  if (provider === "claude-code") return "CC";
   if (provider === "gemini-cli") return "Gemini";
-  if (provider === "codex") return "Codex";
-  return "CC";
+  return isChatProvider(provider) ? PROVIDER_LABELS[provider] : provider;
 }
 
 /**

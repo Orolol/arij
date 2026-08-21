@@ -4,6 +4,7 @@ import { createId } from "@/lib/utils/nanoid";
 import { eq, desc } from "drizzle-orm";
 
 export type GitSyncOperation =
+  | "clone"
   | "detect"
   | "fetch"
   | "pull"
@@ -12,12 +13,18 @@ export type GitSyncOperation =
   | "pr_sync"
   | "release"
   | "tag_push"
-  | "issues_sync";
+  | "issues_sync"
+  // App-managed clone lifecycle (lib/git/clone.ts, lib/projects/clone-cleanup.ts).
+  | "clone_removed";
 
 export type GitSyncStatus = "success" | "failed" | "failure";
 
 interface LogSyncOperationInput {
-  projectId: string;
+  /**
+   * Null for operations that happen before the project exists — a first-time
+   * clone is audited while the import is still deciding what to create.
+   */
+  projectId: string | null;
   operation: GitSyncOperation;
   status: GitSyncStatus;
   branch?: string | null;
@@ -37,7 +44,7 @@ export function logSyncOperation(input: LogSyncOperationInput): void {
     db.insert(gitSyncLog)
       .values({
         id: createId(),
-        projectId: input.projectId,
+        projectId: input.projectId ?? null,
         operation: input.operation,
         status: input.status,
         branch: input.branch ?? null,

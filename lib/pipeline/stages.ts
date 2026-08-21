@@ -27,10 +27,11 @@ import {
   extractSessionUsage,
   resolveSessionOutput,
 } from "@/lib/claude/resolve-session-output";
+import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
 import {
   isResumableProvider,
-  validateResumeSession,
-} from "@/lib/agent-sessions/validate-resume";
+  providerReportsOwnSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 import {
   resolveAgentByNamedId,
   resolveAgentForDispatch,
@@ -50,7 +51,10 @@ import {
   buildTicketBuildPrompt,
   type PromptComment,
 } from "@/lib/claude/prompt-builder";
-import { enrichPromptWithDocumentMentions } from "@/lib/documents/mentions";
+import {
+  enrichPromptWithDocumentMentions,
+  userAuthoredTexts,
+} from "@/lib/documents/mentions";
 import type { ClaudeResult } from "@/lib/claude/spawn";
 import {
   emitSessionCompleted,
@@ -60,6 +64,10 @@ import {
 } from "@/lib/events/emit";
 import { logTransition } from "@/lib/workflow/log";
 import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
+import {
+  buildEpicTargetUrl,
+  createUnresolvedMentionsNotification,
+} from "@/lib/notifications/create";
 import { PIPELINE_REVIEW_TYPE } from "./constants";
 import { assessReviewOutcome } from "./findings";
 import type {
@@ -79,8 +87,10 @@ import type {
  * Retry ladder per stage (deterministic by attempt index):
  *   attempt 1  — as-configured resolution: build/fix via resolveAgentByNamedId
  *                with the run's ORIGINAL namedAgentId; review via
- *                resolveAgentForDispatch purpose 'review' (namedAgentId null,
- *                so reviewer segregation can act).
+ *                resolveAgentForDispatch purpose 'review' with the run's
+ *                reviewNamedAgentId — null for every caller but Full Auto
+ *                Mode, so reviewer segregation can act as before; an explicit
+ *                review agent, when set, wins over segregation.
  *   attempt 2  — RESUME the failed attempt's session when the machinery
  *                allows (validateResumeSession — failed sessions keep their
  *                cliSessionId; status is not checked), same provider/agent;
@@ -95,9 +105,9 @@ import type {
  * attempt 1 and append the open review feedback + pipeline fix instructions
  * to the standard build prompt.
  *
- * `isResumableProvider` (lib/agent-sessions/validate-resume.ts) is the
- * single truth for resume support — NOT the build routes' local list, which
- * wrongly includes codex.
+ * `isResumableProvider` (lib/agent-sessions/resume-capability.ts) is the
+ * single truth for resume support. The build routes' local lists — which
+ * wrongly included codex — now defer to it too.
  */
 
 export const PIPELINE_REVIEW_LABEL = "Code Review";
@@ -115,6 +125,16 @@ export interface PipelineStageDriverInit {
   userStoryId: string | null;
   /** The run's original request-level namedAgentId (attempt-1 code stages). */
   buildNamedAgentId: string | null;
+  /**
+   * Named agent for attempt-1 review stages. NULL — the default, and what
+   * every pre-existing caller gets — keeps the historical behaviour: the
+   * review stage resolves through `resolveAgentForDispatch(..., null, {purpose:
+   * 'review'})` so reviewer segregation can pick a provider different from the
+   * builder's. Full Auto Mode sets it because the user picked a review agent
+   * explicitly, and an explicit choice always beats segregation
+   * (lib/agent-config/agent-resolution.ts:428).
+   */
+  reviewNamedAgentId?: string | null;
   /**
    * Batch/night run that owns this pipeline; stamped on every stage session
    * row (agent_sessions.batch_run_id). Null for standalone runs.
@@ -302,14 +322,19 @@ async function resolveStageAgent(
 ): Promise<ResolvedStageAgent> {
   const resolveConfigured = async (): Promise<ResolvedAgent> => {
     if (request.stage === "review") {
-      return resolveAgentForDispatch(reviewAgentType, init.projectId, null, {
-        purpose: "review",
-        projectId: init.projectId,
-        epicId: init.epicId,
-        ...(init.scope === "story" && init.userStoryId
-          ? { storyId: init.userStoryId }
-          : {}),
-      });
+      return resolveAgentForDispatch(
+        reviewAgentType,
+        init.projectId,
+        init.reviewNamedAgentId ?? null,
+        {
+          purpose: "review",
+          projectId: init.projectId,
+          epicId: init.epicId,
+          ...(init.scope === "story" && init.userStoryId
+            ? { storyId: init.userStoryId }
+            : {}),
+        }
+      );
     }
     return resolveAgentByNamedId(
       codeAgentType,
@@ -408,20 +433,26 @@ async function dispatchPipelineStage(
   let cliSessionId: string | undefined;
   let resumeSession = false;
   if (resumeTarget && isResumableProvider(resolved.provider)) {
+    // validateResumeSession enforces the cross-provider guard itself: the
+    // stored cliSessionId only means something to the CLI that created it.
     const validated = validateResumeSession({
       resumeSessionId: resumeTarget,
       epicId,
       ...(scope === "story" && userStoryId ? { userStoryId } : {}),
+      expectedProvider: resolved.provider,
     });
-    // Guard against cross-provider resume: the stored cliSessionId only
-    // means something to the CLI that created it.
-    const targetRow = readSessionProvider(resumeTarget);
-    if (validated && targetRow?.provider === resolved.provider) {
+    if (validated) {
       cliSessionId = validated.cliSessionId;
       resumeSession = true;
     }
   }
-  if (!cliSessionId && isResumableProvider(resolved.provider)) {
+  // pi announces the session id it created, so minting one here would store
+  // an id the CLI never used.
+  if (
+    !cliSessionId &&
+    isResumableProvider(resolved.provider) &&
+    !providerReportsOwnSessionId(resolved.provider)
+  ) {
     cliSessionId = crypto.randomUUID();
   }
 
@@ -456,7 +487,7 @@ async function dispatchPipelineStage(
     project.gitRepoPath,
     epic.id,
     epic.title,
-    project.defaultBranch || undefined
+    { defaultBranch: project.defaultBranch }
   );
 
   let prompt: string;
@@ -527,20 +558,21 @@ async function dispatchPipelineStage(
     }
   }
 
-  // Document mentions: best-effort for a background stage — a stale mention
-  // must not kill the run the way a 400 informs a human caller.
-  try {
-    prompt = enrichPromptWithDocumentMentions({
-      projectId,
-      prompt,
-      textSources: comments.map((c) => c.content),
-    }).prompt;
-  } catch (error) {
-    console.warn(
-      "[pipeline] Document mention enrichment failed:",
-      error instanceof Error ? error.message : error
-    );
-  }
+  // Document mentions: user-written comments only. An agent comment naming a
+  // codebase file is not an Arij document reference, and an unresolved mention
+  // never stops a background stage — it is reported, not raised.
+  const mentionEnrichment = enrichPromptWithDocumentMentions({
+    projectId,
+    prompt,
+    textSources: userAuthoredTexts(comments),
+  });
+  prompt = mentionEnrichment.prompt;
+  createUnresolvedMentionsNotification({
+    projectId,
+    missing: mentionEnrichment.missing,
+    agentType: request.stage,
+    targetUrl: buildEpicTargetUrl(projectId, epicId),
+  });
 
   // ---------------------------------------------------------------------
   // Session row + dispatch-side status sync (mirror of the routes).

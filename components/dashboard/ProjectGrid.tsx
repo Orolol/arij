@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useProjects } from "@/hooks/useProjects";
 import { useInbox } from "@/hooks/useInbox";
 import { useDashboardSummary } from "@/hooks/useDashboardSummary";
-import { PROVIDER_LABELS, isAgentProvider } from "@/lib/agent-config/constants";
+import { PROVIDER_LABELS, isChatProvider } from "@/lib/agent-config/constants";
 import { formatElapsed } from "@/lib/utils/format-elapsed";
 import { cn } from "@/lib/utils";
 import type { ProjectFilter } from "@/lib/types/dashboard";
@@ -20,7 +20,7 @@ const FILTERS: { value: ProjectFilter; label: string }[] = [
 
 function providerLabel(provider: string | null): string {
   if (!provider) return "Agent";
-  return isAgentProvider(provider) ? PROVIDER_LABELS[provider] : provider;
+  return isChatProvider(provider) ? PROVIDER_LABELS[provider] : provider;
 }
 
 function plural(count: number, word: string): string {

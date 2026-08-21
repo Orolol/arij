@@ -242,9 +242,10 @@ describe("NightRunDialog — scope preview", () => {
     await waitFor(() =>
       expect(screen.getByText("Waves (DAG)")).toBeInTheDocument()
     );
-    // Parallel agents falls back to the scheduler default when unset.
+    // Parallel agents falls back to the scheduler default when unset —
+    // unlimited, so nothing queues until a cap is configured.
     expect(screen.getByText("Parallel agents")).toBeInTheDocument();
-    expect(screen.getByText("3")).toBeInTheDocument();
+    expect(screen.getByText("Unlimited")).toBeInTheDocument();
   });
 
   it("reads the parallelism budget from the project settings override", async () => {

@@ -43,17 +43,16 @@ export const REMOTE_URL_PATTERNS = [
  * GitHub allows letters, digits, `.`, `-` and `_` in owner and repo names.
  * Anything else — separators, NUL bytes, whitespace — is rejected here so a
  * crafted URL can never reach the filesystem layer. A leading `-` is refused as
- * well: `git clone` would read it as an option. Only the segments that are
- * exactly `.` or `..` are rejected for traversal: an embedded `..` inside an
- * already-isolated segment (e.g. `repo..v2`) cannot escape a directory and
- * GitHub allows such names.
+ * well: `git clone` would read it as an option. `.`, `..` and any embedded
+ * traversal component are rejected too, matching the posture of
+ * validatePath() in lib/validation/path.ts.
  */
 const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 export function isSafeRepoSegment(segment: string): boolean {
   if (!segment) return false;
   if (segment.startsWith("-")) return false;
-  if (segment === "." || segment === "..") return false;
+  if (segment === "." || segment.includes("..")) return false;
   return REPO_SEGMENT_PATTERN.test(segment);
 }
 

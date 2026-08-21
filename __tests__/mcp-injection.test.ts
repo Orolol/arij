@@ -37,6 +37,7 @@ import { CodexProvider } from "@/lib/providers/codex";
 import { arijToolsSection } from "@/lib/claude/prompt-sections";
 import {
   ARIJ_MCP_ALLOWED_TOOL_NAMES,
+  ARIJ_MCP_CHAT_ALLOWED_TOOL_NAMES,
   ARIJ_MCP_SERVER_NAME,
   buildMcpSpawnConfig,
   cleanupMcpConfigFile,
@@ -162,6 +163,35 @@ describe("buildClaudeArgs — MCP config injection", () => {
     expect(args).not.toContain("--strict-mcp-config");
     // no allowlist entries for a server that was never configured
     expect(args.slice(args.indexOf("--allowedTools") + 1)).toEqual(["Edit"]);
+  });
+
+  it("chat mode: permission mode default with a read-only repo allowlist plus the MCP names", () => {
+    const args = buildClaudeArgs(
+      { mode: "chat", prompt: "p", mcp: sampleMcp },
+      "json",
+      FAKE_CONFIG_PATH,
+    );
+
+    // Plan mode refuses allowlisted mutating MCP tools headlessly — chat
+    // turns need "default" so the board tools actually run.
+    expect(args.slice(0, 2)).toEqual(["--permission-mode", "default"]);
+    const allowed = args.slice(args.indexOf("--allowedTools") + 1);
+    expect(allowed.slice(0, 3)).toEqual(["Read", "Glob", "Grep"]);
+    expect(allowed).toContain("mcp__arij__get_ticket");
+    // The repo stays read-only: no Bash, no Write, no Edit.
+    expect(allowed).not.toContain("Bash");
+    expect(allowed).not.toContain("Write");
+    expect(allowed).not.toContain("Edit");
+  });
+
+  it("chat mode without MCP still pins the read-only allowlist", () => {
+    const args = buildClaudeArgs({ mode: "chat", prompt: "p" }, "json");
+    expect(args.slice(0, 2)).toEqual(["--permission-mode", "default"]);
+    expect(args.slice(args.indexOf("--allowedTools") + 1)).toEqual([
+      "Read",
+      "Glob",
+      "Grep",
+    ]);
   });
 
   it("adds --allowedTools with only the MCP names when no base tools exist (plan mode)", () => {
@@ -442,5 +472,62 @@ describe("buildMcpSpawnConfig", () => {
     expect(config.env.ARIJ_MCP_TOKEN).toBe(TOKEN);
     expect(config.env.ARIJ_BASE_URL.length).toBeGreaterThan(0);
     expect(config.allowedToolNames).toEqual([...ARIJ_MCP_ALLOWED_TOOL_NAMES]);
+  });
+
+  it("keeps the default (agent) config free of any toolset selector", () => {
+    const config = buildMcpSpawnConfig({ token: TOKEN });
+    expect("ARIJ_MCP_TOOLSET" in config.env).toBe(false);
+    expect(buildMcpSpawnConfig({ token: TOKEN, toolset: "agent" })).toEqual(config);
+  });
+
+  it("selects the chat toolset via env and swaps in the chat allowlist", () => {
+    const config = buildMcpSpawnConfig({ token: TOKEN, toolset: "chat" });
+    expect(config.env.ARIJ_MCP_TOOLSET).toBe("chat");
+    expect(config.env.ARIJ_MCP_TOKEN).toBe(TOKEN);
+    expect(config.allowedToolNames).toEqual([...ARIJ_MCP_CHAT_ALLOWED_TOOL_NAMES]);
+    // no agent-only tools leak into the chat allowlist
+    expect(config.allowedToolNames).not.toContain("mcp__arij__ask_question");
+    expect(config.allowedToolNames).not.toContain("mcp__arij__submit_findings");
+  });
+});
+
+describe("chat-toolset spawn configs — provider wiring", () => {
+  const chatMcp: McpSpawnConfig = {
+    ...sampleMcp,
+    env: { ...sampleMcp.env, ARIJ_MCP_TOOLSET: "chat" },
+    allowedToolNames: [...ARIJ_MCP_CHAT_ALLOWED_TOOL_NAMES],
+  };
+
+  it("claude: the toolset selector rides the per-session config file env", () => {
+    const filePath = writeMcpConfigFile(chatMcp);
+    try {
+      const written = JSON.parse(readFileSync(filePath, "utf-8"));
+      expect(written.mcpServers.arij.env.ARIJ_MCP_TOOLSET).toBe("chat");
+      expect(written.mcpServers.arij.env.ARIJ_MCP_TOKEN).toBe(TOKEN);
+    } finally {
+      cleanupMcpConfigFile(filePath);
+    }
+  });
+
+  it("codex: the env override inline table carries all three keys", () => {
+    const provider = new CodexProvider();
+    const args = provider.buildArgs(
+      {
+        sessionId: "s1",
+        prompt: "PROMPT",
+        cwd: "/work",
+        mode: "plan",
+        mcp: chatMcp,
+      },
+      { outputFile: "/tmp/codex-out-test.txt" },
+    );
+
+    expect(args).toContain(
+      `mcp_servers.arij.env={ARIJ_BASE_URL="http://localhost:3000",ARIJ_MCP_TOKEN=${JSON.stringify(TOKEN)},ARIJ_MCP_TOOLSET="chat"}`,
+    );
+    // the display command still redacts the whole env override
+    const command = provider.buildDisplayCommand(args, "PROMPT");
+    expect(command).not.toContain(TOKEN);
+    expect(command).toContain("mcp_servers.arij.env=<redacted>");
   });
 });

@@ -17,7 +17,7 @@ import { ReviewTypesPicker } from "@/components/shared/ReviewTypesPicker";
 import {
   PROVIDER_LABELS,
   REVIEW_TYPE_TO_AGENT_TYPE,
-  isAgentProvider,
+  isChatProvider,
   type BuiltinReviewType,
 } from "@/lib/agent-config/constants";
 import { resolvePipelineEnabledDefault } from "@/lib/pipeline/constants";
@@ -30,7 +30,7 @@ interface ReviewResolutionPreview {
 }
 
 function providerLabel(provider: string): string {
-  return isAgentProvider(provider) ? PROVIDER_LABELS[provider] : provider;
+  return isChatProvider(provider) ? PROVIDER_LABELS[provider] : provider;
 }
 
 interface EpicItem {

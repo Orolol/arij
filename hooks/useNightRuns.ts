@@ -9,33 +9,45 @@ import type {
 
 /**
  * Polls the project's night runs (the registry's active run plus its recent
- * ring, merged with restart-interrupted runs rebuilt from the database).
+ * ring, merged with runs rebuilt from the database).
  *
- * Best-effort like the other monitor pollers: a failed request keeps the
- * previous snapshot rather than blanking the UI.
+ * A failed request keeps the previous snapshot *and* raises `error`. Both
+ * halves matter: this list is the only durable way back into a past run's
+ * morning summary, so a dead request must never be indistinguishable from
+ * "this project has no night runs" — the caller needs to tell the two apart.
+ *
+ * Cadence follows the data: `intervalMs` while a run is live, `idleIntervalMs`
+ * otherwise. Terminal history barely changes, and the list route rebuilds every
+ * run through per-run and per-epic queries, so idle polling should not pay the
+ * live rate — but it does keep polling, so a run starting while the list is
+ * open still appears.
  */
 export function useNightRuns(
   projectId: string,
   enabled: boolean = true,
-  intervalMs: number = 5000
+  intervalMs: number = 5000,
+  idleIntervalMs: number = 30000
 ) {
   const [runs, setRuns] = useState<NightRunListEntry[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
       const res = await fetch(`/api/projects/${projectId}/build/night-runs`);
-      const json = await res.json();
-      if (Array.isArray(json?.data)) {
+      const json = await res.json().catch(() => null);
+      if (!res.ok || !Array.isArray(json?.data)) {
+        // Leave `runs` alone: a stale list beats a blank one.
+        setError(json?.error ?? "Could not load night runs");
+      } else {
         setRuns(json.data as NightRunListEntry[]);
+        setError(null);
       }
     } catch {
-      // ignore — the list is informational
+      setError("Could not load night runs");
     }
     setLoading(false);
   }, [projectId]);
-
-  usePolling(load, intervalMs, enabled);
 
   /**
    * The one run currently executing. A run rebuilt from the database after a
@@ -47,7 +59,9 @@ export function useNightRuns(
     [runs]
   );
 
-  return { runs, activeRun, loading, refresh: load };
+  usePolling(load, activeRun ? intervalMs : idleIntervalMs, enabled);
+
+  return { runs, activeRun, loading, error, refresh: load };
 }
 
 /**

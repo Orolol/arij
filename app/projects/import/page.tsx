@@ -315,10 +315,10 @@ export default function ImportProjectPage() {
     }
 
     // The clone contract is { path, ownerRepo, remoteUrl, defaultBranch,
-    // reused }. The chain that follows takes minutes and its last step
-    // (POST /api/projects) rejects incomplete clone provenance with a 400
-    // that would only make sense if checked here, right after the clone —
-    // fail early with the repository named instead of dying late.
+    // reused }. The chain that follows takes minutes and quietly loses the
+    // project's remote/default-branch metadata if any of these came back
+    // empty — check the full contract here, right after the clone, and fail
+    // early with the repository named instead of degrading late.
     const missing = (
       ["path", "ownerRepo", "remoteUrl", "defaultBranch"] as const
     ).filter((field) => !result.data?.[field]);

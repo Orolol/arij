@@ -111,7 +111,7 @@ describe("GET /api/projects/[projectId]/epics/[epicId]/diff — base branch", ()
       "/repo",
       "epic-1",
       "Epic One",
-      "develop"
+      { defaultBranch: "develop" }
     );
   });
 
@@ -142,7 +142,7 @@ describe("GET /api/projects/[projectId]/epics/[epicId]/diff — base branch", ()
     const res = await getDiff();
 
     expect(res.status).toBe(200);
-    expect(mockResolveDefaultBranch).toHaveBeenCalledWith("/repo", undefined);
+    expect(mockResolveDefaultBranch).toHaveBeenCalledWith("/repo", null);
     expect(mockGetWorktreeDiff).toHaveBeenCalledWith(
       "/repo/../.arij-worktrees/feature-epic-1",
       "trunk"

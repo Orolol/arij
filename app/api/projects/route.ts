@@ -6,7 +6,7 @@ import { createId } from "@/lib/utils/nanoid";
 import { createProjectSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { validatePath } from "@/lib/validation/path";
-import { parseGitHubOwnerRepoFromRemoteUrl, detectGitHubRemote } from "@/lib/git/remote";
+import { deriveCloneProvenance } from "@/lib/projects/clone-provenance";
 
 export async function GET() {
   const queryStartedAt = Date.now();
@@ -72,6 +72,8 @@ export async function GET() {
       status: projects.status,
       gitRepoPath: projects.gitRepoPath,
       githubOwnerRepo: projects.githubOwnerRepo,
+      cloneSource: projects.cloneSource,
+      gitRemoteUrl: projects.gitRemoteUrl,
       imported: projects.imported,
       createdAt: projects.createdAt,
       updatedAt: projects.updatedAt,
@@ -107,15 +109,11 @@ export async function POST(request: NextRequest) {
     description,
     gitRepoPath,
     githubOwnerRepo,
-    cloneSource,
     gitRemoteUrl,
     defaultBranch,
   } = validated.data;
 
-  // Validate gitRepoPath if provided. The *normalised* path is what gets
-  // stored: every downstream consumer (worktrees, git manager, arji.json sync)
-  // resolves against it, so a relative or untidy input must not survive here.
-  let normalizedRepoPath: string | null = null;
+  // Validate gitRepoPath if provided
   if (gitRepoPath) {
     const pathResult = await validatePath(gitRepoPath);
     if (!pathResult.valid) {
@@ -124,109 +122,26 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    normalizedRepoPath = pathResult.normalizedPath;
   }
+
+  // Provenance is read off the disk, not off the request: `clone_source` is what
+  // later authorises deleting this directory, so it may only be granted by a
+  // marker the clone service wrote into a repository it created itself.
+  const provenance = deriveCloneProvenance(gitRepoPath);
 
   const id = createId();
   const now = new Date().toISOString();
-
-  // `git_remote_url` is a clean-URL column: it is rendered in the UI and
-  // later re-cloned from, so a credential-bearing or non-GitHub URL must not
-  // be persisted. Validate it whenever it is present — not only on the
-  // cloneSource path, where a crafted request would otherwise park a dirty
-  // URL on a manual project.
-  let parsedRemote: ReturnType<typeof parseGitHubOwnerRepoFromRemoteUrl> = null;
-  if (gitRemoteUrl) {
-    parsedRemote = parseGitHubOwnerRepoFromRemoteUrl(gitRemoteUrl);
-    if (!parsedRemote) {
-      return NextResponse.json(
-        {
-          error:
-            "gitRemoteUrl is not a parseable clean GitHub remote URL (credentials are not allowed)",
-        },
-        { status: 400 }
-      );
-    }
-  }
-
-  // `cloneSource: "github"` marks the directory as Arij-owned — the flag a
-  // later clone cleanup acts on. The client asserting it is not enough: the
-  // full provenance tuple must be present, internally consistent, and the
-  // directory must actually be a clone of the claimed repository. Without
-  // this, a crafted request could mark any existing directory as Arij-owned.
-  if (cloneSource) {
-    if (
-      !githubOwnerRepo ||
-      !gitRemoteUrl ||
-      !defaultBranch ||
-      !normalizedRepoPath
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "cloneSource requires githubOwnerRepo, gitRemoteUrl, defaultBranch and gitRepoPath",
-        },
-        { status: 400 }
-      );
-    }
-
-    // The stored remote URL must name the same owner/repo as githubOwnerRepo
-    // (parseability was already enforced above for any gitRemoteUrl).
-    if (
-      !parsedRemote ||
-      parsedRemote.ownerRepo.toLowerCase() !== githubOwnerRepo.toLowerCase()
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "gitRemoteUrl does not describe the claimed GitHub repository (githubOwnerRepo)",
-        },
-        { status: 400 }
-      );
-    }
-
-    // The directory on disk must be a real clone of that repository — its
-    // origin is the clean URL Arij wrote, so an unrelated directory cannot
-    // pass this check. A non-repository directory makes getRemotes() reject
-    // ("fatal: not a git repository"): treat that as "no origin" rather
-    // than letting it escape as a 500 — the directory is provably not a
-    // clone either way (a partial clone whose .git went missing included).
-    let detected: Awaited<ReturnType<typeof detectGitHubRemote>>;
-    try {
-      detected = await detectGitHubRemote(normalizedRepoPath);
-    } catch {
-      detected = null;
-    }
-    if (
-      !detected ||
-      detected.ownerRepo.toLowerCase() !== githubOwnerRepo.toLowerCase()
-    ) {
-      return NextResponse.json(
-        {
-          error:
-            "The git repository path is not a clone of the claimed GitHub repository",
-        },
-        { status: 400 }
-      );
-    }
-
-    // TODO(workspace-epic): anchor `normalizedRepoPath` to the deterministic
-    // managed destination (<projects_root>/<owner>-<repo>) once
-    // lib/projects/workspace.ts lands. Until then, a user's own clone of the
-    // same repository elsewhere would pass every check above and get marked
-    // Arij-owned. clone_source is the flag a later recursive clone cleanup
-    // acts on, so that cleanup must not ship before this anchor exists.
-  }
 
   db.insert(projects)
     .values({
       id,
       name,
       description: description || null,
-      gitRepoPath: normalizedRepoPath,
-      githubOwnerRepo: githubOwnerRepo || null,
-      cloneSource: cloneSource || null,
-      gitRemoteUrl: gitRemoteUrl || null,
+      gitRepoPath: gitRepoPath || null,
+      githubOwnerRepo:
+        githubOwnerRepo || provenance.githubOwnerRepo || null,
+      cloneSource: provenance.cloneSource,
+      gitRemoteUrl: provenance.gitRemoteUrl || gitRemoteUrl || null,
       defaultBranch: defaultBranch || null,
       status: "ideation",
       createdAt: now,

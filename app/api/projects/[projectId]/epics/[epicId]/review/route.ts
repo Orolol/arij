@@ -40,10 +40,15 @@ import {
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
 import {
-  MentionResolutionError,
   enrichPromptWithDocumentMentions,
+  userAuthoredTexts,
 } from "@/lib/documents/mentions";
+import {
+  buildEpicTargetUrl,
+  createUnresolvedMentionsNotification,
+} from "@/lib/notifications/create";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import { logTransition } from "@/lib/workflow/log";
 import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
@@ -166,20 +171,8 @@ export async function POST(request: NextRequest, { params }: Params) {
     gitRepoPath,
     epic.id,
     epic.title,
-    project.defaultBranch || undefined
+    { defaultBranch: project.defaultBranch }
   );
-
-  // Resume support — scope-guarded
-  let resumeCliSessionId: string | undefined;
-  if (resumeSessionIdParam) {
-    const validated = validateResumeSession({
-      resumeSessionId: resumeSessionIdParam,
-      epicId: epicId,
-    });
-    if (validated) {
-      resumeCliSessionId = validated.cliSessionId;
-    }
-  }
 
   const sessionsCreated: string[] = [];
   const resolutions: Array<{
@@ -205,19 +198,20 @@ export async function POST(request: NextRequest, { params }: Params) {
       promptComments
     );
 
-    let enrichedPrompt = prompt;
-    try {
-      enrichedPrompt = enrichPromptWithDocumentMentions({
-        projectId,
-        prompt,
-        textSources: promptComments.map((c) => c.content),
-      }).prompt;
-    } catch (error) {
-      if (error instanceof MentionResolutionError) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
-      }
-      throw error;
-    }
+    // Only user-written comments can reference an Arij document; an agent
+    // comment mentioning a codebase file must neither resolve nor block review.
+    const mentionEnrichment = enrichPromptWithDocumentMentions({
+      projectId,
+      prompt,
+      textSources: userAuthoredTexts(promptComments),
+    });
+    const enrichedPrompt = mentionEnrichment.prompt;
+    createUnresolvedMentionsNotification({
+      projectId,
+      missing: mentionEnrichment.missing,
+      agentType: REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
+      targetUrl: buildEpicTargetUrl(projectId, epicId),
+    });
 
     const resolvedAgent = await resolveAgentForDispatch(
       REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
@@ -234,16 +228,22 @@ export async function POST(request: NextRequest, { params }: Params) {
 
     const agentMode = reviewType === "feature_review" ? "code" : "plan";
 
-    const providerSupportsResume =
-      resolvedAgent.provider === "claude-code" ||
-      resolvedAgent.provider === "gemini-cli" ||
-      resolvedAgent.provider === "codex";
+    // First review session can resume; subsequent ones start fresh. Resolved
+    // per review type because each one may land on a different provider, and
+    // the stored id is only valid for the provider that created it.
+    const resumeCliSessionId =
+      idx === 0 && resumeSessionIdParam
+        ? validateResumeSession({
+            resumeSessionId: resumeSessionIdParam,
+            epicId: epicId,
+            expectedProvider: resolvedAgent.provider,
+          })?.cliSessionId
+        : undefined;
 
-    // First review session can resume (when provider supports it); subsequent ones start fresh
-    const useResume = idx === 0 && providerSupportsResume && !!resumeCliSessionId;
+    const useResume = !!resumeCliSessionId;
     const cliSessionId = useResume
       ? resumeCliSessionId
-      : providerSupportsResume
+      : providerAcceptsAssignedSessionId(resolvedAgent.provider)
         ? crypto.randomUUID()
         : undefined;
 

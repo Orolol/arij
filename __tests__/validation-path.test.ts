@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { validatePath } from "@/lib/validation/path";
-import { parseGitHubRepoInput } from "@/lib/git/github-url";
 import * as fs from "node:fs/promises";
 
 vi.mock("node:fs/promises");
@@ -54,28 +53,16 @@ describe("validatePath", () => {
 
   it("accepts consecutive dots inside a file or directory name", async () => {
     // A `..` *inside* a segment is not a traversal: the segments are already
-    // isolated by the separator and resolve() normalises afterwards. This is
-    // what makes a cloned `owner-repo..v2` (a valid GitHub repo name) import
-    // instead of 400ing at the analysis step.
+    // isolated by the separator and resolve() normalises afterwards. A
+    // user-supplied local directory with such a name imports instead of
+    // 400ing at the analysis step. (GitHub imports never produce one: the
+    // repo-reference parser rejects `..` in owner/repo segments outright.)
     vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
     const result = await validatePath("/home/user/projects/owner-repo..v2");
     expect(result.valid).toBe(true);
     if (result.valid) {
       expect(result.normalizedPath).toBe("/home/user/projects/owner-repo..v2");
     }
-  });
-
-  it("survives the whole chain for a repo name with consecutive dots", async () => {
-    // The parse → clone destination → validatePath chain that used to
-    // contradict itself: the parser accepts `owner/repo..v2`, the clone lands
-    // in <projects_root>/<owner>-<repo>, and that path must validate.
-    vi.mocked(fs.stat).mockResolvedValue({ isDirectory: () => true } as any);
-    const parsed = parseGitHubRepoInput("owner/repo..v2");
-    expect(parsed).not.toBeNull();
-    if (!parsed) return;
-    const dest = `/home/user/projects/${parsed.owner}-${parsed.repo}`;
-    const result = await validatePath(dest);
-    expect(result.valid).toBe(true);
   });
 
   it("rejects empty string", async () => {

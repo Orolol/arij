@@ -3,6 +3,9 @@ import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import { GITHUB_PAT_SETTING_KEY } from "@/lib/github/client";
+import { OPENAI_API_KEY_SETTING_KEY } from "@/lib/openai/constants";
+import { PROJECTS_ROOT_SETTING_KEY } from "@/lib/projects/workspace-constants";
+import { defaultProjectsRoot } from "@/lib/projects/workspace";
 
 function parseValue(raw: string): unknown {
   try {
@@ -32,6 +35,12 @@ export async function GET() {
       continue;
     }
 
+    if (row.key === OPENAI_API_KEY_SETTING_KEY) {
+      const parsed = parseValue(row.value);
+      data[row.key] = { hasToken: typeof parsed === "string" && parsed.trim().length > 0 };
+      continue;
+    }
+
     // Webhook URLs are capability credentials (Slack/Discord incoming
     // webhooks grant post access) — mask them like the PAT; the dedicated
     // /api/settings/webhooks route serves the editing UI.
@@ -46,21 +55,29 @@ export async function GET() {
     data[row.key] = parseValue(row.value);
   }
 
-  return NextResponse.json({ data });
+  // Server-computed fallbacks the client cannot derive (no process.cwd() in
+  // the browser). Kept out of `data` so a round-trip never writes them back
+  // as if they were stored settings.
+  return NextResponse.json({
+    data,
+    defaults: { [PROJECTS_ROOT_SETTING_KEY]: defaultProjectsRoot() },
+  });
 }
 
 export async function PATCH(request: NextRequest) {
   const body = await request.json().catch(() => null);
-  if (!body || typeof body !== "object") {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
     return NextResponse.json(
       { error: "Invalid settings payload. Send a JSON object of setting keys." },
       { status: 400 }
     );
   }
 
-  const now = new Date().toISOString();
+  const entries = Object.entries(body);
 
-  for (const [key, value] of Object.entries(body)) {
+  // Validate everything before writing anything, so a rejected key never
+  // leaves a partially-applied payload behind.
+  for (const [key, value] of entries) {
     if (key === GITHUB_PAT_SETTING_KEY && typeof value !== "string") {
       return NextResponse.json(
         { error: "GitHub token must be saved as a string value." },
@@ -68,20 +85,46 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
-    const jsonValue = JSON.stringify(value);
-    const existing = db.select().from(settings).where(eq(settings.key, key)).get();
+    if (key === OPENAI_API_KEY_SETTING_KEY && typeof value !== "string") {
+      return NextResponse.json(
+        { error: "OpenAI API key must be saved as a string value." },
+        { status: 400 }
+      );
+    }
 
-    if (existing) {
-      db.update(settings)
-        .set({ value: jsonValue, updatedAt: now })
-        .where(eq(settings.key, key))
-        .run();
-    } else {
-      db.insert(settings)
-        .values({ key, value: jsonValue, updatedAt: now })
-        .run();
+    // A non-string root would resolve to garbage in path.resolve() and send
+    // clones somewhere unexpected. Blank IS valid: it clears the override.
+    if (key === PROJECTS_ROOT_SETTING_KEY && typeof value !== "string") {
+      return NextResponse.json(
+        { error: "Projects directory must be saved as a string value." },
+        { status: 400 }
+      );
     }
   }
+
+  const now = new Date().toISOString();
+
+  db.transaction((tx) => {
+    for (const [key, value] of entries) {
+      const jsonValue = JSON.stringify(value);
+      const existing = tx
+        .select()
+        .from(settings)
+        .where(eq(settings.key, key))
+        .get();
+
+      if (existing) {
+        tx.update(settings)
+          .set({ value: jsonValue, updatedAt: now })
+          .where(eq(settings.key, key))
+          .run();
+      } else {
+        tx.insert(settings)
+          .values({ key, value: jsonValue, updatedAt: now })
+          .run();
+      }
+    }
+  });
 
   return NextResponse.json({ data: { updated: true } });
 }

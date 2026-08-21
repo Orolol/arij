@@ -25,6 +25,7 @@ import { cn } from "@/lib/utils";
 import {
   AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY,
   DEFAULT_MAX_CONCURRENT_AGENTS,
+  formatMaxConcurrent,
   agentMaxConcurrentSettingKey,
   parseMaxConcurrentSetting,
 } from "@/lib/agents/scheduler-constants";
@@ -419,9 +420,12 @@ export function NightRunDialog({
               </Select>
             </OptionRow>
 
-            {/* Read-only: the scheduler's budget, set in Settings. */}
+            {/* Read-only: the scheduler's budget, set in Agent
+                Configuration → Providers → Max concurrent agents. */}
             <OptionRow label="Parallel agents">
-              <span className="font-mono text-[13px]">{maxConcurrent}</span>
+              <span className="font-mono text-[13px]">
+                {formatMaxConcurrent(maxConcurrent)}
+              </span>
             </OptionRow>
 
             <OptionRow

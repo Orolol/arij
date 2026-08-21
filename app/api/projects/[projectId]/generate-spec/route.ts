@@ -14,8 +14,9 @@ import { activityRegistry } from "@/lib/activity-registry";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import {
   enrichPromptWithDocumentMentions,
-  MentionResolutionError,
+  userAuthoredTexts,
 } from "@/lib/documents/mentions";
+import { createUnresolvedMentionsNotification } from "@/lib/notifications/create";
 
 export async function POST(
   request: NextRequest,
@@ -58,19 +59,20 @@ export async function POST(
     chatHistory.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
     specSystemPrompt
   );
-  let enrichedPrompt = prompt;
-  try {
-    enrichedPrompt = enrichPromptWithDocumentMentions({
-      projectId,
-      prompt,
-      textSources: chatHistory.map((m) => m.content),
-    }).prompt;
-  } catch (error) {
-    if (error instanceof MentionResolutionError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    throw error;
-  }
+  // User messages only: an assistant reply naming a codebase file is not a
+  // reference to an Arij document, and a dangling one never blocks generation.
+  const mentionEnrichment = enrichPromptWithDocumentMentions({
+    projectId,
+    prompt,
+    textSources: userAuthoredTexts(chatHistory),
+  });
+  const enrichedPrompt = mentionEnrichment.prompt;
+  createUnresolvedMentionsNotification({
+    projectId,
+    missing: mentionEnrichment.missing,
+    agentType: "spec_generation",
+    targetUrl: `/projects/${projectId}/spec`,
+  });
 
   const resolvedAgent = resolveAgentByNamedId(
     "spec_generation",
@@ -91,7 +93,10 @@ export async function POST(
 
   try {
     let result;
-    if (resolvedAgent.provider === "codex" || resolvedAgent.provider === "gemini-cli") {
+    // Every non-Claude provider goes through the provider abstraction. An
+    // allowlist here would silently run some other CLI's work on Claude while
+    // the activity record claims the resolved provider.
+    if (resolvedAgent.provider !== "claude-code") {
       const dynamicProvider = getProvider(resolvedAgent.provider);
       const session = dynamicProvider.spawn({
         sessionId: `spec-${createId()}`,

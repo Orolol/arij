@@ -35,8 +35,9 @@ interface RepoStatusBarProps {
  * against its remote, which pull requests are still open, and the two
  * actions that change that.
  *
- * It deliberately never shows agent or session activity — that is the
- * cockpit's job, and repeating it here would make both bands untrustworthy.
+ * It deliberately never shows agent or session activity — the board's
+ * breathing dots and the Sessions tab already own that, and a second,
+ * differently-timed copy of it here would make both surfaces untrustworthy.
  * Renders nothing at all when the project has no local git repository. The
  * GitHub PAT only gates the PR pills — ahead/behind/worktrees/fetch/push are
  * plain local git and must not disappear with the token.

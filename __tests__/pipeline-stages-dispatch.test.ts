@@ -87,7 +87,11 @@ vi.mock("@/lib/events/emit", () => ({
 
 vi.mock("@/lib/documents/mentions", () => ({
   enrichPromptWithDocumentMentions: vi.fn(
-    ({ prompt }: { prompt: string }) => ({ prompt })
+    ({ prompt }: { prompt: string }) => ({ prompt, missing: [] })
+  ),
+  userAuthoredTexts: vi.fn(
+    (entries: Array<{ author?: string | null; content?: string | null }>) =>
+      entries.filter((e) => e.author !== "agent").map((e) => e.content)
   ),
 }));
 
@@ -111,6 +115,7 @@ const {
   reviewComments,
   ticketComments,
   ticketActivityLog,
+  namedAgents,
 } = await import("@/lib/db/schema");
 const { processManager } = await import("@/lib/claude/process-manager");
 const { createPipelineStageDriver } = await import("@/lib/pipeline/stages");
@@ -406,6 +411,78 @@ describe("fix stage dispatch (epic scope)", () => {
     expect(spawn.opts.cliSessionId).not.toBe("cli-gemini");
     await handle.settled;
   });
+
+  it("resumes a previous pi session with the id pi reported", async () => {
+    const { projectId, epicId } = seed("review");
+    const buildSid = `build-${counter}`;
+    insertSession({
+      id: buildSid,
+      projectId,
+      epicId,
+      provider: "pi",
+      cliSessionId: "3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50",
+    });
+    resolutionMocks.resolveAgentByNamedId.mockReturnValue({
+      provider: "pi",
+      namedAgentId: null,
+      name: null,
+      model: null,
+    });
+
+    const driver = createPipelineStageDriver({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildNamedAgentId: null,
+    });
+    const handle = await driver.launchStage({
+      stage: "fix",
+      attempt: 1,
+      fixCycle: 1,
+      previousAttemptSessionId: null,
+      lastCodeSessionId: buildSid,
+    });
+
+    const spawn = startOpts();
+    expect(spawn.opts.resumeSession).toBe(true);
+    expect(spawn.opts.cliSessionId).toBe("3f1c9a52-1b7e-4f21-9a6f-7b1c2d3e4f50");
+    await handle.settled;
+  });
+
+  /**
+   * pi prints the session id it created, so dispatch must not invent one:
+   * a minted id would be stored and later replayed into `--session`.
+   */
+  it("mints no cliSessionId for pi when there is nothing to resume", async () => {
+    const { projectId, epicId } = seed("review");
+    resolutionMocks.resolveAgentByNamedId.mockReturnValue({
+      provider: "oh-my-pi",
+      namedAgentId: null,
+      name: null,
+      model: null,
+    });
+
+    const driver = createPipelineStageDriver({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildNamedAgentId: null,
+    });
+    const handle = await driver.launchStage({
+      stage: "fix",
+      attempt: 1,
+      fixCycle: 1,
+      previousAttemptSessionId: null,
+      lastCodeSessionId: null,
+    });
+
+    const spawn = startOpts();
+    expect(spawn.opts.resumeSession).toBe(false);
+    expect(spawn.opts.cliSessionId).toBeUndefined();
+    await handle.settled;
+  });
 });
 
 describe("review stage dispatch", () => {
@@ -463,6 +540,101 @@ describe("review stage dispatch", () => {
     expect(
       db.select().from(epics).where(eq(epics.id, epicId)).get()!.status
     ).toBe("review");
+  });
+
+  it("passes an explicit reviewNamedAgentId through to the review resolution", async () => {
+    const { projectId, epicId } = seed("review");
+    db.insert(namedAgents)
+      .values({
+        id: "named-reviewer",
+        name: `Codex Reviewer ${counter}`,
+        provider: "codex",
+        model: "gpt-5.4",
+      })
+      .onConflictDoNothing()
+      .run();
+    processManagerState.result = {
+      success: true,
+      result: claudeEnvelope("**Overall Verdict: Complete**"),
+      duration: 900,
+    };
+    // An explicitly picked named agent wins over reviewer segregation —
+    // the resolver's own precedence rule, exercised here end-to-end.
+    resolutionMocks.resolveAgentForDispatch.mockResolvedValueOnce({
+      provider: "codex",
+      namedAgentId: "named-reviewer",
+      name: "Codex Reviewer",
+      model: "gpt-5.4",
+    });
+
+    const driver = createPipelineStageDriver({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildNamedAgentId: null,
+      reviewNamedAgentId: "named-reviewer",
+    });
+    const handle = await driver.launchStage({
+      stage: "review",
+      attempt: 1,
+      fixCycle: 0,
+      previousAttemptSessionId: null,
+      lastCodeSessionId: null,
+    });
+
+    expect(resolutionMocks.resolveAgentForDispatch).toHaveBeenCalledWith(
+      "review_code",
+      projectId,
+      "named-reviewer",
+      { purpose: "review", projectId, epicId }
+    );
+
+    const row = db
+      .select()
+      .from(agentSessions)
+      .where(eq(agentSessions.id, handle.sessionId!))
+      .get()!;
+    expect(row).toMatchObject({
+      provider: "codex",
+      namedAgentId: "named-reviewer",
+      namedAgentName: "Codex Reviewer",
+      model: "gpt-5.4",
+    });
+
+    await handle.settled;
+  });
+
+  it("keeps segregation-friendly null resolution when reviewNamedAgentId is omitted", async () => {
+    const { projectId, epicId } = seed("review");
+    processManagerState.result = {
+      success: true,
+      result: claudeEnvelope("**Overall Verdict: Complete**"),
+      duration: 900,
+    };
+
+    const driver = createPipelineStageDriver({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildNamedAgentId: "build-agent",
+    });
+    const handle = await driver.launchStage({
+      stage: "review",
+      attempt: 1,
+      fixCycle: 0,
+      previousAttemptSessionId: null,
+      lastCodeSessionId: null,
+    });
+
+    expect(resolutionMocks.resolveAgentForDispatch).toHaveBeenCalledWith(
+      "review_code",
+      projectId,
+      null,
+      { purpose: "review", projectId, epicId }
+    );
+    await handle.settled;
   });
 
   it("reverts the ticket on a negative prose verdict and feeds the driver's prose fallback", async () => {

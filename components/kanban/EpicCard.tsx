@@ -26,12 +26,15 @@ import {
   RefreshCw,
 } from "lucide-react";
 import type { FailedSessionInfo } from "@/hooks/useAgentPolling";
+import {
+  isChatProvider,
+  PROVIDER_LABELS,
+} from "@/lib/agent-config/constants";
 
 function providerLabel(provider?: string): string {
   if (!provider) return "Agent";
   if (provider === "gemini-cli") return "Gemini";
-  if (provider === "codex") return "Codex";
-  return "Claude Code";
+  return isChatProvider(provider) ? PROVIDER_LABELS[provider] : provider;
 }
 
 /**

@@ -208,9 +208,7 @@ describe("Release creation with pushToGitHub", () => {
       "/tmp/repo",
       "1.0.0",
       expect.any(String),
-      // The project row has no stored default branch: the helper falls back
-      // to its own main → master → origin/HEAD chain.
-      undefined
+      { defaultBranch: undefined }
     );
 
     // Verify tag was created against the release commit hash, not HEAD
@@ -282,7 +280,7 @@ describe("Release creation with pushToGitHub", () => {
       "/tmp/repo",
       "1.0.0",
       expect.any(String),
-      "develop"
+      { defaultBranch: "develop" }
     );
   });
 

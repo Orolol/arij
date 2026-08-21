@@ -69,15 +69,12 @@ describe("parseGitHubRepoInput (client-safe)", () => {
     );
   });
 
-  it("accepts consecutive dots inside a segment (a valid GitHub repo name)", () => {
-    // `..` as a WHOLE segment is traversal and stays rejected; an embedded
-    // `..` cannot escape a directory, and GitHub allows such names.
-    expect(parseGitHubRepoInput("owner/repo..v2")).toEqual(
-      expect.objectContaining({ owner: "owner", repo: "repo..v2" })
-    );
-    expect(
-      parseGitHubRepoInput("https://github.com/owner/repo..v2")?.ownerRepo
-    ).toBe("owner/repo..v2");
+  it("rejects consecutive dots anywhere in a segment", () => {
+    // Matches the server-side posture (validatePath in lib/validation/path.ts
+    // and __tests__/github-repo-input-parsing.test.ts): anything that even
+    // looks like a traversal component never reaches the filesystem layer.
+    expect(parseGitHubRepoInput("owner/repo..v2")).toBeNull();
+    expect(parseGitHubRepoInput("https://github.com/owner/repo..v2")).toBeNull();
   });
 
   it("is importable without pulling in simple-git", async () => {

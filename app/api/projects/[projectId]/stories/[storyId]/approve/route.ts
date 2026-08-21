@@ -1,14 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, epics, userStories } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import {
+  projects,
+  epics,
+  userStories,
+  ticketComments,
+  agentSessions,
+} from "@/lib/db/schema";
+import { eq, and } from "drizzle-orm";
+import { createId } from "@/lib/utils/nanoid";
 import { tryExportArjiJson } from "@/lib/sync/export";
-import simpleGit from "simple-git";
+import { mergeWorktree, type MergeWorktreeResult } from "@/lib/git/manager";
+import { logTransition } from "@/lib/workflow/log";
+import { createApproveMergeFailedNotification } from "@/lib/notifications/create";
+import { autoModeRegistry } from "@/lib/auto-mode/registry";
 import { getStoryOr404, isErrorResponse } from "@/lib/api/route-helpers";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
-export async function POST(request: NextRequest, { params }: Params) {
+/**
+ * Approve a user story in review.
+ *
+ * The story itself always goes done — approving one story is a review
+ * verdict on that story alone and must never be blocked by git. Only when
+ * this was the LAST open story does the epic close, and closing the epic
+ * means landing its branch: the merge runs through `mergeWorktree` (aborts
+ * on conflict, targets the project's default branch) BEFORE the epic is
+ * marked done. The previous implementation did it the other way around —
+ * epic done first, then a naive checked-out-branch merge whose failure was
+ * swallowed — which produced "done" epics whose code never reached main.
+ */
+export async function POST(_request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
 
   // Validate story exists (project-scoped) and is in review
@@ -25,7 +47,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const now = new Date().toISOString();
 
-  // Move story to done
+  // Move story to done — unconditionally, whatever git does below.
   db.update(userStories)
     .set({ status: "done" })
     .where(eq(userStories.id, storyId))
@@ -50,41 +72,170 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const allDone = allStories.every((s) => s.id === storyId || s.status === "done");
 
-  let merged = false;
+  if (!allDone) {
+    tryExportArjiJson(projectId);
+    return NextResponse.json({
+      data: { approved: true, epicComplete: false, merged: false },
+    });
+  }
 
-  if (allDone) {
-    // Update epic status to done
-    db.update(epics)
-      .set({ status: "done", updatedAt: now })
-      .where(eq(epics.id, epic.id))
-      .run();
+  // Last story approved — the epic is complete. Land the branch BEFORE
+  // marking the epic done, so "done" always means "on main".
+  const project = db
+    .select()
+    .from(projects)
+    .where(eq(projects.id, projectId))
+    .get();
 
-    // Attempt to merge the epic branch
-    const project = db
-      .select()
-      .from(projects)
-      .where(eq(projects.id, projectId))
-      .get();
+  if (project?.gitRepoPath && epic.branchName) {
+    // Same per-epic merge lock as auto-mode (lib/auto-mode/merge.ts).
+    // Without it, this merge racing auto-mode's can be silently un-merged by
+    // auto's rollback (its checkpoint predates our merge), and racing an
+    // epic-approve has the loser hit 'branch-missing' and leave a spurious
+    // failure trail on a healthy epic. When the lock is held, the story
+    // stays done (the verdict stands) and the epic is left untouched — the
+    // in-flight merge will close it, or the user retries in a moment.
+    if (!autoModeRegistry.beginMergeWork(projectId, epic.id)) {
+      tryExportArjiJson(projectId);
+      return NextResponse.json({
+        data: {
+          approved: true,
+          epicComplete: true,
+          merged: false,
+          mergeError:
+            "A merge is already in flight for this epic — retry in a moment.",
+        },
+      });
+    }
 
-    if (project?.gitRepoPath && epic.branchName) {
+    try {
+      // Worktree of the epic's most recent agent session (the merge route's
+      // lookup) — mergeWorktree has to remove it before git can merge the
+      // branch it holds checked out.
+      const session = db
+        .select()
+        .from(agentSessions)
+        .where(
+          and(
+            eq(agentSessions.epicId, epic.id),
+            eq(agentSessions.projectId, projectId)
+          )
+        )
+        .orderBy(agentSessions.createdAt)
+        .all()
+        .pop();
+      const worktreePath = session?.worktreePath || undefined;
+
+      let result: MergeWorktreeResult;
       try {
-        const git = simpleGit(project.gitRepoPath);
-        await git.merge([epic.branchName, "--no-ff"]);
-        merged = true;
+        result = await mergeWorktree(
+          project.gitRepoPath,
+          epic.branchName,
+          worktreePath,
+          { defaultBranch: project.defaultBranch }
+        );
       } catch (e) {
-        console.error("[approve] Merge failed:", e);
-        // Don't fail the approve — the merge can be done manually
+        // Belt and braces: mergeWorktree reports failures as merged:false,
+        // but a throw (whatever its origin) must fund the same failure path,
+        // not escape as a raw 500 after the story already went done.
+        result = {
+          merged: false,
+          error: e instanceof Error ? e.message : "Merge failed",
+          reason: "error",
+        };
       }
+
+      if (!result.merged) {
+        const mergeError = result.error || "Merge failed";
+
+        // The story approval stands (it already went done above) but the
+        // epic stays exactly where it is — an epic whose code is not on main
+        // must not read "done". Leave a trail: ticket comment, notification,
+        // and an activity-log entry, then report the partial outcome with
+        // 200 — the approve itself DID succeed, only the merge failed. The
+        // trail is best-effort: a hiccup writing it (SQLITE_BUSY) must not
+        // turn the contractual 200 into a generic 500.
+        try {
+          db.insert(ticketComments)
+            .values({
+              id: createId(),
+              epicId: epic.id,
+              author: "agent",
+              content: `**All stories approved, but the epic merge failed.** ${mergeError}\n\nThe epic keeps its current status. Use Resolve Merge on the epic to land the branch and close it.`,
+              createdAt: now,
+            })
+            .run();
+
+          createApproveMergeFailedNotification({
+            projectId,
+            epicId: epic.id,
+            error: mergeError,
+          });
+
+          // Same-status entry: not a move, just the activity log recording
+          // WHY the epic did not close (same pattern as auto-mode's
+          // held-in-place merge failures).
+          const heldStatus = epic.status ?? "review";
+          logTransition({
+            projectId,
+            epicId: epic.id,
+            fromStatus: heldStatus,
+            toStatus: heldStatus,
+            actor: "system",
+            reason: `Epic completion blocked: merge of ${epic.branchName} failed — ${mergeError}`,
+          });
+        } catch (trailError) {
+          console.error(
+            "[story approve] Failed to record the merge-failure trail:",
+            trailError
+          );
+        }
+
+        tryExportArjiJson(projectId);
+
+        return NextResponse.json({
+          data: {
+            approved: true,
+            epicComplete: true,
+            merged: false,
+            mergeError,
+          },
+        });
+      }
+
+      // Merge landed — NOW the epic may close. The branch name is cleared
+      // because mergeWorktree deleted the branch on success; keeping the
+      // name would point at nothing and make later merge attempts fail.
+      db.update(epics)
+        .set({ status: "done", branchName: null, updatedAt: now })
+        .where(eq(epics.id, epic.id))
+        .run();
+
+      tryExportArjiJson(projectId);
+
+      return NextResponse.json({
+        data: {
+          approved: true,
+          epicComplete: true,
+          merged: true,
+          commitHash: result.commitHash,
+        },
+      });
+    } finally {
+      autoModeRegistry.endMergeWork(projectId, epic.id);
     }
   }
+
+  // No repo or no branch: nothing to land, so closing the epic without a
+  // merge is correct, not an error.
+  db.update(epics)
+    .set({ status: "done", updatedAt: now })
+    .where(eq(epics.id, epic.id))
+    .run();
 
   tryExportArjiJson(projectId);
 
   return NextResponse.json({
-    data: {
-      approved: true,
-      epicComplete: allDone,
-      merged,
-    },
+    data: { approved: true, epicComplete: true, merged: false },
   });
 }

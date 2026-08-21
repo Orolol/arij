@@ -66,7 +66,7 @@ describe("createReleaseBranchAndCommitChangelog", () => {
       dir,
       "1.0.0",
       changelog,
-      "develop"
+      { defaultBranch: "develop" }
     );
 
     expect(result.releaseBranch).toBe("release/v1.0.0");
@@ -95,7 +95,7 @@ describe("createReleaseBranchAndCommitChangelog", () => {
       dir,
       "2.0.0",
       changelog,
-      "trunk"
+      { defaultBranch: "trunk" }
     );
 
     expect(result.releaseBranch).toBe("release/v2.0.0");

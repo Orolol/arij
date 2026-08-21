@@ -21,14 +21,41 @@ export function agentMaxConcurrentSettingKey(projectId: string): string {
   return `${AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY}:${projectId}`;
 }
 
-/** Built-in fallback when neither settings key is set. */
-export const DEFAULT_MAX_CONCURRENT_AGENTS = 3;
+/**
+ * "No cap" budget. Stored as `0` in settings (a human types 0 for unlimited)
+ * and carried around as Infinity so `running < limit` needs no special case.
+ */
+export const UNLIMITED_MAX_CONCURRENT_AGENTS = Number.POSITIVE_INFINITY;
+
+/**
+ * Built-in fallback when neither settings key is set: no cap. Arij queues
+ * nothing by default — the machine, the CLIs and the user's own judgement are
+ * the limit. Set an explicit number in Agent Configuration → Providers to get
+ * a queue back.
+ */
+export const DEFAULT_MAX_CONCURRENT_AGENTS = UNLIMITED_MAX_CONCURRENT_AGENTS;
+
+/** True for a budget the scheduler can gate on: a positive integer, or "no cap". */
+export function isValidMaxConcurrent(value: unknown): value is number {
+  return (
+    value === UNLIMITED_MAX_CONCURRENT_AGENTS ||
+    (typeof value === "number" && Number.isInteger(value) && value >= 1)
+  );
+}
+
+/** Human-readable budget for the UI ("Unlimited" rather than "Infinity"). */
+export function formatMaxConcurrent(value: number): string {
+  return Number.isFinite(value) ? String(value) : "Unlimited";
+}
 
 /**
  * Parses a raw settings value (JSON-encoded string, number, or numeric
- * string) into a usable concurrency budget. Returns null for anything that
- * is not a positive integer, so callers fall through to the next default.
- * A budget below 1 would deadlock the queue, so 0 and negatives are invalid.
+ * string) into a usable concurrency budget. Returns null for anything that is
+ * neither a positive integer nor the unlimited sentinel, so callers fall
+ * through to the next default.
+ *
+ * `0` means unlimited: a budget of literally zero would deadlock the queue,
+ * and 0 is what a user types for "no limit".
  */
 export function parseMaxConcurrentSetting(value: unknown): number | null {
   let parsed: unknown = value;
@@ -48,6 +75,9 @@ export function parseMaxConcurrentSetting(value: unknown): number | null {
         ? Number(parsed)
         : NaN;
 
+  if (num === 0 || num === Number.POSITIVE_INFINITY) {
+    return UNLIMITED_MAX_CONCURRENT_AGENTS;
+  }
   if (!Number.isInteger(num) || num < 1) return null;
   return num;
 }

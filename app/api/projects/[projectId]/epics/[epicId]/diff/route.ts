@@ -45,13 +45,13 @@ export async function GET(_request: NextRequest, { params }: Params) {
     project.gitRepoPath,
     epic.id,
     epic.title,
-    project.defaultBranch || undefined
+    { defaultBranch: project.defaultBranch }
   );
 
   try {
     // Diff against the branch the worktree was actually cut from. createWorktree
-    // above resolved its base through resolveDefaultBranch (stored default,
-    // existence-checked, then main → master → origin/HEAD → current); the
+    // above resolved its base through resolveBaseBranch (stored default,
+    // existence-checked, then origin/HEAD → main → master → fallback); the
     // diff must use the very same resolution. Feeding the stored value raw
     // made a stored default branch that no longer exists locally (renamed
     // after import, or the clone's local branch set diverging from the
@@ -59,7 +59,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
     // with 0 ahead/behind over an epic with real commits.
     const baseBranch = await resolveDefaultBranch(
       project.gitRepoPath,
-      project.defaultBranch || undefined
+      project.defaultBranch
     );
     const result = await getWorktreeDiff(worktreePath, baseBranch);
     return NextResponse.json({ data: result });

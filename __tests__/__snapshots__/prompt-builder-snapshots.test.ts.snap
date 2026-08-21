@@ -173,7 +173,7 @@ Output the epic and user stories from the conversation above as a MACHINE-PARSEA
 
 Your ENTIRE response must be a single fenced JSON code block. Nothing else.
 
-\\\`\\\`\\\`json
+\`\`\`json
 {
   "title": "Epic title",
   "description": "Detailed epic description including implementation plan",
@@ -186,11 +186,12 @@ Your ENTIRE response must be a single fenced JSON code block. Nothing else.
   ],
   "dependencies": []
 }
-\\\`\\\`\\\`
+\`\`\`
 
 ABSOLUTE REQUIREMENTS:
-- The very first characters of your response MUST be \\\`\\\`\\\`json
-- The very last characters of your response MUST be \\\`\\\`\\\`
+- The very first characters of your response MUST be \`\`\`json
+- The very last characters of your response MUST be \`\`\`
+- Output EXACTLY ONE epic object. Never output an array, and never wrap it in an "epics" key — if the discussion covers several epics, pick the single most important one and fold the rest into its user stories.
 - Do NOT write any text before or after the JSON code block.
 - Do NOT say "The plan is ready", "Here's the epic", or any summary/preamble.
 - Do NOT ask for confirmation or approval — just output the JSON.

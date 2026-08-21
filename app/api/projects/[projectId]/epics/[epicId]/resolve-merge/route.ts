@@ -16,7 +16,6 @@ import { createId } from "@/lib/utils/nanoid";
 import {
   createWorktree,
   isGitRepo,
-  resolveDefaultBranch,
   startMergeInWorktree,
   mergeWorktree,
 } from "@/lib/git/manager";
@@ -43,6 +42,11 @@ import {
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import { createMergeRetryFailedNotification } from "@/lib/notifications/create";
+import {
+  isResumableProvider,
+  providerAcceptsAssignedSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -84,31 +88,22 @@ export async function POST(request: NextRequest, { params }: Params) {
     gitRepoPath,
     epic.id,
     epic.title,
-    project.defaultBranch || undefined
+    { defaultBranch: project.defaultBranch }
   );
 
-  // Start merge in worktree to surface conflicts. The target is the project's
-  // real default branch — a hard-coded "main" would fail on a clone whose
-  // default is `develop`/`trunk`.
-  const targetBranch = await resolveDefaultBranch(
-    gitRepoPath,
-    project.defaultBranch || undefined
-  );
+  // Start merge in worktree to surface conflicts
   let mergeResult: { conflicted: boolean; output: string };
   try {
-    mergeResult = await startMergeInWorktree(worktreePath, targetBranch);
+    mergeResult = await startMergeInWorktree(worktreePath, "main");
   } catch (error) {
     return errorResponse(error, "Failed to start merge");
   }
 
   // If merge was clean, just do the final merge into main directly
   if (!mergeResult.conflicted) {
-    const finalMerge = await mergeWorktree(
-      gitRepoPath,
-      branchName,
-      worktreePath,
-      project.defaultBranch || undefined
-    );
+    const finalMerge = await mergeWorktree(gitRepoPath, branchName, worktreePath, {
+      defaultBranch: project.defaultBranch,
+    });
     if (!finalMerge.merged) {
       return NextResponse.json(
         { error: finalMerge.error || "Final merge failed" },
@@ -174,22 +169,21 @@ export async function POST(request: NextRequest, { params }: Params) {
     );
   }
 
-  const providerSupportsResume = provider === "claude-code" || provider === "gemini-cli" || provider === "codex";
-
   // Resume support — scope-guarded
   let cliSessionId: string | undefined;
   let resumeSession = false;
-  if (providerSupportsResume && body.resumeSessionId) {
+  if (isResumableProvider(provider) && body.resumeSessionId) {
     const validated = validateResumeSession({
       resumeSessionId: body.resumeSessionId,
       epicId: epicId,
+      expectedProvider: provider,
     });
     if (validated) {
       cliSessionId = validated.cliSessionId;
       resumeSession = true;
     }
   }
-  if (!cliSessionId && providerSupportsResume) {
+  if (!cliSessionId && providerAcceptsAssignedSessionId(provider)) {
     cliSessionId = crypto.randomUUID();
   }
 
@@ -259,7 +253,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         gitRepoPath,
         branchName,
         worktreePath,
-        project.defaultBranch || undefined
+        { defaultBranch: project.defaultBranch }
       );
 
       if (finalMerge.merged) {
@@ -269,6 +263,36 @@ export async function POST(request: NextRequest, { params }: Params) {
           .run();
 
         tryExportArjiJson(projectId);
+      } else {
+        // The agent claimed success but the follow-up merge STILL failed —
+        // e.g. it committed the conflict markers, tripping the marker guard.
+        // This closure has no HTTP response left to carry the failure, so a
+        // silent swallow here would be exactly the bug this route exists to
+        // kill: an epic that never closes and no word on why.
+        const mergeError = finalMerge.error || "Merge failed";
+        try {
+          db.insert(ticketComments)
+            .values({
+              id: createId(),
+              epicId,
+              author: "agent",
+              content: `**Merge resolution finished, but the final merge still failed.** ${mergeError}\n\nThe epic keeps its current status. Run Resolve Merge again to land the branch.`,
+              createdAt: completedAt,
+            })
+            .run();
+
+          createMergeRetryFailedNotification({
+            projectId,
+            epicId,
+            sessionId,
+            error: mergeError,
+          });
+        } catch (trailError) {
+          console.error(
+            "[resolve merge] Failed to record the merge-failure trail:",
+            trailError
+          );
+        }
       }
     }
 

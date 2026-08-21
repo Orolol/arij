@@ -15,6 +15,12 @@ export interface DetectedGitHubRemote extends ParsedGitHubRemote {
   remoteUrl: string;
 }
 
+// The full repo-reference parser (remote URLs, browser URLs, owner/repo
+// shorthand) lives in lib/git/github-url.ts so the client-side import page
+// can share it; re-exported here so server callers keep one import site.
+export type { ParsedGitHubRepoInput } from "@/lib/git/github-url";
+export { parseGitHubRepoInput } from "@/lib/git/github-url";
+
 export interface BranchSyncStatus {
   branch: string;
   remote: string;

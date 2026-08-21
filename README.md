@@ -62,6 +62,8 @@ Use whichever AI coding tool you prefer:
 | **Gemini CLI** | `gemini` CLI via Google |
 | **OpenCode** | `opencode` CLI — open-source, supports any model |
 | **Qwen Code** | `qwen` CLI — Alibaba's coding agent |
+| **Pi** | `pi` CLI — minimal terminal harness, runs any provider's models |
+| **Oh My Pi** | `omp` CLI — standalone multi-agent orchestrator (fork of pi) |
 | **Any CLI agent** | Any tool that accepts a `--prompt` flag works out of the box |
 
 Arij's provider system is designed to be extensible — if your favorite AI coding CLI accepts a prompt and outputs results, it can plug into Arij. Create "Named Agents" to mix and match providers and models — e.g., use Claude Opus for complex builds, Gemini Flash for quick bug fixes, or a local model via OpenCode for privacy-sensitive tasks.
@@ -110,6 +112,12 @@ Set dependencies between epics. Arij builds a DAG and schedules agent work in th
 ### Team Mode
 
 For large features, enable Team Mode to have a single Claude Code session orchestrate multiple sub-agents working on different tickets simultaneously.
+
+### Full Auto Mode
+
+Arm the board and walk away. Full Auto Mode is a standing supervisor, enabled per project from the **Auto** button on the board toolbar: it keeps building everything in To Do, reviewing everything in Review, and **merging each ticket into `main` as soon as its review comes back clean** — with separate concurrency budgets for builds and reviews.
+
+It refuses to touch a ticket another agent already has, and it never overrides a review: an epic with open review findings is left alone until you resolve them. If a merge conflicts, a resolution agent is dispatched and the merge is retried once; a second failure parks the ticket and notifies you. See [docs/architecture/full-auto-mode.md](docs/architecture/full-auto-mode.md) for the full behaviour, the settings keys, and the unattended merge path.
 
 ---
 

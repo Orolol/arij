@@ -10,6 +10,7 @@ import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import {
   enrichPromptWithDocumentMentions,
   MentionResolutionError,
+  userAuthoredTexts,
   validateMentionsExist,
 } from "@/lib/documents/mentions";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
@@ -146,23 +147,20 @@ export async function POST(
   );
 
   const resolvedAgent = resolveAgentByNamedId("chat", projectId, namedAgentId);
-  let enrichedPrompt = prompt;
-  try {
-    enrichedPrompt = enrichPromptWithDocumentMentions({
-      projectId,
-      prompt,
-      textSources: [body.content, ...recentMessages.map((m) => m.content)],
-    }).prompt;
-  } catch (error) {
-    if (error instanceof MentionResolutionError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    throw error;
-  }
+  // The new user message plus earlier user messages only: an assistant reply
+  // naming a codebase file is not an Arij document reference. Unknown mentions
+  // in the new message already returned 400 above (validateMentionsExist).
+  const enrichedPrompt = enrichPromptWithDocumentMentions({
+    projectId,
+    prompt,
+    textSources: [body.content, ...userAuthoredTexts(recentMessages)],
+  }).prompt;
 
   try {
     let result;
-    if (resolvedAgent.provider === "codex" || resolvedAgent.provider === "gemini-cli") {
+    // Same rule as generate-spec: anything that is not Claude Code is spawned
+    // through its own provider, not silently through spawnClaude().
+    if (resolvedAgent.provider !== "claude-code") {
       const dynamicProvider = getProvider(resolvedAgent.provider);
       const session = dynamicProvider.spawn({
         sessionId: `chat-${createId()}`,
