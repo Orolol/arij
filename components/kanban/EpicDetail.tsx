@@ -208,7 +208,21 @@ export function EpicDetail({
   }
 
   async function handleApprove() {
-    await approve();
+    try {
+      await approve();
+      setMergeError(null);
+    } catch (e) {
+      if (isAgentAlreadyRunningError(e)) {
+        onAgentConflict?.({
+          message: e.message,
+          sessionUrl: e.sessionUrl || `/projects/${projectId}/sessions/${e.activeSessionId}`,
+        });
+      }
+      // Same surface as resolve-merge failures: the destructive line in the
+      // Git section, next to the Resolve Merge action the message points at.
+      setMergeError(e instanceof Error ? e.message : "Failed to approve epic");
+    }
+    // Refresh either way — on a merge failure the epic stayed in review.
     refresh();
   }
 
