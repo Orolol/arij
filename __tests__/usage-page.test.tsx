@@ -44,6 +44,7 @@ function makeDays(
 const CODEX_SUB: SubscriptionStatus = {
   provider: "codex",
   source: "provider-reported",
+  sourceDetail: "rollout-snapshot",
   plan: "prolite",
   capturedAt: "2026-08-18T10:00:00.000Z", // 2h before FIXED_NOW
   primary: {
@@ -57,15 +58,20 @@ const CODEX_SUB: SubscriptionStatus = {
     resetsAt: NOW_SEC + 3 * 86400 + 2 * 3600,
   },
   metered: null,
+  claudeLive: null,
+  codexLive: null,
 };
 
 const CLAUDE_SUB: SubscriptionStatus = {
   provider: "claude-code",
   source: "metered-via-arij",
+  sourceDetail: "arij-sessions",
   plan: null,
   capturedAt: null,
   primary: null,
   secondary: null,
+  claudeLive: null,
+  codexLive: null,
   metered: {
     last5h: {
       sessions: 1,
@@ -332,11 +338,14 @@ describe("Usage page — provider-reported gauges (codex)", () => {
           {
             provider: "codex",
             source: "provider-reported",
+            sourceDetail: "rollout-snapshot",
             plan: null,
             capturedAt: null,
             primary: null,
             secondary: null,
             metered: null,
+            claudeLive: null,
+            codexLive: null,
           },
           CLAUDE_SUB,
         ],
@@ -627,11 +636,14 @@ describe("Usage page — states", () => {
           {
             provider: "codex",
             source: "provider-reported",
+            sourceDetail: "rollout-snapshot",
             plan: null,
             capturedAt: null,
             primary: null,
             secondary: null,
             metered: null,
+            claudeLive: null,
+            codexLive: null,
           },
           {
             ...CLAUDE_SUB,
@@ -675,9 +687,35 @@ describe("Usage page — states", () => {
 
     await screen.findByTestId("usage-band");
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    // The mount read respects the route's live-quota TTL.
+    expect(fetchMock).toHaveBeenCalledWith("/api/usage");
 
     fireEvent.click(screen.getByTestId("usage-refresh"));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock).toHaveBeenCalledWith("/api/usage");
+  });
+
+  it("forces a live re-poll when Refresh is clicked, never on mount", async () => {
+    const fetchMock = mockUsage(baseReport());
+    render(<UsagePage />);
+
+    await screen.findByTestId("usage-band");
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/usage");
+
+    fireEvent.click(screen.getByTestId("usage-refresh"));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/usage?fresh=1");
+  });
+
+  it("retries without forcing a fresh poll", async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new Error("network down");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<UsagePage />);
+
+    await screen.findByTestId("usage-error");
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/usage");
   });
 });

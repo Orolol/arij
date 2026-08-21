@@ -235,10 +235,18 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     };
     expect(body.model).toBe("llama3.1");
     expect(body.stream).toBe(true);
-    // System prompt first, then the history in chronological order (the
-    // just-saved user message included).
-    expect(body.messages).toEqual([
-      { role: "system", content: chatPromptFor("Chat system prompt") },
+    // System prompt first (project-context prompt + board-tools section),
+    // then the history in chronological order (the just-saved user message
+    // included).
+    expect(body.messages).toHaveLength(3);
+    expect(body.messages[0].role).toBe("system");
+    expect(
+      body.messages[0].content.startsWith(
+        `${chatPromptFor("Chat system prompt")}\n\n`,
+      ),
+    ).toBe(true);
+    expect(body.messages[0].content).toContain("project assistant");
+    expect(body.messages.slice(1)).toEqual([
       { role: "assistant", content: "Previous message" },
       { role: "user", content: "Current question" },
     ]);
@@ -251,6 +259,11 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
       [],
       "Chat system prompt",
     );
+    // The board tools ride along on every fast-mode chat request.
+    const tools = (JSON.parse(String(init.body)) as {
+      tools?: Array<{ function: { name: string } }>;
+    }).tools;
+    expect(tools?.map((t) => t.function.name)).toContain("list_tickets");
   });
 
   it("sends the Bearer key only when one is configured", async () => {
@@ -286,7 +299,7 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     expect(body.reasoning_effort).toBe("medium");
   });
 
-  it("still sends the project context when no chat system prompt is configured", async () => {
+  it("still sends the project context and board-tools section when no chat system prompt is configured", async () => {
     // The built-in chat prompt is empty by default, so this is the shape a
     // fresh install runs with — the model must still learn what the project
     // is instead of answering as a generic assistant.
@@ -305,10 +318,14 @@ describe("POST /api/projects/[projectId]/chat/stream — OpenAI-compatible fast 
     const body = JSON.parse(String(init.body)) as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(body.messages[0]).toEqual({
-      role: "system",
-      content: chatPromptFor("   "),
-    });
+    const system = body.messages.filter((m) => m.role === "system");
+    expect(system).toHaveLength(1);
+    // The project-context prompt still leads even with an empty configured
+    // prompt, and the board section rides along after it.
+    expect(
+      system[0].content.startsWith(`${chatPromptFor("   ")}\n\n`),
+    ).toBe(true);
+    expect(system[0].content).toContain("project assistant");
   });
 
   it("supports epic_creation refinement and finalization prompts in OpenAI-compatible fast mode", async () => {

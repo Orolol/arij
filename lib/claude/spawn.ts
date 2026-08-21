@@ -11,7 +11,15 @@ import { cleanupMcpConfigFile, writeMcpConfigFile } from "./mcp-injection";
 import type { McpSpawnConfig } from "@/lib/providers/types";
 
 export interface ClaudeOptions {
-  mode: "plan" | "code" | "analyze";
+  /**
+   * "plan": read-only research with the CLI's plan-mode prompt (the model
+   * presents a plan and mutating tools are refused — including allowlisted
+   * MCP tools). "chat": conversational turns that must keep the repo
+   * read-only but still act through the Arij MCP board tools; permission
+   * mode "default" with a read-only allowlist, so allowlisted MCP tools are
+   * auto-approved and everything else is denied headlessly.
+   */
+  mode: "plan" | "code" | "analyze" | "chat";
   prompt: string;
   cwd?: string;
   allowedTools?: string[];
@@ -23,8 +31,10 @@ export interface ClaudeOptions {
    * Arij MCP tool-channel injection. When set, the spawn writes the config
    * to a 0600 temp file and buildClaudeArgs adds `--mcp-config <file>` +
    * `--strict-mcp-config`, merging the exact tool names into --allowedTools.
-   * Set centrally by processManager.start() — direct spawnClaude call sites
-   * (generate-spec, import, chat) never pass it.
+   * Set centrally by processManager.start() for agent sessions, and by the
+   * chat stream route (lib/chat/cli-tool-channel.ts) for chat turns — the
+   * remaining direct call sites (generate-spec, import, title generation)
+   * never pass it.
    */
   mcp?: McpSpawnConfig;
 }
@@ -93,17 +103,27 @@ export function buildClaudeArgs(
     options;
   const mcp = mcpConfigPath ? options.mcp : undefined;
 
-  // --permission-mode: "plan" for read-only, "bypassPermissions" for code/analyze
-  const permissionMode = mode === "plan" ? "plan" : "bypassPermissions";
+  // --permission-mode: "plan" for read-only research, "default" for chat
+  // (headless: allowlisted tools run, everything else is denied),
+  // "bypassPermissions" for code/analyze.
+  const permissionMode =
+    mode === "plan" ? "plan" : mode === "chat" ? "default" : "bypassPermissions";
 
-  // "analyze" mode restricts tools to read + write (no Bash/Edit)
+  // "analyze" mode restricts tools to read + write (no Bash/Edit); "chat"
+  // mode keeps the repo strictly read-only (no Bash, no Write) — board
+  // mutations go through the MCP tools merged in below.
   const effectiveAllowedTools =
-    mode === "analyze" && (!allowedTools || allowedTools.length === 0)
-      ? ["Read", "Glob", "Grep", "Write"]
+    !allowedTools || allowedTools.length === 0
+      ? mode === "analyze"
+        ? ["Read", "Glob", "Grep", "Write"]
+        : mode === "chat"
+          ? ["Read", "Glob", "Grep"]
+          : allowedTools
       : allowedTools;
 
-  // Arij MCP tools ride the same allowlist — exact names, no wildcards, so
-  // they are auto-approved in every permission mode (plan included).
+  // Arij MCP tools ride the same allowlist — exact names, no wildcards.
+  // NOTE: plan mode still refuses mutating MCP tools regardless of the
+  // allowlist; a spawn that must use them needs "chat" (or code) mode.
   const mergedAllowedTools = mcp
     ? [...(effectiveAllowedTools ?? []), ...mcp.allowedToolNames]
     : effectiveAllowedTools;

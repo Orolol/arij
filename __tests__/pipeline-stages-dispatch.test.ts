@@ -87,7 +87,11 @@ vi.mock("@/lib/events/emit", () => ({
 
 vi.mock("@/lib/documents/mentions", () => ({
   enrichPromptWithDocumentMentions: vi.fn(
-    ({ prompt }: { prompt: string }) => ({ prompt })
+    ({ prompt }: { prompt: string }) => ({ prompt, missing: [] })
+  ),
+  userAuthoredTexts: vi.fn(
+    (entries: Array<{ author?: string | null; content?: string | null }>) =>
+      entries.filter((e) => e.author !== "agent").map((e) => e.content)
   ),
 }));
 
@@ -111,6 +115,7 @@ const {
   reviewComments,
   ticketComments,
   ticketActivityLog,
+  namedAgents,
 } = await import("@/lib/db/schema");
 const { processManager } = await import("@/lib/claude/process-manager");
 const { createPipelineStageDriver } = await import("@/lib/pipeline/stages");
@@ -535,6 +540,101 @@ describe("review stage dispatch", () => {
     expect(
       db.select().from(epics).where(eq(epics.id, epicId)).get()!.status
     ).toBe("review");
+  });
+
+  it("passes an explicit reviewNamedAgentId through to the review resolution", async () => {
+    const { projectId, epicId } = seed("review");
+    db.insert(namedAgents)
+      .values({
+        id: "named-reviewer",
+        name: `Codex Reviewer ${counter}`,
+        provider: "codex",
+        model: "gpt-5.4",
+      })
+      .onConflictDoNothing()
+      .run();
+    processManagerState.result = {
+      success: true,
+      result: claudeEnvelope("**Overall Verdict: Complete**"),
+      duration: 900,
+    };
+    // An explicitly picked named agent wins over reviewer segregation —
+    // the resolver's own precedence rule, exercised here end-to-end.
+    resolutionMocks.resolveAgentForDispatch.mockResolvedValueOnce({
+      provider: "codex",
+      namedAgentId: "named-reviewer",
+      name: "Codex Reviewer",
+      model: "gpt-5.4",
+    });
+
+    const driver = createPipelineStageDriver({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildNamedAgentId: null,
+      reviewNamedAgentId: "named-reviewer",
+    });
+    const handle = await driver.launchStage({
+      stage: "review",
+      attempt: 1,
+      fixCycle: 0,
+      previousAttemptSessionId: null,
+      lastCodeSessionId: null,
+    });
+
+    expect(resolutionMocks.resolveAgentForDispatch).toHaveBeenCalledWith(
+      "review_code",
+      projectId,
+      "named-reviewer",
+      { purpose: "review", projectId, epicId }
+    );
+
+    const row = db
+      .select()
+      .from(agentSessions)
+      .where(eq(agentSessions.id, handle.sessionId!))
+      .get()!;
+    expect(row).toMatchObject({
+      provider: "codex",
+      namedAgentId: "named-reviewer",
+      namedAgentName: "Codex Reviewer",
+      model: "gpt-5.4",
+    });
+
+    await handle.settled;
+  });
+
+  it("keeps segregation-friendly null resolution when reviewNamedAgentId is omitted", async () => {
+    const { projectId, epicId } = seed("review");
+    processManagerState.result = {
+      success: true,
+      result: claudeEnvelope("**Overall Verdict: Complete**"),
+      duration: 900,
+    };
+
+    const driver = createPipelineStageDriver({
+      projectId,
+      scope: "epic",
+      epicId,
+      userStoryId: null,
+      buildNamedAgentId: "build-agent",
+    });
+    const handle = await driver.launchStage({
+      stage: "review",
+      attempt: 1,
+      fixCycle: 0,
+      previousAttemptSessionId: null,
+      lastCodeSessionId: null,
+    });
+
+    expect(resolutionMocks.resolveAgentForDispatch).toHaveBeenCalledWith(
+      "review_code",
+      projectId,
+      null,
+      { purpose: "review", projectId, epicId }
+    );
+    await handle.settled;
   });
 
   it("reverts the ticket on a negative prose verdict and feeds the driver's prose fallback", async () => {

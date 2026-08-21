@@ -49,7 +49,12 @@ vi.mock("@/lib/activity-registry", () => ({
 vi.mock("@/lib/documents/mentions", () => ({
   enrichPromptWithDocumentMentions: vi.fn(({ prompt }: { prompt: string }) => ({
     prompt,
+    missing: [],
   })),
+  userAuthoredTexts: vi.fn(
+    (entries: Array<{ role?: string | null; content?: string | null }>) =>
+      entries.filter((e) => e.role !== "assistant").map((e) => e.content)
+  ),
   MentionResolutionError: class extends Error {},
 }));
 

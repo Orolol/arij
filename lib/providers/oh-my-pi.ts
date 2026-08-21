@@ -1,39 +1,58 @@
 /**
- * Oh My Pi provider — the `pi` CLI running the `oh-my-pi` orchestrator
- * extension (npm: oh-my-pi).
+ * Oh My Pi provider — wraps the `omp` CLI (github.com/can1357/oh-my-pi).
  *
- * oh-my-pi is not an agent CLI of its own: its `oh-my-pi` binary only does
- * doctor/init diagnostics. The agent is `pi` with the extension loaded, which
- * swaps pi's default system prompt for a multi-agent orchestrator prompt with
- * specialist sub-agents and skills.
+ * Oh My Pi started life as a pi extension, but has since become a standalone
+ * fork of pi: its own compiled `omp` binary, its own session store
+ * (~/.omp/agent), no `pi` install required. The `--mode json` event stream is
+ * unchanged from pi (verified live against omp 17.2.1: same
+ * `{"type":"session",…}` header, same message_start/message_end shapes), so
+ * event parsing, result extraction and failure detection are all inherited
+ * from PiProvider.
  *
- * CLI: pi --mode json [… pi options] -e oh-my-pi -p <PROMPT>
+ * CLI: omp --mode json [--tools <allowlist>] [--resume <ID>] [--model <M>] -p <PROMPT>
  *
- * `-e` loads the extension explicitly, so the provider works whether or not
- * the user ran `pi install oh-my-pi` — pi resolves npm extension sources on
- * demand (network needed the first time). Availability therefore reduces to
- * "is `pi` on PATH", the same check as the Pi provider.
+ * (omp's `-p` is a boolean `--print` flag with the prompt as a positional
+ * argument, so the argv shape happens to match pi's `-p <PROMPT>` exactly.)
  *
- * Everything else — argument shape, JSON event parsing, resume, failure
- * detection — is inherited from PiProvider.
+ * Divergences from pi, each overridden below:
+ * - binary: `omp`, not `pi` — no extension flag, the orchestrator IS the CLI
+ * - resume: `--resume <ID>` (omp has no `--session` flag); resuming re-emits
+ *   the session header with the SAME id, so the stored id stays stable
+ * - read-only tools: omp ships `glob` instead of pi's `find`/`ls`
  */
 
 import { PiProvider } from "./pi";
 import type { ProviderType } from "./types";
 
-/** npm source pi resolves the orchestrator extension from. */
-export const OH_MY_PI_EXTENSION_SOURCE = "oh-my-pi";
+/** omp built-ins that cannot modify the working tree. */
+export const OMP_READONLY_TOOLS = ["read", "grep", "glob"];
 
 export class OhMyPiProvider extends PiProvider {
   readonly type: ProviderType = "oh-my-pi";
 
-  protected extraArgs(): string[] {
-    return ["-e", OH_MY_PI_EXTENSION_SOURCE];
+  get binaryName(): string {
+    return "omp";
+  }
+
+  protected get cliDisplayName(): string {
+    return "Oh My Pi";
+  }
+
+  protected readonlyTools(): string[] {
+    return OMP_READONLY_TOOLS;
+  }
+
+  protected resumeArgs(cliSessionId: string): string[] {
+    return ["--resume", cliSessionId];
+  }
+
+  protected notAuthenticatedMessage(): string {
+    return "Oh My Pi is not authenticated. Run `omp` and use /login, or set the provider API key.";
   }
 
   protected buildSpawnErrorMessage(err: Error): string {
     return err.message.includes("ENOENT")
-      ? "Pi CLI not found — Oh My Pi runs on top of pi. Install it with: npm i -g @earendil-works/pi-coding-agent"
-      : `Failed to spawn Pi CLI: ${err.message}`;
+      ? "Oh My Pi CLI not found. Ensure `omp` is installed and on PATH (https://github.com/can1357/oh-my-pi)."
+      : `Failed to spawn Oh My Pi CLI: ${err.message}`;
   }
 }

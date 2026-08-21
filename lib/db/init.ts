@@ -54,6 +54,19 @@ const POST_BASELINE_COLUMN_MIGRATIONS: Array<{
   { folderMillis: 1786712100000, table: "agent_sessions", column: "total_cost_usd" },
   // 0026_agent_session_batch_run
   { folderMillis: 1786712300000, table: "agent_sessions", column: "batch_run_id" },
+  // 0028_project_clone_source (single transactional migration: the three
+  // columns are always present or absent together on real databases).
+  // Renumbered from 0027 when it collided with 0027_provider_usage_snapshots:
+  // the `when` timestamp is the migrator's identity, so it moved to a fresh
+  // slot too — a DB that already applied 0027_provider_usage_snapshots must
+  // still see this one as pending.
+  { folderMillis: 1786712500000, table: "projects", column: "clone_source" },
+  { folderMillis: 1786712500000, table: "projects", column: "git_remote_url" },
+  { folderMillis: 1786712500000, table: "projects", column: "default_branch" },
+  // 0030_chat_attachment_ownership (single transactional migration: the two
+  // columns are always present or absent together on real databases)
+  { folderMillis: 1786712700000, table: "chat_attachments", column: "project_id" },
+  { folderMillis: 1786712700000, table: "chat_attachments", column: "epic_id" },
 ];
 
 /** Default on-disk location of the drizzle migration files. */

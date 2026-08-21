@@ -33,8 +33,10 @@ export function useChat(projectId: string, conversationId: string | null) {
   const activeConvRef = useRef(conversationId);
   activeConvRef.current = conversationId;
 
-  // AbortController for the in-flight fetch so we can cancel on conversation switch.
+  // AbortController for the in-flight fetch, plus the conversation it belongs to
+  // so a send in another conversation never cancels it.
   const abortRef = useRef<AbortController | null>(null);
+  const abortOwnerRef = useRef<string | null>(null);
 
   // When the active conversation changes, reset transient UI state so the new
   // conversation starts with a clean slate (not blocked by the previous stream).
@@ -71,10 +73,15 @@ export function useChat(projectId: string, conversationId: string | null) {
       // Capture the conversation this send belongs to so we can guard state updates.
       const ownerConversationId = conversationId;
 
-      // Abort any previous in-flight stream for this hook instance.
-      abortRef.current?.abort();
+      // Abort the previous stream only when it belongs to the same conversation.
+      // Aborting across conversations makes the server cancel a generation the
+      // user never cancelled, and its reply is then never persisted.
+      if (abortOwnerRef.current === ownerConversationId) {
+        abortRef.current?.abort();
+      }
       const controller = new AbortController();
       abortRef.current = controller;
+      abortOwnerRef.current = ownerConversationId;
 
       // Helper: only update state if this conversation is still the active one.
       // This prevents a slow-finishing stream from clobbering the new conversation.
@@ -128,9 +135,10 @@ export function useChat(projectId: string, conversationId: string | null) {
           const { done, value } = await reader.read();
           if (done) break;
 
-          // If the user switched away, stop processing but let the server finish.
-          if (isStale()) break;
-
+          // Keep draining even when the user switched away: stopping here leaves
+          // the response unread, the server-side stream gets cancelled and the
+          // assistant reply is lost. Per-event `isStale()` guards below keep the
+          // other conversation's UI untouched.
           buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";

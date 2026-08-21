@@ -39,6 +39,9 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       status: "status",
       gitRepoPath: "git_repo_path",
       githubOwnerRepo: "github_owner_repo",
+      cloneSource: "clone_source",
+      gitRemoteUrl: "git_remote_url",
+      defaultBranch: "default_branch",
       spec: "spec",
       imported: "imported",
       ticketCounter: "ticket_counter",
@@ -135,6 +138,8 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
     columns: {
       id: "id",
       chatMessageId: "chat_message_id",
+      projectId: "project_id",
+      epicId: "epic_id",
       fileName: "file_name",
       filePath: "file_path",
       mimeType: "mime_type",
@@ -614,6 +619,9 @@ const NULLABLE: [string, string][] = [
   ["releases", "pushedAt"],
   ["gitSyncLog", "branch"],
   ["gitSyncLog", "detail"],
+  // A clone is logged before any project row exists — see migration
+  // 0029_git_sync_log_nullable_project.
+  ["gitSyncLog", "projectId"],
   ["githubIssues", "importedEpicId"],
   ["githubIssues", "importedAt"],
   ["agentSessions", "cliSessionId"],
@@ -1202,6 +1210,53 @@ describe("db schema: migrated database", () => {
       sqlite.prepare("DELETE FROM projects WHERE id = 'p1'").run();
 
       expect(sqlite.prepare("SELECT * FROM notifications").all()).toHaveLength(0);
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("accepts a project-less git_sync_log row (clone runs before the project exists)", () => {
+    const { sqlite } = createTestDb();
+    try {
+      sqlite
+        .prepare(
+          "INSERT INTO git_sync_log (id, project_id, operation, status, detail) VALUES ('g1', NULL, 'clone', 'success', '{\"reused\":false}')"
+        )
+        .run();
+
+      const rows = sqlite
+        .prepare("SELECT * FROM git_sync_log")
+        .all() as Record<string, unknown>[];
+      expect(rows).toHaveLength(1);
+      expect(rows[0].project_id).toBeNull();
+      expect(rows[0].operation).toBe("clone");
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("keeps the git_sync_log foreign key after the nullable rebuild", () => {
+    const { sqlite } = createTestDb();
+    try {
+      sqlite.prepare("INSERT INTO projects (id, name) VALUES ('p1', 'MyProject')").run();
+      sqlite
+        .prepare(
+          "INSERT INTO git_sync_log (id, project_id, operation, status) VALUES ('g1', 'p1', 'push', 'success')"
+        )
+        .run();
+
+      // A bogus project is still rejected...
+      expect(() =>
+        sqlite
+          .prepare(
+            "INSERT INTO git_sync_log (id, project_id, operation, status) VALUES ('g2', 'nope', 'push', 'success')"
+          )
+          .run()
+      ).toThrow(/FOREIGN KEY/i);
+
+      // ...and rows that do belong to a project still cascade.
+      sqlite.prepare("DELETE FROM projects WHERE id = 'p1'").run();
+      expect(sqlite.prepare("SELECT * FROM git_sync_log").all()).toHaveLength(0);
     } finally {
       sqlite.close();
     }

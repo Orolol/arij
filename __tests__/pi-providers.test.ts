@@ -1,11 +1,13 @@
 /**
  * Tests for the Pi and Oh My Pi providers.
  *
- * Both drive the same `pi` binary; Oh My Pi additionally loads the `oh-my-pi`
- * orchestrator extension. The interesting behavior is the `--mode json` event
- * stream: the final answer is the last assistant `message_end`, the session id
- * comes from the stream header, and a run that ended on a model error still
- * exits 0 — so success has to be downgraded from the stream, not the exit code.
+ * Pi drives the `pi` binary; Oh My Pi is a standalone fork with its own `omp`
+ * binary, a `--resume` flag instead of `--session`, and a different read-only
+ * tool set — but the same `--mode json` event stream. The interesting shared
+ * behavior is that stream: the final answer is the last assistant
+ * `message_end`, the session id comes from the stream header, and a run that
+ * ended on a model error still exits 0 — so success has to be downgraded from
+ * the stream, not the exit code.
  */
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
@@ -68,6 +70,9 @@ function createFakeChild() {
     },
     emitClose(code: number | null) {
       for (const fn of listeners.get("close") ?? []) fn(code);
+    },
+    emitError(err: Error) {
+      for (const fn of listeners.get("error") ?? []) fn(err);
     },
   };
 }
@@ -287,6 +292,11 @@ describe("PiProvider", () => {
       expect(findPiRunFailure(stdout)).toBe("Pi run was aborted.");
     });
 
+    it("labels fallback failure messages with the caller's CLI name", () => {
+      const stdout = assistantMessageEnd("", { stopReason: "aborted" });
+      expect(findPiRunFailure(stdout, "Oh My Pi")).toBe("Oh My Pi run was aborted.");
+    });
+
     it("ignores an error on an earlier turn that the run recovered from", () => {
       const stdout = [
         assistantMessageEnd("", { stopReason: "error", errorMessage: "blip" }),
@@ -353,24 +363,33 @@ describe("PiProvider", () => {
 describe("OhMyPiProvider", () => {
   const provider: BaseCliProvider = new OhMyPiProvider();
 
-  it("has type 'oh-my-pi' but runs the pi binary", () => {
+  it("has type 'oh-my-pi' and runs the standalone omp binary", () => {
     expect(provider.type).toBe("oh-my-pi");
-    expect(provider.binaryName).toBe("pi");
+    expect(provider.binaryName).toBe("omp");
   });
 
-  it("loads the oh-my-pi extension before the prompt", () => {
-    const args = provider.buildArgs(baseOptions());
-    expect(args).toContain("-e");
-    expect(args[args.indexOf("-e") + 1]).toBe("oh-my-pi");
-    expect(args.indexOf("-e")).toBeLessThan(args.indexOf("-p"));
+  it("does not load any extension — the orchestrator is the CLI itself", () => {
+    expect(provider.buildArgs(baseOptions())).not.toContain("-e");
   });
 
-  it("keeps the rest of the pi argument shape", () => {
-    const args = provider.buildArgs(baseOptions({ mode: "plan", model: "sonnet" }));
+  it("keeps pi's --mode json / -p argument shape", () => {
+    const args = provider.buildArgs(baseOptions({ model: "sonnet" }));
     expect(args.slice(0, 2)).toEqual(["--mode", "json"]);
-    expect(args[args.indexOf("--tools") + 1]).toBe("read,grep,find,ls");
     expect(args[args.indexOf("--model") + 1]).toBe("sonnet");
     expect(args.slice(-2)).toEqual(["-p", baseOptions().prompt]);
+  });
+
+  it("restricts to omp's read-only tools in plan mode (glob, not find/ls)", () => {
+    const args = provider.buildArgs(baseOptions({ mode: "plan" }));
+    expect(args[args.indexOf("--tools") + 1]).toBe("read,grep,glob");
+  });
+
+  it("resumes with --resume, not pi's --session", () => {
+    const args = provider.buildArgs(
+      baseOptions({ cliSessionId: SESSION_ID, resumeSession: true }),
+    );
+    expect(args[args.indexOf("--resume") + 1]).toBe(SESSION_ID);
+    expect(args).not.toContain("--session");
   });
 
   it("parses the pi event stream like the Pi provider", () => {
@@ -381,6 +400,18 @@ describe("OhMyPiProvider", () => {
 
     expect(provider.extractResult(stdout, "")).toBe("Orchestrated.");
     expect(provider.parseSessionId(stdout, "")).toBe(SESSION_ID);
+  });
+
+  it("shows the omp display command, and points a missing binary at omp", async () => {
+    const session = provider.spawn(baseOptions());
+    expect(session.command).toContain("omp --mode json");
+
+    fakeChild.emitError(new Error("spawn omp ENOENT"));
+
+    const result = await session.promise;
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("`omp`");
+    expect(result.error).not.toContain("pi-coding-agent");
   });
 });
 
@@ -424,7 +455,7 @@ describe("pi stream helpers", () => {
 // ---------------------------------------------------------------------------
 
 describe("Resume classification — Pi providers", () => {
-  it("treats pi and oh-my-pi as resumable (--session <ID>)", () => {
+  it("treats pi (--session) and oh-my-pi (--resume) as resumable", () => {
     expect(isResumableProvider("pi")).toBe(true);
     expect(isResumableProvider("oh-my-pi")).toBe(true);
   });

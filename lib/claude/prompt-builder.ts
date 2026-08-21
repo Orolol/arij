@@ -17,6 +17,7 @@ import {
   projectHeader,
   descriptionSection,
   projectContextSections,
+  ticketImagesSection,
 } from "./prompt-sections";
 import { getProjectMemoryContent } from "@/lib/documents/memory";
 import { PROJECT_MEMORY_MAX_CHARS } from "@/lib/documents/memory-constants";
@@ -57,6 +58,18 @@ export interface PromptEpic {
   title: string;
   description?: string | null;
   type?: string | null;
+  /**
+   * Owning project id — present when callers pass a full Drizzle epic row
+   * (every dispatch route does). Required to read `images`, whose stored
+   * paths are namespaced per project.
+   */
+  projectId?: string | null;
+  /**
+   * `epics.images` verbatim — a JSON array of upload paths written by the bug
+   * creation modal, or null. Left as `unknown` because the column is
+   * free-form text: the normaliser, not the type, decides what is usable.
+   */
+  images?: unknown;
 }
 
 export interface PromptUserStory {
@@ -555,7 +568,7 @@ Output the epic and user stories from the conversation above as a MACHINE-PARSEA
 
 Your ENTIRE response must be a single fenced JSON code block. Nothing else.
 
-\\\`\\\`\\\`json
+\`\`\`json
 {
   "title": "Epic title",
   "description": "Detailed epic description including implementation plan",
@@ -568,11 +581,12 @@ Your ENTIRE response must be a single fenced JSON code block. Nothing else.
   ],
   "dependencies": []
 }
-\\\`\\\`\\\`
+\`\`\`
 
 ABSOLUTE REQUIREMENTS:
-- The very first characters of your response MUST be \\\`\\\`\\\`json
-- The very last characters of your response MUST be \\\`\\\`\\\`
+- The very first characters of your response MUST be \`\`\`json
+- The very last characters of your response MUST be \`\`\`
+- Output EXACTLY ONE epic object. Never output an array, and never wrap it in an "epics" key — if the discussion covers several epics, pick the single most important one and fold the rest into its user stories.
 - Do NOT write any text before or after the JSON code block.
 - Do NOT say "The plan is ready", "Here's the epic", or any summary/preamble.
 - Do NOT ask for confirmation or approval — just output the JSON.
@@ -608,7 +622,13 @@ export function buildTitleGenerationPrompt(
  * The prompt includes the full project context, the target epic, and its
  * user stories with acceptance criteria.
  */
-export interface TeamEpic {
+/**
+ * Unlike the solo builders, which take a Drizzle epic row whole, a team epic is
+ * a hand-built projection — so it has to name every field it forwards.
+ * `projectId`/`images` are picked from `PromptEpic` rather than redeclared so a
+ * batch build cannot silently drop a bug's screenshots the way it once did.
+ */
+export interface TeamEpic extends Pick<PromptEpic, "projectId" | "images"> {
   title: string;
   description?: string | null;
   worktreePath: string;
@@ -651,6 +671,10 @@ export function buildTeamBuildPrompt(
     if (epic.description) {
       parts.push(`${epic.description.trim()}\n`);
     }
+
+    // Nested a level below `### Epic N` so the paths stay attached to the epic
+    // they belong to — the team lead is reading several tickets at once.
+    parts.push(ticketImagesSection(epic, { headingLevel: 4 }));
 
     parts.push(userStoriesSection(epic.userStories));
   }
@@ -716,6 +740,7 @@ export function buildBuildPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
 
   // User stories
   parts.push(userStoriesSection(userStories));
@@ -786,6 +811,8 @@ export function buildTicketBuildPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
+
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
 
   // Ticket details
   parts.push(`## Ticket to Implement\n`);
@@ -989,6 +1016,8 @@ export function buildReviewPrompt(
     parts.push(`${epic.description.trim()}\n`);
   }
 
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
+
   // Ticket details
   parts.push(`## Ticket Under Review\n`);
   parts.push(`### ${story.title}\n`);
@@ -1148,6 +1177,7 @@ export function buildEpicReviewPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
 
   // Skip user stories section for bug tickets (they have none)
   if (!isBug) {

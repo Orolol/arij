@@ -1,13 +1,24 @@
 import { z } from "zod";
 import { isAgentProvider } from "@/lib/agent-config/constants";
+import { MAX_TICKET_IMAGES } from "@/lib/uploads/image-attachments";
 
 // --- Project schemas ---
 
+/**
+ * Note what is *not* here: `cloneSource`.
+ *
+ * It is the flag that authorises Arij to delete a directory, so it is never
+ * accepted from a request on either route. The create route derives it from the
+ * clone marker on disk (`lib/git/clone-marker.ts`), and nothing can change it
+ * afterwards — a value a client can set is a request, not provenance.
+ */
 export const createProjectSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
   description: z.string().max(5000).nullish(),
   gitRepoPath: z.string().max(1000).nullish(),
   githubOwnerRepo: z.string().max(200).nullish(),
+  gitRemoteUrl: z.string().max(1000).nullish(),
+  defaultBranch: z.string().max(255).nullish(),
 });
 
 export const updateProjectSchema = z.object({
@@ -15,6 +26,7 @@ export const updateProjectSchema = z.object({
   description: z.string().max(5000).nullish(),
   gitRepoPath: z.string().max(1000).nullish(),
   githubOwnerRepo: z.string().max(200).nullish(),
+  defaultBranch: z.string().max(255).nullish(),
   status: z
     .enum(["ideation", "specifying", "building", "done", "archived"])
     .optional(),
@@ -25,12 +37,58 @@ export const importProjectSchema = z.object({
   path: z.string().min(1, "path is required"),
 });
 
+export const cloneProjectSchema = z.object({
+  /** URL, SSH remote or `owner/repo` shorthand — parsed server-side. */
+  url: z.string("url is required").min(1, "url is required").max(500),
+  /**
+   * Only set when re-cloning for a project that already exists, so the audit
+   * row can be attributed to it. A first-time clone leaves it unset and is
+   * logged as an unowned operation.
+   */
+  projectId: z.string().max(64).nullish(),
+});
+
+// --- Story field rules ---
+
+/**
+ * One set of caps for every path that writes a user story.
+ *
+ * Stories are created two ways — nested in `createEpicSchema` (manual form and
+ * chat both post the whole epic at once) or on their own via
+ * `/api/projects/:id/user-stories` — and edited through the story schemas
+ * below. While the nested input was uncapped the create route accepted a title
+ * the edit routes then refused, so the story landed in the database renamable
+ * only to a shorter title. Same numbers on every path means anything this route
+ * stores is something the edit routes still accept.
+ */
+const STORY_TITLE_MAX_LENGTH = 500;
+const STORY_TEXT_MAX_LENGTH = 10000;
+
+const STORY_TITLE_TOO_LONG = `User story title must be ${STORY_TITLE_MAX_LENGTH} characters or fewer`;
+const STORY_DESCRIPTION_TOO_LONG = `User story description must be ${STORY_TEXT_MAX_LENGTH} characters or fewer`;
+const STORY_CRITERIA_TOO_LONG = `User story acceptance criteria must be ${STORY_TEXT_MAX_LENGTH} characters or fewer`;
+
 // --- Epic schemas ---
 
+/**
+ * Nested story for `createEpicSchema`. Every field is trimmed *before* it is
+ * checked: `"   "` is a 400 for the whole request rather than a member the
+ * route drops on its way to a `201` — a success status that persisted only part
+ * of the array is data loss the caller never hears about — and the caps are
+ * measured on the value that actually gets stored.
+ */
 const userStoryInput = z.object({
-  title: z.string().min(1),
-  description: z.string().nullish(),
-  acceptanceCriteria: z.string().nullish(),
+  title: z
+    .string()
+    .trim()
+    .min(1, "User story title is required")
+    .max(STORY_TITLE_MAX_LENGTH, STORY_TITLE_TOO_LONG),
+  description: z.string().trim().max(STORY_TEXT_MAX_LENGTH, STORY_DESCRIPTION_TOO_LONG).nullish(),
+  acceptanceCriteria: z
+    .string()
+    .trim()
+    .max(STORY_TEXT_MAX_LENGTH, STORY_CRITERIA_TOO_LONG)
+    .nullish(),
 });
 
 const dependencyInput = z.object({
@@ -39,8 +97,11 @@ const dependencyInput = z.object({
 });
 
 export const createEpicSchema = z.object({
-  title: z.string().min(1, "Title is required").max(200),
-  description: z.string().max(10000).nullish(),
+  // Trimmed before both checks: `"   "` is not a title, and the caps are
+  // measured on the value that actually gets stored — which is also what the
+  // manual form measures client-side, so the two agree on the boundary.
+  title: z.string().trim().min(1, "Title is required").max(200),
+  description: z.string().trim().max(10000).nullish(),
   priority: z.number().int().min(0).max(3).optional(),
   status: z
     .enum(["backlog", "todo", "in_progress", "review", "done"])
@@ -53,6 +114,32 @@ export const createEpicSchema = z.object({
   images: z.array(z.string()).nullish(),
   userStories: z.array(userStoryInput).optional(),
   dependencies: z.array(dependencyInput).optional(),
+});
+
+/**
+ * `POST /api/projects/:id/bugs`.
+ *
+ * A bug is an epic row (`type = 'bug'`), so the caps are the epic's caps —
+ * anything this route stores has to stay editable through `updateEpicSchema`,
+ * and a title that only one of the two accepts is a ticket nobody can rename.
+ *
+ * `images` is checked for *shape* here only. Whether a path is an upload this
+ * project actually holds needs the database and the disk, so the route asks
+ * `lookupServableUpload` — a JSON array of strings is the most a schema can
+ * honestly promise.
+ */
+export const createBugSchema = z.object({
+  title: z.string().trim().min(1, "Title is required").max(200),
+  description: z.string().trim().max(10000).nullish(),
+  priority: z.number().int().min(0).max(3).optional(),
+  linkedEpicId: z.string().min(1).max(64).nullish(),
+  images: z
+    .array(z.string(), "images must be an array of upload paths")
+    .max(
+      MAX_TICKET_IMAGES,
+      `A bug may carry at most ${MAX_TICKET_IMAGES} screenshots`
+    )
+    .nullish(),
 });
 
 export const updateEpicSchema = z.object({
@@ -70,16 +157,16 @@ export const updateEpicSchema = z.object({
 
 export const createStorySchema = z.object({
   epicId: z.string().min(1, "epicId is required"),
-  title: z.string().min(1, "title is required").max(500),
-  description: z.string().max(10000).nullish(),
-  acceptanceCriteria: z.string().max(10000).nullish(),
+  title: z.string().min(1, "title is required").max(STORY_TITLE_MAX_LENGTH),
+  description: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
+  acceptanceCriteria: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
   status: z.enum(["todo", "in_progress", "review", "done"]).optional(),
 });
 
 export const updateStorySchema = z.object({
-  title: z.string().min(1).max(500).optional(),
-  description: z.string().max(10000).nullish(),
-  acceptanceCriteria: z.string().max(10000).nullish(),
+  title: z.string().min(1).max(STORY_TITLE_MAX_LENGTH).optional(),
+  description: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
+  acceptanceCriteria: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
   status: z.enum(["todo", "in_progress", "review", "done"]).optional(),
   position: z.number().int().min(0).optional(),
 });
@@ -87,9 +174,9 @@ export const updateStorySchema = z.object({
 // Bulk story PATCH uses `id` in the body
 export const updateStoryByIdSchema = z.object({
   id: z.string().min(1, "id is required"),
-  title: z.string().min(1).max(500).optional(),
-  description: z.string().max(10000).nullish(),
-  acceptanceCriteria: z.string().max(10000).nullish(),
+  title: z.string().min(1).max(STORY_TITLE_MAX_LENGTH).optional(),
+  description: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
+  acceptanceCriteria: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
   status: z.enum(["todo", "in_progress", "review", "done"]).optional(),
   position: z.number().int().min(0).optional(),
 });

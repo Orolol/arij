@@ -38,4 +38,21 @@ export function isEpicCreationConversationAgentType(type: string | null | undefi
   return normalizeConversationAgentType(type) === EPIC_CREATION_AGENT_TYPE;
 }
 
+/**
+ * Conversation types whose turns are strict prompt contracts: epic creation
+ * must answer with refinement/finalization output (finalization in strict
+ * JSON), and brainstorm is the structured spec flow. They may run in the
+ * OpenAI-compatible fast mode, but board tools would corrupt their output,
+ * so every tool surface — fast-mode board tools and the CLI chat tool
+ * channel — is gated off for them.
+ */
+export function isToolIneligibleConversationAgentType(
+  type: string | null | undefined
+): boolean {
+  return (
+    isEpicCreationConversationAgentType(type) ||
+    isBrainstormConversationAgentType(type)
+  );
+}
+
 

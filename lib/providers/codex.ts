@@ -60,13 +60,19 @@ interface CodexSpawnContext extends ProviderSpawnContext {
  */
 function buildCodexMcpOverrideArgs(mcp: McpSpawnConfig): string[] {
   const prefix = `mcp_servers.${mcp.serverName}`;
+  // All env keys ride the inline table (base URL, token, and the optional
+  // toolset selector) — JSON.stringify of each value is a valid TOML string.
+  const envTable = Object.entries(mcp.env)
+    .filter(([, value]) => value !== undefined)
+    .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
+    .join(",");
   return [
     "-c",
     `${prefix}.command=${JSON.stringify(mcp.command)}`,
     "-c",
     `${prefix}.args=${JSON.stringify(mcp.args)}`,
     "-c",
-    `${prefix}.env={ARIJ_BASE_URL=${JSON.stringify(mcp.env.ARIJ_BASE_URL)},ARIJ_MCP_TOKEN=${JSON.stringify(mcp.env.ARIJ_MCP_TOKEN)}}`,
+    `${prefix}.env={${envTable}}`,
   ];
 }
 

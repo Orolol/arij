@@ -62,8 +62,12 @@ describe("Document mentions", () => {
     expect(result.prompt).toContain("d2-ui-mock.png");
   });
 
-  it("throws clear error for unknown mentions", async () => {
-    const { enrichPromptWithDocumentMentions, MentionResolutionError } = await import(
+  /**
+   * Enrichment reports unknown mentions instead of throwing: a dangling
+   * document link must never refuse a build or a review.
+   */
+  it("reports unknown mentions instead of throwing, and keeps what resolved", async () => {
+    const { enrichPromptWithDocumentMentions } = await import(
       "@/lib/documents/mentions"
     );
 
@@ -78,12 +82,46 @@ describe("Document mentions", () => {
       },
     ]);
 
+    const result = enrichPromptWithDocumentMentions({
+      projectId: "proj-1",
+      prompt: "Implement",
+      textSources: ["Reference @README.md and @missing.md"],
+    });
+
+    expect(result.missing).toEqual(["missing.md"]);
+    expect(result.prompt).toContain("# Doc");
+  });
+
+  it("still throws from validateMentionsExist, the user-input guard", async () => {
+    const { validateMentionsExist, MentionResolutionError } = await import(
+      "@/lib/documents/mentions"
+    );
+
+    mockListProjectDocuments.mockReturnValue([]);
+
     expect(() =>
-      enrichPromptWithDocumentMentions({
+      validateMentionsExist({
         projectId: "proj-1",
-        prompt: "Implement",
         textSources: ["Reference @missing.md"],
       })
     ).toThrow(MentionResolutionError);
+  });
+
+  /**
+   * Agents write `@src/foo.ts` about the project's own codebase. Resolving
+   * those against Arij's Docs used to fail the whole build/review.
+   */
+  it("keeps only user-authored text as mention sources", async () => {
+    const { userAuthoredTexts } = await import("@/lib/documents/mentions");
+
+    expect(
+      userAuthoredTexts([
+        { author: "user", content: "see @spec.md" },
+        { author: "agent", content: "I updated @src/foo.ts" },
+        { role: "user", content: "and @notes.md" },
+        { role: "assistant", content: "check @lib/bar.ts" },
+        { content: "no author recorded" },
+      ])
+    ).toEqual(["see @spec.md", "and @notes.md", "no author recorded"]);
   });
 });

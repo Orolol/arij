@@ -7,6 +7,7 @@ import {
   ChevronDown,
   MessageSquare,
   Moon,
+  PencilLine,
   Plus,
   RefreshCw,
 } from "lucide-react";
@@ -18,6 +19,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -26,12 +28,14 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CockpitBar } from "@/components/layout/CockpitBar";
+import { ProjectSourceBadge } from "@/components/layout/ProjectSourceBadge";
 import { RepoStatusBar } from "@/components/layout/RepoStatusBar";
 
 interface ProjectSummary {
   gitRepoPath: string | null;
   githubOwnerRepo: string | null;
+  cloneSource: string | null;
+  gitRemoteUrl: string | null;
 }
 
 const TAB_CLASS =
@@ -50,6 +54,8 @@ export default function ProjectLayout({
   const [projectSummary, setProjectSummary] = useState<ProjectSummary>({
     gitRepoPath: null,
     githubOwnerRepo: null,
+    cloneSource: null,
+    gitRemoteUrl: null,
   });
   const [syncing, setSyncing] = useState(false);
 
@@ -62,6 +68,8 @@ export default function ProjectLayout({
           setProjectSummary({
             gitRepoPath: d.data.gitRepoPath ?? null,
             githubOwnerRepo: d.data.githubOwnerRepo ?? null,
+            cloneSource: d.data.cloneSource ?? null,
+            gitRemoteUrl: d.data.gitRemoteUrl ?? null,
           });
         }
       })
@@ -200,6 +208,12 @@ export default function ProjectLayout({
           </TooltipProvider>
         )}
 
+        <ProjectSourceBadge
+          gitRepoPath={projectSummary.gitRepoPath}
+          cloneSource={projectSummary.cloneSource}
+          gitRemoteUrl={projectSummary.gitRemoteUrl}
+        />
+
         <div className="ml-auto flex items-center gap-[8px]">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -212,15 +226,29 @@ export default function ProjectLayout({
                 New
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[168px]">
+            <DropdownMenuContent align="end" className="min-w-[228px]">
+              {/*
+                Two epic paths, named for what they cost: the form is instant
+                and agent-free, the chat is the brainstorming round-trip. The
+                manual entry comes first because it is the cheaper default.
+              */}
               <DropdownMenuItem
-                data-testid="header-new-epic"
+                data-testid="header-new-epic-manual"
+                onSelect={() => openBoardPanel("panel=new-epic-manual")}
+                className="text-[13px]"
+              >
+                <PencilLine className="w-[13px] h-[13px]" />
+                New Epic (manual)
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-testid="header-new-epic-chat"
                 onSelect={() => openBoardPanel("panel=new-epic")}
                 className="text-[13px]"
               >
-                <Plus className="w-[13px] h-[13px]" />
-                New Epic
+                <MessageSquare className="w-[13px] h-[13px]" />
+                New Epic (via chat)
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem
                 data-testid="header-new-bug"
                 onSelect={() => openBoardPanel("panel=new-bug")}
@@ -264,8 +292,6 @@ export default function ProjectLayout({
           setProjectSummary((prev) => ({ ...prev, githubOwnerRepo: ownerRepo }))
         }
       />
-
-      {isBoard && <CockpitBar projectId={projectId} />}
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 overflow-auto">{children}</div>

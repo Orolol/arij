@@ -178,11 +178,9 @@ describe("Project board — night run wiring", () => {
   it("no longer renders night-run chrome on the board itself", async () => {
     render(<KanbanPage />);
     await screen.findByTestId("board");
-    // Both affordances moved to the project chrome (header button + cockpit
-    // night cell); the page is reached by URL only.
+    // Starting a run lives in the project header; the board reaches the
+    // summary by URL only (`?nightRun=`). The durable list of past runs lives
+    // on the Sessions tab — see sessions-page-queued.test.tsx.
     expect(screen.queryByTestId("night-run-button")).not.toBeInTheDocument();
-    expect(
-      screen.queryByTestId("night-last-run-button")
-    ).not.toBeInTheDocument();
   });
 });

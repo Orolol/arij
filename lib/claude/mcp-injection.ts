@@ -17,8 +17,13 @@
  *      files, which would mean writing config into user worktrees.
  *   3. The session has an agent_sessions row (checked by the caller) — the
  *      row provides the project scope the token is bound to. Spawns without
- *      rows (generate-spec, import, chat streaming) get no injection by
- *      construction.
+ *      rows (generate-spec, import) get no injection by construction.
+ *
+ * CLI chat conversations are the one exception to the single wiring point:
+ * they have no agent_sessions row, so the chat stream route wires its own
+ * per-turn channel through lib/chat/cli-tool-channel.ts — same gates 1 and 2,
+ * project scope from the route params, and the "chat" toolset (board tools,
+ * no ask_question/submit_findings) instead of the agent toolset.
  */
 
 import fs from "fs";
@@ -42,7 +47,7 @@ export const ARIJ_MCP_SERVER_NAME = "arij";
 /** Path of the stdio shim, relative to the app root (the server's cwd). */
 export const ARIJ_MCP_SHIM_RELATIVE_PATH = ["bin", "arij-mcp.mjs"] as const;
 
-/** The five v1 tools, as exact allowlist entries (no wildcards). */
+/** The five v1 agent tools, as exact allowlist entries (no wildcards). */
 export const ARIJ_MCP_ALLOWED_TOOL_NAMES = [
   "mcp__arij__get_ticket",
   "mcp__arij__update_ticket_status",
@@ -50,6 +55,26 @@ export const ARIJ_MCP_ALLOWED_TOOL_NAMES = [
   "mcp__arij__ask_question",
   "mcp__arij__submit_findings",
 ] as const;
+
+/**
+ * The chat-toolset tools (CLI chat conversations), as exact allowlist
+ * entries. Mirrors the fast-mode board tools (lib/chat/board-tools.ts);
+ * ask_question/submit_findings are deliberately absent — nothing holds a
+ * chat turn, and chat tokens are rejected by those routes anyway.
+ */
+export const ARIJ_MCP_CHAT_ALLOWED_TOOL_NAMES = [
+  "mcp__arij__list_tickets",
+  "mcp__arij__get_ticket",
+  "mcp__arij__create_ticket",
+  "mcp__arij__update_ticket",
+  "mcp__arij__update_ticket_status",
+  "mcp__arij__post_comment",
+  "mcp__arij__get_agent_status",
+  "mcp__arij__start_build",
+] as const;
+
+/** Which shim toolset a spawn config selects (ARIJ_MCP_TOOLSET env). */
+export type ArijMcpToolset = "agent" | "chat";
 
 /**
  * Tolerant parse of the settings row value. Settings values are
@@ -100,8 +125,17 @@ export function providerSupportsMcp(provider: string): boolean {
  * `process.execPath` + app-root-relative shim path: sessions run with
  * cwd = worktree while the Next server's cwd is the app root (bin/arij.mjs
  * sets it), so the shim path must be absolute from the server's cwd.
+ *
+ * The default (agent) toolset keeps the config byte-identical to before
+ * toolsets existed: no ARIJ_MCP_TOOLSET key is emitted at all.
  */
-export function buildMcpSpawnConfig({ token }: { token: string }): McpSpawnConfig {
+export function buildMcpSpawnConfig({
+  token,
+  toolset = "agent",
+}: {
+  token: string;
+  toolset?: ArijMcpToolset;
+}): McpSpawnConfig {
   return {
     serverName: ARIJ_MCP_SERVER_NAME,
     command: process.execPath,
@@ -109,8 +143,12 @@ export function buildMcpSpawnConfig({ token }: { token: string }): McpSpawnConfi
     env: {
       ARIJ_BASE_URL: getAppBaseUrl(),
       ARIJ_MCP_TOKEN: token,
+      ...(toolset === "chat" ? { ARIJ_MCP_TOOLSET: "chat" as const } : {}),
     },
-    allowedToolNames: [...ARIJ_MCP_ALLOWED_TOOL_NAMES],
+    allowedToolNames:
+      toolset === "chat"
+        ? [...ARIJ_MCP_CHAT_ALLOWED_TOOL_NAMES]
+        : [...ARIJ_MCP_ALLOWED_TOOL_NAMES],
   };
 }
 

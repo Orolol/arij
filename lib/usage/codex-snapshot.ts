@@ -8,6 +8,7 @@ import {
   extractLatestRateLimitSnapshot,
   type ParsedRateLimitSnapshot,
 } from "@/lib/usage/codex-rate-limits";
+import type { CodexLiveQuota } from "@/lib/types/usage";
 
 /**
  * Filesystem side of the codex quota capture.
@@ -141,6 +142,59 @@ function storeSnapshot(
     .values(row)
     .onConflictDoUpdate({ target: providerUsageSnapshots.provider, set: row })
     .run();
+}
+
+/**
+ * Persist a LIVE app-server poll into the same snapshot row the rollout scan
+ * feeds, so the fallback chain stays single-source: after a restart (or if the
+ * codex CLI disappears) the freshest quota the UI can fall back to is whatever
+ * poll or rollout wrote last.
+ *
+ * `capturedAt` is Arij's wall clock — a live poll is "now", which is always >=
+ * any rollout file's provider event time, so the forward-only guard in
+ * `storeSnapshot` composes correctly (an old rollout can never clobber a live
+ * poll; a newer rollout scan after 2 minutes legitimately can... except it
+ * can't either, because rollout timestamps are past events). The snapshot
+ * columns keep single-limit semantics — the "codex" bucket (or buckets[0]) —
+ * which is all the fallback path renders; multi-bucket detail lives only in
+ * `rawJson`.
+ *
+ * Best-effort: a locked database logs one warning and returns. Never throws.
+ */
+export function storeCodexLiveSnapshot(
+  quota: CodexLiveQuota,
+  rawRateLimitsJson: string,
+): void {
+  try {
+    const bucket =
+      quota.buckets.find((entry) => entry.limitId === "codex") ??
+      quota.buckets[0];
+    if (!bucket) return; // parser guarantees >=1 bucket; belt and braces
+
+    storeSnapshot(
+      {
+        capturedAt: new Date().toISOString(),
+        planType: quota.planType,
+        primary: {
+          usedPercent: bucket.usedPercent,
+          windowMinutes: bucket.windowDurationMins,
+          resetsAt: bucket.resetsAtUnix,
+        },
+        secondary: bucket.secondary
+          ? {
+              usedPercent: bucket.secondary.usedPercent,
+              windowMinutes: bucket.secondary.windowDurationMins,
+              resetsAt: bucket.secondary.resetsAtUnix,
+            }
+          : null,
+        rawJson: rawRateLimitsJson,
+      },
+      // Provenance marker, not a path — the column is free text.
+      "live:codex-app-server",
+    );
+  } catch (error) {
+    console.warn("[usage] codex live snapshot store failed:", error);
+  }
 }
 
 /**

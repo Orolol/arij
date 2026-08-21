@@ -40,7 +40,8 @@ export async function GET(_request: NextRequest, { params }: Params) {
   const { worktreePath } = await createWorktree(
     project.gitRepoPath,
     epic.id,
-    epic.title
+    epic.title,
+    { defaultBranch: project.defaultBranch }
   );
 
   try {

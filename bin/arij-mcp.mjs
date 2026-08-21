@@ -8,6 +8,13 @@
  * network, timeout, non-2xx — surface as tool-level `isError` results, never
  * as protocol crashes.
  *
+ * Toolsets (ARIJ_MCP_TOOLSET): "agent" (default) is the ticket-scoped set for
+ * build/review sessions launched on a ticket. "chat" is the board-scoped set
+ * for CLI chat conversations — parity with the fast-mode board tools
+ * (lib/chat/board-tools.ts): no ask_question/submit_findings (nothing holds a
+ * chat turn), ticket_id always explicit (a chat token has no launch ticket).
+ * Only the active toolset's tools are listed AND callable.
+ *
  * Deliberate constraints:
  * - Low-level SDK API (Server + raw JSON Schema), NOT McpServer/registerTool:
  *   the SDK bundles zod@3 while the repo uses zod@4, and the low-level API
@@ -34,6 +41,8 @@ if (!baseUrl || !token) {
   process.exit(1);
 }
 
+const TOOLSET = process.env.ARIJ_MCP_TOOLSET === "chat" ? "chat" : "agent";
+
 const TICKET_ID_PROPERTY = {
   ticket_id: {
     type: "string",
@@ -43,7 +52,7 @@ const TICKET_ID_PROPERTY = {
   },
 };
 
-const TOOLS = [
+const AGENT_TOOLS = [
   {
     name: "get_ticket",
     description:
@@ -174,6 +183,179 @@ const TOOLS = [
   },
 ];
 
+/**
+ * Board-scoped toolset for CLI chat conversations. Mirrors the fast-mode
+ * board tools (lib/chat/board-tools.ts) name-for-name; each maps to the
+ * /api/mcp/<kebab-case> route like every other tool. Descriptions carry the
+ * usage guidance (referencing tickets by readable id, asking before builds)
+ * because chat prompts do not get an "Arij tools" prompt section.
+ */
+const CHAT_TICKET_ID_PROPERTY = {
+  ticket_id: {
+    type: "string",
+    minLength: 1,
+    description: 'Ticket id or readable id (e.g. "E-arij-042").',
+  },
+};
+
+const CHAT_TOOLS = [
+  {
+    name: "list_tickets",
+    description:
+      "List the tickets (epics) on this project's Arij kanban board: id, readable id, title, status column, type, priority and user-story progress. Use it to read the board before answering questions about it.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: {
+          type: "string",
+          enum: ["backlog", "todo", "in_progress", "review", "done", "released"],
+          description: "Only return tickets in this board column.",
+        },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_ticket",
+    description:
+      "Read one Arij ticket in full: description, user stories with acceptance criteria, comment thread and review findings.",
+    inputSchema: {
+      type: "object",
+      properties: { ...CHAT_TICKET_ID_PROPERTY },
+      required: ["ticket_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "create_ticket",
+    description:
+      "Create a new ticket (epic) on the Arij board, optionally with user stories. Returns the new ticket's ids.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: {
+          type: "string",
+          minLength: 1,
+          maxLength: 200,
+          description: "Short ticket title.",
+        },
+        description: { type: "string", description: "Markdown description." },
+        type: { type: "string", enum: ["feature", "bug"] },
+        priority: {
+          type: "integer",
+          minimum: 0,
+          maximum: 3,
+          description: "0=Low, 1=Medium, 2=High, 3=Critical.",
+        },
+        status: {
+          type: "string",
+          enum: ["backlog", "todo", "in_progress", "review", "done"],
+          description: "Starting column, defaults to backlog.",
+        },
+        user_stories: {
+          type: "array",
+          description: "Optional user stories to create with the ticket.",
+          items: {
+            type: "object",
+            properties: {
+              title: { type: "string", minLength: 1 },
+              description: { type: "string" },
+              acceptance_criteria: { type: "string" },
+            },
+            required: ["title"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["title"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "update_ticket",
+    description:
+      "Edit an Arij ticket's title, description or priority (not its status — use update_ticket_status for that).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...CHAT_TICKET_ID_PROPERTY,
+        title: { type: "string", minLength: 1 },
+        description: { type: "string" },
+        priority: { type: "integer", minimum: 0, maximum: 3 },
+      },
+      required: ["ticket_id"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "update_ticket_status",
+    description:
+      "Move an Arij ticket to another board column. Transitions are validated by the workflow engine (e.g. review→done needs an approved review), so an invalid move returns an explanatory error.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...CHAT_TICKET_ID_PROPERTY,
+        status: {
+          type: "string",
+          enum: ["backlog", "todo", "in_progress", "review", "done"],
+          description: "Target board column.",
+        },
+        reason: {
+          type: "string",
+          maxLength: 500,
+          description: "Optional short reason, shown in the activity log.",
+        },
+      },
+      required: ["ticket_id", "status"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "post_comment",
+    description:
+      "Post a comment on an Arij ticket's thread (attributed to the agent).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...CHAT_TICKET_ID_PROPERTY,
+        body: {
+          type: "string",
+          minLength: 1,
+          maxLength: 8000,
+          description: "Markdown comment body.",
+        },
+      },
+      required: ["ticket_id", "body"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "get_agent_status",
+    description:
+      "List the agent activity on this Arij project right now: running/queued build, review and merge sessions, plus live chat/spec/release activities.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "start_build",
+    description:
+      "Launch a coding agent on an Arij ticket (creates a git worktree and a build session). Only for buildable columns (backlog/todo/in_progress/review); fails if an agent is already working on the ticket. Ask the user before using this unless they clearly requested a build.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...CHAT_TICKET_ID_PROPERTY,
+        comment: {
+          type: "string",
+          description:
+            "Optional instruction passed to the build agent and posted as a comment.",
+        },
+      },
+      required: ["ticket_id"],
+      additionalProperties: false,
+    },
+  },
+];
+
+const TOOLS = TOOLSET === "chat" ? CHAT_TOOLS : AGENT_TOOLS;
 const TOOL_NAMES = new Set(TOOLS.map((tool) => tool.name));
 
 /** Wrap a message as a tool-level error result (never a protocol failure). */

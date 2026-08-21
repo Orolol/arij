@@ -10,6 +10,7 @@ import {
   AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY,
   DEFAULT_MAX_CONCURRENT_AGENTS,
   agentMaxConcurrentSettingKey,
+  isValidMaxConcurrent,
   parseMaxConcurrentSetting,
 } from "@/lib/agents/scheduler-constants";
 
@@ -33,10 +34,11 @@ import {
  * (resolve-merge, release notes, git pull): the user triggers one and
  * watches it. Only batch-style dispatch goes through the queue.
  *
- * Budget resolution per project (first hit wins, clamped to >= 1):
+ * Budget resolution per project (first hit wins; a stored 0 means unlimited):
  *   1. settings key `agent_max_concurrent:<projectId>`
  *   2. settings key `agent_max_concurrent` (global default)
- *   3. DEFAULT_MAX_CONCURRENT_AGENTS (3)
+ *   3. DEFAULT_MAX_CONCURRENT_AGENTS (unlimited — nothing queues until the
+ *      user sets an explicit cap)
  * The budget is re-read whenever a start decision is made, so setting
  * changes apply to the very next slot without a restart.
  *
@@ -135,7 +137,7 @@ export class AgentScheduler {
       throw new Error(`Session ${sessionId} is already scheduled`);
     }
 
-    // A budget below 1 is impossible (resolution clamps to >= 1), so an idle
+    // A budget below 1 is impossible (0 resolves to unlimited), so an idle
     // project always starts immediately — without paying a settings read.
     if (
       state.running.size === 0 ||
@@ -202,9 +204,7 @@ export class AgentScheduler {
   private effectiveLimit(projectId: string): number {
     try {
       const limit = this.getMaxConcurrent(projectId);
-      return Number.isInteger(limit) && limit >= 1
-        ? limit
-        : DEFAULT_MAX_CONCURRENT_AGENTS;
+      return isValidMaxConcurrent(limit) ? limit : DEFAULT_MAX_CONCURRENT_AGENTS;
     } catch (error) {
       console.error(
         `[agent-scheduler] Failed to resolve max concurrency for project ${projectId}; using default`,

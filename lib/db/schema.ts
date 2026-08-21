@@ -16,6 +16,11 @@ export const projects = sqliteTable("projects", {
   status: text("status").default("ideation"), // ideation | specifying | building | done | archived
   gitRepoPath: text("git_repo_path"),
   githubOwnerRepo: text("github_owner_repo"),
+  // "github" when Arij cloned the directory itself and therefore owns it;
+  // NULL for user-supplied paths, which Arij must never delete.
+  cloneSource: text("clone_source"),
+  gitRemoteUrl: text("git_remote_url"),
+  defaultBranch: text("default_branch"),
   spec: text("spec"),
   imported: integer("imported").default(0),
   ticketCounter: integer("ticket_counter").default(0), // shared sequence across epics+bugs
@@ -119,9 +124,20 @@ export const chatMessages = sqliteTable("chat_messages", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
+/**
+ * An uploaded file and, in the three owner columns, what keeps it alive.
+ *
+ * `chatMessageId` is set when the staged upload is sent as part of a chat
+ * message; `epicId` when it is filed as a bug's screenshot. Both NULL means
+ * the upload is still staged in a form nobody has submitted — the only state
+ * in which discarding it is allowed. `projectId` is set at upload time and
+ * outlives either claim, so deleting a project takes its files with it.
+ */
 export const chatAttachments = sqliteTable("chat_attachments", {
   id: text("id").primaryKey(),
   chatMessageId: text("chat_message_id").references(() => chatMessages.id, { onDelete: "cascade" }),
+  projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  epicId: text("epic_id").references(() => epics.id, { onDelete: "cascade" }),
   fileName: text("file_name").notNull(),
   filePath: text("file_path").notNull(),
   mimeType: text("mime_type").notNull(),
@@ -386,10 +402,13 @@ export const reviewComments = sqliteTable(
 
 export const gitSyncLog = sqliteTable("git_sync_log", {
   id: text("id").primaryKey(),
-  projectId: text("project_id")
-    .notNull()
-    .references(() => projects.id, { onDelete: "cascade" }),
-  operation: text("operation").notNull(), // push | pull | fetch | detect | tag_push | pr_create | pr_sync | release
+  // Nullable since 0029_git_sync_log_nullable_project: a clone is logged
+  // before the project row exists (POST /api/projects/clone runs ahead of
+  // POST /api/projects), and NOT NULL + FK made those rows un-insertable.
+  projectId: text("project_id").references(() => projects.id, {
+    onDelete: "cascade",
+  }),
+  operation: text("operation").notNull(), // clone | push | pull | fetch | detect | tag_push | pr_create | pr_sync | release
   branch: text("branch"),
   status: text("status").notNull(), // success | failure
   detail: text("detail"), // JSON payload for error info

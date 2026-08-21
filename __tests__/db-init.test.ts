@@ -246,6 +246,11 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN output_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN total_cost_usd");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN batch_run_id");
+      conn.exec("ALTER TABLE projects DROP COLUMN clone_source");
+      conn.exec("ALTER TABLE projects DROP COLUMN git_remote_url");
+      conn.exec("ALTER TABLE projects DROP COLUMN default_branch");
+      conn.exec("ALTER TABLE chat_attachments DROP COLUMN project_id");
+      conn.exec("ALTER TABLE chat_attachments DROP COLUMN epic_id");
     });
 
     withDb(file, (conn) => {
@@ -257,8 +262,48 @@ describe("initDb", () => {
       expect(columnNames(conn, "agent_sessions")).toContain("output_tokens");
       expect(columnNames(conn, "agent_sessions")).toContain("total_cost_usd");
       expect(columnNames(conn, "agent_sessions")).toContain("batch_run_id");
+      expect(columnNames(conn, "projects")).toContain("clone_source");
+      expect(columnNames(conn, "projects")).toContain("git_remote_url");
+      expect(columnNames(conn, "projects")).toContain("default_branch");
+      expect(columnNames(conn, "chat_attachments")).toContain("project_id");
+      expect(columnNames(conn, "chat_attachments")).toContain("epic_id");
       expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
       expectFullSchema(conn);
+    });
+  });
+
+  it("leaves git_sync_log.project_id nullable so pre-project clones can be audited", () => {
+    // A first-time import clones before the project row exists. 0029 rebuilds
+    // the table to allow that; the insert is the assertion, since a NOT NULL
+    // left in place would reject it.
+    const file = tempDbPath();
+
+    withDb(file, (conn) => {
+      initDb(conn);
+
+      expect(() =>
+        conn
+          .prepare(
+            `INSERT INTO git_sync_log (id, project_id, operation, status, detail)
+             VALUES (?, NULL, 'clone', 'success', ?)`
+          )
+          .run("log_1", JSON.stringify({ ownerRepo: "owner/repo" }))
+      ).not.toThrow();
+
+      const row = conn
+        .prepare("SELECT project_id, operation FROM git_sync_log WHERE id = ?")
+        .get("log_1") as { project_id: string | null; operation: string };
+
+      expect(row.project_id).toBeNull();
+      expect(row.operation).toBe("clone");
+
+      // The cascade to projects has to survive the rebuild.
+      const foreignKeys = conn
+        .prepare("PRAGMA foreign_key_list(git_sync_log)")
+        .all() as Array<{ table: string; on_delete: string }>;
+      expect(foreignKeys).toHaveLength(1);
+      expect(foreignKeys[0].table).toBe("projects");
+      expect(foreignKeys[0].on_delete.toUpperCase()).toBe("CASCADE");
     });
   });
 
@@ -266,8 +311,9 @@ describe("initDb", () => {
     const file = tempDbPath();
 
     // Simulate a bookkeeping-less database whose schema stops at 0023:
-    // outcome exists; the 0024 usage columns, the 0025 table, and the 0026
-    // batch_run_id column do not.
+    // outcome exists; the 0024 usage columns, the 0025 table, the 0026
+    // batch_run_id column, the 0028 clone columns and the 0030 attachment
+    // ownership columns do not.
     withDb(file, (conn) => {
       initDb(conn);
       conn.exec('DROP TABLE "__drizzle_migrations"');
@@ -275,18 +321,26 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN output_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN total_cost_usd");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN batch_run_id");
+      conn.exec("ALTER TABLE projects DROP COLUMN clone_source");
+      conn.exec("ALTER TABLE projects DROP COLUMN git_remote_url");
+      conn.exec("ALTER TABLE projects DROP COLUMN default_branch");
+      conn.exec("ALTER TABLE chat_attachments DROP COLUMN project_id");
+      conn.exec("ALTER TABLE chat_attachments DROP COLUMN epic_id");
       conn.exec("DROP TABLE ticket_read_cursors");
     });
 
     withDb(file, (conn) => {
       // 0023's ALTER must be stamped (outcome exists — re-running would
-      // throw) while 0024/0025/0026 actually run.
+      // throw) while 0024/0025/0026/0028 actually run.
       expect(() => initDb(conn)).not.toThrow();
 
       expect(columnNames(conn, "agent_sessions")).toContain("input_tokens");
       expect(columnNames(conn, "agent_sessions")).toContain("output_tokens");
       expect(columnNames(conn, "agent_sessions")).toContain("total_cost_usd");
       expect(columnNames(conn, "agent_sessions")).toContain("batch_run_id");
+      expect(columnNames(conn, "projects")).toContain("clone_source");
+      expect(columnNames(conn, "projects")).toContain("git_remote_url");
+      expect(columnNames(conn, "projects")).toContain("default_branch");
       expect(tableNames(conn)).toContain("ticket_read_cursors");
       expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
       expectFullSchema(conn);
@@ -310,6 +364,99 @@ describe("initDb", () => {
       expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
       expect(seedRows(conn)).toHaveLength(1);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Journal integrity
+// ---------------------------------------------------------------------------
+
+/**
+ * Drizzle's migrator keeps ONE high-water mark — the greatest `created_at` in
+ * `__drizzle_migrations` — and skips every journal entry at or below it. A
+ * migration inserted with a `when` below an already-applied one is therefore
+ * never applied, on any database that is already up to date, forever. These
+ * tests make that mistake fail in CI instead of in someone's data directory.
+ */
+describe("migration journal", () => {
+  const entries = journal.entries;
+
+  it("orders migrations by a strictly increasing `when`", () => {
+    const backdated = entries.filter(
+      (entry, index) => index > 0 && entry.when <= entries[index - 1].when
+    );
+
+    expect(
+      backdated.map((entry) => entry.tag),
+      "a migration must be appended with a `when` above every earlier one, never backdated"
+    ).toEqual([]);
+  });
+
+  it("gives every migration a unique tag, timestamp and file", () => {
+    expect(new Set(entries.map((entry) => entry.tag)).size).toBe(entries.length);
+    expect(new Set(entries.map((entry) => entry.when)).size).toBe(entries.length);
+
+    for (const entry of entries) {
+      expect(
+        fs.existsSync(path.join(MIGRATIONS_FOLDER, `${entry.tag}.sql`)),
+        `${entry.tag}.sql is referenced by the journal but missing on disk`
+      ).toBe(true);
+    }
+  });
+
+  it("re-applies the git_sync_log rebuild without losing rows", () => {
+    // That migration was renumbered (0027 -> 0028 -> 0029) after it had
+    // shipped on a branch, so an early database can legitimately run the
+    // rebuild twice.
+    const entry = entries.find(
+      (candidate) => candidate.tag === "0029_git_sync_log_nullable_project"
+    );
+    expect(entry).toBeDefined();
+
+    const file = tempDbPath();
+    withDb(file, (conn) => {
+      initDb(conn);
+      conn
+        .prepare(
+          "INSERT INTO git_sync_log (id, project_id, operation, status) VALUES ('g1', NULL, 'clone', 'success')"
+        )
+        .run();
+
+      // Drop this row and every later one so the migrator's high-water mark
+      // falls back below it, exactly as it does when the entry moves up the
+      // journal. The tail re-runs with it, so the columns 0030 adds have to go
+      // back too — an ADD COLUMN is not a no-op the second time.
+      conn
+        .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at >= ?')
+        .run(entry!.when);
+      conn.exec("ALTER TABLE chat_attachments DROP COLUMN project_id");
+      conn.exec("ALTER TABLE chat_attachments DROP COLUMN epic_id");
+
+      expect(() => initDb(conn)).not.toThrow();
+
+      expect(appliedMigrationTimestamps(conn)).toContain(entry!.when);
+      expect(
+        conn.prepare("SELECT id FROM git_sync_log").all()
+      ).toHaveLength(1);
+      // Still nullable afterwards.
+      expect(() =>
+        conn
+          .prepare(
+            "INSERT INTO git_sync_log (id, project_id, operation, status) VALUES ('g2', NULL, 'clone', 'success')"
+          )
+          .run()
+      ).not.toThrow();
+    });
+  });
+
+  it("keeps the journal and the migration files in step", () => {
+    const onDisk = fs
+      .readdirSync(MIGRATIONS_FOLDER)
+      .filter((name) => name.endsWith(".sql"))
+      .map((name) => name.replace(/\.sql$/, ""))
+      .sort();
+
+    expect(onDisk).toEqual(entries.map((entry) => entry.tag).sort());
   });
 });
 

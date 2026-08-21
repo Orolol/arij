@@ -31,6 +31,17 @@ const EXPECTED_TOOL_NAMES = [
   "submit_findings",
 ];
 
+const EXPECTED_CHAT_TOOL_NAMES = [
+  "list_tickets",
+  "get_ticket",
+  "create_ticket",
+  "update_ticket",
+  "update_ticket_status",
+  "post_comment",
+  "get_agent_status",
+  "start_build",
+];
+
 interface CapturedRequest {
   method: string | undefined;
   url: string | undefined;
@@ -354,6 +365,14 @@ describe("tools/call → HTTP bridge", () => {
     expect(capturedRequests).toHaveLength(0);
   });
 
+  it("rejects chat-toolset tools without the env var (default = agent toolset)", async () => {
+    const result = await client.callTool("list_tickets", {});
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("UNKNOWN_TOOL");
+    expect(capturedRequests).toHaveLength(0);
+  });
+
   it("turns connection failures into isError results, not protocol crashes", async () => {
     const isolated = new McpStdioClient({
       ...process.env,
@@ -374,4 +393,111 @@ describe("tools/call → HTTP bridge", () => {
       isolated.kill();
     }
   }, 20000);
+});
+
+/* ------------------------------------------------------------------ */
+/* Chat toolset (ARIJ_MCP_TOOLSET=chat)                                */
+/* ------------------------------------------------------------------ */
+
+describe("chat toolset (ARIJ_MCP_TOOLSET=chat)", () => {
+  let chatClient: McpStdioClient;
+
+  beforeAll(async () => {
+    chatClient = new McpStdioClient({
+      ...process.env,
+      ARIJ_BASE_URL: baseUrl,
+      ARIJ_MCP_TOKEN: "test-token",
+      ARIJ_MCP_TOOLSET: "chat",
+    });
+    await chatClient.initialize();
+  }, 20000);
+
+  afterAll(() => {
+    chatClient?.kill();
+  });
+
+  it("declares exactly the eight board tools, in order, with schemas", async () => {
+    const result = await chatClient.request("tools/list", {});
+
+    expect(result.tools.map((tool: { name: string }) => tool.name)).toEqual(
+      EXPECTED_CHAT_TOOL_NAMES
+    );
+    for (const tool of result.tools) {
+      expect(tool.description.length).toBeGreaterThan(20);
+      expect(tool.inputSchema.type).toBe("object");
+      expect(tool.inputSchema.additionalProperties).toBe(false);
+    }
+  });
+
+  it("requires an explicit ticket_id on every ticket-scoped tool", async () => {
+    const result = await chatClient.request("tools/list", {});
+    const byName = new Map<string, any>(
+      result.tools.map((tool: any) => [tool.name, tool])
+    );
+
+    for (const name of [
+      "get_ticket",
+      "update_ticket",
+      "update_ticket_status",
+      "post_comment",
+      "start_build",
+    ]) {
+      const tool = byName.get(name);
+      expect(tool.inputSchema.required).toContain("ticket_id");
+      // no "defaults to the launch ticket" wording — chat has no launch ticket
+      expect(tool.inputSchema.properties.ticket_id.description).not.toContain(
+        "Defaults"
+      );
+    }
+
+    const updateStatus = byName.get("update_ticket_status");
+    expect(updateStatus.inputSchema.properties.status.enum).toEqual([
+      "backlog",
+      "todo",
+      "in_progress",
+      "review",
+      "done",
+    ]); // "released" stays system-only in chat too
+  });
+
+  it("bridges get_agent_status to POST /api/mcp/get-agent-status", async () => {
+    nextResponse = { status: 200, body: { data: { count: 0, activities: [] } } };
+
+    const result = await chatClient.callTool("get_agent_status", {});
+
+    expect(result.isError).toBeFalsy();
+    expect(JSON.parse(result.content[0].text)).toEqual({ count: 0, activities: [] });
+    expect(capturedRequests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/mcp/get-agent-status",
+      authorization: "Bearer test-token",
+      body: {},
+    });
+  });
+
+  it("forwards start_build args verbatim to /api/mcp/start-build", async () => {
+    nextResponse = {
+      status: 200,
+      body: { data: { started: { ticket: "E-arij-042", session_id: "s1" } } },
+    };
+
+    await chatClient.callTool("start_build", {
+      ticket_id: "E-arij-042",
+      comment: "Focus on the API layer",
+    });
+
+    expect(capturedRequests[0]).toMatchObject({
+      url: "/api/mcp/start-build",
+      body: { ticket_id: "E-arij-042", comment: "Focus on the API layer" },
+    });
+  });
+
+  it("rejects agent-only tools without calling the backend", async () => {
+    for (const name of ["ask_question", "submit_findings"]) {
+      const result = await chatClient.callTool(name, {});
+      expect(result.isError).toBe(true);
+      expect(result.content[0].text).toContain("UNKNOWN_TOOL");
+    }
+    expect(capturedRequests).toHaveLength(0);
+  });
 });
