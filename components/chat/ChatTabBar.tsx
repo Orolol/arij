@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Loader2, MessageSquare, Plus, Sparkles, X } from "lucide-react";
+import { Loader2, MessageCircle, MessageSquare, Plus, Sparkles, X } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,7 +9,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { Conversation } from "@/hooks/useConversations";
-import { isEpicCreationConversationAgentType } from "@/lib/chat/conversation-agent";
+import {
+  CHAT_AGENT_TYPE,
+  isEpicCreationConversationAgentType,
+} from "@/lib/chat/conversation-agent";
 import {
   isLegacyConversationGenerating,
   resolveLegacyConversationLabel,
@@ -63,7 +66,9 @@ export function ChatTabBar({
             data-agent-type={
               isEpicCreationConversationAgentType(conversation.type)
                 ? "epic_creation"
-                : "brainstorm"
+                : conversation.type === CHAT_AGENT_TYPE
+                  ? "chat"
+                  : "brainstorm"
             }
             onClick={() => onSelectTab(conversation.id)}
             className={cn(
@@ -110,6 +115,13 @@ export function ChatTabBar({
           </button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start">
+          <DropdownMenuItem
+            data-testid="new-tab-chat"
+            onClick={() => onCreateTab({ type: "chat", label: "Chat" })}
+          >
+            <MessageCircle className="mr-2 h-4 w-4" />
+            Chat
+          </DropdownMenuItem>
           <DropdownMenuItem
             data-testid="new-tab-brainstorm"
             onClick={() => onCreateTab({ type: "brainstorm", label: "Brainstorm" })}

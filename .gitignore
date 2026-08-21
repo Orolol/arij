@@ -23,6 +23,11 @@
 # production
 /build
 
+# app-managed clone root (POST /api/projects/clone). Clones land in
+# /projects/<owner>-<repo> and their worktrees in /projects/.arij-worktrees,
+# so one entry covers both — keeps this repo clean when dogfooding Arij.
+/projects
+
 # misc
 .DS_Store
 *.pem
@@ -50,9 +55,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# app-managed clone root (lib/projects/workspace.ts). Holds repositories Arij
-# cloned plus the .arij-worktrees they get worktrees in, so dogfooding Arij on
-# its own checkout never pollutes this repo. Anchored: app/projects and
-# lib/projects stay tracked.
-/projects

@@ -10,7 +10,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_PROJECTS_DIRNAME,
+  DEFAULT_PROJECTS_ROOT_DIRNAME,
   PROJECTS_ROOT_SETTING_KEY,
 } from "@/lib/projects/workspace-constants";
 
@@ -39,10 +39,11 @@ describe("README — importing from GitHub", () => {
   it("says where the code will land, and how to change it", () => {
     expect(readme).toContain(PROJECTS_ROOT_SETTING_KEY);
     expect(readme).toMatch(
-      new RegExp(`<arij>/${DEFAULT_PROJECTS_DIRNAME}`)
+      new RegExp(`<arij>/${DEFAULT_PROJECTS_ROOT_DIRNAME}`)
     );
     expect(readme).toMatch(/<projects root>\/<owner>-<repo>/);
-    expect(readme).toMatch(/relative one is resolved against/i);
+    // A relative override would move with the server's cwd, so it is refused.
+    expect(readme).toMatch(/relative one.*refused/is);
   });
 
   it("states that private repositories need the PAT from Settings", () => {
@@ -115,8 +116,8 @@ describe("docs/architecture/github-import.md", () => {
   });
 
   it("names both migrations that ship with the feature", () => {
-    expect(importDoc).toContain("0027_project_clone_source");
-    expect(importDoc).toContain("0028_git_sync_log_nullable_project");
+    expect(importDoc).toContain("0028_project_clone_source");
+    expect(importDoc).toContain("0029_git_sync_log_nullable_project");
   });
 
   it("points at the test files, and each one exists", () => {

@@ -6,15 +6,19 @@
 
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { DEFAULT_PROJECTS_DIRNAME } from "@/lib/projects/workspace-constants";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_PROJECTS_ROOT_DIRNAME } from "@/lib/projects/workspace-constants";
 
 const REPO_ROOT = process.cwd();
 const CLONE_DIRNAME = "owner-repo";
+const REAL_GITIGNORE = fs.readFileSync(path.join(REPO_ROOT, ".gitignore"), "utf-8");
+
+let testRepoDir: string;
 
 function git(args: string[]): string {
-  return execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf-8" });
+  return execFileSync("git", args, { cwd: testRepoDir, encoding: "utf-8" });
 }
 
 /** `git check-ignore -v <p>`; null when the path is not ignored (exit 1). */
@@ -26,23 +30,28 @@ function checkIgnore(relativePath: string): string | null {
   }
 }
 
-const created: string[] = [];
+beforeEach(() => {
+  testRepoDir = fs.mkdtempSync(path.join(os.tmpdir(), "arij-gitignore-test-"));
+  execFileSync("git", ["init"], { cwd: testRepoDir, encoding: "utf-8" });
+  fs.writeFileSync(path.join(testRepoDir, ".gitignore"), REAL_GITIGNORE);
+  fs.mkdirSync(path.join(testRepoDir, "app", "projects"), { recursive: true });
+  fs.writeFileSync(path.join(testRepoDir, "app", "projects", "page.tsx"), "// page\n");
+  fs.mkdirSync(path.join(testRepoDir, "lib", "projects"), { recursive: true });
+  fs.writeFileSync(path.join(testRepoDir, "lib", "projects", "workspace.ts"), "// workspace\n");
+});
 
 afterEach(() => {
-  while (created.length > 0) {
-    fs.rmSync(created.pop() as string, { recursive: true, force: true });
+  if (testRepoDir && fs.existsSync(testRepoDir)) {
+    fs.rmSync(testRepoDir, { recursive: true, force: true });
   }
 });
 
-/** Materializes `<repo>/projects/...` and returns the absolute root path. */
+/** Materializes `<testRepoDir>/projects/...` and returns the absolute root path. */
 function materialize(...segments: string[]): string {
-  const root = path.join(REPO_ROOT, DEFAULT_PROJECTS_DIRNAME);
-  const alreadyThere = fs.existsSync(root);
+  const root = path.join(testRepoDir, DEFAULT_PROJECTS_ROOT_DIRNAME);
   const target = path.join(root, ...segments);
   fs.mkdirSync(target, { recursive: true });
   fs.writeFileSync(path.join(target, "README.md"), "# clone\n");
-  // Only remove the root if this test created it.
-  if (!alreadyThere) created.push(root);
   return root;
 }
 
@@ -52,20 +61,18 @@ function statusUnderProjectsRoot(): string[] {
     .split("\n")
     .map((line) => line.slice(3).trim())
     .filter((entry) =>
-      entry === `${DEFAULT_PROJECTS_DIRNAME}/` ||
-      entry.startsWith(`${DEFAULT_PROJECTS_DIRNAME}/`)
+      entry === `${DEFAULT_PROJECTS_ROOT_DIRNAME}/` ||
+      entry.startsWith(`${DEFAULT_PROJECTS_ROOT_DIRNAME}/`)
     );
 }
 
 describe(".gitignore — app-managed clone root", () => {
   it("contains the anchored /projects rule", () => {
-    const gitignore = fs.readFileSync(path.join(REPO_ROOT, ".gitignore"), "utf-8");
-
-    expect(gitignore.split("\n").map((l) => l.trim())).toContain("/projects");
+    expect(REAL_GITIGNORE.split("\n").map((l) => l.trim())).toContain("/projects");
   });
 
   it("ignores a clone destination", () => {
-    expect(checkIgnore(`${DEFAULT_PROJECTS_DIRNAME}/${CLONE_DIRNAME}`)).toContain(
+    expect(checkIgnore(`${DEFAULT_PROJECTS_ROOT_DIRNAME}/${CLONE_DIRNAME}`)).toContain(
       "/projects"
     );
   });
@@ -75,17 +82,17 @@ describe(".gitignore — app-managed clone root", () => {
     // ".arij-worktrees") — for a clone at <root>/<owner>-<repo> that is
     // <root>/.arij-worktrees, covered by the same rule.
     const clonePath = path.join(
-      REPO_ROOT,
-      DEFAULT_PROJECTS_DIRNAME,
+      testRepoDir,
+      DEFAULT_PROJECTS_ROOT_DIRNAME,
       CLONE_DIRNAME
     );
     const worktreeBase = path.join(clonePath, "..", ".arij-worktrees");
 
     expect(path.resolve(worktreeBase)).toBe(
-      path.join(REPO_ROOT, DEFAULT_PROJECTS_DIRNAME, ".arij-worktrees")
+      path.join(testRepoDir, DEFAULT_PROJECTS_ROOT_DIRNAME, ".arij-worktrees")
     );
     expect(
-      checkIgnore(path.relative(REPO_ROOT, path.join(worktreeBase, "epic-branch")))
+      checkIgnore(path.relative(testRepoDir, path.join(worktreeBase, "epic-branch")))
     ).toContain("/projects");
   });
 

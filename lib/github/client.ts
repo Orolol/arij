@@ -78,6 +78,13 @@ export async function validateGitHubToken(token: string): Promise<{
   valid: boolean;
   login?: string;
   error?: string;
+  /**
+   * HTTP status GitHub answered with, when it answered at all. Absent for a
+   * network failure — callers that must distinguish "GitHub rejected this
+   * token" from "GitHub could not be reached" (POST /api/projects/clone) key
+   * off 401 rather than off `valid` alone.
+   */
+  status?: number;
 }> {
   const cleanToken = token.trim();
   if (!cleanToken) {
@@ -94,6 +101,7 @@ export async function validateGitHubToken(token: string): Promise<{
     return {
       valid: true,
       login: response.data.login,
+      status: response.status,
     };
   } catch (error) {
     if (typeof error === "object" && error && "status" in error) {
@@ -102,6 +110,7 @@ export async function validateGitHubToken(token: string): Promise<{
         return {
           valid: false,
           error: "GitHub rejected the token. Verify it and try again.",
+          status,
         };
       }
       if (status === 403) {
@@ -109,6 +118,7 @@ export async function validateGitHubToken(token: string): Promise<{
           valid: false,
           error:
             "GitHub denied access for this token. Check token scopes and account access.",
+          status,
         };
       }
     }

@@ -10,8 +10,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { ticketComments } from "@/lib/db/schema";
+import { agentSessions, ticketComments } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 import { isErrorResponse } from "@/lib/api/route-helpers";
 import { validateBody } from "@/lib/validation/validate";
@@ -36,6 +37,15 @@ export async function POST(request: NextRequest) {
   if (isErrorResponse(found)) return found;
   const { epic } = found;
 
+  // Link the comment to the spawning session only when an agent_sessions
+  // row exists: chat turns (fast-mode board tools, CLI chat toolset) mint
+  // tokens without one, and the agentSessionId FK would reject their id.
+  const sessionRow = db
+    .select({ id: agentSessions.id })
+    .from(agentSessions)
+    .where(eq(agentSessions.id, auth.sessionId))
+    .get();
+
   const commentId = createId();
   db.insert(ticketComments)
     .values({
@@ -43,7 +53,7 @@ export async function POST(request: NextRequest) {
       epicId: epic.id,
       author: "agent",
       content: body.body,
-      agentSessionId: auth.sessionId,
+      agentSessionId: sessionRow?.id ?? null,
       createdAt: new Date().toISOString(),
     })
     .run();

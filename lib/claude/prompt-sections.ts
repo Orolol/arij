@@ -6,6 +6,8 @@
  * `prompt-builder.ts`.
  */
 
+import { ticketImageAbsolutePaths } from "@/lib/uploads/ticket-image-paths";
+
 import type {
   PromptDocument,
   PromptEpic,
@@ -89,6 +91,56 @@ export function memorySection(memory: string | null | undefined): string {
   return section(PROJECT_MEMORY_HEADING, memory);
 }
 
+/** Heading under which a ticket's attached screenshots are listed. */
+export const TICKET_IMAGES_HEADING = "Attached Screenshots";
+
+/**
+ * The screenshots attached to a ticket, as absolute paths the agent can read.
+ *
+ * A bug reported with a screenshot is usually *only* describable by that
+ * screenshot, so the paths go in the prompt body rather than being left for
+ * the agent to discover. They are absolute on purpose: the agent's cwd is a
+ * worktree of the user's project, while the uploads live under Arij's own
+ * directory — a relative path would silently resolve to nothing.
+ *
+ * Empty string when the ticket has no usable image, so a ticket without a
+ * screenshot produces a prompt byte-identical to before this section existed.
+ * Because this is plain prompt text, every CLI provider gets the same thing.
+ *
+ * `headingLevel` is required rather than defaulted because no level is right
+ * everywhere and the wrong one fails silently: the paths belong *inside* the
+ * block describing the ticket they were attached to, and each builder nests
+ * that block differently. `## Epic to Implement`, `## Epic Context` and
+ * `## Bug Under Review` hold their parts at `###`, so the paths go at `###`
+ * too — an `##` would close the block and adopt whatever `###` follows it,
+ * which is how `### User Stories` ends up reading as part of the screenshots.
+ * The team build lists each ticket as `### Epic N` and goes one deeper again:
+ * with N tickets in one prompt, paths that drift out of their epic send the
+ * wrong sub-agent looking at them.
+ */
+export function ticketImagesSection(
+  epic: PromptEpic,
+  options: { headingLevel: number },
+): string {
+  if (!epic.projectId) return "";
+
+  const paths = ticketImageAbsolutePaths(epic.images, epic.projectId);
+  if (paths.length === 0) return "";
+
+  const { headingLevel } = options;
+  const noun = paths.length === 1 ? "screenshot" : "screenshots";
+  const lines = paths.map((absolutePath) => `- ${absolutePath}`).join("\n");
+
+  return `${"#".repeat(headingLevel)} ${TICKET_IMAGES_HEADING}
+
+The reporter attached ${paths.length} ${noun} to this ticket, showing what was actually observed. Read ${
+    paths.length === 1 ? "it" : "them"
+  } from disk — these are absolute paths on this machine, outside the repository you are working in:
+
+${lines}
+`;
+}
+
 // ---------------------------------------------------------------------------
 // Composite helpers
 // ---------------------------------------------------------------------------
@@ -125,7 +177,10 @@ export function projectContextSections(
  * section is appended centrally by processManager.start() — and only when
  * MCP injection is active for that spawn — so prompts stay byte-identical
  * when the toggle is off, for unsupported providers, and for direct
- * spawnClaude call sites (generate-spec, import, chat) that never inject.
+ * spawnClaude call sites (generate-spec, import) that never inject. CLI
+ * chat turns (lib/chat/cli-tool-channel.ts) get no prompt section either:
+ * the chat toolset's tool descriptions carry their own usage guidance, so
+ * chat prompts stay byte-identical with and without the channel.
  *
  * Review agents (agentType `review_*`) get an extra sentence pointing at
  * submit_findings while keeping the prose "**Overall Verdict: …**" line the

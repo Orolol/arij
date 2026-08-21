@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import simpleGit from "simple-git";
-import { resolveRemoteDefaultBranch } from "./remote";
+import { resolveBaseBranch } from "./base-branch";
 
 export interface ReleaseBranchResult {
   releaseBranch: string;
@@ -9,36 +9,20 @@ export interface ReleaseBranchResult {
   commitHash: string | null;
 }
 
-/**
- * `origin/HEAD` first — a repository whose default is `trunk` or `develop` is
- * not served by the main/master convention — then the convention, then
- * whatever branch exists. The remote's answer only counts when the branch is
- * present locally, since that is what gets checked out.
- */
-async function pickBaseBranch(
-  repoPath: string,
-  branches: string[]
-): Promise<string> {
-  const remoteDefault = await resolveRemoteDefaultBranch(repoPath);
-  if (remoteDefault && branches.includes(remoteDefault)) return remoteDefault;
-
-  if (branches.includes("main")) return "main";
-  if (branches.includes("master")) return "master";
-  if (branches.length > 0) return branches[0];
-  throw new Error("No local branches found in repository.");
-}
-
 export async function createReleaseBranchAndCommitChangelog(
   repoPath: string,
   version: string,
-  changelog: string
+  changelog: string,
+  options: { defaultBranch?: string | null } = {}
 ): Promise<ReleaseBranchResult> {
   const git = simpleGit(repoPath);
   const releaseBranch = `release/v${version}`;
 
   const branchSummary = await git.branchLocal();
   const originalBranch = branchSummary.current;
-  const baseBranch = await pickBaseBranch(repoPath, branchSummary.all);
+  const baseBranch = await resolveBaseBranch(git, branchSummary.all, {
+    preferred: options.defaultBranch,
+  });
 
   try {
     const branchExists = branchSummary.all.includes(releaseBranch);

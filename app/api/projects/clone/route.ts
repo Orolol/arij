@@ -1,167 +1,158 @@
 import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import { settings } from "@/lib/db/schema";
+import { projects } from "@/lib/db/schema";
+import { eq } from "drizzle-orm";
 import {
-  CloneError,
-  cloneRepository,
-  redactGitError,
-  type CloneErrorCode,
+  CloneConflictError,
+  CloneFailedError,
+  cloneGitHubRepository,
 } from "@/lib/git/clone";
-import {
-  CLONE_TIMEOUT_SETTING_KEY,
-  DEFAULT_CLONE_TIMEOUT_MS,
-  parseCloneTimeoutSetting,
-} from "@/lib/git/clone-constants";
 import { parseGitHubRepoInput } from "@/lib/git/remote";
+import { redactedErrorMessage } from "@/lib/git/redact";
 import { getGitHubTokenFromSettings } from "@/lib/github/client";
-import { writeGitSyncLog } from "@/lib/github/sync-log";
-import { cloneDestinationFor, ensureProjectsRoot } from "@/lib/projects/workspace";
+import { logSyncOperation } from "@/lib/github/sync-log";
+import {
+  ensureProjectsRoot,
+  resolveCloneDestination,
+  resolveProjectsRoot,
+} from "@/lib/projects/workspace";
 import { cloneProjectSchema } from "@/lib/validation/schemas";
-import { isValidationError, validateBody } from "@/lib/validation/validate";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
 
 /**
- * POST /api/projects/clone
+ * Clone a GitHub repository into the app-managed workspace.
  *
- * Clones a GitHub repository into `<projects_root>/<owner>-<repo>` and hands
- * the path back so the caller can run the existing, untouched import pipeline
- * (`POST /api/projects/import`) against it. Split from the import route on
- * purpose: analysis stays unaware of cloning, and the UI gets two honest
- * progress steps instead of one opaque spinner.
+ * Deliberately separate from POST /api/projects/import: that route stays
+ * untouched and keeps taking a filesystem path, while the UI gets two honest
+ * progress steps ("Cloning…", then "Analyzing…"). Re-submitting the same URL is
+ * idempotent — an existing healthy clone is fetched, not re-downloaded, which
+ * is what makes resuming an interrupted import instant.
+ *
+ * Like the import route this is synchronous: a large clone holds the request
+ * open for as long as it takes. No new job infrastructure.
  */
-
-const STATUS_BY_CODE: Record<CloneErrorCode, number> = {
-  invalid_input: 400,
-  branch_not_found: 400,
-  auth_failed: 401,
-  not_found: 404,
-  conflict: 409,
-  clone_failed: 500,
-  network: 502,
-  timeout: 504,
-};
-
-function resolveCloneTimeoutMs(): number {
-  try {
-    const row = db
-      .select()
-      .from(settings)
-      .where(eq(settings.key, CLONE_TIMEOUT_SETTING_KEY))
-      .get();
-    return (
-      (row ? parseCloneTimeoutSetting(row.value) : null) ??
-      DEFAULT_CLONE_TIMEOUT_MS
-    );
-  } catch {
-    return DEFAULT_CLONE_TIMEOUT_MS;
-  }
-}
-
 export async function POST(request: NextRequest) {
   const validated = await validateBody(cloneProjectSchema, request);
   if (isValidationError(validated)) return validated;
 
-  const { url, branch } = validated.data;
+  const { url, projectId } = validated.data;
 
   const parsed = parseGitHubRepoInput(url);
   if (!parsed) {
     return NextResponse.json(
       {
         error:
-          "Could not read a GitHub repository from that input. Use https://github.com/owner/repo, git@github.com:owner/repo.git, or owner/repo.",
+          "Not a GitHub repository URL. Use https://github.com/owner/repo, git@github.com:owner/repo.git, or owner/repo.",
       },
       { status: 400 }
     );
   }
 
-  const { owner, repo, ownerRepo, cloneUrl } = parsed;
-  const cleanBranch = branch?.trim() || null;
-
-  let dest: string;
+  let projectsRoot: string;
+  let destination: string;
   try {
-    dest = cloneDestinationFor(owner, repo, ensureProjectsRoot());
+    projectsRoot = ensureProjectsRoot(resolveProjectsRoot());
+    destination = resolveCloneDestination(parsed.owner, parsed.repo, projectsRoot);
   } catch (error) {
-    const message = redactGitError(error);
-    console.error("[projects/clone] workspace root unavailable:", message);
     return NextResponse.json(
-      { error: `Could not prepare the clone directory: ${message}` },
-      { status: 500 }
+      { error: redactedErrorMessage(error, "Could not resolve the clone destination.") },
+      { status: 400 }
     );
   }
 
-  // Read once so the same value drives the command and the failure message.
   const token = getGitHubTokenFromSettings();
-  const startedAt = Date.now();
 
   try {
-    const result = await cloneRepository({
-      cloneUrl,
-      dest,
-      branch: cleanBranch,
+    const result = await cloneGitHubRepository({
+      input: url,
+      destination,
       token,
-      expectedOwnerRepo: ownerRepo,
-      timeoutMs: resolveCloneTimeoutMs(),
     });
 
-    writeGitSyncLog({
-      projectId: null,
-      operation: "clone",
-      status: "success",
-      branch: result.defaultBranch,
-      detail: {
-        ownerRepo,
+    recordCloneOutcome(projectId, "success", {
+      ownerRepo: result.ownerRepo,
+      destination: result.path,
+      reused: result.reused,
+      managed: result.managed,
+      destinationState: result.destinationState,
+      durationMs: result.durationMs,
+      defaultBranch: result.defaultBranch,
+    });
+
+    return NextResponse.json({
+      data: {
         path: result.path,
-        remoteUrl: cloneUrl,
+        ownerRepo: result.ownerRepo,
+        remoteUrl: result.remoteUrl,
+        defaultBranch: result.defaultBranch,
         reused: result.reused,
-        durationMs: result.durationMs,
-        authenticated: !!token,
+        managed: result.managed,
+        projectsRoot,
       },
     });
-
-    return NextResponse.json(
-      {
-        data: {
-          path: result.path,
-          ownerRepo,
-          remoteUrl: cloneUrl,
-          defaultBranch: result.defaultBranch,
-          reused: result.reused,
-        },
-      },
-      { status: result.reused ? 200 : 201 }
-    );
   } catch (error) {
-    // Every string leaving this block goes through the redactor: the PAT must
-    // reach neither the response, nor the console, nor git_sync_log.
-    const cloneError =
-      error instanceof CloneError
-        ? error
-        : new CloneError("clone_failed", redactGitError(error, token ? [token] : []));
-    const message = redactGitError(cloneError.message, token ? [token] : []);
-    const status = STATUS_BY_CODE[cloneError.code] ?? 500;
+    if (error instanceof CloneConflictError) {
+      recordCloneOutcome(projectId, "failure", {
+        ownerRepo: parsed.ownerRepo,
+        destination,
+        destinationState: error.state,
+        error: error.message,
+      });
 
-    writeGitSyncLog({
-      projectId: null,
-      operation: "clone",
-      status: "failure",
-      branch: cleanBranch,
-      detail: {
-        ownerRepo,
-        path: dest,
-        remoteUrl: cloneUrl,
-        code: cloneError.code,
-        error: message,
-        durationMs: Date.now() - startedAt,
-        authenticated: !!token,
-      },
-    });
+      return NextResponse.json(
+        {
+          error: error.message,
+          code: error.code,
+          data: {
+            destination: error.destination,
+            existingRemote: error.existingRemote,
+          },
+        },
+        { status: 409 }
+      );
+    }
 
-    console.error("[projects/clone] clone failed:", {
-      ownerRepo,
-      code: cloneError.code,
+    const message =
+      error instanceof CloneFailedError
+        ? error.message
+        : redactedErrorMessage(error, `Failed to clone ${parsed.ownerRepo}.`);
+
+    recordCloneOutcome(projectId, "failure", {
+      ownerRepo: parsed.ownerRepo,
+      destination,
       error: message,
     });
 
-    return NextResponse.json({ error: message, code: cloneError.code }, { status });
+    return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+/**
+ * Writes the clone audit trail.
+ *
+ * Every clone is recorded, including the first-time import that has no project
+ * yet — `git_sync_log.project_id` is nullable since migration 0029 precisely so
+ * that the common case stops falling through the audit trail. It is still a
+ * foreign key, though, so an id that names no existing project is logged as an
+ * unowned operation rather than losing the row to a constraint failure.
+ */
+function recordCloneOutcome(
+  projectId: string | null | undefined,
+  status: "success" | "failure",
+  detail: Record<string, unknown>
+): void {
+  const owner = projectId
+    ? (db
+        .select({ id: projects.id })
+        .from(projects)
+        .where(eq(projects.id, projectId))
+        .get()?.id ?? null)
+    : null;
+
+  logSyncOperation({
+    projectId: owner,
+    operation: "clone",
+    status,
+    detail: { ...detail, status },
+  });
 }

@@ -18,15 +18,11 @@ export async function validatePath(
 
   const trimmed = inputPath.trim();
 
-  // Reject traversal before normalization, testing path *components* rather
-  // than the raw substring: a `..` inside a name is not traversal, and
-  // `repo..archive` is both a legal GitHub repository and therefore a legal
-  // clone directory (isSafeRepoSegment() in lib/git/remote-parse.ts draws the
-  // line in the same place). A lone `.` is not traversal either — resolve()
-  // below collapses it. Backslash counts as a separator so the check does not
-  // depend on the host platform.
-  const segments = trimmed.split(/[\\/]+/);
-  if (segments.some((segment) => segment === "..")) {
+  // Reject `..` as a whole path segment before normalization. A `..` *inside*
+  // a file or directory name (e.g. a cloned `repo..v2`, a repo name GitHub
+  // allows) is not a traversal: the segments are already isolated by the
+  // separator, and the resolve() below normalises the path regardless.
+  if (trimmed.split(/[/\\]/).some((segment) => segment === "..")) {
     return {
       valid: false,
       error: "Path must not contain traversal components (..)",

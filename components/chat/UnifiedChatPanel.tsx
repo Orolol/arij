@@ -25,9 +25,11 @@ import {
   ChatProposalCard,
   ChatWorkspaceHeader,
 } from "@/components/chat/ChatWorkspaceHeader";
+import type { ChatAgentSelection } from "@/components/chat/ChatProviderSelect";
 import { MessageList } from "@/components/chat/MessageList";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { QuestionCards } from "@/components/chat/QuestionCards";
+import { OPENAI_COMPATIBLE_PROVIDER } from "@/lib/agent-config/constants";
 import { useConversations } from "@/hooks/useConversations";
 import { usePanelLayout, DIVIDER_WIDTH, type UnifiedPanelState } from "@/hooks/usePanelLayout";
 import { usePolling } from "@/hooks/usePolling";
@@ -293,11 +295,22 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       [activeId, rawSendMessage],
     );
 
-    async function handleAgentChange(namedAgentId: string) {
+
+    async function handleSelectAgentOrProvider({
+      namedAgentId,
+      provider,
+    }: ChatAgentSelection) {
       if (!activeId || hasMessages) {
         return;
       }
-      await updateConversation(activeId, { namedAgentId });
+      // A named agent owns its provider: the PATCH route re-derives it from
+      // the agent row, so sending one here would be silently ignored. Direct
+      // API and raw CLI providers both travel as a provider with the
+      // named-agent link explicitly cleared.
+      await updateConversation(
+        activeId,
+        namedAgentId ? { namedAgentId } : { provider, namedAgentId: null },
+      );
     }
 
     async function handleCreateEpic() {
@@ -330,7 +343,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
               activeProvider={activeProvider}
               hasMessages={hasMessages}
               isBusy={isCurrentConversationBusy}
-              onAgentChange={handleAgentChange}
+              onSelectAgentOrProvider={handleSelectAgentOrProvider}
             />
           }
         />
@@ -377,6 +390,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
           onSend={sendMessage}
           disabled={isCurrentConversationBusy || !activeConversation}
           placeholder={isEpicCreation ? "Describe your epic idea..." : "Ask a question..."}
+          attachmentsDisabled={activeProvider === OPENAI_COMPATIBLE_PROVIDER}
         />
       </div>
     );

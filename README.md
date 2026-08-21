@@ -62,6 +62,8 @@ Use whichever AI coding tool you prefer:
 | **Gemini CLI** | `gemini` CLI via Google |
 | **OpenCode** | `opencode` CLI — open-source, supports any model |
 | **Qwen Code** | `qwen` CLI — Alibaba's coding agent |
+| **Pi** | `pi` CLI — minimal terminal harness, runs any provider's models |
+| **Oh My Pi** | `omp` CLI — standalone multi-agent orchestrator (fork of pi) |
 | **Any CLI agent** | Any tool that accepts a `--prompt` flag works out of the box |
 
 Arij's provider system is designed to be extensible — if your favorite AI coding CLI accepts a prompt and outputs results, it can plug into Arij. Create "Named Agents" to mix and match providers and models — e.g., use Claude Opus for complex builds, Gemini Flash for quick bug fixes, or a local model via OpenCode for privacy-sensitive tasks.
@@ -112,6 +114,12 @@ Set dependencies between epics. Arij builds a DAG and schedules agent work in th
 
 For large features, enable Team Mode to have a single Claude Code session orchestrate multiple sub-agents working on different tickets simultaneously.
 
+### Full Auto Mode
+
+Arm the board and walk away. Full Auto Mode is a standing supervisor, enabled per project from the **Auto** button on the board toolbar: it keeps building everything in To Do, reviewing everything in Review, and **merging each ticket into `main` as soon as its review comes back clean** — with separate concurrency budgets for builds and reviews.
+
+It refuses to touch a ticket another agent already has, and it never overrides a review: an epic with open review findings is left alone until you resolve them. If a merge conflicts, a resolution agent is dispatched and the merge is retried once; a second failure parks the ticket and notifies you. See [docs/architecture/full-auto-mode.md](docs/architecture/full-auto-mode.md) for the full behaviour, the settings keys, and the unattended merge path.
+
 ---
 
 ## Getting Started
@@ -153,7 +161,7 @@ Or **Import** an existing codebase — Arij will analyze it and suggest epics au
 
 #### Import from a GitHub URL
 
-**Import** accepts a repository URL as well as a local path. Pick **GitHub URL**, paste any of these, and hit **Clone & Analyze**:
+**Import** accepts a repository URL as well as a local path. Pick **GitHub URL**, paste any of these, and hit **Import**:
 
 ```
 https://github.com/owner/repo
@@ -172,7 +180,7 @@ The project is created already connected to GitHub: push, PR creation, releases 
 
 Notes:
 
-- **Private repositories** need a GitHub PAT — set it in **Settings → GitHub PAT**. The token is used for the clone command only; it is never written to `.git/config`, so `origin` keeps a clean URL. Public repositories clone with no token at all.
+- **Private repositories** need a GitHub PAT — set it in **Settings → GitHub PAT**. The token is only sent when an anonymous attempt is refused, and it is never written to `.git/config`, so `origin` keeps a clean URL. Public repositories clone with no token at all.
 - **Clones are full clones** — no `--depth`, no `--single-branch`. Arij creates worktrees off the default branch, computes merge bases and tags releases, and all of that needs the complete history. Expect the clone of a large repository to take a while; the UI shows "Cloning repository..." as its own step.
 - **Re-importing the same repository is safe.** If the destination already holds that repository, Arij fetches it instead of re-cloning. If it holds something else, the import stops with a conflict and tells you what is in the way — nothing is ever overwritten.
 - Only directories Arij created itself are ever treated as Arij's to remove. A project you pointed at a local path is never touched.
@@ -183,7 +191,7 @@ Notes:
 
 Cloned repositories go to `<arij>/projects/` — the directory next to `data/`, gitignored, created on first use. Each clone is `<projects root>/<owner>-<repo>`, and their worktrees sit alongside in `<projects root>/.arij-worktrees`.
 
-To keep your code elsewhere, set **Settings → Projects Directory**, stored as the `projects_root` setting. An absolute path is used as-is; a relative one is resolved against the directory Arij runs from. Clearing the field restores the default.
+To keep your code elsewhere, set **Settings → Projects Directory**, stored as the `projects_root` setting. Only an absolute path is accepted — a relative one would move with the directory Arij runs from, so it is refused and the default is used instead. Clearing the field restores the default.
 
 #### Credentials
 

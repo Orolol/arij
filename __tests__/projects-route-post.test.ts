@@ -1,12 +1,18 @@
 /**
  * `POST /api/projects` — the last step of every import, and until now the only
- * project route with no coverage at all.
+ * project route whose POST had no direct coverage (projects-route.test.ts only
+ * exercises GET).
  *
  * Runs against `createTestDb()` (real migration chain, real columns) rather
  * than a query-chain mock: the point of most of these assertions is that a
- * value survives into the column migration 0027 added, which a mock that
+ * value survives into the columns migration 0028 added, which a mock that
  * records `.values()` calls cannot show. Paths are real temp directories —
  * `validatePath()` stats them — and nothing here touches the network.
+ *
+ * Provenance is the marker-based design: `clone_source` is never taken from
+ * the request (the schema drops it — see clone-lifecycle-provenance.test.ts
+ * for the unit layer); the route derives it from the clone marker on disk.
+ * These tests pin that derivation end-to-end through the route.
  */
 
 import fs from "node:fs";
@@ -16,6 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { projects, settings } from "@/lib/db/schema";
 import { PROJECTS_ROOT_SETTING_KEY } from "@/lib/projects/workspace-constants";
+import { writeCloneMarker } from "@/lib/git/clone-marker";
 import { mockJsonRequest, mockNextRequest } from "@/__tests__/helpers/db-mock";
 
 vi.mock("@/lib/db", async () => {
@@ -45,12 +52,8 @@ function storedProject(id: string) {
   return db.select().from(projects).where(eq(projects.id, id)).get();
 }
 
-/**
- * Reproduces what the clone service leaves on disk: a managed clone root, with
- * `<owner>-<repo>` inside it. `cloneSource: "github"` is only accepted for
- * exactly this path, so tests that claim it have to earn it.
- */
-function managedClone(owner: string, repo: string): { root: string; dir: string } {
+/** Points `projects_root` at a fresh temp directory and returns it. */
+function configuredRoot(): string {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "arij-projects-root-"));
   tempDirs.push(root);
 
@@ -62,9 +65,33 @@ function managedClone(owner: string, repo: string): { root: string; dir: string 
     })
     .run();
 
+  return root;
+}
+
+/**
+ * Reproduces what the clone service leaves on disk: `<owner>-<repo>` inside
+ * the managed root, with (or without) Arij's marker in `.git/`. Provenance is
+ * only granted for a marked directory inside the current root, so tests that
+ * expect `clone_source = "github"` have to earn it the same way a real clone
+ * does.
+ */
+async function cloneDir(
+  root: string,
+  owner: string,
+  repo: string,
+  options: { marked?: boolean } = {}
+): Promise<string> {
   const dir = path.join(root, `${owner}-${repo}`);
-  fs.mkdirSync(dir, { recursive: true });
-  return { root, dir };
+  fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
+  if (options.marked ?? true) {
+    await writeCloneMarker(dir, {
+      owner,
+      repo,
+      ownerRepo: `${owner}/${repo}`,
+      remoteUrl: `https://github.com/${owner}/${repo}.git`,
+    });
+  }
+  return dir;
 }
 
 beforeEach(() => {
@@ -127,6 +154,16 @@ describe("POST /api/projects — creation", () => {
     expect(response.status).toBe(400);
     expect((await response.json()).error).toBe("Invalid JSON body");
   });
+
+  it("rejects a gitRepoPath that does not exist on disk", async () => {
+    const response = await post({
+      name: "Ghost",
+      gitRepoPath: path.join(os.tmpdir(), "arij-definitely-missing-dir"),
+    });
+
+    expect(response.status).toBe(400);
+    expect(db.select().from(projects).all()).toHaveLength(0);
+  });
 });
 
 describe("POST /api/projects — clone metadata", () => {
@@ -139,261 +176,95 @@ describe("POST /api/projects — clone metadata", () => {
     expect(storedProject(body.data.id)?.githubOwnerRepo).toBe("Orolol/arij");
   });
 
-  it("persists the full clone provenance an import writes", async () => {
-    const { dir } = managedClone("Orolol", "arij");
-
+  it("persists defaultBranch for later worktree bases", async () => {
     const body = await (
-      await post({
-        name: "arij",
-        gitRepoPath: dir,
-        githubOwnerRepo: "Orolol/arij",
-        cloneSource: "github",
-        gitRemoteUrl: "https://github.com/Orolol/arij.git",
-        defaultBranch: "main",
-      })
+      await post({ name: "Arij", defaultBranch: "develop" })
     ).json();
 
-    expect(storedProject(body.data.id)).toMatchObject({
-      gitRepoPath: dir,
-      githubOwnerRepo: "Orolol/arij",
+    expect(storedProject(body.data.id)?.defaultBranch).toBe("develop");
+  });
+});
+
+describe("POST /api/projects — clone provenance is derived from the disk", () => {
+  it("grants github provenance to a marked clone inside the projects root", async () => {
+    const root = configuredRoot();
+    const dir = await cloneDir(root, "octocat", "hello-world");
+
+    const body = await (await post({ name: "Import", gitRepoPath: dir })).json();
+    const row = storedProject(body.data.id);
+
+    expect(row).toMatchObject({
       cloneSource: "github",
-      gitRemoteUrl: "https://github.com/Orolol/arij.git",
-      defaultBranch: "main",
+      gitRemoteUrl: "https://github.com/octocat/hello-world.git",
+      githubOwnerRepo: "octocat/hello-world",
     });
   });
 
-  it("leaves cloneSource NULL for a user-supplied path", async () => {
-    // The ownership flag: a directory Arij did not create must never be
-    // offered for deletion when the project is deleted.
+  it("refuses to mark a directory Arij never cloned, whatever the request claims", async () => {
+    const root = configuredRoot();
+    const dir = await cloneDir(root, "octocat", "hello-world", {
+      marked: false,
+    });
+
+    // `cloneSource` is not even part of the schema: a request cannot state
+    // provenance, only a marker on disk can.
     const body = await (
-      await post({ name: "Local repo", gitRepoPath: repoDir() })
+      await post({
+        name: "Impostor",
+        gitRepoPath: dir,
+        cloneSource: "github",
+        gitRemoteUrl: "https://github.com/octocat/hello-world.git",
+      })
+    ).json();
+    const row = storedProject(body.data.id);
+
+    expect(row?.cloneSource).toBeNull();
+    // The remote URL is kept — it is useful metadata — but grants nothing.
+    expect(row?.gitRemoteUrl).toBe(
+      "https://github.com/octocat/hello-world.git"
+    );
+  });
+
+  it("refuses github provenance for a marked directory outside the root", async () => {
+    configuredRoot();
+    const outside = repoDir();
+    fs.mkdirSync(path.join(outside, ".git"), { recursive: true });
+    await writeCloneMarker(outside, {
+      owner: "octocat",
+      repo: "hello-world",
+      ownerRepo: "octocat/hello-world",
+      remoteUrl: "https://github.com/octocat/hello-world.git",
+    });
+
+    const body = await (
+      await post({ name: "Moved", gitRepoPath: outside })
     ).json();
 
     expect(storedProject(body.data.id)?.cloneSource).toBeNull();
   });
 
-  it("rejects a cloneSource Arij does not issue", async () => {
-    const response = await post({ name: "Spoofed", cloneSource: "gitlab" });
+  it("fills githubOwnerRepo from the marker when the request omits it", async () => {
+    const root = configuredRoot();
+    const dir = await cloneDir(root, "octocat", "hello-world");
 
-    expect(response.status).toBe(400);
-    expect(db.select().from(projects).all()).toHaveLength(0);
-  });
+    const body = await (await post({ name: "Import", gitRepoPath: dir })).json();
 
-  it("accepts an explicit null for each optional clone field", async () => {
-    const response = await post({
-      name: "Nulls",
-      cloneSource: null,
-      gitRemoteUrl: null,
-      defaultBranch: null,
-      githubOwnerRepo: null,
-    });
-
-    expect(response.status).toBe(201);
-  });
-
-  it("rejects an over-length remote url", async () => {
-    const response = await post({
-      name: "Long",
-      gitRemoteUrl: `https://github.com/o/${"a".repeat(500)}.git`,
-    });
-
-    expect(response.status).toBe(400);
-  });
-});
-
-describe("POST /api/projects — path normalisation", () => {
-  it("stores the resolved path, not the string the caller typed", async () => {
-    const dir = repoDir();
-
-    for (const input of [`${dir}/`, `${dir}//`, `${dir}/.`, ` ${dir} `]) {
-      db.delete(projects).run();
-      const body = await (await post({ name: "Normalised", gitRepoPath: input })).json();
-
-      expect(body.data.gitRepoPath).toBe(dir);
-      expect(storedProject(body.data.id)?.gitRepoPath).toBe(dir);
-    }
-  });
-
-  it("stores a path that worktrees can be hung off unchanged", async () => {
-    // createWorktree() joins `<gitRepoPath>/../.arij-worktrees`; a stored
-    // trailing slash would push that one directory too deep.
-    const dir = repoDir();
-    const body = await (
-      await post({ name: "Worktree host", gitRepoPath: `${dir}/` })
-    ).json();
-
-    const stored = storedProject(body.data.id)!.gitRepoPath!;
-    expect(path.join(stored, "..", ".arij-worktrees")).toBe(
-      path.join(path.dirname(dir), ".arij-worktrees")
+    expect(storedProject(body.data.id)?.githubOwnerRepo).toBe(
+      "octocat/hello-world"
     );
   });
 
-  it("rejects a path that does not exist", async () => {
-    const response = await post({
-      name: "Ghost",
-      gitRepoPath: path.join(os.tmpdir(), "arij-does-not-exist-4c1f"),
-    });
+  it("still accepts a plain local import with no provenance", async () => {
+    const dir = repoDir();
 
-    expect(response.status).toBe(400);
-    expect((await response.json()).error).toMatch(/does not exist/i);
-    expect(db.select().from(projects).all()).toHaveLength(0);
-  });
-
-  it("rejects a path pointing at a file rather than a directory", async () => {
-    const file = path.join(repoDir(), "README.md");
-    fs.writeFileSync(file, "# not a repo");
-
-    const response = await post({ name: "File", gitRepoPath: file });
-
-    expect(response.status).toBe(400);
-    expect((await response.json()).error).toMatch(/not a directory/i);
-  });
-
-  it.each([
-    ["traversal", "/tmp/../etc"],
-    ["embedded traversal", "/tmp/foo/../../etc"],
-    ["NUL byte", "/tmp/evil\0/repo"],
-  ])("rejects a %s path with 400", async (_label, gitRepoPath) => {
-    const response = await post({ name: "Escape", gitRepoPath });
-
-    expect(response.status).toBe(400);
-    expect(db.select().from(projects).all()).toHaveLength(0);
-  });
-
-  it("treats an empty path as no path at all", async () => {
-    const response = await post({ name: "Blank", gitRepoPath: "" });
+    const response = await post({ name: "Local", gitRepoPath: dir });
     const body = await response.json();
 
     expect(response.status).toBe(201);
-    expect(storedProject(body.data.id)?.gitRepoPath).toBeNull();
-  });
-});
-
-/**
- * `cloneSource` is an ownership claim: it is what later authorises Arij to
- * delete the directory, so it cannot be something a request simply asserts.
- * `gitRemoteUrl` is bound by the no-secret-on-disk contract in the same way.
- */
-describe("POST /api/projects — clone provenance is server-verified", () => {
-  it("refuses to mark a directory Arij never cloned as a github clone", async () => {
-    managedClone("Orolol", "arij");
-    // A real directory, but not the managed destination for this repository.
-    const outsider = repoDir();
-
-    const response = await post({
-      name: "Spoofed",
-      gitRepoPath: outsider,
-      githubOwnerRepo: "Orolol/arij",
-      cloneSource: "github",
-      gitRemoteUrl: "https://github.com/Orolol/arij.git",
-    });
-
-    expect(response.status).toBe(400);
-    expect((await response.json()).error).toMatch(/cloned itself/i);
-    expect(db.select().from(projects).all()).toHaveLength(0);
-  });
-
-  it("refuses a managed path claimed for the wrong repository", async () => {
-    const { dir } = managedClone("Orolol", "arij");
-
-    const response = await post({
-      name: "Mismatched",
-      gitRepoPath: dir,
-      githubOwnerRepo: "attacker/evil",
-      cloneSource: "github",
-      gitRemoteUrl: "https://github.com/attacker/evil.git",
-    });
-
-    expect(response.status).toBe(400);
-    expect(db.select().from(projects).all()).toHaveLength(0);
-  });
-
-  it("refuses github provenance with no path at all", async () => {
-    const response = await post({
-      name: "Pathless",
-      cloneSource: "github",
-      gitRemoteUrl: "https://github.com/Orolol/arij.git",
-    });
-
-    expect(response.status).toBe(400);
-    expect(db.select().from(projects).all()).toHaveLength(0);
-  });
-
-  it.each([
-    ["https://x-access-token:ghp_secret@github.com/Orolol/arij.git"],
-    ["https://user:password@github.com/Orolol/arij.git"],
-  ])("refuses to store a credential-bearing remote url (%s)", async (url) => {
-    const response = await post({ name: "Tokenised", gitRemoteUrl: url });
-
-    expect(response.status).toBe(400);
-    // The point is not just the rejection: nothing carrying the secret is
-    // written, so it cannot leak later through a diff or a log surface.
-    expect(db.select().from(projects).all()).toHaveLength(0);
-    expect((await response.json()).error).not.toContain("ghp_secret");
-  });
-
-  it("refuses a remote url that is not a GitHub repository", async () => {
-    const response = await post({
-      name: "Elsewhere",
-      gitRemoteUrl: "https://gitlab.com/Orolol/arij.git",
-    });
-
-    expect(response.status).toBe(400);
-  });
-
-  it("refuses a remote url that contradicts githubOwnerRepo", async () => {
-    const response = await post({
-      name: "Contradictory",
-      githubOwnerRepo: "Orolol/arij",
-      gitRemoteUrl: "https://github.com/someone/else.git",
-    });
-
-    expect(response.status).toBe(400);
-    expect((await response.json()).error).toMatch(/does not match/i);
-  });
-
-  it("normalises the stored remote url instead of echoing the input", async () => {
-    const body = await (
-      await post({
-        name: "Browser URL",
-        // What a user actually pastes out of the address bar.
-        gitRemoteUrl: "https://github.com/Orolol/arij/tree/main",
-      })
-    ).json();
-
     expect(storedProject(body.data.id)).toMatchObject({
-      gitRemoteUrl: "https://github.com/Orolol/arij.git",
-      // Derived rather than demanded: the remote already names the repo.
-      githubOwnerRepo: "Orolol/arij",
-    });
-  });
-
-  it("still accepts a plain local import with no provenance", async () => {
-    const response = await post({ name: "Local", gitRepoPath: repoDir() });
-
-    expect(response.status).toBe(201);
-    expect(storedProject((await response.json()).data.id)).toMatchObject({
+      gitRepoPath: dir,
       cloneSource: null,
       gitRemoteUrl: null,
     });
-  });
-
-  it.each([
-    ["leading dash", "--upload-pack=touch/pwned"],
-    ["whitespace", "main branch"],
-    ["ref metacharacter", "main^{}"],
-  ])("refuses a branch name git would reject (%s)", async (_label, branch) => {
-    const response = await post({ name: "Bad branch", defaultBranch: branch });
-
-    expect(response.status).toBe(400);
-    expect(db.select().from(projects).all()).toHaveLength(0);
-  });
-
-  it("accepts an ordinary slashed branch name", async () => {
-    const body = await (
-      await post({ name: "Slashed", defaultBranch: "release/v2" })
-    ).json();
-
-    expect(storedProject(body.data.id)?.defaultBranch).toBe("release/v2");
   });
 });

@@ -1,25 +1,25 @@
 import simpleGit, { type SimpleGit } from "simple-git";
-import { parseGitHubOwnerRepoFromRemoteUrl } from "./remote-parse";
+import {
+  isSafeRepoSegment,
+  matchGitHubRemoteUrl,
+} from "@/lib/git/github-url";
 
-// The pure parsing layer lives in ./remote-parse so the browser can use it
-// (this module pulls in simple-git). Re-exported here so server-side callers
-// keep a single import site.
-export {
-  normalizeRemoteUrl,
-  parseGitHubOwnerRepoFromRemoteUrl,
-  parseGitHubRepoInput,
-} from "./remote-parse";
-export type {
-  ParsedGitHubRemote,
-  ParsedGitHubRepoInput,
-} from "./remote-parse";
-
-import type { ParsedGitHubRemote } from "./remote-parse";
+export interface ParsedGitHubRemote {
+  owner: string;
+  repo: string;
+  ownerRepo: string;
+}
 
 export interface DetectedGitHubRemote extends ParsedGitHubRemote {
   remoteName: string;
   remoteUrl: string;
 }
+
+// The full repo-reference parser (remote URLs, browser URLs, owner/repo
+// shorthand) lives in lib/git/github-url.ts so the client-side import page
+// can share it; re-exported here so server callers keep one import site.
+export type { ParsedGitHubRepoInput } from "@/lib/git/github-url";
+export { parseGitHubRepoInput } from "@/lib/git/github-url";
 
 export interface BranchSyncStatus {
   branch: string;
@@ -47,6 +47,33 @@ export class PushValidationError extends Error {
     this.name = "PushValidationError";
     this.code = code;
   }
+}
+
+function normalizeRemoteUrl(raw: string): string {
+  return raw.trim();
+}
+
+export function parseGitHubOwnerRepoFromRemoteUrl(
+  remoteUrl: string
+): ParsedGitHubRemote | null {
+  const value = normalizeRemoteUrl(remoteUrl);
+  if (!value) return null;
+
+  // The grammar (patterns + segment safety) lives in lib/git/github-url.ts so
+  // the server-side and client-side parsers share one source of truth. The
+  // safety check matters here too: a remote whose owner/repo fails it (e.g.
+  // `..` or a leading `-`) is not a usable GitHub reference.
+  const matched = matchGitHubRemoteUrl(value);
+  if (!matched) return null;
+  if (!isSafeRepoSegment(matched.owner) || !isSafeRepoSegment(matched.repo)) {
+    return null;
+  }
+
+  return {
+    owner: matched.owner,
+    repo: matched.repo,
+    ownerRepo: `${matched.owner}/${matched.repo}`,
+  };
 }
 
 function getGit(repoPath: string): SimpleGit {
@@ -180,38 +207,6 @@ export async function getConflictFileDiffs(
     diffs.push({ filePath: file, diff });
   }
   return diffs;
-}
-
-/**
- * The branch `origin` advertises as its default — `main`, but just as often
- * `trunk`, `develop` or `dev`. Read from the `origin/HEAD` symbolic ref that
- * `git clone` writes.
- *
- * Returns null when the repository has no remote, or when the remote never
- * advertised a HEAD. Callers pick their own fallback from there: "no remote"
- * means something different to a fresh clone than it does to a merge.
- */
-export async function resolveRemoteDefaultBranch(
-  repoPath: string,
-  remote = "origin"
-): Promise<string | null> {
-  const cleanRemote = defaultRemote(remote);
-
-  try {
-    const ref = await getGit(repoPath).raw([
-      "symbolic-ref",
-      "--quiet",
-      "--short",
-      `refs/remotes/${cleanRemote}/HEAD`,
-    ]);
-
-    const value = ref?.trim() ?? "";
-    const prefix = `${cleanRemote}/`;
-    const branch = value.startsWith(prefix) ? value.slice(prefix.length) : value;
-    return branch || null;
-  } catch {
-    return null;
-  }
 }
 
 export async function getCurrentGitBranch(repoPath: string): Promise<string> {

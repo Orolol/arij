@@ -14,7 +14,9 @@ export type ProviderType =
   | "opencode"
   | "deepseek"
   | "kimi"
-  | "zai";
+  | "zai"
+  | "pi"
+  | "oh-my-pi";
 
 export type ProviderChunkStreamType = "response" | "raw" | "output";
 
@@ -47,6 +49,8 @@ export interface McpSpawnConfig {
   env: {
     ARIJ_BASE_URL: string;
     ARIJ_MCP_TOKEN: string;
+    /** Selects the shim's toolset; absent = the default agent toolset. */
+    ARIJ_MCP_TOOLSET?: "chat";
   };
   /** Exact tool names merged into the allowlist (no wildcards). */
   allowedToolNames: string[];
@@ -59,8 +63,12 @@ export interface ProviderSpawnOptions {
   prompt: string;
   /** Working directory for the agent. */
   cwd: string;
-  /** Agent mode: "plan" = read-only, "code" = full write access. */
-  mode: "plan" | "code" | "analyze";
+  /**
+   * Agent mode: "plan" = read-only, "code" = full write access. "chat" is
+   * claude-code's conversational mode (read-only repo, MCP board tools
+   * allowed); providers without a distinct chat posture treat it as "plan".
+   */
+  mode: "plan" | "code" | "analyze" | "chat";
   /** Explicit list of allowed tools (Claude Code only). */
   allowedTools?: string[];
   /** Model override. */

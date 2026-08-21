@@ -32,9 +32,8 @@ vi.mock("@/lib/agent-sessions/lifecycle", async () => {
 const { AgentScheduler, resolveMaxConcurrentForProject } = await import(
   "@/lib/agents/scheduler"
 );
-const { parseMaxConcurrentSetting } = await import(
-  "@/lib/agents/scheduler-constants"
-);
+const { parseMaxConcurrentSetting, UNLIMITED_MAX_CONCURRENT_AGENTS } =
+  await import("@/lib/agents/scheduler-constants");
 
 /** Launch closure whose settlement the test controls. */
 function controlledLaunch(started: string[], sessionId: string) {
@@ -72,6 +71,22 @@ describe("AgentScheduler dispatch", () => {
     expect(result).toEqual({ started: true, queuedAhead: 0 });
     expect(started).toEqual(["a"]);
     expect(scheduler.getCounts("proj-1")).toEqual({ running: 1, queued: 0 });
+  });
+
+  /** The built-in default: nothing queues until the user sets a cap. */
+  it("never queues when the budget is unlimited", () => {
+    const scheduler = new AgentScheduler({
+      getMaxConcurrent: () => UNLIMITED_MAX_CONCURRENT_AGENTS,
+    });
+    const started: string[] = [];
+
+    for (const id of ["a", "b", "c", "d", "e"]) {
+      const entry = controlledLaunch(started, id);
+      expect(scheduler.submit("proj-1", id, entry.launch).started).toBe(true);
+    }
+
+    expect(started).toEqual(["a", "b", "c", "d", "e"]);
+    expect(scheduler.getCounts("proj-1")).toEqual({ running: 5, queued: 0 });
   });
 
   it("queues FIFO past the budget and drains in order as slots free", async () => {
@@ -312,15 +327,26 @@ describe("resolveMaxConcurrentForProject", () => {
     expect(resolveMaxConcurrentForProject("proj-1")).toBe(2);
   });
 
-  it("falls back to the built-in default when neither key is set", () => {
+  it("falls back to the built-in default (unlimited) when neither key is set", () => {
     dbMockState.getQueue = [null, null];
-    expect(resolveMaxConcurrentForProject("proj-1")).toBe(3);
+    expect(resolveMaxConcurrentForProject("proj-1")).toBe(
+      UNLIMITED_MAX_CONCURRENT_AGENTS
+    );
   });
 
-  it("skips invalid values (zero, negative, junk) instead of honoring them", () => {
-    // Project key holds 0 (would deadlock) -> global key junk -> default.
-    dbMockState.getQueue = [{ value: "0" }, { value: '"lots"' }];
-    expect(resolveMaxConcurrentForProject("proj-1")).toBe(3);
+  it("honors a stored 0 as unlimited", () => {
+    dbMockState.getQueue = [{ value: "0" }];
+    expect(resolveMaxConcurrentForProject("proj-1")).toBe(
+      UNLIMITED_MAX_CONCURRENT_AGENTS
+    );
+  });
+
+  it("skips invalid values (negative, junk) instead of honoring them", () => {
+    // Project key negative -> global key junk -> built-in default.
+    dbMockState.getQueue = [{ value: "-2" }, { value: '"lots"' }];
+    expect(resolveMaxConcurrentForProject("proj-1")).toBe(
+      UNLIMITED_MAX_CONCURRENT_AGENTS
+    );
   });
 });
 
@@ -331,8 +357,12 @@ describe("parseMaxConcurrentSetting", () => {
     expect(parseMaxConcurrentSetting('"4"')).toBe(4);
   });
 
-  it("rejects non-positive, fractional, and non-numeric values", () => {
-    expect(parseMaxConcurrentSetting("0")).toBeNull();
+  it("reads 0 as unlimited", () => {
+    expect(parseMaxConcurrentSetting("0")).toBe(UNLIMITED_MAX_CONCURRENT_AGENTS);
+    expect(parseMaxConcurrentSetting(0)).toBe(UNLIMITED_MAX_CONCURRENT_AGENTS);
+  });
+
+  it("rejects negative, fractional, and non-numeric values", () => {
     expect(parseMaxConcurrentSetting("-2")).toBeNull();
     expect(parseMaxConcurrentSetting("2.5")).toBeNull();
     expect(parseMaxConcurrentSetting("banana")).toBeNull();

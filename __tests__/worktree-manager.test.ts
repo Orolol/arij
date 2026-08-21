@@ -18,7 +18,7 @@ vi.mock("fs", () => ({
   mkdirSync: vi.fn(),
 }));
 
-import { createWorktree } from "@/lib/git/manager";
+import { createWorktree, resolveDefaultBranch } from "@/lib/git/manager";
 import fs from "fs";
 
 describe("createWorktree", () => {
@@ -103,84 +103,42 @@ describe("createWorktree", () => {
   });
 });
 
-/**
- * Base-branch resolution. `main`-else-`master` was a guess that silently
- * picked a branch which may not exist: a repository whose default is `trunk`
- * or `develop` imported cleanly and then failed here, at `worktree add`.
- */
-describe("createWorktree — base branch", () => {
+// The thin path-only wrapper the diff route uses: same resolution as
+// createWorktree/mergeWorktree (stored default when it exists locally,
+// then origin/HEAD, then main/master), for callers holding only a repo path.
+describe("resolveDefaultBranch", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    (fs.existsSync as ReturnType<typeof vi.fn>).mockReturnValue(false);
   });
 
-  /** `raw` serves both the origin/HEAD lookup and the worktree command. */
-  function withRemoteHead(head: string | null) {
-    mockGit.raw.mockImplementation(async (args: string[]) => {
-      if (!args.includes("symbolic-ref")) return "";
-      if (head === null) throw new Error("fatal: ref is not a symbolic ref");
-      return `${head}\n`;
-    });
-  }
-
-  function baseBranchUsed(): string {
-    const call = mockGit.raw.mock.calls.find((args) =>
-      (args[0] as string[]).includes("worktree")
+  it("answers with origin/HEAD for a clone whose default is neither main nor master", async () => {
+    mockGit.branchLocal.mockResolvedValue({ all: ["develop"], current: "develop" });
+    mockGit.raw.mockImplementation(async (args: string[]) =>
+      args[0] === "symbolic-ref" ? "origin/develop\n" : ""
     );
-    if (!call) throw new Error("worktree was never created");
-    return (call[0] as string[]).at(-1) as string;
-  }
 
-  it("bases a new branch on the branch origin advertises as default", async () => {
-    mockGit.branchLocal.mockResolvedValue({
-      all: ["trunk", "other-branch"],
-      current: "trunk",
-    });
-    withRemoteHead("origin/trunk");
-
-    await createWorktree("/repo", "epic123", "My Epic Title");
-
-    expect(baseBranchUsed()).toBe("trunk");
+    expect(await resolveDefaultBranch("/repo")).toBe("develop");
   });
 
-  it("prefers the remote default over a local main", async () => {
-    // A repository that keeps `main` around but develops on `develop`.
-    mockGit.branchLocal.mockResolvedValue({
-      all: ["main", "develop"],
-      current: "develop",
-    });
-    withRemoteHead("origin/develop");
+  it("answers with the stored default branch when it exists locally", async () => {
+    mockGit.branchLocal.mockResolvedValue({ all: ["main", "develop"], current: "main" });
+    mockGit.raw.mockImplementation(async (args: string[]) =>
+      args[0] === "symbolic-ref" ? "origin/main\n" : ""
+    );
 
-    await createWorktree("/repo", "epic123", "My Epic Title");
-
-    expect(baseBranchUsed()).toBe("develop");
+    expect(await resolveDefaultBranch("/repo", "develop")).toBe("develop");
+    // The stored value is trusted without an origin/HEAD lookup.
+    expect(mockGit.raw).not.toHaveBeenCalledWith(
+      expect.arrayContaining(["symbolic-ref"])
+    );
   });
 
-  it("ignores a remote default that has no local branch", async () => {
-    // `main` on its own does not resolve to refs/remotes/origin/main, so
-    // handing it to git as a start-point would just fail differently.
-    mockGit.branchLocal.mockResolvedValue({
-      all: ["master"],
-      current: "master",
-    });
-    withRemoteHead("origin/main");
+  it("ignores a stored default branch that no longer exists locally", async () => {
+    mockGit.branchLocal.mockResolvedValue({ all: ["main"], current: "main" });
+    mockGit.raw.mockImplementation(async (args: string[]) =>
+      args[0] === "symbolic-ref" ? "origin/main\n" : ""
+    );
 
-    await createWorktree("/repo", "epic123", "My Epic Title");
-
-    expect(baseBranchUsed()).toBe("master");
-  });
-
-  it("falls back to the checked-out branch when no convention applies", async () => {
-    // No remote to ask and neither main nor master present: the old guess
-    // returned "master" here and the worktree could never be created.
-    mockGit.branchLocal.mockResolvedValue({
-      all: ["trunk"],
-      current: "trunk",
-    });
-    withRemoteHead(null);
-
-    await createWorktree("/repo", "epic123", "My Epic Title");
-
-    expect(baseBranchUsed()).toBe("trunk");
+    expect(await resolveDefaultBranch("/repo", "develop")).toBe("main");
   });
 });

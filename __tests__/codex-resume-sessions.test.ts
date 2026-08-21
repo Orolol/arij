@@ -28,7 +28,16 @@ describe("GET /api/projects/[projectId]/sessions/resumable", () => {
     mockResolveAgentByNamedId.mockReturnValue({ provider: "codex", namedAgentId: null });
   });
 
-  it("returns resumable sessions for codex provider", async () => {
+  /**
+   * This used to assert the opposite. `fix(codex): enable session resume`
+   * (b3d25eb) made the endpoint list codex sessions, but codex never reports
+   * the thread id it created — `CodexProvider.parseSessionId()` returns
+   * undefined — so the stored id is one Arij invented and `codex exec resume`
+   * would reject it. validateResumeSession has refused codex ever since, so
+   * every entry this endpoint returned was a picker option that silently
+   * started a fresh run. The endpoint now agrees with dispatch.
+   */
+  it("returns no resumable sessions for codex, which cannot resume", async () => {
     dbMockState.allQueue = [
       [
         {
@@ -54,8 +63,7 @@ describe("GET /api/projects/[projectId]/sessions/resumable", () => {
     );
 
     const json = await res.json();
-    expect(json.data).toHaveLength(1);
-    expect(json.data[0].cliSessionId).toBe("codex-cli-123");
+    expect(json.data).toEqual([]);
   });
 
   it("returns resumable sessions for claude-code provider", async () => {

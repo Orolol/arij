@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import SettingsPage from "@/app/settings/page";
 
 let webhookRows: Array<{ projectId: string; projectName: string; url: string }> =
@@ -41,6 +41,9 @@ beforeEach(() => {
 });
 
 describe("Settings page — Webhooks section", () => {
+  function webhooksSection() {
+    return within(screen.getByTestId("webhooks-settings"));
+  }
   it("renders the empty state when there are no projects", async () => {
     render(<SettingsPage />);
 
@@ -80,7 +83,7 @@ describe("Settings page — Webhooks section", () => {
     fireEvent.change(zetaInput, {
       target: { value: "  https://discord.com/api/webhooks/x  " },
     });
-    fireEvent.click(screen.getAllByRole("button", { name: "Save" })[1]);
+    fireEvent.click(webhooksSection().getAllByRole("button", { name: "Save" })[1]);
 
     await waitFor(() => expect(putCalls).toHaveLength(1));
     expect(putCalls[0]).toEqual({
@@ -102,7 +105,7 @@ describe("Settings page — Webhooks section", () => {
     fireEvent.change(await screen.findByLabelText("Arij"), {
       target: { value: "" },
     });
-    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    fireEvent.click(webhooksSection().getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(putCalls).toHaveLength(1));
     expect(putCalls[0]).toEqual({ projectId: "p1", url: "" });
@@ -119,7 +122,7 @@ describe("Settings page — Webhooks section", () => {
 
     render(<SettingsPage />);
 
-    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    fireEvent.click(await webhooksSection().findByRole("button", { name: "Save" }));
 
     expect(
       await screen.findByText(

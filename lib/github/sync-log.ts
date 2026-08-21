@@ -13,15 +13,16 @@ export type GitSyncOperation =
   | "pr_sync"
   | "release"
   | "tag_push"
-  | "issues_sync";
+  | "issues_sync"
+  // App-managed clone lifecycle (lib/git/clone.ts, lib/projects/clone-cleanup.ts).
+  | "clone_removed";
 
 export type GitSyncStatus = "success" | "failed" | "failure";
 
 interface LogSyncOperationInput {
   /**
-   * Null for operations that run before any project row exists — a clone
-   * happens ahead of POST /api/projects (see migration
-   * 0027_git_sync_log_nullable_project).
+   * Null for operations that happen before the project exists — a first-time
+   * clone is audited while the import is still deciding what to create.
    */
   projectId: string | null;
   operation: GitSyncOperation;

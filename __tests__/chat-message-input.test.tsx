@@ -201,4 +201,38 @@ describe("MessageInput", () => {
       expect(document.querySelector('img[alt="test.png"]')).toBeNull();
     });
   });
+
+  it("retains staged attachments when sending text with attachmentsDisabled=true", async () => {
+    const onSend = vi.fn();
+    const { rerender } = render(<MessageInput {...defaultProps} onSend={onSend} />);
+
+    // Stage an attachment while enabled
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(["fake-image"], "test.png", { type: "image/png" });
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(document.querySelector('img[alt="test.png"]')).toBeTruthy();
+    });
+
+    // Switch mode to attachmentsDisabled (OpenAI fast mode)
+    rerender(<MessageInput {...defaultProps} onSend={onSend} attachmentsDisabled={true} />);
+
+    // Thumbnail is hidden while disabled
+    expect(document.querySelector('img[alt="test.png"]')).toBeNull();
+
+    // Send text in fast mode
+    const textarea = screen.getByPlaceholderText("Ask a question...");
+    await userEvent.type(textarea, "Fast question");
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: false });
+
+    // Sent with empty attachments array
+    expect(onSend).toHaveBeenCalledWith("Fast question", []);
+
+    // Switch back to CLI provider (attachmentsDisabled=false)
+    rerender(<MessageInput {...defaultProps} onSend={onSend} attachmentsDisabled={false} />);
+
+    // Staged attachment is preserved
+    expect(document.querySelector('img[alt="test.png"]')).toBeTruthy();
+  });
 });

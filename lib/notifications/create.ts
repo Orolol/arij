@@ -8,6 +8,7 @@ import {
 } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
 import { AGENT_TYPE_LABELS } from "@/lib/agent-config/constants";
+import { formatDocumentMention } from "@/lib/documents/mention-format";
 import { durationMsBetween, sendProjectWebhook } from "@/lib/webhooks/send";
 import { NIGHT_STOPPED_ABORT_REASON } from "@/lib/night/constants";
 import type { TicketExecutionStatus } from "@/lib/dependencies/scheduler";
@@ -112,6 +113,64 @@ export function buildStalledTitle(
     return `${base} on ${epicReadableId ?? epicTitle} ${suffix}`;
   }
   return `${base} ${suffix}`;
+}
+
+/**
+ * Title for a run launched with document mentions Arij could not resolve.
+ *
+ * Examples:
+ *   "Build ran without @spec.md — no such document in Docs"
+ *   "Code review ran without @spec.md, @notes.md — no such document in Docs"
+ */
+export function buildUnresolvedMentionsTitle(
+  missing: string[],
+  agentType: string | null
+): string {
+  const label =
+    (agentType && AGENT_TYPE_LABELS[agentType as keyof typeof AGENT_TYPE_LABELS]) ||
+    agentType ||
+    "Agent";
+  const list = missing.map((name) => formatDocumentMention(name)).join(", ");
+  return `${label} ran without ${list} — no such document in Docs`;
+}
+
+/**
+ * Notify that a prompt referenced documents that do not exist in Docs.
+ *
+ * The run still launched: an agent writing `@some/file.ts` about the project's
+ * own codebase must never block a build or a review, and a user typo should
+ * cost a notification, not a refused launch.
+ */
+export function createUnresolvedMentionsNotification(input: {
+  projectId: string;
+  missing: string[];
+  agentType: string | null;
+  targetUrl: string;
+  sessionId?: string | null;
+}): void {
+  if (input.missing.length === 0) return;
+
+  const project = db
+    .select({ name: projects.name })
+    .from(projects)
+    .where(eq(projects.id, input.projectId))
+    .get();
+  if (!project) return;
+
+  db.insert(notifications)
+    .values({
+      id: createId(),
+      projectId: input.projectId,
+      projectName: project.name,
+      sessionId: input.sessionId ?? null,
+      agentType: input.agentType,
+      status: "failed",
+      title: buildUnresolvedMentionsTitle(input.missing, input.agentType),
+      targetUrl: input.targetUrl,
+    })
+    .run();
+
+  pruneNotifications();
 }
 
 interface SessionNotificationContext {
@@ -279,6 +338,161 @@ export function createAskedQuestionNotificationFromSession(
     error: null,
     path: targetUrl,
   });
+}
+
+/**
+ * Create the "Full Auto Mode could not merge <ticket>" notification.
+ *
+ * The one path where Full Auto Mode gives up and needs a human: a merge
+ * conflict survived the merge-fix agent and the retry, so the epic is parked
+ * and its branch is still unmerged. Deep-links to the epic on the board —
+ * the actionable place is the ticket, not the (already finished) session.
+ * Uses the "failed" status for alarm styling.
+ */
+export function createAutoModeMergeParkedNotification(input: {
+  projectId: string;
+  epicId: string;
+  sessionId: string | null;
+  error: string;
+}): void {
+  const project = db
+    .select({ name: projects.name })
+    .from(projects)
+    .where(eq(projects.id, input.projectId))
+    .get();
+  if (!project) return;
+
+  const epic = db
+    .select({ title: epics.title, readableId: epics.readableId })
+    .from(epics)
+    .where(eq(epics.id, input.epicId))
+    .get();
+
+  const label = epic?.readableId
+    ? epic.title
+      ? `${epic.readableId}: ${epic.title}`
+      : epic.readableId
+    : (epic?.title ?? input.epicId);
+
+  db.insert(notifications)
+    .values({
+      id: createId(),
+      projectId: input.projectId,
+      projectName: project.name,
+      sessionId: input.sessionId,
+      agentType: "merge",
+      status: "failed",
+      title: `Auto mode could not merge ${label} — ${input.error}`,
+      targetUrl: buildEpicTargetUrl(input.projectId, input.epicId),
+    })
+    .run();
+
+  pruneNotifications();
+}
+
+/**
+ * Create the "Approval blocked — could not merge <ticket>" notification.
+ *
+ * Fired by the approve routes when the pre-approval merge fails. The approve
+ * flow merges FIRST and only then marks anything done, so a failed merge
+ * means the ticket deliberately stayed put — nothing was resolved, nothing
+ * moved. The user has to act: open the epic, run Resolve Merge, and approve
+ * again. Deep-links to the epic on the board (the actionable place is the
+ * ticket, not a session — no agent ran). Uses the "failed" status for alarm
+ * styling.
+ */
+export function createApproveMergeFailedNotification(input: {
+  projectId: string;
+  epicId: string;
+  error: string;
+}): void {
+  const project = db
+    .select({ name: projects.name })
+    .from(projects)
+    .where(eq(projects.id, input.projectId))
+    .get();
+  if (!project) return;
+
+  const epic = db
+    .select({ title: epics.title, readableId: epics.readableId })
+    .from(epics)
+    .where(eq(epics.id, input.epicId))
+    .get();
+
+  const label = epic?.readableId
+    ? epic.title
+      ? `${epic.readableId}: ${epic.title}`
+      : epic.readableId
+    : (epic?.title ?? input.epicId);
+
+  db.insert(notifications)
+    .values({
+      id: createId(),
+      projectId: input.projectId,
+      projectName: project.name,
+      sessionId: null,
+      // Own type string (not "merge"): approval blockage is user-actionable,
+      // not an agent run, and must stay distinguishable from auto-mode rows.
+      agentType: "approve_merge_failed",
+      status: "failed",
+      title: `Approval blocked — could not merge ${label}: ${input.error}. Use Resolve Merge, then approve again.`,
+      targetUrl: buildEpicTargetUrl(input.projectId, input.epicId),
+    })
+    .run();
+
+  pruneNotifications();
+}
+
+/**
+ * Create the "merge-fix agent ran, but the merge STILL failed" notification.
+ *
+ * Fired by the resolve-merge route and the merge route's autoAgent retry
+ * when the post-agent merge attempt comes back `merged: false` — e.g. the
+ * agent committed the conflict markers instead of resolving them, tripping
+ * the conflict-marker guard. Without this the failure would be silent: the
+ * routes' background closures have no HTTP response left to carry it, so a
+ * notification is the only way the user learns why the epic did not close.
+ * Deep-links to the epic on the board; uses "failed" for alarm styling.
+ */
+export function createMergeRetryFailedNotification(input: {
+  projectId: string;
+  epicId: string;
+  sessionId: string | null;
+  error: string;
+}): void {
+  const project = db
+    .select({ name: projects.name })
+    .from(projects)
+    .where(eq(projects.id, input.projectId))
+    .get();
+  if (!project) return;
+
+  const epic = db
+    .select({ title: epics.title, readableId: epics.readableId })
+    .from(epics)
+    .where(eq(epics.id, input.epicId))
+    .get();
+
+  const label = epic?.readableId
+    ? epic.title
+      ? `${epic.readableId}: ${epic.title}`
+      : epic.readableId
+    : (epic?.title ?? input.epicId);
+
+  db.insert(notifications)
+    .values({
+      id: createId(),
+      projectId: input.projectId,
+      projectName: project.name,
+      sessionId: input.sessionId,
+      agentType: "merge",
+      status: "failed",
+      title: `Merge-fix agent finished, but the merge still failed for ${label} — ${input.error}`,
+      targetUrl: buildEpicTargetUrl(input.projectId, input.epicId),
+    })
+    .run();
+
+  pruneNotifications();
 }
 
 /**

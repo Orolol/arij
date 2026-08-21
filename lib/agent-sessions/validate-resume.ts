@@ -2,53 +2,38 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
+import { isResumableProvider } from "./resume-capability";
 import type { ProviderType } from "@/lib/providers/types";
 
 interface ValidateResumeInput {
   resumeSessionId: string | undefined;
   epicId: string;
   userStoryId?: string;
+  /**
+   * The provider about to be launched. Required: a stored cliSessionId only
+   * means something to the CLI that minted it, so resuming across providers
+   * hands e.g. a Gemini id to `pi --session`.
+   */
+  expectedProvider: ProviderType | string;
 }
 
 interface ValidateResumeResult {
   cliSessionId: string;
 }
 
-/**
- * Providers that support session resume.
- *
- * - claude-code: --resume <ID>
- * - gemini-cli: --resume <ID>
- * - mistral-vibe: --resume <ID>
- * - opencode: --session <ID>
- * - kimi: --continue (directory-scoped)
- *
- * Non-resumable: codex, qwen-code, deepseek, zai
- */
-const RESUMABLE_PROVIDERS = new Set<ProviderType>([
-  "claude-code",
-  "gemini-cli",
-  "mistral-vibe",
-  "opencode",
-  "kimi",
-]);
+// Re-exported so existing importers keep working; the list itself lives in
+// resume-capability.ts, which dispatch routes and client code share.
+export { isResumableProvider };
 
 /**
- * Returns true if the given provider supports session resume.
- */
-export function isResumableProvider(provider: ProviderType | string): boolean {
-  return RESUMABLE_PROVIDERS.has(provider as ProviderType);
-}
-
-/**
- * Validates that a resume session belongs to the same scope (epic/story)
- * and that its provider supports resume.
- * Returns the cliSessionId if valid, null otherwise.
+ * Validates that a resume session belongs to the same scope (epic/story),
+ * that its provider supports resume, and that it is the *same* provider now
+ * being launched. Returns the cliSessionId if valid, null otherwise.
  */
 export function validateResumeSession(
   input: ValidateResumeInput,
 ): ValidateResumeResult | null {
-  const { resumeSessionId, epicId, userStoryId } = input;
+  const { resumeSessionId, epicId, userStoryId, expectedProvider } = input;
 
   if (!resumeSessionId) return null;
 
@@ -66,9 +51,13 @@ export function validateResumeSession(
 
   if (!prevSession) return null;
 
-  // Check if the provider supports resume
+  // Check if the provider supports resume. Legacy rows predate the column
+  // and were all Claude Code.
   const provider = prevSession.provider ?? "claude-code";
   if (!isResumableProvider(provider)) return null;
+
+  // Cross-provider resume is never valid: the id belongs to the other CLI.
+  if (provider !== expectedProvider) return null;
 
   // Legacy-row fallback: pre-migration rows may only have claude_session_id.
   const previousCliSessionId = resolveCliSessionId(prevSession);

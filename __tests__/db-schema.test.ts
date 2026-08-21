@@ -138,6 +138,8 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
     columns: {
       id: "id",
       chatMessageId: "chat_message_id",
+      projectId: "project_id",
+      epicId: "epic_id",
       fileName: "file_name",
       filePath: "file_path",
       mimeType: "mime_type",
@@ -427,6 +429,23 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       updatedAt: "updated_at",
     },
   },
+  providerUsageSnapshots: {
+    sqlName: "provider_usage_snapshots",
+    columns: {
+      provider: "provider",
+      capturedAt: "captured_at",
+      planType: "plan_type",
+      primaryUsedPercent: "primary_used_percent",
+      primaryWindowMinutes: "primary_window_minutes",
+      primaryResetsAt: "primary_resets_at",
+      secondaryUsedPercent: "secondary_used_percent",
+      secondaryWindowMinutes: "secondary_window_minutes",
+      secondaryResetsAt: "secondary_resets_at",
+      sourceFile: "source_file",
+      rawJson: "raw_json",
+      updatedAt: "updated_at",
+    },
+  },
 };
 
 /** Every SQLiteTable exported from the schema module, keyed by export name. */
@@ -572,6 +591,10 @@ const NOT_NULL: [string, string][] = [
   ["notificationReadCursor", "readAt"],
   ["ticketReadCursors", "lastReadAt"],
   ["ticketReadCursors", "updatedAt"],
+  // A snapshot without its provider event timestamp or its raw payload could
+  // not be aged or re-parsed — both are load-bearing for honest staleness.
+  ["providerUsageSnapshots", "capturedAt"],
+  ["providerUsageSnapshots", "rawJson"],
 ];
 
 describe("db schema: NOT NULL columns", () => {
@@ -600,7 +623,7 @@ const NULLABLE: [string, string][] = [
   ["gitSyncLog", "branch"],
   ["gitSyncLog", "detail"],
   // A clone is logged before any project row exists — see migration
-  // 0027_git_sync_log_nullable_project.
+  // 0029_git_sync_log_nullable_project.
   ["gitSyncLog", "projectId"],
   ["githubIssues", "importedEpicId"],
   ["githubIssues", "importedAt"],

@@ -28,7 +28,10 @@ import {
   classifySessionOutcome,
   extractSessionUsage,
 } from "@/lib/claude/resolve-session-output";
-import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
+import {
+  isResumableProvider,
+  providerAcceptsAssignedSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 import fs from "fs";
 import path from "path";
 
@@ -134,7 +137,7 @@ export async function POST(request: NextRequest, { params }: Params) {
               resumeSession = true;
             }
           }
-          if (!cliSessionId) {
+          if (!cliSessionId && providerAcceptsAssignedSessionId(provider)) {
             cliSessionId = crypto.randomUUID();
           }
         }

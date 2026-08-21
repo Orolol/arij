@@ -16,11 +16,11 @@ export const projects = sqliteTable("projects", {
   status: text("status").default("ideation"), // ideation | specifying | building | done | archived
   gitRepoPath: text("git_repo_path"),
   githubOwnerRepo: text("github_owner_repo"),
-  // Provenance of gitRepoPath: "github" when Arij cloned the directory itself,
-  // NULL for a user-supplied path (which Arij must never delete).
+  // "github" when Arij cloned the directory itself and therefore owns it;
+  // NULL for user-supplied paths, which Arij must never delete.
   cloneSource: text("clone_source"),
-  gitRemoteUrl: text("git_remote_url"), // clean clone URL, never tokenised
-  defaultBranch: text("default_branch"), // reported by the clone; beats the main/master guess
+  gitRemoteUrl: text("git_remote_url"),
+  defaultBranch: text("default_branch"),
   spec: text("spec"),
   imported: integer("imported").default(0),
   ticketCounter: integer("ticket_counter").default(0), // shared sequence across epics+bugs
@@ -124,9 +124,20 @@ export const chatMessages = sqliteTable("chat_messages", {
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
+/**
+ * An uploaded file and, in the three owner columns, what keeps it alive.
+ *
+ * `chatMessageId` is set when the staged upload is sent as part of a chat
+ * message; `epicId` when it is filed as a bug's screenshot. Both NULL means
+ * the upload is still staged in a form nobody has submitted — the only state
+ * in which discarding it is allowed. `projectId` is set at upload time and
+ * outlives either claim, so deleting a project takes its files with it.
+ */
 export const chatAttachments = sqliteTable("chat_attachments", {
   id: text("id").primaryKey(),
   chatMessageId: text("chat_message_id").references(() => chatMessages.id, { onDelete: "cascade" }),
+  projectId: text("project_id").references(() => projects.id, { onDelete: "cascade" }),
+  epicId: text("epic_id").references(() => epics.id, { onDelete: "cascade" }),
   fileName: text("file_name").notNull(),
   filePath: text("file_path").notNull(),
   mimeType: text("mime_type").notNull(),
@@ -391,7 +402,7 @@ export const reviewComments = sqliteTable(
 
 export const gitSyncLog = sqliteTable("git_sync_log", {
   id: text("id").primaryKey(),
-  // Nullable since 0027_git_sync_log_nullable_project: a clone is logged
+  // Nullable since 0029_git_sync_log_nullable_project: a clone is logged
   // before the project row exists (POST /api/projects/clone runs ahead of
   // POST /api/projects), and NOT NULL + FK made those rows un-insertable.
   projectId: text("project_id").references(() => projects.id, {
@@ -580,3 +591,28 @@ export const ticketReadCursors = sqliteTable("ticket_read_cursors", {
 
 export type TicketReadCursor = typeof ticketReadCursors.$inferSelect;
 export type NewTicketReadCursor = typeof ticketReadCursors.$inferInsert;
+
+// ---------------------------------------------------------------------------
+// Provider usage snapshots
+// ---------------------------------------------------------------------------
+
+// Latest provider-reported rate-limit snapshot per provider (see migration
+// 0027). captured_at = provider event time (ISO UTC); resets_at = unix
+// SECONDS as emitted; raw_json = the full rate_limits object.
+export const providerUsageSnapshots = sqliteTable("provider_usage_snapshots", {
+  provider: text("provider").primaryKey(),
+  capturedAt: text("captured_at").notNull(),
+  planType: text("plan_type"),
+  primaryUsedPercent: real("primary_used_percent"),
+  primaryWindowMinutes: integer("primary_window_minutes"),
+  primaryResetsAt: integer("primary_resets_at"),
+  secondaryUsedPercent: real("secondary_used_percent"),
+  secondaryWindowMinutes: integer("secondary_window_minutes"),
+  secondaryResetsAt: integer("secondary_resets_at"),
+  sourceFile: text("source_file"),
+  rawJson: text("raw_json").notNull(),
+  updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+export type ProviderUsageSnapshot = typeof providerUsageSnapshots.$inferSelect;
+export type NewProviderUsageSnapshot = typeof providerUsageSnapshots.$inferInsert;

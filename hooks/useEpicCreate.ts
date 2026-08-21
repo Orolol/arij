@@ -3,6 +3,12 @@
 import { useState, useCallback } from "react";
 import { parseEpicFromConversation } from "@/lib/epic-parsing";
 
+/** How long to wait for a finalization reply to land before giving up. */
+const FINALIZE_TIMEOUT_MS = 180_000;
+const FINALIZE_POLL_INTERVAL_MS = 2_000;
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 interface EpicCreateResult {
   epicId: string;
   title: string;
@@ -33,16 +39,27 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
           return null;
         }
 
-        const messagesRes = await fetch(
-          `/api/projects/${projectId}/chat?conversationId=${conversationId}`
-        );
-        if (!messagesRes.ok) {
+        const loadMessages = async (): Promise<Array<{
+          role: string;
+          content: string;
+        }> | null> => {
+          const res = await fetch(
+            `/api/projects/${projectId}/chat?conversationId=${conversationId}`
+          );
+          if (!res.ok) return null;
+          const json = await res.json();
+          return json.data || [];
+        };
+
+        const countAssistant = (list: Array<{ role: string }>) =>
+          list.filter((message) => message.role === "assistant").length;
+
+        const initialMessages = await loadMessages();
+        if (!initialMessages) {
           setError("Unable to load the conversation. Try again.");
           return null;
         }
-        const messagesJson = await messagesRes.json();
-        let messages: Array<{ role: string; content: string }> =
-          messagesJson.data || [];
+        let messages = initialMessages;
 
         if (messages.length === 0) {
           setError("No messages found in this conversation yet.");
@@ -62,21 +79,30 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
               attempt === 0
                 ? "Generate the final epic with user stories based on our discussion."
                 : 'Output ONLY the JSON code block for the epic. Start your response with ```json and end with ```. No other text.';
+            const assistantCountBefore = countAssistant(messages);
             await sendMessage(prompt, [], { finalize: true });
 
-            const updatedRes = await fetch(
-              `/api/projects/${projectId}/chat?conversationId=${conversationId}`
-            );
-            if (updatedRes.ok) {
-              const updatedJson = await updatedRes.json();
-              const updatedMessages: Array<{ role: string; content: string }> =
-                updatedJson.data || [];
-              if (updatedMessages.length > 0) {
-                messages = updatedMessages;
+            // `sendMessage` can resolve before the reply is persisted (aborted
+            // stream, conversation switched while generating). Poll until a new
+            // assistant message actually lands instead of parsing stale rows and
+            // reporting a failure the user then sees contradicted on screen.
+            const deadline = Date.now() + FINALIZE_TIMEOUT_MS;
+            while (true) {
+              const updated = await loadMessages();
+              if (updated && updated.length > 0) {
+                messages = updated;
               }
+
+              parsedEpic = parseEpicFromConversation(messages);
+              if (parsedEpic) break;
+              // A reply landed but it is not parseable — let the next attempt
+              // ask again rather than waiting out the timeout.
+              if (countAssistant(messages) > assistantCountBefore) break;
+              if (Date.now() >= deadline) break;
+
+              await delay(FINALIZE_POLL_INTERVAL_MS);
             }
 
-            parsedEpic = parseEpicFromConversation(messages);
             if (parsedEpic) break;
           }
         }

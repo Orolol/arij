@@ -4,109 +4,131 @@ import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import {
-  DEFAULT_PROJECTS_DIRNAME,
+  DEFAULT_PROJECTS_ROOT_DIRNAME,
   PROJECTS_ROOT_SETTING_KEY,
-  parseProjectsRoot,
+  cloneDirectoryName,
+  isSafeRepoNameSegment,
+  parseProjectsRootSetting,
 } from "./workspace-constants";
-import { assertInsideRoot as assertPathInsideRoot } from "./workspace-path";
 
 /**
- * Server-side resolution of the app-managed clone root.
+ * Resolution of the app-managed clone root, and the containment check every
+ * destructive operation on a clone has to pass first.
  *
- * Every repository Arij clones lands in `<root>/<owner>-<repo>`, which becomes
- * the project's `git_repo_path`. Worktrees are then created at
- * `path.join(repoPath, "..", ".arij-worktrees")` (lib/git/manager.ts), i.e.
- * `<root>/.arij-worktrees` — so a single `/projects` .gitignore rule covers
- * both clones and their worktrees when dogfooding Arij on itself.
+ * The root is the security boundary of the whole clone feature: Arij only ever
+ * creates directories inside it, and only ever deletes directories that are
+ * still inside it *and* that it recorded as its own (`clone_source = 'github'`).
  */
 
-/** Built-in root used when no `projects_root` override is configured. */
-export function defaultProjectsRoot(): string {
-  return path.join(process.cwd(), DEFAULT_PROJECTS_DIRNAME);
+/** `<cwd>/projects` — the root used when `projects_root` is not configured. */
+export function defaultProjectsRoot(cwd: string = process.cwd()): string {
+  return path.join(cwd, DEFAULT_PROJECTS_ROOT_DIRNAME);
 }
 
 /**
- * The effective clone root: the `projects_root` setting when set, otherwise
- * `<cwd>/projects`. Always absolute — a relative override is anchored to the
- * working directory so clone destinations never depend on the caller's cwd.
+ * The configured clone root, or the default. Never throws: a malformed or
+ * relative settings value falls back to the default rather than pointing
+ * clone/delete at an unexpected directory.
  */
 export function resolveProjectsRoot(): string {
-  const row = db
-    .select({ value: settings.value })
-    .from(settings)
-    .where(eq(settings.key, PROJECTS_ROOT_SETTING_KEY))
-    .get();
-
-  const override = row ? parseProjectsRoot(row.value) : null;
-  if (!override) return defaultProjectsRoot();
-
-  return path.resolve(process.cwd(), override);
-}
-
-/**
- * Creates the clone root if it does not exist and returns it. A no-op when the
- * directory is already there (`mkdirSync` with `recursive: true`).
- */
-export function ensureProjectsRoot(): string {
-  const root = resolveProjectsRoot();
-  fs.mkdirSync(root, { recursive: true });
-  return root;
-}
-
-/**
- * Guards a clone destination against escaping the root.
- *
- * The URL parsing layer already validates owner/repo, but this is the last
- * line of defence before any filesystem write: a crafted `owner` such as
- * `../../etc` must never resolve outside the root. The root itself is rejected
- * too — cloning into it would nest every later clone inside the first one.
- *
- * The containment check itself lives in the db-free ./workspace-path module so
- * it can be reasoned about (and tested) without a settings lookup; this wrapper
- * only supplies the configured root and the caller-facing message.
- *
- * Returns the resolved absolute destination.
- */
-export function assertInsideRoot(
-  destination: string,
-  root: string = resolveProjectsRoot()
-): string {
+  let raw: string | undefined;
   try {
-    return assertPathInsideRoot(root, destination);
-  } catch (cause) {
-    throw new Error(
-      `Refusing to use a path outside the projects root: ${destination}`,
-      { cause }
-    );
+    raw = db
+      .select()
+      .from(settings)
+      .where(eq(settings.key, PROJECTS_ROOT_SETTING_KEY))
+      .get()?.value;
+  } catch {
+    raw = undefined;
   }
+
+  const configured = parseProjectsRootSetting(raw);
+  return path.resolve(configured ?? defaultProjectsRoot());
 }
 
-/** Owner and repository segments Arij accepts in a clone destination. */
-const SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
-
-function assertSegment(value: string, label: string): string {
-  const trimmed = typeof value === "string" ? value.trim() : "";
-
-  // `.` and `..` match the character class but are traversal components.
-  if (!SEGMENT_PATTERN.test(trimmed) || trimmed === "." || trimmed === "..") {
-    throw new Error(`Invalid GitHub ${label}: ${JSON.stringify(value)}`);
+/** Creates the clone root if it does not exist yet. Returns the resolved root. */
+export function ensureProjectsRoot(root: string = resolveProjectsRoot()): string {
+  const resolved = path.resolve(root);
+  if (!fs.existsSync(resolved)) {
+    fs.mkdirSync(resolved, { recursive: true });
   }
-
-  return trimmed;
+  return resolved;
 }
 
 /**
- * Destination directory for a clone of `owner/repo`: `<root>/<owner>-<repo>`.
+ * True when `candidate` is a strict descendant of `root`.
  *
- * Deterministic and collision-free across owners, which makes re-importing the
- * same repository idempotent — the clone service can detect the existing
- * directory and fetch instead of re-cloning.
+ * Strict on purpose: the root itself is never removable, and a sibling whose
+ * name merely shares the prefix (`/projects-backup` vs `/projects`) must not
+ * pass. Paths are resolved but deliberately not symlink-resolved here — callers
+ * that delete pass a `realpath`ed candidate (see `containsPathOnDisk`).
  */
-export function cloneDestinationFor(
+export function isInsideProjectsRoot(candidate: string, root: string): boolean {
+  const resolvedRoot = path.resolve(root);
+  const resolvedCandidate = path.resolve(candidate);
+  if (resolvedCandidate === resolvedRoot) return false;
+
+  const relative = path.relative(resolvedRoot, resolvedCandidate);
+  return (
+    relative.length > 0 &&
+    !relative.startsWith("..") &&
+    !path.isAbsolute(relative)
+  );
+}
+
+/**
+ * Containment check that additionally collapses symlinks on both sides, so a
+ * symlink planted inside the root cannot smuggle a delete out of it. Falls back
+ * to the plain check for paths that do not exist on disk.
+ */
+export function containsPathOnDisk(candidate: string, root: string): boolean {
+  if (!isInsideProjectsRoot(candidate, root)) return false;
+
+  let realRoot: string;
+  try {
+    realRoot = fs.realpathSync(path.resolve(root));
+  } catch {
+    return true; // root itself is not on disk yet — plain check already passed
+  }
+
+  let realCandidate: string;
+  try {
+    realCandidate = fs.realpathSync(path.resolve(candidate));
+  } catch {
+    return true; // candidate does not exist — nothing to delete anyway
+  }
+
+  return isInsideProjectsRoot(realCandidate, realRoot);
+}
+
+/** Where `.arij-worktrees` lives for a clone at `<root>/<owner>-<repo>`. */
+export function worktreesRootFor(repoPath: string): string {
+  return path.join(path.resolve(repoPath), "..", ".arij-worktrees");
+}
+
+/**
+ * Absolute destination of a clone. Throws on an unsafe owner/repo rather than
+ * returning a path — every caller treats this as a hard failure.
+ */
+export function resolveCloneDestination(
   owner: string,
   repo: string,
   root: string = resolveProjectsRoot()
 ): string {
-  const dirName = `${assertSegment(owner, "owner")}-${assertSegment(repo, "repository")}`;
-  return assertInsideRoot(path.join(root, dirName), root);
+  if (!isSafeRepoNameSegment(owner) || !isSafeRepoNameSegment(repo)) {
+    throw new Error(`Unsafe repository identifier: ${owner}/${repo}`);
+  }
+
+  const destination = path.join(
+    path.resolve(root),
+    cloneDirectoryName(owner, repo)
+  );
+
+  // Belt and braces: even with validated segments, never hand back a path that
+  // is not inside the root.
+  if (!isInsideProjectsRoot(destination, root)) {
+    throw new Error(`Clone destination escapes the projects root: ${destination}`);
+  }
+
+  return destination;
 }
