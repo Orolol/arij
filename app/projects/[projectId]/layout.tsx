@@ -28,7 +28,6 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { CockpitBar } from "@/components/layout/CockpitBar";
 import { ProjectSourceBadge } from "@/components/layout/ProjectSourceBadge";
 import { RepoStatusBar } from "@/components/layout/RepoStatusBar";
 
@@ -293,8 +292,6 @@ export default function ProjectLayout({
           setProjectSummary((prev) => ({ ...prev, githubOwnerRepo: ownerRepo }))
         }
       />
-
-      {isBoard && <CockpitBar projectId={projectId} />}
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 overflow-auto">{children}</div>
