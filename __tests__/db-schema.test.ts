@@ -607,6 +607,9 @@ describe("db schema: NOT NULL columns", () => {
 const NULLABLE: [string, string][] = [
   ["projects", "githubOwnerRepo"],
   ["projects", "gitRepoPath"],
+  ["projects", "cloneSource"],
+  ["projects", "gitRemoteUrl"],
+  ["projects", "defaultBranch"],
   ["epics", "prNumber"],
   ["epics", "prUrl"],
   ["epics", "prStatus"],
