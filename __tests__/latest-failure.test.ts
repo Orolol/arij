@@ -78,15 +78,32 @@ describe("selectLatestFailures", () => {
     });
   });
 
-  it("breaks a same-second failed+completed tie in favor of clearing the badge", () => {
+  it("breaks a same-second failed+completed/running/queued tie in favor of clearing the badge", () => {
+    for (const status of ["completed", "running", "queued"]) {
+      const failed = selectLatestFailures(
+        [
+          session({ id: "f1", status: "failed", error: "boom" }),
+          session({ id: "retry", status }),
+        ],
+        new Set()
+      );
+      expect(failed).toEqual({});
+    }
+  });
+
+  it("handles multiple epics independently", () => {
     const failed = selectLatestFailures(
       [
-        session({ id: "f1", status: "failed", error: "boom" }),
-        session({ id: "retry", status: "completed" }),
+        session({ id: "f1", epicId: "e1", status: "failed", error: "epic 1 failed" }),
+        session({ id: "s2", epicId: "e2", status: "completed" }),
+        session({ id: "f3-old", epicId: "e3", status: "failed", error: "old fail", createdAt: "2026-08-21 10:00:00" }),
+        session({ id: "s3-new", epicId: "e3", status: "completed", createdAt: "2026-08-21 10:05:00" }),
       ],
       new Set()
     );
-    expect(failed).toEqual({});
+    expect(failed).toEqual({
+      e1: { sessionId: "f1", error: "epic 1 failed", agentType: "build" },
+    });
   });
 
   it("breaks a same-second all-failed tie by latest endedAt", () => {
