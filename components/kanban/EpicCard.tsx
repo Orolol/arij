@@ -25,7 +25,7 @@ import {
   TriangleAlert,
   RefreshCw,
 } from "lucide-react";
-import type { FailedSessionInfo } from "@/hooks/useAgentPolling";
+import type { FailedSessionInfo } from "@/lib/agent-sessions/latest-failure";
 import {
   isChatProvider,
   PROVIDER_LABELS,
