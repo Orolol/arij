@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Dialog,
   DialogContent,
@@ -57,7 +57,11 @@ function formatSize(bytes: number): string {
  * unchecked ("Tout sélectionner" sweeps the importable files), and files
  * whose basename already exists in the project's documents are marked
  * « déjà importé » and cannot be re-imported — mirroring the upload route's
- * case-insensitive uniqueness rule.
+ * case-insensitive uniqueness rule. « Relancer le scan » re-runs the scan
+ * and re-fetches the existing documents, so a second scan marks everything
+ * already imported without ever offering a duplicate. Documents whose
+ * source file has vanished from the repo stay visible in Arij and are
+ * signalled below the list (« conserver et signaler »).
  */
 export function ScanProjectDialog({
   projectId,
@@ -68,7 +72,9 @@ export function ScanProjectDialog({
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [existingNames, setExistingNames] = useState<Set<string>>(new Set());
+  const [existingDocs, setExistingDocs] = useState<
+    Array<{ originalFilename: string }>
+  >([]);
   const [importing, setImporting] = useState(false);
   const [importSummary, setImportSummary] = useState<{
     importedCount: number;
@@ -97,36 +103,38 @@ export function ScanProjectDialog({
       setScanning(false);
     }
   }, [projectId]);
+  // Documents already registered for the project — the same key the upload
+  // route dedups on (case-insensitive originalFilename). Re-fetched on every
+  // open AND every in-dialog rescan, so a second scan also reflects imports
+  // that landed elsewhere (upload route, another session) in between.
+  const refreshExisting = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/documents`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) return;
+      const docs = (Array.isArray(data.data) ? data.data : []) as Array<{
+        originalFilename: string;
+      }>;
+      setExistingDocs(docs);
+    } catch {
+      // A failed name lookup must not block scanning: worst case the user
+      // selects an already-imported file and the server skips it.
+    }
+  }, [projectId]);
 
-  // Basenames already registered as project documents — the same key the
-  // upload route dedups on (case-insensitive originalFilename).
   useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(`/api/projects/${projectId}/documents`);
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok || cancelled) return;
-        const docs = (Array.isArray(data.data) ? data.data : []) as Array<{
-          originalFilename: string;
-        }>;
-        setExistingNames(
-          new Set(docs.map((doc) => doc.originalFilename.toLowerCase()))
-        );
-      } catch {
-        // A failed name lookup must not block scanning: worst case the user
-        // selects an already-imported file and the server skips it.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [open, projectId]);
+    if (open) refreshExisting();
+  }, [open, refreshExisting]);
 
   useEffect(() => {
     if (open) runScan();
   }, [open, runScan]);
+
+  const existingNames = useMemo(
+    () =>
+      new Set(existingDocs.map((doc) => doc.originalFilename.toLowerCase())),
+    [existingDocs]
+  );
 
   const isImportable = useCallback(
     (file: ScannedFile) => !existingNames.has(file.name.toLowerCase()),
@@ -137,6 +145,27 @@ export function ScanProjectDialog({
   const allSelected =
     importableFiles.length > 0 &&
     importableFiles.every((file) => selected.has(file.relativePath));
+
+  // « Conserver et signaler » — the deleted-source-file decision. A document
+  // imported into Arij whose basename no longer matches any scanned file
+  // stays visible and usable (a scan never deletes); the note rendered below
+  // the list is the signal. Documents uploaded manually with no repo
+  // counterpart are included too: the statement ("no matching file in the
+  // current repo") is factual regardless of how the doc landed.
+  const missingSources = useMemo(() => {
+    if (!result) return [];
+    const scannedNames = new Set(
+      result.files.map((file) => file.name.toLowerCase())
+    );
+    return existingDocs.filter(
+      (doc) => !scannedNames.has(doc.originalFilename.toLowerCase())
+    );
+  }, [result, existingDocs]);
+
+  function rescan() {
+    refreshExisting();
+    runScan();
+  }
 
   function toggleAll() {
     setSelected((prev) => {
@@ -178,13 +207,12 @@ export function ScanProjectDialog({
         return;
       }
       const payload = data.data as ImportResponse;
-      setExistingNames((prev) => {
-        const next = new Set(prev);
-        for (const doc of payload.imported) {
-          next.add(doc.originalFilename.toLowerCase());
-        }
-        return next;
-      });
+      setExistingDocs((prev) => [
+        ...prev,
+        ...payload.imported.map((doc) => ({
+          originalFilename: doc.originalFilename,
+        })),
+      ]);
       setSelected(new Set());
       setImportSummary({
         importedCount: payload.imported.length,
@@ -321,16 +349,26 @@ export function ScanProjectDialog({
                 {result.files.length === 1 ? "" : "s"} ·{" "}
                 {selected.size} sélectionné{selected.size === 1 ? "" : "s"}
               </p>
-              <Button
-                size="sm"
-                className="gap-[7px]"
-                disabled={selected.size === 0 || importing}
-                onClick={importSelection}
-              >
-                {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
-                Importer la sélection
-                {selected.size > 0 ? ` (${selected.size})` : ""}
-              </Button>
+              <div className="flex flex-none items-center gap-[8px]">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={scanning || importing}
+                  onClick={rescan}
+                >
+                  Relancer le scan
+                </Button>
+                <Button
+                  size="sm"
+                  className="gap-[7px]"
+                  disabled={selected.size === 0 || importing}
+                  onClick={importSelection}
+                >
+                  {importing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+                  Importer la sélection
+                  {selected.size > 0 ? ` (${selected.size})` : ""}
+                </Button>
+              </div>
             </div>
             {importSummary && (
               <div className="flex flex-col gap-[4px] rounded-[8px] border border-border bg-muted/40 p-[10px]">
@@ -351,6 +389,29 @@ export function ScanProjectDialog({
                     ))}
                   </div>
                 )}
+              </div>
+            )}
+            {missingSources.length > 0 && (
+              <div className="flex flex-col gap-[4px] rounded-[8px] border border-border bg-muted/40 p-[10px]">
+                <p className="text-[12.5px]">
+                  {missingSources.length} document
+                  {missingSources.length === 1 ? "" : "s"} déjà importé
+                  {missingSources.length === 1 ? "" : "s"} ne correspond
+                  {missingSources.length === 1 ? "" : "ent"} à aucun fichier du
+                  dépôt — il{missingSources.length === 1 ? "" : "s"} reste
+                  {missingSources.length === 1 ? "" : "nt"} accessible
+                  {missingSources.length === 1 ? "" : "s"} dans Arij.
+                </p>
+                <div className="flex flex-col gap-[2px]">
+                  {missingSources.map((doc) => (
+                    <p
+                      key={doc.originalFilename}
+                      className="font-mono text-[11px] text-muted-foreground"
+                    >
+                      {doc.originalFilename}
+                    </p>
+                  ))}
+                </div>
               </div>
             )}
           </div>

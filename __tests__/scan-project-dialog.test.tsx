@@ -21,9 +21,13 @@ const SCAN_FILES = [
 interface FetchOverrides {
   existingDocs?: Array<{ originalFilename: string }>;
   importResponse?: { ok: boolean; status?: number; body: unknown };
+  /** Per-call sequence for /documents — lets a test change what Arij has
+   *  already imported between the first scan and a rescan. */
+  existingDocsQueue?: Array<Array<{ originalFilename: string }>>;
 }
 
 function mockFetch(overrides: FetchOverrides = {}) {
+  let documentsCalls = 0;
   const fetchMock = vi.fn(async (input: string | URL | Request) => {
     const url = String(input);
     if (url.includes("/documents/import")) {
@@ -57,14 +61,14 @@ function mockFetch(overrides: FetchOverrides = {}) {
       };
     }
     if (url.endsWith("/documents")) {
+      const docs =
+        overrides.existingDocsQueue?.[documentsCalls] ??
+        overrides.existingDocs ?? [{ id: "doc-1", originalFilename: "Old.md" }];
+      documentsCalls += 1;
       return {
         ok: true,
         status: 200,
-        json: async () => ({
-          data:
-            overrides.existingDocs ??
-            [{ id: "doc-1", originalFilename: "Old.md" }],
-        }),
+        json: async () => ({ data: docs }),
       };
     }
     return { ok: true, status: 200, json: async () => ({ data: {} }) };
@@ -190,5 +194,77 @@ describe("ScanProjectDialog — selection before import", () => {
     expect(
       screen.getByText(/docs\/spec\.pdf — Échec de la conversion/)
     ).toBeInTheDocument();
+  });
+});
+
+describe("ScanProjectDialog — rescan idempotency", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("re-scans in place and marks files imported since the first scan", async () => {
+    const fetchMock = mockFetch({
+      existingDocsQueue: [
+        [{ originalFilename: "Old.md" }],
+        // Between the two scans, README.md was imported (upload route,
+        // another session…): the second scan must mark it « déjà importé »
+        // instead of offering it again.
+        [
+          { originalFilename: "Old.md" },
+          { originalFilename: "README.md" },
+        ],
+      ],
+    });
+    renderDialog();
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Sélectionner docs/README.md")).not.toBeDisabled()
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Relancer le scan" }));
+
+    // Both the scan and the existing-documents lookup run again — the mark
+    // must reflect imports that landed elsewhere in between.
+    await waitFor(() => {
+      const documentLookups = fetchMock.mock.calls.filter(
+        (c) => typeof c[0] === "string" && (c[0] as string).endsWith("/documents")
+      );
+      expect(documentLookups).toHaveLength(2);
+    });
+    await waitFor(() =>
+      expect(screen.getAllByText("déjà importé")).toHaveLength(2)
+    );
+    expect(checkboxFor("docs/README.md")).toBeDisabled();
+    expect(checkboxFor("notes/Old.md")).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Importer la sélection/ })
+    ).toBeDisabled();
+
+    // Idempotent: a rescan alone never triggers an import, so no duplicate
+    // row can appear server-side either.
+    expect(importCalls(fetchMock)).toHaveLength(0);
+  });
+
+  it("keeps imported documents whose file left the repo visible and signals them", async () => {
+    mockFetch({
+      existingDocs: [
+        { originalFilename: "Old.md" },
+        // Not among SCAN_FILES: its source file is gone from the repo.
+        { originalFilename: "archived-spec.pdf" },
+      ],
+    });
+    renderDialog();
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/ne correspond à aucun fichier du dépôt/)
+      ).toBeInTheDocument()
+    );
+    // The signal names the orphaned document and states it stays accessible…
+    expect(screen.getByText("archived-spec.pdf")).toBeInTheDocument();
+    expect(screen.getByText(/reste accessible/)).toBeInTheDocument();
+    // …while Old.md still matches notes/Old.md in the scan and is NOT
+    // signalled — it only appears once, as the scanned row's name.
+    expect(screen.getAllByText("Old.md")).toHaveLength(1);
   });
 });
