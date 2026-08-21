@@ -101,7 +101,7 @@ export default function DocumentsPage() {
           </p>
         </div>
         <div className="ml-auto">
-          <ScanProjectDialog projectId={projectId} />
+          <ScanProjectDialog projectId={projectId} onImported={handleUploaded} />
         </div>
       </div>
 
