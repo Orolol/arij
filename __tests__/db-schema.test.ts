@@ -138,6 +138,8 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
     columns: {
       id: "id",
       chatMessageId: "chat_message_id",
+      projectId: "project_id",
+      epicId: "epic_id",
       fileName: "file_name",
       filePath: "file_path",
       mimeType: "mime_type",

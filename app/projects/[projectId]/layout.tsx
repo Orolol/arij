@@ -7,6 +7,7 @@ import {
   ChevronDown,
   MessageSquare,
   Moon,
+  PencilLine,
   Plus,
   RefreshCw,
 } from "lucide-react";
@@ -18,6 +19,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -224,15 +226,29 @@ export default function ProjectLayout({
                 New
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-[168px]">
+            <DropdownMenuContent align="end" className="min-w-[228px]">
+              {/*
+                Two epic paths, named for what they cost: the form is instant
+                and agent-free, the chat is the brainstorming round-trip. The
+                manual entry comes first because it is the cheaper default.
+              */}
               <DropdownMenuItem
-                data-testid="header-new-epic"
+                data-testid="header-new-epic-manual"
+                onSelect={() => openBoardPanel("panel=new-epic-manual")}
+                className="text-[13px]"
+              >
+                <PencilLine className="w-[13px] h-[13px]" />
+                New Epic (manual)
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                data-testid="header-new-epic-chat"
                 onSelect={() => openBoardPanel("panel=new-epic")}
                 className="text-[13px]"
               >
-                <Plus className="w-[13px] h-[13px]" />
-                New Epic
+                <MessageSquare className="w-[13px] h-[13px]" />
+                New Epic (via chat)
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem
                 data-testid="header-new-bug"
                 onSelect={() => openBoardPanel("panel=new-bug")}
