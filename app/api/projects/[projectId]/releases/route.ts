@@ -31,7 +31,10 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 import { processManager } from "@/lib/claude/process-manager";
 import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
+import {
+  isResumableProvider,
+  providerAcceptsAssignedSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { applyTransition } from "@/lib/workflow/transition-service";
 import { emitReleaseCreated } from "@/lib/events/emit";
@@ -209,7 +212,7 @@ ${ticketContext}
             resumeSession = true;
           }
         }
-        if (!cliSessionId) {
+        if (!cliSessionId && providerAcceptsAssignedSessionId(agentProvider)) {
           cliSessionId = crypto.randomUUID();
         }
       }
@@ -323,7 +326,8 @@ ${ticketContext}
     releaseBranchResult = await createReleaseBranchAndCommitChangelog(
       project.gitRepoPath,
       version,
-      changelog
+      changelog,
+      { defaultBranch: project.defaultBranch }
     );
     releaseBranch = releaseBranchResult.releaseBranch;
   }

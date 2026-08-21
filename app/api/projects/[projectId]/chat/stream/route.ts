@@ -9,29 +9,59 @@ import { buildChatPrompt, buildEpicRefinementPrompt, buildEpicFinalizationPrompt
 import { getProvider, type ProviderType } from "@/lib/providers";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { isEpicCreationConversationAgentType } from "@/lib/chat/conversation-agent";
+import {
+  isEpicCreationConversationAgentType,
+  isOpenAiIneligibleConversationAgentType,
+} from "@/lib/chat/conversation-agent";
+import {
+  getOpenAiConfigFromSettings,
+  streamOpenAiChatEvents,
+  type OpenAiChatMessage,
+  type OpenAiToolCall,
+} from "@/lib/openai/client";
+import {
+  buildBoardToolsSystemSection,
+  CHAT_BOARD_TOOL_DEFINITIONS,
+  executeChatBoardTool,
+  type ChatBoardToolContext,
+} from "@/lib/chat/board-tools";
+import { mintMcpToken, revokeMcpTokensForSession } from "@/lib/mcp/token-store";
+import { createChatCliToolChannel } from "@/lib/chat/cli-tool-channel";
+import { isMcpToolsEnabled } from "@/lib/claude/mcp-injection";
+import { getAppBaseUrl } from "@/lib/webhooks/send";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import { activityRegistry } from "@/lib/activity-registry";
 import {
   enrichPromptWithDocumentMentions,
   MentionResolutionError,
+  userAuthoredTexts,
   validateMentionsExist,
 } from "@/lib/documents/mentions";
+import {
+  isChatProvider,
+  OPENAI_COMPATIBLE_PROVIDER,
+  PROVIDER_LABELS,
+  type ChatModeProvider,
+} from "@/lib/agent-config/constants";
+import {
+  isResumableProvider,
+  providerAcceptsAssignedSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { chatMessageSchema } from "@/lib/validation/chat-schemas";
 
-const RESUME_CAPABLE_PROVIDERS = new Set<ProviderType>([
-  "claude-code",
-  "gemini-cli",
-  "codex",
-]);
-
-function normalizeProvider(value: string | null | undefined): ProviderType | null {
-  if (value === "claude-code" || value === "gemini-cli" || value === "codex") {
-    return value;
-  }
-  return null;
+/**
+ * The stored conversation provider, honoured for any provider the app
+ * knows — including the OpenAI-compatible fast mode, which is not a CLI
+ * provider (the fast-mode branch below handles it before any CLI spawn).
+ * A short allowlist here silently discards the user's choice: the
+ * conversation create/update routes accept every `isChatProvider()` value,
+ * so a Pi conversation would normalize to null and fall back to the
+ * configured chat default — running a different CLI than the one shown.
+ */
+function normalizeProvider(value: string | null | undefined): ChatModeProvider | null {
+  return value && isChatProvider(value) ? value : null;
 }
 
 function isResumeSessionExpiredError(error: string | null | undefined): boolean {
@@ -39,6 +69,42 @@ function isResumeSessionExpiredError(error: string | null | undefined): boolean 
   return /(session|resume).*(expired|not found|invalid|unknown|does not exist)|invalid.*(session|resume)/i.test(
     error
   );
+}
+
+/**
+ * Upper bound on fast-mode tool rounds per turn (each round is one upstream
+ * completion request). Keeps a confused model from looping forever and the
+ * messages array from growing without bound.
+ */
+const MAX_TOOL_ROUNDS = 8;
+
+/**
+ * Upper bound on tool calls executed within one round. The overflow still
+ * gets a `role:"tool"` reply (the protocol requires one per call id), but
+ * an error payload instead of an execution.
+ */
+const MAX_TOOL_CALLS_PER_ROUND = 8;
+
+/**
+ * Whether a first-round upstream failure looks like the endpoint rejecting
+ * the `tools` field itself (older OpenAI-compatible servers): client errors
+ * only — a generic 500 is usually a transient upstream hiccup, and retrying
+ * it without tools would silently strip the board tools for the turn.
+ */
+function isLikelyToolsRejection(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  if (!error.message.startsWith("OpenAI-compatible API error:")) return false;
+  return /\b(400|404|422|501)\b/.test(error.message) || /tool/i.test(error.message);
+}
+
+function sseResponse(stream: ReadableStream) {
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
 
 export async function POST(
@@ -50,6 +116,8 @@ export async function POST(
   const validated = await validateBody(chatMessageSchema, request);
   if (isValidationError(validated)) return validated;
   const body = validated.data;
+
+  const encoder = new TextEncoder();
 
   if (!body.content && (!body.attachmentIds || body.attachmentIds.length === 0)) {
     return NextResponse.json(
@@ -74,6 +142,81 @@ export async function POST(
   const attachmentIds: string[] = body.attachmentIds || [];
   const finalize: boolean = body.finalize === true;
 
+  // Load context
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
+
+  const conversation = conversationId
+    ? db
+        .select()
+        .from(chatConversations)
+        .where(eq(chatConversations.id, conversationId))
+        .get()
+    : null;
+  const conversationType = conversation?.type ?? null;
+
+  const resolvedByNamedAgent = resolveAgentByNamedId(
+    "chat",
+    projectId,
+    conversation?.namedAgentId ?? null
+  );
+  const conversationProvider = normalizeProvider(conversation?.provider);
+  const resolvedAgent =
+    conversationProvider && !conversation?.namedAgentId
+      ? { ...resolvedByNamedAgent, provider: conversationProvider }
+      : resolvedByNamedAgent;
+
+  let openAiConfig: ReturnType<typeof getOpenAiConfigFromSettings> | null = null;
+  if (resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER) {
+    if (isOpenAiIneligibleConversationAgentType(conversationType)) {
+      return NextResponse.json(
+        {
+          error:
+            "OpenAI-compatible mode is not available for epic-creation or brainstorm conversations.",
+        },
+        { status: 400 }
+      );
+    }
+
+    if (attachmentIds.length > 0) {
+      return NextResponse.json(
+        { error: "Image attachments are not supported in OpenAI-compatible mode." },
+        { status: 400 }
+      );
+    }
+
+    openAiConfig = getOpenAiConfigFromSettings();
+    if (!openAiConfig.baseUrl || !openAiConfig.model) {
+      return NextResponse.json(
+        {
+          error:
+            "OpenAI-compatible mode is not configured. Set the Base URL and Model in Settings.",
+        },
+        { status: 400 }
+      );
+    }
+  }
+
+  const conditions = [eq(chatMessages.projectId, projectId)];
+  if (conversationId) {
+    conditions.push(eq(chatMessages.conversationId, conversationId));
+  }
+
+  const recentMessages = db
+    .select()
+    .from(chatMessages)
+    .where(and(...conditions))
+    .orderBy(desc(chatMessages.createdAt))
+    .limit(20)
+    .all()
+    .reverse();
+
+  const messageHistory = recentMessages.map((m) => ({
+    role: (m.role === "assistant" ? "assistant" : "user") as "user" | "assistant",
+    content: m.content,
+  }));
+
   function setConversationStatus(status: "active" | "generating" | "error") {
     if (!conversationId) return;
     db.update(chatConversations)
@@ -82,7 +225,7 @@ export async function POST(
       .run();
   }
 
-  // Save user message
+  // Save user message (after fast-mode and parameter validation checks have passed)
   const userMsgId = createId();
   const userContent = body.content || (attachmentIds.length > 0 ? "[image]" : "");
   db.insert(chatMessages)
@@ -103,127 +246,6 @@ export async function POST(
       .where(inArray(chatAttachments.id, attachmentIds))
       .run();
   }
-
-  // Load context
-  const found = getProjectOr404(projectId);
-  if (isErrorResponse(found)) return found;
-  const { project } = found;
-
-  const conditions = [eq(chatMessages.projectId, projectId)];
-  if (conversationId) {
-    conditions.push(eq(chatMessages.conversationId, conversationId));
-  }
-
-  const recentMessages = db
-    .select()
-    .from(chatMessages)
-    .where(and(...conditions))
-    .orderBy(desc(chatMessages.createdAt))
-    .limit(20)
-    .all()
-    .reverse();
-
-  const conversation = conversationId
-    ? db
-        .select()
-        .from(chatConversations)
-        .where(eq(chatConversations.id, conversationId))
-        .get()
-    : null;
-  const conversationType = conversation?.type ?? null;
-
-  const messageHistory = recentMessages.map((m) => ({
-    role: m.role as "user" | "assistant",
-    content: m.content,
-  }));
-
-  let prompt: string;
-  if (isEpicCreationConversationAgentType(conversationType)) {
-    const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
-    const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
-    const existingEpics = db
-      .select({
-        title: epics.title,
-        description: epics.description,
-      })
-      .from(epics)
-      .where(eq(epics.projectId, projectId))
-      .orderBy(epics.position)
-      .all();
-
-    prompt = finalize
-      ? buildEpicFinalizationPrompt(
-          project,
-          [],
-          messageHistory,
-          globalPrompt,
-          existingEpics,
-        )
-      : buildEpicRefinementPrompt(
-          project,
-          [],
-          messageHistory,
-          globalPrompt,
-          existingEpics,
-        );
-  } else {
-    const chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
-    prompt = buildChatPrompt(project, [], messageHistory, chatSystemPrompt);
-  }
-
-  const resolvedByNamedAgent = resolveAgentByNamedId(
-    "chat",
-    projectId,
-    conversation?.namedAgentId ?? null
-  );
-  const conversationProvider = normalizeProvider(conversation?.provider);
-  const resolvedAgent =
-    conversationProvider && !conversation?.namedAgentId
-      ? { ...resolvedByNamedAgent, provider: conversationProvider }
-      : resolvedByNamedAgent;
-
-  try {
-    prompt = enrichPromptWithDocumentMentions({
-      projectId,
-      prompt,
-      textSources: [body.content, ...messageHistory.map((m) => m.content)],
-    }).prompt;
-  } catch (error) {
-    if (error instanceof MentionResolutionError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    throw error;
-  }
-
-  const providerSupportsResume = RESUME_CAPABLE_PROVIDERS.has(
-    resolvedAgent.provider as ProviderType
-  );
-  // Legacy-row fallback handled inside resolveCliSessionId().
-  let cliSessionId = conversation
-    ? resolveCliSessionId(conversation) ?? undefined
-    : undefined;
-  const resumeSession = Boolean(conversationId && cliSessionId && providerSupportsResume);
-  if (!cliSessionId && providerSupportsResume) {
-    cliSessionId = crypto.randomUUID();
-  }
-  const effectivePrompt = resumeSession ? userContent : prompt;
-
-  function persistConversationSessionId(nextCliSessionId?: string) {
-    if (!conversationId || !nextCliSessionId) return;
-    db.update(chatConversations)
-      .set({ cliSessionId: nextCliSessionId })
-      .where(eq(chatConversations.id, conversationId))
-      .run();
-  }
-
-  setConversationStatus("generating");
-
-  // Determine conversation label for activity registry
-  const activityLabel =
-    conversation?.label ? `Chat: ${conversation.label}` : "Chat";
-  const activityId = `chat-${createId()}`;
-
-  const encoder = new TextEncoder();
 
   /**
    * Helper: save assistant message and generate title after stream completes.
@@ -254,8 +276,12 @@ export async function POST(
         .all().length;
 
       if (msgCount === 2) {
-        const conv = db.select().from(chatConversations).where(eq(chatConversations.id, conversationId)).get();
-        if (conv && (conv.label === "Brainstorm" || conv.label === "New Epic")) {
+        const conv = db
+          .select()
+          .from(chatConversations)
+          .where(eq(chatConversations.id, conversationId))
+          .get();
+        if (conv && (conv.label === "Brainstorm" || conv.label === "New Epic" || conv.label === "Chat")) {
           const titlePrompt = buildTitleGenerationPrompt(userContent, fullContent);
           spawnClaude({ mode: "plan", prompt: titlePrompt, model: "haiku" }).promise
             .then((titleResult) => {
@@ -290,9 +316,389 @@ export async function POST(
     controller.close();
   }
 
-  // Gemini/Codex: non-streaming providers
+  // ---------------------------------------------------------------------
+  // OpenAI-compatible fast mode: dedicated HTTP path ahead of the CLI
+  // branches. History travels in the messages array (no session resume),
+  // and upstream SSE chunks are re-emitted as token-by-token delta events.
+  // ---------------------------------------------------------------------
+  if (resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER && openAiConfig) {
+    let chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
+    try {
+      chatSystemPrompt = enrichPromptWithDocumentMentions({
+        projectId,
+        prompt: chatSystemPrompt,
+        textSources: [body.content, ...messageHistory.map((m) => m.content)],
+      }).prompt;
+    } catch (error) {
+      if (error instanceof MentionResolutionError) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+      throw error;
+    }
+
+    // Same global toggle as the CLI agents' MCP injection: off means the
+    // model gets neither the tools nor a system prompt promising them.
+    const chatToolsEnabled = isMcpToolsEnabled();
+    const systemSections = [
+      chatSystemPrompt.trim(),
+      chatToolsEnabled ? buildBoardToolsSystemSection(project) : "",
+    ].filter(Boolean);
+    const openAiMessages: OpenAiChatMessage[] = [
+      { role: "system", content: systemSections.join("\n\n") },
+    ];
+    for (const message of messageHistory) {
+      openAiMessages.push({
+        role: message.role,
+        content: message.content,
+      });
+    }
+    openAiMessages.push({
+      role: "user",
+      content: userContent,
+    });
+
+    const activityLabel = conversation?.label
+      ? `Chat: ${conversation.label}`
+      : "Chat";
+    const activityId = `chat-${createId()}`;
+
+    setConversationStatus("generating");
+
+    const abortController = new AbortController();
+    activityRegistry.register({
+      id: activityId,
+      projectId,
+      type: "chat",
+      label: activityLabel,
+      provider: OPENAI_COMPATIBLE_PROVIDER,
+      namedAgentName: resolvedAgent.name ?? null,
+      startedAt: new Date().toISOString(),
+      kill: () => abortController.abort(),
+    });
+
+    // Per-turn agent identity for the MCP-backed board tools: status
+    // changes land attributed to `agent`, scoped to this project. The
+    // fetch base is the app's own constant base URL (never the request's
+    // Host header, which a DNS-rebound origin could control and would then
+    // receive the bearer token).
+    const toolSessionId = `chat-tools-${activityId}`;
+    const toolContext: ChatBoardToolContext | null = chatToolsEnabled
+      ? {
+          projectId,
+          baseUrl: getAppBaseUrl(),
+          mcpToken: mintMcpToken({
+            sessionId: toolSessionId,
+            projectId,
+            epicId: null,
+            userStoryId: null,
+            agentType: "chat",
+          }),
+          signal: abortController.signal,
+        }
+      : null;
+    let toolChannelReleased = false;
+    const releaseToolChannel = () => {
+      if (toolChannelReleased) return;
+      toolChannelReleased = true;
+      if (toolContext) revokeMcpTokensForSession(toolSessionId);
+    };
+
+    let clientCancelled = false;
+    let fullContent = "";
+    const sseStream = new ReadableStream({
+      async start(controller) {
+        try {
+          const messages = [...openAiMessages];
+          let toolsEnabled = chatToolsEnabled;
+          let round = 0;
+          while (round < MAX_TOOL_ROUNDS) {
+            round += 1;
+            let roundText = "";
+            let toolCalls: OpenAiToolCall[] = [];
+            try {
+              for await (const event of streamOpenAiChatEvents(
+                openAiConfig,
+                messages,
+                {
+                  tools: toolsEnabled ? CHAT_BOARD_TOOL_DEFINITIONS : undefined,
+                  signal: abortController.signal,
+                },
+              )) {
+                if (event.type === "text") {
+                  // Separate this round's text from the previous round's.
+                  const delta =
+                    roundText === "" && fullContent.length > 0
+                      ? `\n\n${event.text}`
+                      : event.text;
+                  roundText += event.text;
+                  fullContent += delta;
+                  controller.enqueue(
+                    encoder.encode(`data: ${JSON.stringify({ delta })}\n\n`)
+                  );
+                } else {
+                  toolCalls = event.toolCalls;
+                }
+              }
+            } catch (error) {
+              if (
+                toolsEnabled &&
+                round === 1 &&
+                fullContent === "" &&
+                isLikelyToolsRejection(error)
+              ) {
+                // Retry the turn without tools — and without the system
+                // section promising them, so the model does not answer
+                // board questions from imagination.
+                toolsEnabled = false;
+                round = 0;
+                if (messages[0]?.role === "system") {
+                  const noToolsSystemContent = chatSystemPrompt.trim();
+                  if (noToolsSystemContent) {
+                    messages[0] = { role: "system", content: noToolsSystemContent };
+                  } else {
+                    messages.shift();
+                  }
+                }
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({
+                      status:
+                        "Board tools unavailable on this endpoint — continuing without them.",
+                    })}\n\n`
+                  )
+                );
+                continue;
+              }
+              throw error;
+            }
+
+            if (abortController.signal.aborted) break;
+            if (toolCalls.length === 0) break;
+
+            messages.push({
+              role: "assistant",
+              content: roundText,
+              tool_calls: toolCalls,
+            });
+            if (round === MAX_TOOL_ROUNDS) {
+              const note = `${fullContent ? "\n\n" : ""}[Stopped: tool budget of ${MAX_TOOL_ROUNDS} rounds exhausted.]`;
+              fullContent += note;
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify({ delta: note })}\n\n`)
+              );
+              break;
+            }
+            if (!toolContext) {
+              // A server emitted tool_calls although none were advertised —
+              // treat the round as final rather than execute anything.
+              break;
+            }
+            for (const [callIndex, call] of toolCalls.entries()) {
+              // The protocol wants one tool reply per call id; overflow
+              // calls get an error payload instead of an execution.
+              if (callIndex >= MAX_TOOL_CALLS_PER_ROUND) {
+                messages.push({
+                  role: "tool",
+                  tool_call_id: call.id,
+                  content: JSON.stringify({
+                    error: `Skipped: more than ${MAX_TOOL_CALLS_PER_ROUND} tool calls in one round.`,
+                  }),
+                });
+                continue;
+              }
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ status: `Using ${call.function.name}...` })}\n\n`
+                )
+              );
+              const resultJson = await executeChatBoardTool(call, toolContext);
+              messages.push({
+                role: "tool",
+                tool_call_id: call.id,
+                content: resultJson,
+              });
+            }
+          }
+          releaseToolChannel();
+          activityRegistry.unregister(activityId);
+          if (abortController.signal.aborted) {
+            if (!clientCancelled) {
+              if (fullContent.length > 0) {
+                saveAssistantAndTitle(controller, fullContent, "active");
+              } else {
+                setConversationStatus("active");
+                controller.close();
+              }
+            } else {
+              setConversationStatus("active");
+            }
+            return;
+          }
+          saveAssistantAndTitle(controller, fullContent, "active");
+        } catch (error) {
+          releaseToolChannel();
+          if (abortController.signal.aborted) {
+            // Client disconnected or the activity was killed.
+            activityRegistry.unregister(activityId);
+            if (!clientCancelled) {
+              if (fullContent.length > 0) {
+                saveAssistantAndTitle(controller, fullContent, "active");
+              } else {
+                setConversationStatus("active");
+                controller.close();
+              }
+            } else {
+              setConversationStatus("active");
+            }
+            return;
+          }
+          const failureMessage =
+            error instanceof Error &&
+            error.message.startsWith("OpenAI-compatible API error:")
+              ? error.message
+              : `OpenAI-compatible API error: ${
+                  error instanceof Error ? error.message : "request failed"
+                }`;
+          const isMidStream = fullContent.length > 0;
+          fullContent = isMidStream
+            ? `${fullContent}\n\n${failureMessage}`
+            : failureMessage;
+          controller.enqueue(
+            encoder.encode(
+              `data: ${JSON.stringify({
+                delta: isMidStream ? `\n\n${failureMessage}` : failureMessage,
+              })}\n\n`
+            )
+          );
+          activityRegistry.unregister(activityId);
+          saveAssistantAndTitle(controller, fullContent, "error");
+        }
+      },
+      cancel() {
+        clientCancelled = true;
+        releaseToolChannel();
+        activityRegistry.unregister(activityId);
+        abortController.abort();
+        setConversationStatus("active");
+      },
+    });
+
+    return sseResponse(sseStream);
+  }
+
+  // Full history including the user message just saved above, required by
+  // prompt builders so the agent answers the current question.
+  const fullHistory = [
+    ...messageHistory,
+    { role: "user" as const, content: userContent },
+  ];
+
+  let prompt: string;
+  if (isEpicCreationConversationAgentType(conversationType)) {
+    const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
+    const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+    const existingEpics = db
+      .select({
+        title: epics.title,
+        description: epics.description,
+      })
+      .from(epics)
+      .where(eq(epics.projectId, projectId))
+      .orderBy(epics.position)
+      .all();
+
+    prompt = finalize
+      ? buildEpicFinalizationPrompt(
+          project,
+          [],
+          fullHistory,
+          globalPrompt,
+          existingEpics,
+        )
+      : buildEpicRefinementPrompt(
+          project,
+          [],
+          fullHistory,
+          globalPrompt,
+          existingEpics,
+        );
+  } else {
+    const chatSystemPrompt = await resolveAgentPrompt("chat", projectId);
+    prompt = buildChatPrompt(project, [], fullHistory, chatSystemPrompt);
+  }
+
+  try {
+    prompt = enrichPromptWithDocumentMentions({
+      projectId,
+      prompt,
+      textSources: [body.content, ...fullHistory.map((m) => m.content)],
+    }).prompt;
+  } catch (error) {
+    if (error instanceof MentionResolutionError) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    throw error;
+  }
+
+  const providerSupportsResume = isResumableProvider(resolvedAgent.provider);
+  // Legacy-row fallback handled inside resolveCliSessionId().
+  let cliSessionId = conversation
+    ? resolveCliSessionId(conversation) ?? undefined
+    : undefined;
+  const resumeSession = Boolean(conversationId && cliSessionId && providerSupportsResume);
+  // Only mint for providers that take a caller-chosen id — pi reports its own.
+  if (!cliSessionId && providerAcceptsAssignedSessionId(resolvedAgent.provider)) {
+    cliSessionId = crypto.randomUUID();
+  }
+  // A resumed session already carries the conversation, so the new user text is
+  // normally enough. Finalization is the exception: the strict JSON output
+  // contract lives in the built prompt, and sending only "Generate the final
+  // epic…" makes the CLI answer in prose (or with an `epics` array), which the
+  // client parser then rejects. Always send the full prompt for that turn.
+  const isEpicFinalization =
+    finalize && isEpicCreationConversationAgentType(conversationType);
+  const effectivePrompt = resumeSession && !isEpicFinalization ? userContent : prompt;
+
+  function persistConversationSessionId(nextCliSessionId?: string) {
+    if (!conversationId || !nextCliSessionId) return;
+    db.update(chatConversations)
+      .set({ cliSessionId: nextCliSessionId })
+      .where(eq(chatConversations.id, conversationId))
+      .run();
+  }
+
+  setConversationStatus("generating");
+
+  // Determine conversation label for activity registry
+  const activityLabel =
+    conversation?.label ? `Chat: ${conversation.label}` : "Chat";
+  const activityId = `chat-${createId()}`;
+
+  // Per-turn Arij MCP tool channel for CLI chat providers (claude-code,
+  // codex): the spawned CLI gets the chat toolset of mcp__arij__* board
+  // tools — parity with the fast-mode board tools above. Null when the
+  // provider has no MCP surface, the toggle is off, or the conversation is
+  // an epic-creation/brainstorm prompt contract. The token must be revoked
+  // on every completion path below (success, error, client cancel).
+  const cliToolChannel = createChatCliToolChannel({
+    projectId,
+    provider: resolvedAgent.provider,
+    conversationType,
+  });
+
+  // Claude chat turns run in "chat" mode (permission mode "default" with a
+  // read-only repo allowlist): plan mode refuses allowlisted mutating MCP
+  // tools AND nudges the model into presenting plans it cannot exit from in
+  // a headless spawn. Epic-creation flows keep plan mode — they are prompt
+  // contracts with no tool channel.
+  const claudeChatMode = isEpicCreationConversationAgentType(conversationType)
+    ? ("plan" as const)
+    : ("chat" as const);
+
+  // Every non-Claude provider: non-streaming, spawned through its own provider
   if (resolvedAgent.provider !== "claude-code") {
-    const dynamicProvider = getProvider(resolvedAgent.provider);
+    // "openai-compatible" is not a CLI provider: that branch returned above.
+    const dynamicProvider = getProvider(resolvedAgent.provider as ProviderType);
     let activeProviderSession = dynamicProvider.spawn({
       sessionId: `chat-${createId()}`,
       prompt: effectivePrompt,
@@ -302,6 +708,7 @@ export async function POST(
       logIdentifier: conversationId || `chat-${projectId}`,
       cliSessionId,
       resumeSession,
+      mcp: cliToolChannel?.mcp,
     });
 
     activityRegistry.register({
@@ -320,10 +727,9 @@ export async function POST(
         controller.enqueue(
           encoder.encode(
             `data: ${JSON.stringify({
-              status:
-                resolvedAgent.provider === "codex"
-                  ? "Codex processing..."
-                  : "Gemini processing...",
+              status: `${
+                PROVIDER_LABELS[resolvedAgent.provider]
+              } processing...`,
             })}\n\n`
           )
         );
@@ -337,7 +743,9 @@ export async function POST(
             !result.success &&
             isResumeSessionExpiredError(result.error)
           ) {
-            cliSessionId = providerSupportsResume ? crypto.randomUUID() : undefined;
+            cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
+              ? crypto.randomUUID()
+              : undefined;
             activeProviderSession = dynamicProvider.spawn({
               sessionId: `chat-${createId()}`,
               prompt,
@@ -347,9 +755,12 @@ export async function POST(
               logIdentifier: conversationId || `chat-${projectId}`,
               cliSessionId,
               resumeSession: false,
+              mcp: cliToolChannel?.mcp,
             });
             result = await activeProviderSession.promise;
           }
+
+          cliToolChannel?.release();
 
           const fullContent = result.success
             ? parseClaudeOutput(result.result || "").content || "(empty response)"
@@ -367,6 +778,7 @@ export async function POST(
           activityRegistry.unregister(activityId);
           saveAssistantAndTitle(controller, fullContent, result.success ? "active" : "error");
         } catch (error) {
+          cliToolChannel?.release();
           const failureMessage =
             error instanceof Error ? `Error: ${error.message}` : "Error: Provider request failed";
 
@@ -378,19 +790,14 @@ export async function POST(
         }
       },
       cancel() {
+        cliToolChannel?.release();
         activityRegistry.unregister(activityId);
         activeProviderSession.kill();
         setConversationStatus("active");
       },
     });
 
-    return new Response(sseStream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    return sseResponse(sseStream);
   }
 
   // Claude resume-first path: attempt resume non-streaming, fallback to fresh prompt.
@@ -417,13 +824,14 @@ export async function POST(
         try {
           let resultSessionId = cliSessionId;
           let attempt = spawnClaude({
-            mode: "plan",
+            mode: claudeChatMode,
             prompt: effectivePrompt,
             model: resolvedAgent.model,
             cwd: project.gitRepoPath || undefined,
             logIdentifier: conversationId || `chat-${projectId}`,
             cliSessionId: resultSessionId,
             resumeSession: true,
+            mcp: cliToolChannel?.mcp,
           });
           currentKill = attempt.kill;
           let result = await attempt.promise;
@@ -431,16 +839,19 @@ export async function POST(
           if (!result.success && isResumeSessionExpiredError(result.error)) {
             resultSessionId = crypto.randomUUID();
             attempt = spawnClaude({
-              mode: "plan",
+              mode: claudeChatMode,
               prompt,
               model: resolvedAgent.model,
               cwd: project.gitRepoPath || undefined,
               logIdentifier: conversationId || `chat-${projectId}`,
               cliSessionId: resultSessionId,
+              mcp: cliToolChannel?.mcp,
             });
             currentKill = attempt.kill;
             result = await attempt.promise;
           }
+
+          cliToolChannel?.release();
 
           const fullContent = result.success
             ? parseClaudeOutput(result.result || "").content || "(empty response)"
@@ -458,6 +869,7 @@ export async function POST(
           activityRegistry.unregister(activityId);
           saveAssistantAndTitle(controller, fullContent, result.success ? "active" : "error");
         } catch (error) {
+          cliToolChannel?.release();
           const failureMessage =
             error instanceof Error ? `Error: ${error.message}` : "Error: Provider request failed";
           controller.enqueue(
@@ -468,29 +880,25 @@ export async function POST(
         }
       },
       cancel() {
+        cliToolChannel?.release();
         activityRegistry.unregister(activityId);
         currentKill();
         setConversationStatus("active");
       },
     });
 
-    return new Response(sseStream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
+    return sseResponse(sseStream);
   }
 
   // Claude Code fresh-session path: preserve stream-json UX.
   const { stream: claudeStream, kill } = spawnClaudeStream({
-    mode: "plan",
+    mode: claudeChatMode,
     prompt: effectivePrompt,
     model: resolvedAgent.model,
     cwd: project.gitRepoPath || undefined,
     logIdentifier: conversationId || `chat-${projectId}`,
     cliSessionId,
+    mcp: cliToolChannel?.mcp,
   });
 
   activityRegistry.register({
@@ -536,6 +944,7 @@ export async function POST(
         hasStreamError = true;
       }
 
+      cliToolChannel?.release();
       activityRegistry.unregister(activityId);
       if (!hasStreamError) {
         persistConversationSessionId(cliSessionId);
@@ -544,17 +953,12 @@ export async function POST(
       saveAssistantAndTitle(controller, fullContent, hasStreamError ? "error" : "active");
     },
     cancel() {
+      cliToolChannel?.release();
       activityRegistry.unregister(activityId);
       kill();
       setConversationStatus("active");
     },
   });
 
-  return new Response(sseStream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    },
-  });
+    return sseResponse(sseStream);
 }

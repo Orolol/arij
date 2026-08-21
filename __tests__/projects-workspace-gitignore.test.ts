@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DEFAULT_PROJECTS_DIRNAME } from "@/lib/projects/workspace-constants";
+import { DEFAULT_PROJECTS_ROOT_DIRNAME } from "@/lib/projects/workspace-constants";
 
 const REPO_ROOT = process.cwd();
 const CLONE_DIRNAME = "owner-repo";
@@ -48,7 +48,7 @@ afterEach(() => {
 
 /** Materializes `<testRepoDir>/projects/...` and returns the absolute root path. */
 function materialize(...segments: string[]): string {
-  const root = path.join(testRepoDir, DEFAULT_PROJECTS_DIRNAME);
+  const root = path.join(testRepoDir, DEFAULT_PROJECTS_ROOT_DIRNAME);
   const target = path.join(root, ...segments);
   fs.mkdirSync(target, { recursive: true });
   fs.writeFileSync(path.join(target, "README.md"), "# clone\n");
@@ -61,8 +61,8 @@ function statusUnderProjectsRoot(): string[] {
     .split("\n")
     .map((line) => line.slice(3).trim())
     .filter((entry) =>
-      entry === `${DEFAULT_PROJECTS_DIRNAME}/` ||
-      entry.startsWith(`${DEFAULT_PROJECTS_DIRNAME}/`)
+      entry === `${DEFAULT_PROJECTS_ROOT_DIRNAME}/` ||
+      entry.startsWith(`${DEFAULT_PROJECTS_ROOT_DIRNAME}/`)
     );
 }
 
@@ -72,7 +72,7 @@ describe(".gitignore — app-managed clone root", () => {
   });
 
   it("ignores a clone destination", () => {
-    expect(checkIgnore(`${DEFAULT_PROJECTS_DIRNAME}/${CLONE_DIRNAME}`)).toContain(
+    expect(checkIgnore(`${DEFAULT_PROJECTS_ROOT_DIRNAME}/${CLONE_DIRNAME}`)).toContain(
       "/projects"
     );
   });
@@ -83,13 +83,13 @@ describe(".gitignore — app-managed clone root", () => {
     // <root>/.arij-worktrees, covered by the same rule.
     const clonePath = path.join(
       testRepoDir,
-      DEFAULT_PROJECTS_DIRNAME,
+      DEFAULT_PROJECTS_ROOT_DIRNAME,
       CLONE_DIRNAME
     );
     const worktreeBase = path.join(clonePath, "..", ".arij-worktrees");
 
     expect(path.resolve(worktreeBase)).toBe(
-      path.join(testRepoDir, DEFAULT_PROJECTS_DIRNAME, ".arij-worktrees")
+      path.join(testRepoDir, DEFAULT_PROJECTS_ROOT_DIRNAME, ".arij-worktrees")
     );
     expect(
       checkIgnore(path.relative(testRepoDir, path.join(worktreeBase, "epic-branch")))

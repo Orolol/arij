@@ -34,6 +34,20 @@ export async function POST(request: NextRequest) {
   const auth = requireMcpToken(request);
   if (isErrorResponse(auth)) return auth;
 
+  // Chat tokens (fast-mode board tools and CLI chat turns) have no session
+  // outcome to hold — the user is already in the conversation. Answer in
+  // the chat instead of routing a question through the ticket feed.
+  if (auth.agentType === "chat") {
+    return NextResponse.json(
+      {
+        error:
+          "ask_question is not available in chat conversations — ask the user directly in the chat.",
+        code: "FORBIDDEN",
+      },
+      { status: 403 }
+    );
+  }
+
   const validated = await validateBody(bodySchema, request);
   if (isErrorResponse(validated)) return validated;
   const body = validated.data;

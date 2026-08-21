@@ -103,9 +103,10 @@ class ClaudeProcessManager {
 
     // Arij MCP tool channel — mint a per-session bearer token, attach the
     // MCP server config for the provider to inject, and append the tools
-    // prompt section. This is the SINGLE wiring point: every dispatch route
-    // threads through here, while direct spawnClaude call sites
-    // (generate-spec, import, chat streaming) never get injection.
+    // prompt section. This is the single wiring point for AGENT sessions:
+    // every dispatch route threads through here. Direct spawnClaude call
+    // sites (generate-spec, import) never get injection; CLI chat turns get
+    // their own chat-toolset channel from lib/chat/cli-tool-channel.ts.
     // Strictly best-effort: a session must never fail to spawn because
     // injection did. Gates: settings toggle (absent row = enabled),
     // provider support (claude-code/codex), and an agent_sessions row —

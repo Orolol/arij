@@ -28,6 +28,7 @@ vi.mock("@/lib/agent-config/constants", () => ({
       "claude-code", "codex", "gemini-cli",
       "mistral-vibe", "qwen-code", "opencode",
       "deepseek", "kimi", "zai",
+      "pi", "oh-my-pi",
     ].includes(v)
   ),
   isAgentType: vi.fn(() => true),

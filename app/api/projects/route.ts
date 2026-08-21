@@ -6,6 +6,7 @@ import { createId } from "@/lib/utils/nanoid";
 import { createProjectSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { validatePath } from "@/lib/validation/path";
+import { deriveCloneProvenance } from "@/lib/projects/clone-provenance";
 
 export async function GET() {
   const queryStartedAt = Date.now();
@@ -71,6 +72,8 @@ export async function GET() {
       status: projects.status,
       gitRepoPath: projects.gitRepoPath,
       githubOwnerRepo: projects.githubOwnerRepo,
+      cloneSource: projects.cloneSource,
+      gitRemoteUrl: projects.gitRemoteUrl,
       imported: projects.imported,
       createdAt: projects.createdAt,
       updatedAt: projects.updatedAt,
@@ -101,7 +104,14 @@ export async function POST(request: NextRequest) {
   const validated = await validateBody(createProjectSchema, request);
   if (isValidationError(validated)) return validated;
 
-  const { name, description, gitRepoPath, githubOwnerRepo } = validated.data;
+  const {
+    name,
+    description,
+    gitRepoPath,
+    githubOwnerRepo,
+    gitRemoteUrl,
+    defaultBranch,
+  } = validated.data;
 
   // Validate gitRepoPath if provided
   if (gitRepoPath) {
@@ -114,6 +124,11 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // Provenance is read off the disk, not off the request: `clone_source` is what
+  // later authorises deleting this directory, so it may only be granted by a
+  // marker the clone service wrote into a repository it created itself.
+  const provenance = deriveCloneProvenance(gitRepoPath);
+
   const id = createId();
   const now = new Date().toISOString();
 
@@ -123,7 +138,11 @@ export async function POST(request: NextRequest) {
       name,
       description: description || null,
       gitRepoPath: gitRepoPath || null,
-      githubOwnerRepo: githubOwnerRepo || null,
+      githubOwnerRepo:
+        githubOwnerRepo || provenance.githubOwnerRepo || null,
+      cloneSource: provenance.cloneSource,
+      gitRemoteUrl: provenance.gitRemoteUrl || gitRemoteUrl || null,
+      defaultBranch: defaultBranch || null,
       status: "ideation",
       createdAt: now,
       updatedAt: now,

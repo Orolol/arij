@@ -161,7 +161,7 @@
 }
 
 /* Breathing agent dot — size via w-* / h-* utilities at the call site
-   (7px on cards, 8px in the rail and the cockpit). */
+   (7px on cards, 8px in the rail). */
 .breathing-dot {
   border-radius: 9999px;
   background: var(--agent);

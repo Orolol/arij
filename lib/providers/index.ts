@@ -12,6 +12,8 @@ import { OpenCodeProvider } from "./opencode";
 import { DeepSeekProvider } from "./deepseek";
 import { KimiProvider } from "./kimi";
 import { ZaiProvider } from "./zai";
+import { PiProvider } from "./pi";
+import { OhMyPiProvider } from "./oh-my-pi";
 
 const providers: Record<ProviderType, AgentProvider> = {
   "claude-code": new ClaudeCodeProvider(),
@@ -23,6 +25,8 @@ const providers: Record<ProviderType, AgentProvider> = {
   deepseek: new DeepSeekProvider(),
   kimi: new KimiProvider(),
   zai: new ZaiProvider(),
+  pi: new PiProvider(),
+  "oh-my-pi": new OhMyPiProvider(),
 };
 
 /**

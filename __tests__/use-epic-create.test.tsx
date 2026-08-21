@@ -230,6 +230,75 @@ Acceptance Criteria:
     );
   });
 
+  /**
+   * `sendMessage` resolves as soon as the client stops reading the SSE stream —
+   * which happens early when the stream is aborted or the user switches
+   * conversation while the CLI is still generating. Parsing right away used to
+   * report "I couldn't extract a full epic yet" seconds before the epic JSON
+   * showed up in the very same conversation.
+   */
+  it("waits for the finalization reply instead of failing on stale messages", async () => {
+    vi.useFakeTimers();
+    try {
+      const sendMessage = vi.fn().mockResolvedValue(undefined);
+      const stale = [
+        { role: "user", content: "I want auth" },
+        { role: "assistant", content: "Let me help you plan an authentication system." },
+      ];
+      const withEpic = [
+        ...stale,
+        { role: "user", content: "Generate the final epic with user stories based on our discussion." },
+        {
+          role: "assistant",
+          content:
+            '```json\n{"title":"Auth","description":"Auth system","userStories":[{"title":"As a user, I want login so that I can access the app"}]}\n```',
+        },
+      ];
+      const messagesResponse = (data: unknown) => ({
+        ok: true,
+        json: () => Promise.resolve({ data }),
+      });
+
+      fetchMock
+        .mockResolvedValueOnce(messagesResponse(stale)) // initial load
+        .mockResolvedValueOnce(messagesResponse(stale)) // reply not persisted yet
+        .mockResolvedValueOnce(messagesResponse(stale)) // still generating
+        .mockResolvedValueOnce(messagesResponse(withEpic)) // reply landed
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () =>
+            Promise.resolve({
+              data: { id: "epic-late", title: "Auth", userStoriesCreated: 1 },
+            }),
+        });
+
+      const { result } = renderHook(() =>
+        useEpicCreate({
+          projectId: "proj1",
+          conversationId: "conv1",
+          sendMessage,
+        }),
+      );
+
+      let createdId: string | null = null;
+      await act(async () => {
+        const pending = result.current.createEpic().then((id) => {
+          createdId = id;
+        });
+        await vi.advanceTimersByTimeAsync(10_000);
+        await pending;
+      });
+
+      expect(createdId).toBe("epic-late");
+      // A single finalization prompt was enough — the loop waited instead of
+      // burning its second attempt on a reply that had not landed yet.
+      expect(sendMessage).toHaveBeenCalledTimes(1);
+      expect(result.current.error).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("surfaces API errors when epic creation fails", async () => {
     fetchMock
       .mockResolvedValueOnce({

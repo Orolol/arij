@@ -28,6 +28,13 @@ export interface ApplyTransitionOpts {
   skipDbUpdate?: boolean;
   /** When true, only validate — skip DB update, emit, and log. */
   validateOnly?: boolean;
+  /**
+   * When true, validate as if every open review comment were already
+   * resolved. For the approve flow's pre-merge check: approval bulk-resolves
+   * comments and closes the ticket in one action, but must validate BEFORE
+   * writing anything — the comment resolution included.
+   */
+  assumeReviewCommentsResolved?: boolean;
 }
 
 export interface ApplyTransitionResult {
@@ -56,6 +63,7 @@ export function applyTransition(opts: ApplyTransitionOpts): ApplyTransitionResul
     sessionId,
     skipDbUpdate,
     validateOnly,
+    assumeReviewCommentsResolved,
   } = opts;
 
   // Same-status is a no-op (reorder within column)
@@ -66,6 +74,9 @@ export function applyTransition(opts: ApplyTransitionOpts): ApplyTransitionResul
   // 1. Build context & validate
   const ctx = buildTransitionContext({ epicId, fromStatus, toStatus, actor });
   ctx.source = source;
+  if (assumeReviewCommentsResolved) {
+    ctx.hasOpenReviewComments = false;
+  }
   const result = validateTransition(ctx);
   if (!result.valid) {
     return { valid: false, error: result.error };

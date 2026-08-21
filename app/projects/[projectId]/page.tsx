@@ -26,8 +26,11 @@ import {
 import { Hammer, Layers, Loader2, X, CheckCircle2, XCircle, Plus, Users, Search, GitMerge, Bot } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BugCreateDialog } from "@/components/kanban/BugCreateDialog";
+import { EpicCreateDialog } from "@/components/kanban/EpicCreateDialog";
 import { NightRunDialog } from "@/components/night/NightRunDialog";
 import { NightRunSummaryDialog } from "@/components/night/NightRunSummaryDialog";
+import { AutoModeDialog } from "@/components/auto-mode/AutoModeDialog";
+import { AutoModeToggle } from "@/components/auto-mode/AutoModeToggle";
 import { QuickCapture } from "@/components/kanban/QuickCapture";
 import type { KanbanEpicAgentActivity } from "@/lib/types/kanban";
 import { getActiveDetailTicketId, selectOnlyTicket } from "@/lib/kanban/selection";
@@ -58,7 +61,9 @@ export default function KanbanPage() {
   const [batchMerging, setBatchMerging] = useState(false);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [bugDialogOpen, setBugDialogOpen] = useState(false);
+  const [epicDialogOpen, setEpicDialogOpen] = useState(false);
   const [nightDialogOpen, setNightDialogOpen] = useState(false);
+  const [autoModeDialogOpen, setAutoModeDialogOpen] = useState(false);
   const [nightSummaryRunId, setNightSummaryRunId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [highlightedActivityId, setHighlightedActivityId] = useState<string | null>(null);
@@ -250,6 +255,8 @@ export default function KanbanPage() {
       panelRef.current?.openChat();
     } else if (panel === "new-epic") {
       panelRef.current?.openNewEpic();
+    } else if (panel === "new-epic-manual") {
+      setEpicDialogOpen(true);
     } else if (panel === "new-bug") {
       setBugDialogOpen(true);
     }
@@ -525,6 +532,11 @@ export default function KanbanPage() {
                   onError={(message) => addToast("error", message)}
                 />
               </div>
+              <AutoModeToggle
+                projectId={projectId}
+                onOpen={() => setAutoModeDialogOpen(true)}
+                refreshTrigger={refreshTrigger}
+              />
               <span className="ml-auto truncate text-[12.5px] text-muted-foreground">
                 {visibleCount} ticket{visibleCount === 1 ? "" : "s"} visible
                 {panelOpen && " · Released returns when the panel closes"}
@@ -784,6 +796,16 @@ export default function KanbanPage() {
         ))}
       </div>
 
+      <EpicCreateDialog
+        projectId={projectId}
+        open={epicDialogOpen}
+        onOpenChange={setEpicDialogOpen}
+        onCreated={() => {
+          setRefreshTrigger((t) => t + 1);
+          addToast("success", "Epic created");
+        }}
+      />
+
       <BugCreateDialog
         projectId={projectId}
         open={bugDialogOpen}
@@ -799,6 +821,23 @@ export default function KanbanPage() {
         defaultNamedAgentId={namedAgentId}
         onStarted={(result) => {
           addToast("success", result.message);
+          setRefreshTrigger((t) => t + 1);
+        }}
+        onError={(message) => addToast("error", message)}
+      />
+
+      <AutoModeDialog
+        projectId={projectId}
+        open={autoModeDialogOpen}
+        onOpenChange={setAutoModeDialogOpen}
+        defaultNamedAgentId={namedAgentId}
+        onSaved={(status) => {
+          addToast(
+            "success",
+            status.enabled
+              ? `Full Auto Mode is on — ${status.candidates.build} to build, ${status.candidates.review} to review`
+              : "Full Auto Mode is off"
+          );
           setRefreshTrigger((t) => t + 1);
         }}
         onError={(message) => addToast("error", message)}

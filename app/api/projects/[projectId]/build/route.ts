@@ -40,10 +40,6 @@ import {
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import {
-  enrichPromptWithDocumentMentions,
-  MentionResolutionError,
-} from "@/lib/documents/mentions";
 import { buildExecutionPlan } from "@/lib/dependencies/scheduler";
 import {
   filterBuildableTickets,
@@ -64,6 +60,7 @@ import { isPipelineRunActive } from "@/lib/pipeline/constants";
 import { NIGHT_RUN_ID_PREFIX } from "@/lib/night/constants";
 import { nightRunRegistry } from "@/lib/night/registry";
 import { startNightRun } from "@/lib/night/run";
+import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 
 /**
  * Batch build options (everything except `epicIds`, which keeps its
@@ -88,23 +85,6 @@ const batchBuildOptionsSchema = z.object({
   circuitBreaker: z.number().int().min(0).max(10).optional(),
   costCapUsd: z.number().positive().optional(),
 });
-
-function collectEpicMentionSources(
-  epic: { title?: string | null; description?: string | null },
-  stories: Array<{
-    title?: string | null;
-    description?: string | null;
-    acceptanceCriteria?: string | null;
-  }>
-): Array<string | null | undefined> {
-  return [
-    epic.title,
-    epic.description,
-    ...stories.map((story) => story.title),
-    ...stories.map((story) => story.description),
-    ...stories.map((story) => story.acceptanceCriteria),
-  ];
-}
 
 export async function POST(
   request: NextRequest,
@@ -212,6 +192,9 @@ export async function POST(
   }
 
   const gitRepoPath = project.gitRepoPath;
+  // Captured alongside gitRepoPath: the closures below outlive the narrowing
+  // TypeScript does on `project` here.
+  const projectDefaultBranch = project.defaultBranch;
 
   const isRepo = await isGitRepo(gitRepoPath);
   if (!isRepo) {
@@ -254,7 +237,8 @@ export async function POST(
         const { worktreePath, branchName } = await createWorktree(
           gitRepoPath,
           epic.id,
-          epic.title
+          epic.title,
+          { defaultBranch: projectDefaultBranch }
         );
 
         teamEpics.push({
@@ -262,6 +246,10 @@ export async function POST(
           description: epic.description,
           worktreePath,
           userStories: us,
+          // A bug batched into a team build carries its screenshots like any
+          // other dispatch; solo mode gets them by passing the row whole.
+          projectId: epic.projectId,
+          images: epic.images,
         });
 
         epicRecords.push({ id: epicId, branchName });
@@ -281,25 +269,10 @@ export async function POST(
         teamEpics,
         teamBuildSystemPrompt
       );
-      let enrichedTeamPrompt = prompt;
-      try {
-        enrichedTeamPrompt = enrichPromptWithDocumentMentions({
-          projectId,
-          prompt,
-          textSources: teamEpics.flatMap((teamEpic) => [
-            teamEpic.title,
-            teamEpic.description,
-            ...teamEpic.userStories.map((story) => story.title),
-            ...teamEpic.userStories.map((story) => story.description),
-            ...teamEpic.userStories.map((story) => story.acceptanceCriteria),
-          ]),
-        }).prompt;
-      } catch (error) {
-        if (error instanceof MentionResolutionError) {
-          return NextResponse.json({ error: error.message }, { status: 400 });
-        }
-        throw error;
-      }
+      // No document mentions to resolve: the batch prompt carries no
+      // user-written text — epic and story fields are generated content, and
+      // an agent's `@some/file.ts` points at the project's codebase, not Docs.
+      const enrichedTeamPrompt = prompt;
       const resolvedTeamAgent = resolveAgentByNamedId(
         "team_build",
         projectId,
@@ -319,7 +292,11 @@ export async function POST(
       fs.mkdirSync(logsDir, { recursive: true });
       const logsPath = path.join(logsDir, "logs.json");
 
-      const teamCliSessionId = crypto.randomUUID();
+      const teamCliSessionId = providerAcceptsAssignedSessionId(
+        resolvedTeamAgent.provider,
+      )
+        ? crypto.randomUUID()
+        : undefined;
 
       createQueuedSession({
         id: sessionId,
@@ -480,7 +457,8 @@ export async function POST(
     const { worktreePath, branchName } = await createWorktree(
       gitRepoPath,
       epic.id,
-      epic.title
+      epic.title,
+      { defaultBranch: projectDefaultBranch }
     );
 
     // Compose prompt
@@ -491,19 +469,8 @@ export async function POST(
       us,
       buildSystemPrompt
     );
-    let enrichedPrompt = prompt;
-    try {
-      enrichedPrompt = enrichPromptWithDocumentMentions({
-        projectId,
-        prompt,
-        textSources: collectEpicMentionSources(epic, us),
-      }).prompt;
-    } catch (error) {
-      if (error instanceof MentionResolutionError) {
-        throw error;
-      }
-      throw error;
-    }
+    // Same as team mode: nothing user-written to resolve mentions from.
+    const enrichedPrompt = prompt;
     const resolvedBuildAgent = resolveAgentByNamedId("build", projectId, namedAgentId);
 
     // Create session in DB
@@ -527,9 +494,11 @@ export async function POST(
       );
     }
 
-    const providerSupportsResume =
-      resolvedBuildAgent.provider === "claude-code" || resolvedBuildAgent.provider === "gemini-cli";
-    const soloCliSessionId = providerSupportsResume ? crypto.randomUUID() : undefined;
+    const soloCliSessionId = providerAcceptsAssignedSessionId(
+      resolvedBuildAgent.provider,
+    )
+      ? crypto.randomUUID()
+      : undefined;
 
     createQueuedSession({
       id: sessionId,
@@ -977,9 +946,6 @@ export async function POST(
       },
     });
   } catch (e) {
-    if (e instanceof MentionResolutionError) {
-      return NextResponse.json({ error: e.message }, { status: 400 });
-    }
     if (
       e &&
       typeof e === "object" &&

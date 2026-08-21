@@ -38,11 +38,18 @@ import {
   markSessionTerminal,
 } from "@/lib/agent-sessions/lifecycle";
 import {
-  MentionResolutionError,
   enrichPromptWithDocumentMentions,
-  validateMentionsExist,
+  userAuthoredTexts,
 } from "@/lib/documents/mentions";
+import {
+  buildEpicTargetUrl,
+  createUnresolvedMentionsNotification,
+} from "@/lib/notifications/create";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import {
+  isResumableProvider,
+  providerAcceptsAssignedSessionId,
+} from "@/lib/agent-sessions/resume-capability";
 import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import {
   emitSessionStarted,
@@ -68,18 +75,6 @@ export async function POST(request: NextRequest, { params }: Params) {
   // pipeline_enabled setting chain decides (default OFF).
   const pipelineParam: boolean | undefined =
     typeof body.pipeline === "boolean" ? body.pipeline : undefined;
-
-  try {
-    validateMentionsExist({
-      projectId,
-      textSources: [body.comment],
-    });
-  } catch (error) {
-    if (error instanceof MentionResolutionError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    throw error;
-  }
 
   // Validate epic exists (project-scoped)
   const foundEpic = getEpicOr404(projectId, epicId);
@@ -182,7 +177,8 @@ export async function POST(request: NextRequest, { params }: Params) {
   const { worktreePath, branchName } = await createWorktree(
     gitRepoPath,
     epic.id,
-    epic.title
+    epic.title,
+    { defaultBranch: project.defaultBranch }
   );
 
   // Build prompt — append review context if present
@@ -191,41 +187,38 @@ export async function POST(request: NextRequest, { params }: Params) {
     prompt = prompt + "\n\n" + reviewContext;
   }
 
-  let enrichedPrompt = prompt;
-  try {
-    enrichedPrompt = enrichPromptWithDocumentMentions({
-      projectId,
-      prompt,
-      textSources: [body.comment, ...promptComments.map((c) => c.content)],
-    }).prompt;
-  } catch (error) {
-    if (error instanceof MentionResolutionError) {
-      return NextResponse.json({ error: error.message }, { status: 400 });
-    }
-    throw error;
-  }
+  // Only user-written text can reference an Arij document; an agent comment
+  // mentioning a codebase file must neither resolve nor block the build.
+  const mentionEnrichment = enrichPromptWithDocumentMentions({
+    projectId,
+    prompt,
+    textSources: [body.comment, ...userAuthoredTexts(promptComments)],
+  });
+  const enrichedPrompt = mentionEnrichment.prompt;
+  createUnresolvedMentionsNotification({
+    projectId,
+    missing: mentionEnrichment.missing,
+    agentType: "build",
+    targetUrl: buildEpicTargetUrl(projectId, epicId),
+  });
 
   const resolvedAgent = resolveAgentByNamedId("build", projectId, namedAgentId);
-
-  const providerSupportsResume =
-    resolvedAgent.provider === "claude-code" ||
-    resolvedAgent.provider === "gemini-cli" ||
-    resolvedAgent.provider === "codex";
 
   // Resume support — scope-guarded
   let cliSessionId: string | undefined;
   let resumeSession = false;
-  if (providerSupportsResume && body.resumeSessionId) {
+  if (isResumableProvider(resolvedAgent.provider) && body.resumeSessionId) {
     const validated = validateResumeSession({
       resumeSessionId: body.resumeSessionId,
       epicId: epicId,
+      expectedProvider: resolvedAgent.provider,
     });
     if (validated) {
       cliSessionId = validated.cliSessionId;
       resumeSession = true;
     }
   }
-  if (!cliSessionId && providerSupportsResume) {
+  if (!cliSessionId && providerAcceptsAssignedSessionId(resolvedAgent.provider)) {
     cliSessionId = crypto.randomUUID();
   }
 

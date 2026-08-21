@@ -11,6 +11,8 @@ const ALL_PROVIDERS: ProviderType[] = [
   "deepseek",
   "kimi",
   "zai",
+  "pi",
+  "oh-my-pi",
 ];
 
 export async function GET() {

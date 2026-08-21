@@ -1,5 +1,5 @@
 /**
- * Migration 0027_project_clone_source: the three provenance columns on
+ * Migration 0028_project_clone_source: the three provenance columns on
  * `projects` (clone_source / git_remote_url / default_branch), the hand-written
  * journal entry, and the guarantee that existing rows are untouched.
  */
@@ -14,7 +14,7 @@ import { initDb } from "@/lib/db/init";
 import { projects } from "@/lib/db/schema";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
-const MIGRATION_TAG = "0027_project_clone_source";
+const MIGRATION_TAG = "0028_project_clone_source";
 const NEW_COLUMNS = ["clone_source", "git_remote_url", "default_branch"];
 
 const journal = JSON.parse(
@@ -52,7 +52,7 @@ function columnNames(conn: Database.Database, table: string): string[] {
   ).map((row) => row.name);
 }
 
-describe("0027_project_clone_source — migration file", () => {
+describe("0028_project_clone_source — migration file", () => {
   it("adds the three columns with ALTER TABLE statements", () => {
     const sql = fs.readFileSync(
       path.join(MIGRATIONS_FOLDER, `${MIGRATION_TAG}.sql`),
@@ -66,13 +66,15 @@ describe("0027_project_clone_source — migration file", () => {
     }
   });
 
-  it("is registered in the journal at idx 26", () => {
+  it("is registered in the journal at idx 27, in apply order", () => {
     const entry = journal.entries.find((e) => e.tag === MIGRATION_TAG);
 
     expect(entry).toBeDefined();
-    expect(entry?.idx).toBe(26);
-    // Journal order drives apply order: 0027 must be the last entry.
-    expect(journal.entries[journal.entries.length - 1].tag).toBe(MIGRATION_TAG);
+    expect(entry?.idx).toBe(27);
+    // Journal order drives apply order: the `when` timestamps must be strictly
+    // increasing so 0028 runs after 0027_provider_usage_snapshots.
+    const whens = journal.entries.map((e) => e.when);
+    expect([...whens].sort((a, b) => a - b)).toEqual(whens);
   });
 
   it("leaves the drizzle-kit snapshots untouched (generate must not be run)", () => {
@@ -83,12 +85,12 @@ describe("0027_project_clone_source — migration file", () => {
 
     // Snapshots stop at 0013 while the journal is far ahead — regenerating
     // them would diff against stale state and emit wrong DDL.
-    expect(snapshots).not.toContain("0027_snapshot.json");
+    expect(snapshots).not.toContain("0028_snapshot.json");
     expect(snapshots[snapshots.length - 1]).toBe("0013_snapshot.json");
   });
 });
 
-describe("0027_project_clone_source — applied schema", () => {
+describe("0028_project_clone_source — applied schema", () => {
   it("creates the columns on a fresh database", () => {
     withDb(tempDbPath(), (conn) => {
       initDb(conn);
@@ -110,7 +112,7 @@ describe("0027_project_clone_source — applied schema", () => {
     withDb(tempDbPath(), (conn) => {
       initDb(conn);
 
-      // A row written the pre-0027 way: no provenance columns mentioned.
+      // A row written the pre-0028 way: no provenance columns mentioned.
       conn
         .prepare(
           "INSERT INTO projects (id, name, git_repo_path) VALUES (?, ?, ?)"
@@ -166,19 +168,25 @@ describe("0027_project_clone_source — applied schema", () => {
     });
   });
 
-  it("applies cleanly on an existing database that stops at 0026", () => {
+  it("applies cleanly on an existing database that predates it", () => {
     const file = tempDbPath();
 
-    // Build the full schema, then simulate a database that predates 0027 by
-    // dropping the columns and un-stamping the migration.
+    // Build the full schema, then simulate a database that predates 0028 by
+    // dropping the columns and un-stamping 0028 *and everything after it* —
+    // the migrator replays entries strictly newer than the last stamped one,
+    // so a stray later stamp would legitimately mask 0028. The later
+    // migrations are safe to replay: 0029 is an idempotent rebuild and 0030's
+    // columns are dropped here too.
     withDb(file, (conn) => {
       initDb(conn);
       for (const column of NEW_COLUMNS) {
         conn.exec(`ALTER TABLE projects DROP COLUMN ${column}`);
       }
+      conn.exec("ALTER TABLE chat_attachments DROP COLUMN project_id");
+      conn.exec("ALTER TABLE chat_attachments DROP COLUMN epic_id");
       const entry = journal.entries.find((e) => e.tag === MIGRATION_TAG);
       conn
-        .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at = ?')
+        .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at >= ?')
         .run(entry?.when);
 
       conn
@@ -201,12 +209,12 @@ describe("0027_project_clone_source — applied schema", () => {
     });
   });
 
-  it("stamps 0027 on a bookkeeping-less database that already has the columns", () => {
+  it("stamps 0028 on a bookkeeping-less database that already has the columns", () => {
     const file = tempDbPath();
 
     withDb(file, (conn) => {
       initDb(conn);
-      // Legacy shape: schema present (including 0027's columns) but no
+      // Legacy shape: schema present (including 0028's columns) but no
       // migration bookkeeping — stampLegacyBaseline must recognise it instead
       // of letting migrate() re-run the ALTERs.
       conn.exec('DROP TABLE "__drizzle_migrations"');

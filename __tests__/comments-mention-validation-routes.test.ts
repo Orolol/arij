@@ -57,6 +57,30 @@ describe("Comment mention validation", () => {
     expect(json.error).toContain("Unknown document mention");
   });
 
+  /**
+   * Agents write `@src/foo.ts` about the project's own codebase — that is not
+   * an Arij document reference, and bouncing the comment blocked the run.
+   */
+  it("lets an agent comment through without resolving its mentions", async () => {
+    const { MentionResolutionError } = await import("@/lib/documents/mentions");
+    dbMockState.getQueue = [{ id: "epic-1" }, { id: "comment-1" }];
+    mockValidateMentionsExist.mockImplementation(() => {
+      throw new MentionResolutionError(["src/foo.ts"]);
+    });
+
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/epics/[epicId]/comments/route"
+    );
+
+    const res = await POST(
+      mockJsonRequest({ author: "agent", content: "I updated @src/foo.ts" }),
+      mockRouteContext({ projectId: "proj-1", epicId: "epic-1" })
+    );
+
+    expect(res.status).toBe(201);
+    expect(mockValidateMentionsExist).not.toHaveBeenCalled();
+  });
+
   it("blocks story comment submit when mention validation fails", async () => {
     const { MentionResolutionError } = await import("@/lib/documents/mentions");
     dbMockState.getQueue = [{ id: "story-1" }];

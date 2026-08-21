@@ -37,6 +37,8 @@ describe("Schema: namedAgents table and provider types", () => {
     expect(isAgentProvider("deepseek")).toBe(true);
     expect(isAgentProvider("kimi")).toBe(true);
     expect(isAgentProvider("zai")).toBe(true);
+    expect(isAgentProvider("pi")).toBe(true);
+    expect(isAgentProvider("oh-my-pi")).toBe(true);
     expect(isAgentProvider("invalid")).toBe(false);
   });
 
@@ -51,7 +53,9 @@ describe("Schema: namedAgents table and provider types", () => {
     expect(PROVIDER_OPTIONS).toContain("deepseek");
     expect(PROVIDER_OPTIONS).toContain("kimi");
     expect(PROVIDER_OPTIONS).toContain("zai");
-    expect(PROVIDER_OPTIONS).toHaveLength(9);
+    expect(PROVIDER_OPTIONS).toContain("pi");
+    expect(PROVIDER_OPTIONS).toContain("oh-my-pi");
+    expect(PROVIDER_OPTIONS).toHaveLength(11);
   });
 
   it("ProviderType in providers/types.ts includes gemini-cli", async () => {

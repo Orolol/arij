@@ -16,6 +16,7 @@ import {
 import { buildTechCheckPrompt, buildE2eTestPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 import type { AgentType } from "@/lib/agent-config/constants";
 import {
   createQueuedSession,
@@ -97,7 +98,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
   fs.mkdirSync(logsDir, { recursive: true });
   const logsPath = path.join(logsDir, "logs.json");
-  const cliSessionId = crypto.randomUUID();
+  const cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
+    ? crypto.randomUUID()
+    : undefined;
 
   createQueuedSession({
     id: sessionId,

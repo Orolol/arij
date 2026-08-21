@@ -28,6 +28,7 @@ import {
 import { MessageList } from "@/components/chat/MessageList";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { QuestionCards } from "@/components/chat/QuestionCards";
+import { OPENAI_COMPATIBLE_PROVIDER } from "@/lib/agent-config/constants";
 import { useConversations } from "@/hooks/useConversations";
 import { usePanelLayout, DIVIDER_WIDTH, type UnifiedPanelState } from "@/hooks/usePanelLayout";
 import { usePolling } from "@/hooks/usePolling";
@@ -300,6 +301,13 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       await updateConversation(activeId, { namedAgentId });
     }
 
+    async function handleProviderChange(provider: string) {
+      if (!activeId || hasMessages) {
+        return;
+      }
+      await updateConversation(activeId, { provider });
+    }
+
     async function handleCreateEpic() {
       const epicId = await createEpic();
       if (epicId) {
@@ -331,6 +339,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
               hasMessages={hasMessages}
               isBusy={isCurrentConversationBusy}
               onAgentChange={handleAgentChange}
+              onProviderChange={handleProviderChange}
             />
           }
         />
@@ -377,6 +386,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
           onSend={sendMessage}
           disabled={isCurrentConversationBusy || !activeConversation}
           placeholder={isEpicCreation ? "Describe your epic idea..." : "Ask a question..."}
+          attachmentsDisabled={activeProvider === OPENAI_COMPATIBLE_PROVIDER}
         />
       </div>
     );

@@ -36,6 +36,9 @@ export function resolveLegacyConversationLabel(
       return trimmed;
     }
   }
+  if (type === "chat") {
+    return "Chat";
+  }
   return isEpicCreationConversationAgentType(type) ? "New Epic" : "Brainstorm";
 }
 
