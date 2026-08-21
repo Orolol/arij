@@ -17,6 +17,7 @@ import {
   projectHeader,
   descriptionSection,
   projectContextSections,
+  ticketImagesSection,
 } from "./prompt-sections";
 import { getProjectMemoryContent } from "@/lib/documents/memory";
 import { PROJECT_MEMORY_MAX_CHARS } from "@/lib/documents/memory-constants";
@@ -57,6 +58,18 @@ export interface PromptEpic {
   title: string;
   description?: string | null;
   type?: string | null;
+  /**
+   * Owning project id — present when callers pass a full Drizzle epic row
+   * (every dispatch route does). Required to read `images`, whose stored
+   * paths are namespaced per project.
+   */
+  projectId?: string | null;
+  /**
+   * `epics.images` verbatim — a JSON array of upload paths written by the bug
+   * creation modal, or null. Left as `unknown` because the column is
+   * free-form text: the normaliser, not the type, decides what is usable.
+   */
+  images?: unknown;
 }
 
 export interface PromptUserStory {
@@ -609,7 +622,13 @@ export function buildTitleGenerationPrompt(
  * The prompt includes the full project context, the target epic, and its
  * user stories with acceptance criteria.
  */
-export interface TeamEpic {
+/**
+ * Unlike the solo builders, which take a Drizzle epic row whole, a team epic is
+ * a hand-built projection — so it has to name every field it forwards.
+ * `projectId`/`images` are picked from `PromptEpic` rather than redeclared so a
+ * batch build cannot silently drop a bug's screenshots the way it once did.
+ */
+export interface TeamEpic extends Pick<PromptEpic, "projectId" | "images"> {
   title: string;
   description?: string | null;
   worktreePath: string;
@@ -652,6 +671,10 @@ export function buildTeamBuildPrompt(
     if (epic.description) {
       parts.push(`${epic.description.trim()}\n`);
     }
+
+    // Nested a level below `### Epic N` so the paths stay attached to the epic
+    // they belong to — the team lead is reading several tickets at once.
+    parts.push(ticketImagesSection(epic, { headingLevel: 4 }));
 
     parts.push(userStoriesSection(epic.userStories));
   }
@@ -717,6 +740,7 @@ export function buildBuildPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
 
   // User stories
   parts.push(userStoriesSection(userStories));
@@ -787,6 +811,8 @@ export function buildTicketBuildPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
+
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
 
   // Ticket details
   parts.push(`## Ticket to Implement\n`);
@@ -990,6 +1016,8 @@ export function buildReviewPrompt(
     parts.push(`${epic.description.trim()}\n`);
   }
 
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
+
   // Ticket details
   parts.push(`## Ticket Under Review\n`);
   parts.push(`### ${story.title}\n`);
@@ -1149,6 +1177,7 @@ export function buildEpicReviewPrompt(
   if (epic.description) {
     parts.push(`${epic.description.trim()}\n`);
   }
+  parts.push(ticketImagesSection(epic, { headingLevel: 3 }));
 
   // Skip user stories section for bug tickets (they have none)
   if (!isBug) {
@@ -1329,6 +1358,108 @@ Your ENTIRE response must be ONLY the new memory document body, as raw markdown.
 - Do NOT wrap it in code fences.
 - Do NOT add any preamble, explanation, or summary before or after it.
 - Do NOT address the user — the response is written verbatim into the memory document.
+`);
+
+  return parts.filter(Boolean).join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// 13. Spec Auto-Rewrite Prompt
+// ---------------------------------------------------------------------------
+
+/**
+ * Board snapshot the auto rewrite grounds the spec in: every epic/story
+ * status plus the release history, so the agent can tell what actually
+ * shipped from what is still planned.
+ */
+export interface SpecRewriteBoardState {
+  epics: Array<{ id: string; title: string; status: string }>;
+  userStories: Array<{ epicId: string; title: string; status: string }>;
+  releases: Array<{ version: string; title: string | null; changelog: string | null }>;
+}
+
+/** The release that triggered the rewrite. */
+export interface SpecRewriteReleaseContext {
+  version: string;
+  title: string | null;
+  changelog: string | null;
+}
+
+function specRewriteBoardSection(board: SpecRewriteBoardState): string {
+  const lines: string[] = [`## Current Board State\n`];
+  if (board.epics.length === 0) {
+    lines.push(`(No tickets on the board.)\n`);
+  }
+  for (const epic of board.epics) {
+    lines.push(`- **${epic.title}** — ${epic.status}`);
+    const stories = board.userStories.filter((s) => s.epicId === epic.id);
+    for (const story of stories) {
+      lines.push(`  - ${story.title} (${story.status})`);
+    }
+  }
+  if (board.releases.length > 0) {
+    lines.push(``, `### Release History`);
+    for (const release of board.releases) {
+      lines.push(`- v${release.version}${release.title ? ` — ${release.title}` : ""}`);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+/**
+ * Builds the prompt for the automatic spec rewrite fired after a release.
+ * Like the memory distill, the current spec is the object being rewritten
+ * and gets its own framing instead of the standard injected section.
+ */
+export function buildSpecAutoRewritePrompt(
+  project: PromptProject,
+  currentSpec: string | null,
+  board: SpecRewriteBoardState,
+  release: SpecRewriteReleaseContext,
+  systemPrompt?: string | null,
+): string {
+  const parts: string[] = [];
+
+  parts.push(systemSection(systemPrompt));
+  parts.push(projectHeader(project.name));
+  parts.push(descriptionSection(project.description));
+
+  parts.push(`## Current Specification\n`);
+  if (currentSpec && currentSpec.trim().length > 0) {
+    parts.push(currentSpec.trim() + "\n");
+  } else {
+    parts.push(`(The project specification is currently empty.)\n`);
+  }
+
+  parts.push(specRewriteBoardSection(board));
+
+  parts.push(
+    `## Release That Just Shipped\n`,
+    `- **Version:** v${release.version}${release.title ? ` — ${release.title}` : ""}\n`
+  );
+  if (release.changelog && release.changelog.trim()) {
+    parts.push(`### Changelog\n`, release.changelog.trim() + "\n");
+  }
+
+  parts.push(`## Task: Rewrite the Specification to Match Reality
+
+This project's specification is a living document: it is injected into every agent prompt for this project, so it must describe the project as it IS today — not as it was when first written. A release was just published; update the specification accordingly.
+
+Rewrite the ENTIRE specification above so that:
+
+- Features delivered by shipped releases are presented as implemented reality (current behaviour), not as future plans.
+- Architecture and key-decisions sections reflect what was actually built, incorporating decisions taken during implementation.
+- Objectives and scope stay accurate: drop or rewrite goals the project has outgrown, keep genuine future direction clearly framed as plans (backlog / next steps).
+- The changelog of the release above is evidence of what changed — fold its facts in, but write prose, not a copy of the changelog.
+- Preserve the document's overall structure and voice where they are still accurate; this is a refresh, not a restart.
+
+### Output Format
+
+Your ENTIRE response must be ONLY the new specification, as raw markdown.
+
+- Do NOT wrap it in code fences.
+- Do NOT add any preamble, explanation, or summary before or after it.
+- Do NOT address the user — the response is written verbatim into the project specification.
 `);
 
   return parts.filter(Boolean).join("\n");
