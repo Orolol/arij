@@ -2,9 +2,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, Sparkles } from "lucide-react";
+import { Sparkles } from "lucide-react";
 
-import { PillButton, SurfaceCard, projectTone } from "@/components/piscine";
+import { PillButton, projectTone } from "@/components/piscine";
+import { ToastStack } from "@/components/notifications/ToastStack";
+import { useToastStack } from "@/components/notifications/useToastStack";
 import { useTicketOverlay } from "@/components/ticket/TicketOverlayProvider";
 import { useChat } from "@/hooks/useChat";
 import { useControlDesk } from "@/hooks/useControlDesk";
@@ -24,9 +26,16 @@ import {
 } from "@/lib/chat/conversation-agent";
 import { isLegacyConversationGenerating } from "@/lib/chat/parity-contract";
 import type { ControlDeskPayload, DeskProject } from "@/lib/control-desk/types";
+import { cn } from "@/lib/utils";
 
 import { agentSelectionPatch } from "./agent-selection";
 import { ChatComposer, type ChatAgentChoice } from "./ChatComposer";
+import {
+  ChatPaneSwitcher,
+  DEFAULT_CHAT_PANE,
+  chatPaneClass,
+  type ChatPane,
+} from "./ChatPaneSwitcher";
 import { ChatThread, type ChatThreadResolvedTicket } from "./ChatThread";
 import { ContextRail } from "./ContextRail";
 import { ConversationRoster } from "./ConversationRoster";
@@ -44,6 +53,14 @@ import { longPlacement, shortPlacement } from "./placement";
  * ticket it produces appears in the thread itself as an actionable card, with
  * no detour through the board.
  *
+ * THREE COLUMNS FROM `lg`, ONE PANE BELOW IT (B-arij-180). Both flanks were
+ * `w-[300px] shrink-0` with no breakpoint, so a 390px phone was asked to fit
+ * 600px of fixed columns plus the thread: the roster took the screen and the
+ * thread, the composer and the rail were off it. Below `lg` the page stacks
+ * into a single pane with `ChatPaneSwitcher` above it; the panes are hidden,
+ * never unmounted, and `lg:flex` puts all three back with no state to restore.
+ * The switcher is `lg:hidden`, so the desktop frame is unchanged.
+ *
  * NO 60px HEADER: `components/piscine/TopBar` is mounted once by
  * `app/layout.tsx` and owns the logo, the project chips, ⌘K, the inbox, Auto
  * and "New". This page starts at its own three-column body. It also has no
@@ -59,12 +76,6 @@ export interface ChatPageViewProps {
   initialProjectId?: string;
   /** `?conversation=` — a deep link to one conversation. */
   initialConversationId?: string;
-}
-
-interface ToastRow {
-  id: string;
-  tone: "success" | "error";
-  message: string;
 }
 
 /** Every desk collection that can tell us about a ticket, flattened. */
@@ -239,18 +250,7 @@ export function ChatPageView({
     projects.find((row) => row.id === activeProjectId) ?? null;
   const tone = projectTone(project?.colorIndex ?? 0);
 
-  const [toasts, setToasts] = useState<ToastRow[]>([]);
-  const raise = useCallback(
-    (tone: "success" | "error", message: string) => {
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-      setToasts((current) => [...current, { id, tone, message }]);
-      setTimeout(
-        () => setToasts((current) => current.filter((row) => row.id !== id)),
-        5000,
-      );
-    },
-    [],
-  );
+  const { toasts, raise, dismiss } = useToastStack();
 
   return (
     <div
@@ -279,35 +279,36 @@ export function ChatPageView({
         <EmptyChatWorkspace />
       )}
 
-      {toasts.length > 0 ? (
-        <div className="fixed right-4 bottom-4 z-50 flex flex-col gap-2">
-          {/*
-            The body stays ink whatever the tone. A toast floats over the page
-            and belongs to no stratum, so it has no deep to borrow — the
-            failure is in the wording and in the icon beside it.
-          */}
-          {toasts.map((toast) => (
-            <SurfaceCard
-              key={toast.id}
-              radius={11}
-              data-testid="chat-toast"
-              className="flex items-center gap-2 px-[14px] py-[10px] font-sans text-[13px] text-foreground"
-            >
-              {toast.tone === "success" ? null : (
-                <AlertTriangle
-                  size={13}
-                  aria-hidden="true"
-                  className="shrink-0 text-muted-foreground"
-                />
-              )}
-              <span>{toast.message}</span>
-            </SurfaceCard>
-          ))}
-        </div>
-      ) : null}
+      <ToastStack items={toasts} onDismiss={dismiss} testId="chat-toast" />
     </div>
   );
 }
+
+/**
+ * The page body, shared by the empty state and the real workspace.
+ *
+ * A COLUMN THAT BECOMES A ROW. Below `lg` the switcher sits on top of one
+ * full-width pane; from `lg` the three columns share one row exactly as they
+ * always have — `lg:gap-3` restores the 12px the frame draws, and the switcher
+ * is `display: none` so it costs the row nothing.
+ */
+const CHAT_BODY_CLASS =
+  "flex min-h-0 flex-1 flex-col gap-[10px] px-[14px] pt-[14px] pb-[14px] lg:flex-row lg:gap-3";
+
+/**
+ * The middle pane. `tabIndex={-1}` is not decoration: picking a conversation
+ * on a phone destroys the pane holding the card you just tapped, and without
+ * somewhere to put focus it would fall to `<body>`.
+ */
+const THREAD_PANE_CLASS = "min-h-0 min-w-0 flex-1 flex-col gap-[10px] outline-none";
+
+/**
+ * The right rail. `overflow-y-auto` belongs to the stacked layout, where the
+ * pane owns the full height and its three bands can exceed it; from `lg` the
+ * column behaves exactly as before.
+ */
+const CONTEXT_PANE_CLASS =
+  "min-h-0 w-full flex-1 flex-col gap-[10px] overflow-y-auto lg:w-[300px] lg:flex-none lg:overflow-y-visible";
 
 /**
  * The page with no project to scope to — while the desk read is in flight, or
@@ -322,8 +323,12 @@ function EmptyChatWorkspace() {
     () => ({ spec: null, memory: null, citedDocs: [] }),
     [],
   );
+  const [pane, setPane] = useState<ChatPane>(DEFAULT_CHAT_PANE);
+
   return (
-    <div className="flex min-h-0 flex-1 gap-3 px-[14px] pt-[14px] pb-[14px]">
+    <div className={CHAT_BODY_CLASS}>
+      <ChatPaneSwitcher pane={pane} onChange={setPane} />
+
       <ConversationRoster
         conversations={[]}
         activeId={null}
@@ -334,8 +339,12 @@ function EmptyChatWorkspace() {
         onCreate={() => {}}
         onRestartPersistentSession={() => {}}
         createDisabled
+        className={chatPaneClass(pane, "conversations")}
       />
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[10px]">
+      <div
+        data-testid="chat-thread-pane"
+        className={cn(THREAD_PANE_CLASS, chatPaneClass(pane, "thread"))}
+      >
         <div className="min-h-0 flex-1" />
         <ChatComposer
           projectId={null}
@@ -349,7 +358,10 @@ function EmptyChatWorkspace() {
           onSend={() => {}}
         />
       </div>
-      <div className="flex w-[300px] shrink-0 flex-col gap-[10px]">
+      <div
+        data-testid="chat-context"
+        className={cn(CONTEXT_PANE_CLASS, chatPaneClass(pane, "context"))}
+      >
         <ContextRail tokens={emptyTokens} />
         <CreatedHereCard entries={[]} tone={1} onOpenTicket={() => {}} />
         <TowardSpecBand available={false} pending={false} onPropose={() => {}} />
@@ -656,6 +668,37 @@ function ChatWorkspace({
 
   const contextTokens = useChatContextTokens(projectId, messages);
 
+  /* ---- which pane, on a viewport too narrow for three -------------------- */
+
+  const [pane, setPane] = useState<ChatPane>(DEFAULT_CHAT_PANE);
+  const threadPaneRef = useRef<HTMLDivElement>(null);
+  const [claimThreadFocus, setClaimThreadFocus] = useState(false);
+
+  // AFTER the commit that un-hides the pane, never during the click: focusing
+  // a `display: none` element is a silent no-op, so this cannot be done in the
+  // handler that asks for the switch.
+  useEffect(() => {
+    if (!claimThreadFocus) return;
+    setClaimThreadFocus(false);
+    threadPaneRef.current?.focus();
+  }, [claimThreadFocus]);
+
+  const handleSelectConversation = useCallback(
+    (conversationId: string) => {
+      setActiveId(conversationId);
+      // On a phone the card you just tapped belongs to the pane that is about
+      // to disappear — show the conversation you chose, and take its focus
+      // with it. `pane !== "thread"` IS the test for the stacked layout: the
+      // switcher is `lg:hidden`, so a desktop session never leaves the thread
+      // pane and nothing here moves focus away from the roster it clicked.
+      if (pane !== "thread") {
+        setPane("thread");
+        setClaimThreadFocus(true);
+      }
+    },
+    [pane, setActiveId],
+  );
+
   /* ---- sending --------------------------------------------------------- */
 
   const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
@@ -787,21 +830,30 @@ function ChatWorkspace({
     : "Start a conversation to brainstorm your project with Claude";
 
   return (
-    <div className="flex min-h-0 flex-1 gap-3 px-[14px] pt-[14px] pb-[14px]">
+    <div className={CHAT_BODY_CLASS}>
+      <ChatPaneSwitcher pane={pane} onChange={setPane} />
+
       <ConversationRoster
         conversations={conversations}
         activeId={activeId}
         project={project}
         agentLabels={agentLabels}
         ticketCounts={ticketCounts}
-        onSelect={setActiveId}
+        onSelect={handleSelectConversation}
         onCreate={handleCreateConversation}
         onRestartPersistentSession={(conversationId) =>
           void restartPersistentSession(conversationId)
         }
+        className={chatPaneClass(pane, "conversations")}
       />
 
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-[10px]">
+      <div
+        ref={threadPaneRef}
+        data-testid="chat-thread-pane"
+        tabIndex={-1}
+        aria-label="Fil de la conversation"
+        className={cn(THREAD_PANE_CLASS, chatPaneClass(pane, "thread"))}
+      >
         <ChatThread
           projectId={projectId}
           messages={messages}
@@ -840,7 +892,10 @@ function ChatWorkspace({
         />
       </div>
 
-      <div className="flex w-[300px] shrink-0 flex-col gap-[10px]">
+      <div
+        data-testid="chat-context"
+        className={cn(CONTEXT_PANE_CLASS, chatPaneClass(pane, "context"))}
+      >
         <ContextRail tokens={contextTokens} />
         <CreatedHereCard
           entries={createdHere}
