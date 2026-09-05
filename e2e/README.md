@@ -151,6 +151,24 @@ git repo under the OS temp directory, and deletes both afterwards. Tests never
 share a board, so they stay safe under `fullyParallel`, and the `arji.json`
 export a board write triggers lands in the scratch repo rather than in this one.
 
+**That safety stops at the project boundary.** The database is one file for all
+four workers, and several surfaces deliberately span the whole workspace: `/`,
+`/tickets` with no `?project=`, `/qa`, and the top bar's project chips. On those
+a concurrently running spec's projects and tickets are legitimately on screen,
+so an absolute `toHaveCount(n)` is asserting on the workspace rather than on the
+test's own data — green alone, green on CI at `workers: 1`, and red locally
+whenever a sibling overlaps. It has bitten twice: the eight-chips test in
+`piscine-finishing.spec.ts` and the project/state filters in
+`tickets-registry-filters.spec.ts`.
+
+Count what the test owns instead — the ids it created, or a marker narrowed with
+`.filter({ hasText: … })`, which is what `qa-findings-responsive.spec.ts` does on
+`/qa`. Exact counts stay meaningful under `?project=`. Note that the registry
+also truncates each group to `GROUP_PREVIEW` rows, so on an unfiltered `/tickets`
+a spec's own rows can be pushed past the "+ n autres" line and disappear
+entirely; presence, not just the count, is unreliable there.
+`__tests__/e2e-workspace-scope-counts.test.ts` fails if the pattern returns.
+
 The suite uses `data/e2e.db`, separate from the personal `data/arij.db`.
 `ARIJ_DB_PATH` overrides that path for both the runner and the server.
 `DELETE /api/projects/:id` cascades the board rows and cleans up project
