@@ -21,8 +21,6 @@
  * guard blocks a manual dispatch while the auto rewrite runs.
  */
 
-import fs from "fs";
-import path from "path";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
@@ -33,28 +31,14 @@ import {
   settings,
   userStories,
 } from "@/lib/db/schema";
-import { createId } from "@/lib/utils/nanoid";
-import { agentScheduler } from "@/lib/agents/scheduler";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
+import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import {
   buildSpecAutoRewritePrompt,
   type SpecRewriteBoardState,
 } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import {
   SPEC_AUTO_REWRITE_SETTING_KEY,
@@ -301,102 +285,44 @@ export async function dispatchSpecAutoRewriteSession(
     systemPrompt
   );
 
-  const sessionId = createId();
-  const now = new Date().toISOString();
-  const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-  fs.mkdirSync(logsDir, { recursive: true });
-  const logsPath = path.join(logsDir, "logs.json");
-  const cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
-    ? crypto.randomUUID()
-    : undefined;
-
   // Deliberately no epicId: like the memory distill, a spec rewrite is a
   // project-level background run and must not occupy an epic's concurrency
   // slot or anchor to a ticket.
-  createQueuedSession({
-    id: sessionId,
-    projectId: input.projectId,
-    mode: "plan",
-    provider: resolvedAgent.provider,
-    prompt,
-    logsPath,
-    cliSessionId,
-    namedAgentId: resolvedAgent.namedAgentId ?? null,
+  const { sessionId } = dispatchBackgroundSession({
     agentType: SPEC_REWRITE_AGENT_TYPE,
-    namedAgentName: resolvedAgent.name || null,
-    model: resolvedAgent.model || null,
-    createdAt: now,
-  });
-
-  agentScheduler.submit(input.projectId, sessionId, async () => {
-    markSessionRunning(sessionId);
-
-    processManager.start(
-      sessionId,
-      {
-        mode: "plan",
-        prompt,
-        cwd: project.gitRepoPath || process.cwd(),
-        model: resolvedAgent.model,
-        cliSessionId,
-      },
-      resolvedAgent.provider
-    );
-
-    const info = await waitForProcessCompletion(sessionId, POLL_INTERVAL_MS);
-
-    const completedAt = new Date().toISOString();
-    const result = info?.result;
-
-    try {
-      fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-    } catch {
-      // Best-effort log write.
-    }
-
-    const outcome = classifySessionOutcome(result, sessionId);
-
-    try {
-      markSessionTerminal(
-        sessionId,
-        {
-          success: !!result?.success,
-          error: result?.error ?? null,
-          outcome,
-          usage: extractSessionUsage(result),
-        },
-        completedAt
-      );
-    } catch (error) {
-      if (!isSessionLifecycleConflictError(error)) {
-        console.error("[spec-auto-rewrite] Failed to finalize session", error);
+    projectId: input.projectId,
+    prompt,
+    resolvedAgent,
+    mode: "plan",
+    cwd: project.gitRepoPath || process.cwd(),
+    pollIntervalMs: POLL_INTERVAL_MS,
+    logPrefix: "[spec-auto-rewrite]",
+    onTerminal: ({ sessionId, result, outcome, completedAt }) => {
+      // Only a delivered answer replaces the spec — silent runs, asked
+      // questions, and failures leave it untouched.
+      if (!result?.success || outcome !== "answered") {
+        return;
       }
-    }
 
-    // Only a delivered answer replaces the spec — silent runs, asked
-    // questions, and failures leave it untouched.
-    if (!result?.success || outcome !== "answered") {
-      return;
-    }
+      const output = sanitizeRewrittenSpec(
+        resolveSessionOutput(result, sessionId, "")
+      );
+      if (!output) {
+        return;
+      }
 
-    const output = sanitizeRewrittenSpec(
-      resolveSessionOutput(result, sessionId, "")
-    );
-    if (!output) {
-      return;
-    }
+      try {
+        db.update(projects)
+          .set({ spec: output, updatedAt: completedAt })
+          .where(eq(projects.id, input.projectId))
+          .run();
+      } catch (error) {
+        console.error("[spec-auto-rewrite] Failed to save rewritten spec", error);
+        return;
+      }
 
-    try {
-      db.update(projects)
-        .set({ spec: output, updatedAt: completedAt })
-        .where(eq(projects.id, input.projectId))
-        .run();
-    } catch (error) {
-      console.error("[spec-auto-rewrite] Failed to save rewritten spec", error);
-      return;
-    }
-
-    tryExportArjiJson(input.projectId);
+      tryExportArjiJson(input.projectId);
+    },
   });
 
   return { sessionId };

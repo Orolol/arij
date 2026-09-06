@@ -36,8 +36,6 @@
  *     a human edit made mid-dream is never silently overwritten.
  */
 
-import fs from "fs";
-import path from "path";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
@@ -49,26 +47,12 @@ import {
   ticketComments,
   userStories,
 } from "@/lib/db/schema";
-import { createId } from "@/lib/utils/nanoid";
-import { agentScheduler } from "@/lib/agents/scheduler";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
+import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import { extractLastNonEmptyTextFromFile } from "@/lib/agent-sessions/last-text";
 import { buildDreamingPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 // Single source of truth for the heading the pipeline files diagnostics under,
 // and for the dead-session marker it stamps into them.
 import {
@@ -982,15 +966,6 @@ export async function dispatchDreamingSession(
     systemPrompt
   );
 
-  const sessionId = createId();
-  const now = new Date().toISOString();
-  const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-  fs.mkdirSync(logsDir, { recursive: true });
-  const logsPath = path.join(logsDir, "logs.json");
-  const cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
-    ? crypto.randomUUID()
-    : undefined;
-
   // Re-check under NO await: the guard above ran before `resolveAgentPrompt`,
   // and two triggers firing together (the Docs button while a night run
   // finishes, or an auto-distill racing this dream) could both have passed it
@@ -1010,197 +985,153 @@ export async function dispatchDreamingSession(
   // Deliberately no epicId (see the module docblock): a dream spans every
   // ticket, so pinning it to one would both lie and hold that epic's
   // concurrency slot for the whole run.
-  createQueuedSession({
-    id: sessionId,
-    projectId: input.projectId,
-    mode: "plan",
-    provider: resolvedAgent.provider,
-    prompt,
-    logsPath,
-    cliSessionId,
-    namedAgentId: resolvedAgent.namedAgentId ?? null,
+  const { sessionId } = dispatchBackgroundSession({
     agentType: DREAMING_AGENT_TYPE,
-    namedAgentName: resolvedAgent.name || null,
-    model: resolvedAgent.model || null,
-    batchRunId: input.batchRunId ?? null,
-    createdAt: now,
-  });
-
-  try {
-    emitSessionStarted(input.projectId, "", sessionId, DREAMING_AGENT_TYPE);
-  } catch {
-    // Non-critical event emission
-  }
-  agentScheduler.submit(input.projectId, sessionId, async () => {
-    markSessionRunning(sessionId);
-
-    processManager.start(
-      sessionId,
-      {
-        mode: "plan",
-        prompt,
-        cwd: project.gitRepoPath || process.cwd(),
-        model: resolvedAgent.model,
-        cliSessionId,
-      },
-      resolvedAgent.provider
-    );
-
-    const info = await waitForProcessCompletion(sessionId, POLL_INTERVAL_MS);
-
-    const completedAt = new Date().toISOString();
-    const result = info?.result;
-
-    try {
-      fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-    } catch {
-      // Best-effort log write.
-    }
-
-    const outcome = classifySessionOutcome(result, sessionId);
-
-    try {
-      markSessionTerminal(
-        sessionId,
-        {
-          success: !!result?.success,
-          error: result?.error ?? null,
-          outcome,
-          usage: extractSessionUsage(result),
-        },
-        completedAt
-      );
-    } catch (error) {
-      if (!isSessionLifecycleConflictError(error)) {
-        console.error(`${DREAMING_LOG_PREFIX} Failed to finalize session`, error);
+    projectId: input.projectId,
+    prompt,
+    resolvedAgent,
+    mode: "plan",
+    cwd: project.gitRepoPath || process.cwd(),
+    pollIntervalMs: POLL_INTERVAL_MS,
+    logPrefix: DREAMING_LOG_PREFIX,
+    session: { batchRunId: input.batchRunId ?? null },
+    onQueued: ({ sessionId: sid }) => {
+      try {
+        emitSessionStarted(input.projectId, "", sid, DREAMING_AGENT_TYPE);
+      } catch {
+        // Non-critical event emission
       }
-    }
+    },
+    onTerminal: ({ sessionId: sid, result, outcome, completedAt }) => {
+      try {
+        eventBus.emit({
+          type:
+            result?.success && outcome === "answered"
+              ? "session:completed"
+              : "session:failed",
+          projectId: input.projectId,
+          data: { sessionId: sid, agentType: DREAMING_AGENT_TYPE },
+          timestamp: completedAt,
+        });
+      } catch {
+        // Non-critical event emission
+      }
+      // Only a delivered answer replaces the memory — silent runs, asked
+      // questions and failures leave it exactly as it was.
+      if (!result?.success || outcome !== "answered") {
+        return;
+      }
 
-    try {
-      eventBus.emit({
-        type: result?.success && outcome === "answered" ? "session:completed" : "session:failed",
-        projectId: input.projectId,
-        data: { sessionId, agentType: DREAMING_AGENT_TYPE },
-        timestamp: completedAt,
-      });
-    } catch {
-      // Non-critical event emission
-    }
-    // Only a delivered answer replaces the memory — silent runs, asked
-    // questions and failures leave it exactly as it was.
-    if (!result?.success || outcome !== "answered") {
-      return;
-    }
-
-    const output = sanitizeDreamedMemory(
-      resolveSessionOutput(result, sessionId, "")
-    );
-    if (!output) {
-      return;
-    }
-
-    // Validate what would ACTUALLY BE STORED, not what the agent produced.
-    // `saveProjectMemory` truncates at the cap, so an over-long response can
-    // arrive with all four sections and land with its last one cut off — a
-    // document that stops mid-sentence, injected into every future prompt,
-    // with the digest window marked as learned. Checking the cap-effective
-    // text catches that as well as an agent that ignored the contract.
-    const structure = validateDreamedMemoryStructure(enforceMemoryCap(output));
-    if (!structure.valid) {
-      // Same posture as the mid-dream edit: nothing stored, cutoff unmoved, so
-      // the next dream reads the same sessions and gets another attempt. The
-      // rejected text stays readable on the session page.
-      console.warn(
-        `${DREAMING_LOG_PREFIX} discarded for project ${input.projectId}:` +
-          ` the dreamed memory did not match the required structure` +
-          ` (${structure.reason}); session ${sessionId}`
+      const output = sanitizeDreamedMemory(
+        resolveSessionOutput(result, sid, "")
       );
-      return;
-    }
+      if (!output) {
+        return;
+      }
 
-    try {
-      // Snapshot and replacement commit together or not at all. A dream
-      // rewrites the whole document, so the pre-dream text is the only way
-      // back — and archiving it separately would let a failed save burn that
-      // snapshot while leaving the live memory untouched.
-      //
-      // `expectedPrevious` is the memory this dream actually REASONED FROM
-      // (captured minutes ago, at prompt time). A dream runs long enough for
-      // someone to save an edit in the Docs tab meanwhile; replacing blindly
-      // would throw that edit away in favour of text derived from the version
-      // before it. The human edit is the newer intent and wins — a dream can
-      // just be run again.
-      replaceProjectMemoryWithSnapshot(input.projectId, output, {
-        expectedPrevious: currentMemory,
-      });
-    } catch (error) {
-      // Either way the window deliberately does NOT advance: a dream whose
-      // output was never stored taught the project nothing, so the next dream
-      // must read the same sessions again rather than skip past them.
-      if (isProjectMemoryChangedError(error)) {
-        console.info(
+      // Validate what would ACTUALLY BE STORED, not what the agent produced.
+      // `saveProjectMemory` truncates at the cap, so an over-long response can
+      // arrive with all four sections and land with its last one cut off — a
+      // document that stops mid-sentence, injected into every future prompt,
+      // with the digest window marked as learned. Checking the cap-effective
+      // text catches that as well as an agent that ignored the contract.
+      const structure = validateDreamedMemoryStructure(enforceMemoryCap(output));
+      if (!structure.valid) {
+        // Same posture as the mid-dream edit: nothing stored, cutoff unmoved, so
+        // the next dream reads the same sessions and gets another attempt. The
+        // rejected text stays readable on the session page.
+        console.warn(
           `${DREAMING_LOG_PREFIX} discarded for project ${input.projectId}:` +
-            ` the memory was edited while the dream ran (its output is still` +
-            ` readable on session ${sessionId})`
+            ` the dreamed memory did not match the required structure` +
+            ` (${structure.reason}); session ${sid}`
         );
         return;
       }
-      console.error(`${DREAMING_LOG_PREFIX} Failed to save dreamed memory`, error);
-      return;
-    }
 
-    // Story 3: record who wrote the document, and tell every open memory
-    // view to re-fetch — the single channel every other write path uses.
-    try {
-      recordMemoryWriteProvenance(input.projectId, {
-        source: "dreaming",
-        sessionId,
-      });
-      eventBus.emit({
-        type: "memory:changed",
-        projectId: input.projectId,
-        data: { source: "dreaming" },
-        timestamp: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.warn(
-        `${DREAMING_LOG_PREFIX} Failed to record the dream memory write`,
-        error
-      );
-    }
+      try {
+        // Snapshot and replacement commit together or not at all. A dream
+        // rewrites the whole document, so the pre-dream text is the only way
+        // back — and archiving it separately would let a failed save burn that
+        // snapshot while leaving the live memory untouched.
+        //
+        // `expectedPrevious` is the memory this dream actually REASONED FROM
+        // (captured minutes ago, at prompt time). A dream runs long enough for
+        // someone to save an edit in the Docs tab meanwhile; replacing blindly
+        // would throw that edit away in favour of text derived from the version
+        // before it. The human edit is the newer intent and wins — a dream can
+        // just be run again.
+        replaceProjectMemoryWithSnapshot(input.projectId, output, {
+          expectedPrevious: currentMemory,
+        });
+      } catch (error) {
+        // Either way the window deliberately does NOT advance: a dream whose
+        // output was never stored taught the project nothing, so the next dream
+        // must read the same sessions again rather than skip past them.
+        if (isProjectMemoryChangedError(error)) {
+          console.info(
+            `${DREAMING_LOG_PREFIX} discarded for project ${input.projectId}:` +
+              ` the memory was edited while the dream ran (its output is still` +
+              ` readable on session ${sid})`
+          );
+          return;
+        }
+        console.error(`${DREAMING_LOG_PREFIX} Failed to save dreamed memory`, error);
+        return;
+      }
 
-    // The single place the window advances — after, and only after, the memory
-    // document actually changed. Stamped with the COLLECTION instant, so
-    // sessions that reached a terminal state while this dream was running stay
-    // inside the next window instead of falling through the crack between
-    // "collected" and "finished".
-    try {
-      recordDreamCutoff(input.projectId, collected.collectedAtIso);
-    } catch (error) {
-      // Losing the cutoff costs a re-read, never a loss — leave it noisy but
-      // non-fatal.
-      console.warn(
-        `${DREAMING_LOG_PREFIX} Failed to record the dream cutoff`,
-        error
-      );
-    }
+      // Story 3: record who wrote the document, and tell every open memory
+      // view to re-fetch — the single channel every other write path uses.
+      try {
+        recordMemoryWriteProvenance(input.projectId, {
+          source: "dreaming",
+          sessionId: sid,
+        });
+        eventBus.emit({
+          type: "memory:changed",
+          projectId: input.projectId,
+          data: { source: "dreaming" },
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error) {
+        console.warn(
+          `${DREAMING_LOG_PREFIX} Failed to record the dream memory write`,
+          error
+        );
+      }
 
-    try {
-      createMemoryDreamedNotification({
-        projectId: input.projectId,
-        sessionId,
-        sessionsAnalyzed: collected.includedCount,
-        // The memory this dream replaced is exactly what it reasoned from —
-        // the guard above just proved the two are still the same text.
-        previousChars: currentMemory?.length ?? 0,
-        newChars: getProjectMemoryContent(input.projectId)?.length ?? 0,
-      });
-    } catch (error) {
-      console.warn(
-        `${DREAMING_LOG_PREFIX} Failed to notify about the dreamed memory`,
-        error
-      );
-    }
+      // The single place the window advances — after, and only after, the memory
+      // document actually changed. Stamped with the COLLECTION instant, so
+      // sessions that reached a terminal state while this dream was running stay
+      // inside the next window instead of falling through the crack between
+      // "collected" and "finished".
+      try {
+        recordDreamCutoff(input.projectId, collected.collectedAtIso);
+      } catch (error) {
+        // Losing the cutoff costs a re-read, never a loss — leave it noisy but
+        // non-fatal.
+        console.warn(
+          `${DREAMING_LOG_PREFIX} Failed to record the dream cutoff`,
+          error
+        );
+      }
+
+      try {
+        createMemoryDreamedNotification({
+          projectId: input.projectId,
+          sessionId: sid,
+          sessionsAnalyzed: collected.includedCount,
+          // The memory this dream replaced is exactly what it reasoned from —
+          // the guard above just proved the two are still the same text.
+          previousChars: currentMemory?.length ?? 0,
+          newChars: getProjectMemoryContent(input.projectId)?.length ?? 0,
+        });
+      } catch (error) {
+        console.warn(
+          `${DREAMING_LOG_PREFIX} Failed to notify about the dreamed memory`,
+          error
+        );
+      }
+    },
   });
 
   return {
