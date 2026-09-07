@@ -48,10 +48,8 @@ import {
   PROVIDER_LABELS,
   type ChatModeProvider,
 } from "@/lib/agent-config/constants";
-import {
-  isResumableProvider,
-  providerAcceptsAssignedSessionId,
-} from "@/lib/agent-sessions/resume-capability";
+import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
+import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
 import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { chatMessageSchema } from "@/lib/validation/chat-schemas";
@@ -733,8 +731,8 @@ export async function POST(
     : undefined;
   const resumeSession = Boolean(conversationId && cliSessionId && providerSupportsResume);
   // Only mint for providers that take a caller-chosen id — pi reports its own.
-  if (!cliSessionId && providerAcceptsAssignedSessionId(resolvedAgent.provider)) {
-    cliSessionId = crypto.randomUUID();
+  if (!cliSessionId) {
+    cliSessionId = mintAssignedCliSessionId(resolvedAgent.provider);
   }
   // A resumed session already carries the conversation, so the new user text is
   // normally enough. Finalization is the exception: the strict JSON output
@@ -892,9 +890,7 @@ export async function POST(
             clearConversationSessionId();
             // A fresh session has no history, so it needs the full prompt
             // rather than the resume path's bare user message.
-            cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
-              ? crypto.randomUUID()
-              : undefined;
+            cliSessionId = mintAssignedCliSessionId(resolvedAgent.provider);
             enqueueIfOpen(
               controller,
               `data: ${JSON.stringify({
@@ -999,9 +995,7 @@ export async function POST(
             !result.success &&
             isResumeSessionExpiredError(result.error)
           ) {
-            cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
-              ? crypto.randomUUID()
-              : undefined;
+            cliSessionId = mintAssignedCliSessionId(resolvedAgent.provider);
             activeProviderSession = dynamicProvider.spawn({
               sessionId: `chat-${createId()}`,
               prompt,

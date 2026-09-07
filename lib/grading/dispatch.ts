@@ -5,8 +5,6 @@
  * a grading report, but never changes epic/story status. Epics without a
  * usable rubric are a successful, journalled no-op.
  */
-import fs from "fs";
-import path from "path";
 import { and, desc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
@@ -15,24 +13,10 @@ import {
   projects,
   userStories,
 } from "@/lib/db/schema";
-import { createId } from "@/lib/utils/nanoid";
 import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { assembleGradingPrompt } from "@/lib/tokens";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-} from "@/lib/claude/resolve-session-output";
 import { resolveAgentForDispatch } from "@/lib/agent-config/agent-resolution";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import { agentScheduler } from "@/lib/agents/scheduler";
+import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
@@ -261,83 +245,39 @@ export async function dispatchGradingSession(
     { defaultBranch: project.defaultBranch },
   );
 
-  const sessionId = createId();
-  const now = new Date().toISOString();
-  const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-  fs.mkdirSync(logsDir, { recursive: true });
-  const logsPath = path.join(logsDir, "logs.json");
-  const cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
-    ? crypto.randomUUID()
-    : undefined;
+  // A grading run succeeded only if a report row exists: the agent must have
+  // called submit_grading, not merely exited zero. Decided in `evaluate`, so
+  // the verdict written to the session row says the same as the result.
+  let reportId: string | null = null;
 
-  createQueuedSession({
-    id: sessionId,
+  const dispatched = dispatchBackgroundSession({
+    agentType: GRADING_AGENT_TYPE,
     projectId: input.projectId,
+    // Ticket-scoped on purpose: a grader occupies the epic (or story) the way
+    // a review does, so the concurrency guards keep a second agent off it.
     epicId: input.epicId,
     userStoryId: input.userStoryId ?? null,
-    mode: "code",
-    provider: resolvedAgent.provider,
     prompt,
-    estimatedPromptTokens: assembled.tokens.total,
-    estimatedPromptBreakdown: JSON.stringify(assembled.tokens.breakdown),
-    logsPath,
-    branchName,
-    worktreePath,
-    cliSessionId,
-    namedAgentId: resolvedAgent.namedAgentId ?? null,
-    namedAgentName: resolvedAgent.name ?? null,
-    model: resolvedAgent.model ?? null,
-    agentType: GRADING_AGENT_TYPE,
-    batchRunId: input.batchRunId ?? null,
-    createdAt: now,
-  });
-
-  emitSessionStarted(
-    input.projectId,
-    input.epicId,
-    sessionId,
-    GRADING_AGENT_TYPE,
-  );
-
-  let settle!: (result: GradingSessionResult) => void;
-  const settled = new Promise<GradingSessionResult>((resolve) => {
-    settle = resolve;
-  });
-
-  agentScheduler.submit(input.projectId, sessionId, async () => {
-    let terminal: GradingSessionResult = {
-      sessionId,
-      success: false,
-      outcome: null,
-      error: "Grading session did not run",
-      reportId: null,
-    };
-
-    try {
-      markSessionRunning(sessionId);
-      processManager.start(
+    resolvedAgent,
+    mode: "code",
+    cwd: worktreePath,
+    logPrefix: "[grading]",
+    session: {
+      estimatedPromptTokens: assembled.tokens.total,
+      estimatedPromptBreakdown: JSON.stringify(assembled.tokens.breakdown),
+      branchName,
+      worktreePath,
+      batchRunId: input.batchRunId ?? null,
+    },
+    onQueued: ({ sessionId }) => {
+      emitSessionStarted(
+        input.projectId,
+        input.epicId,
         sessionId,
-        {
-          mode: "code",
-          prompt,
-          cwd: worktreePath,
-          model: resolvedAgent.model,
-          cliSessionId,
-        },
-        resolvedAgent.provider,
+        GRADING_AGENT_TYPE,
       );
-
-      const info = await waitForProcessCompletion(sessionId);
-      const completedAt = new Date().toISOString();
-      const result = info?.result;
-
-      try {
-        fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-      } catch {
-        // Best-effort log write.
-      }
-
-      const outcome = classifySessionOutcome(result, sessionId);
+    },
+    evaluate: ({ sessionId, result }) => {
       const report = db
         .select({ id: gradingReports.id })
         .from(gradingReports)
@@ -345,6 +285,7 @@ export async function dispatchGradingSession(
         .orderBy(desc(gradingReports.createdAt))
         .limit(1)
         .get();
+      reportId = report?.id ?? null;
       const success = Boolean(result?.success && report);
       const error = success
         ? null
@@ -352,32 +293,9 @@ export async function dispatchGradingSession(
           (result?.success
             ? GRADING_MISSING_REPORT_ERROR
             : "The grading session failed without reporting an error.");
-
-      terminal = {
-        sessionId,
-        success,
-        outcome,
-        error,
-        reportId: report?.id ?? null,
-      };
-
-      try {
-        markSessionTerminal(
-          sessionId,
-          {
-            success,
-            error,
-            outcome,
-            usage: extractSessionUsage(result),
-          },
-          completedAt,
-        );
-      } catch (lifecycleError) {
-        if (!isSessionLifecycleConflictError(lifecycleError)) {
-          console.error("[grading] Failed to finalize session", lifecycleError);
-        }
-      }
-
+      return { success, error };
+    },
+    onTerminal: ({ sessionId, success, error }) => {
       if (success) {
         emitSessionCompleted(input.projectId, input.epicId, sessionId);
       } else {
@@ -388,24 +306,35 @@ export async function dispatchGradingSession(
           error ?? "Acceptance grading failed",
         );
       }
-    } catch (error) {
-      terminal = {
-        sessionId,
-        success: false,
-        outcome: "error",
-        error: error instanceof Error ? error.message : "Grading launch failed",
-        reportId: null,
-      };
-      throw error;
-    } finally {
-      settle(terminal);
-    }
+    },
   });
+
+  const settled: Promise<GradingSessionResult> = dispatched.settled.then(
+    (run) =>
+      run.launchError
+        ? {
+            sessionId: run.sessionId,
+            success: false,
+            outcome: "error",
+            error:
+              run.launchError instanceof Error
+                ? run.launchError.message
+                : "Grading launch failed",
+            reportId: null,
+          }
+        : {
+            sessionId: run.sessionId,
+            success: run.success,
+            outcome: run.outcome,
+            error: run.error,
+            reportId,
+          },
+  );
 
   return {
     skipped: false,
-    sessionId,
-    provider: resolvedAgent.provider,
+    sessionId: dispatched.sessionId,
+    provider: dispatched.provider,
     segregated: resolvedAgent.segregated === true,
     builderProvider: resolvedAgent.builderProvider ?? null,
     settled,

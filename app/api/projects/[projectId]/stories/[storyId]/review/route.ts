@@ -44,7 +44,7 @@ import {
   createUnresolvedMentionsNotification,
 } from "@/lib/notifications/create";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
+import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
 import { transitionReviewRejected } from "@/lib/workflow/automatic-transitions";
 import {
   resolveReviewVerdict,
@@ -222,9 +222,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     const useResume = !!resumeCliSessionId;
     const cliSessionId = useResume
       ? resumeCliSessionId
-      : providerAcceptsAssignedSessionId(resolvedAgent.provider)
-        ? crypto.randomUUID()
-        : undefined;
+      : mintAssignedCliSessionId(resolvedAgent.provider);
 
     createQueuedSession({
       id: sessionId,

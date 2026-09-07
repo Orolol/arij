@@ -61,7 +61,7 @@ import { isPipelineRunActive } from "@/lib/pipeline/constants";
 import { NIGHT_RUN_ID_PREFIX } from "@/lib/night/constants";
 import { nightRunRegistry } from "@/lib/night/registry";
 import { startNightRun } from "@/lib/night/run";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
+import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
 import {
   createPromptSectionCapture,
   finalizeCapturedPrompt,
@@ -329,11 +329,9 @@ export async function POST(
       fs.mkdirSync(logsDir, { recursive: true });
       const logsPath = path.join(logsDir, "logs.json");
 
-      const teamCliSessionId = providerAcceptsAssignedSessionId(
+      const teamCliSessionId = mintAssignedCliSessionId(
         resolvedTeamAgent.provider,
-      )
-        ? crypto.randomUUID()
-        : undefined;
+      );
 
       createQueuedSession({
         id: sessionId,
@@ -570,11 +568,9 @@ export async function POST(
       );
     }
 
-    const soloCliSessionId = providerAcceptsAssignedSessionId(
+    const soloCliSessionId = mintAssignedCliSessionId(
       resolvedBuildAgent.provider,
-    )
-      ? crypto.randomUUID()
-      : undefined;
+    );
 
     transitionBuildStarted({
       projectId,

@@ -12,36 +12,20 @@
  *
  * Chat mode: the pass's entire deliverable is mutating MCP calls (which plan
  * mode refuses), but it must not carry write access into the user's checkout
- * the way code mode's bypassPermissions would. See the mode comment on
- * createQueuedSession below.
+ * the way code mode's bypassPermissions would. See the mode comment on the
+ * dispatch below.
  *
  * The dispatcher also refuses outright when the resolved provider cannot
  * carry the MCP channel: a refinement run without tools is a silent no-op
  * that would report "the board was already in shape".
  */
-import fs from "fs";
-import path from "path";
 import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions, projects, namedAgents } from "@/lib/db/schema";
-import { createId } from "@/lib/utils/nanoid";
 import { buildRefinementPrompt } from "@/lib/claude/prompt-builder";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-} from "@/lib/claude/resolve-session-output";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentForDispatch } from "@/lib/agent-config/agent-resolution";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import { agentScheduler } from "@/lib/agents/scheduler";
+import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
 import {
   isMcpToolsEnabled,
   providerSupportsMcp,
@@ -197,23 +181,38 @@ export async function dispatchRefinementSession(
     );
   }
 
-  const sessionId = createId();
-  const now = new Date().toISOString();
-  const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-  fs.mkdirSync(logsDir, { recursive: true });
-  const logsPath = path.join(logsDir, "logs.json");
-  const cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
-    ? crypto.randomUUID()
-    : undefined;
   const cwd = project.gitRepoPath || process.cwd();
 
-  createQueuedSession({
-    id: sessionId,
+  // The report is published for failed runs too: whatever the pass managed
+  // to change is already on the board, and unexplained movement is worse
+  // than a partial report. Publishing also drains the change registry, which
+  // is what bounds it — a session whose entries are never taken stays
+  // resident for the life of the process.
+  let published: ReturnType<typeof publishRefinementReport> | null = null;
+  const publishAfterFailure = (sessionId: string): void => {
+    try {
+      published = publishRefinementReport({
+        projectId: input.projectId,
+        sessionId,
+        succeeded: false,
+      });
+    } catch (reportError) {
+      console.error(
+        "[refinement] Failed to publish report after launch failure",
+        reportError,
+      );
+      // Drain regardless, so the registry cannot leak this session's key.
+      takeRefinementChanges(sessionId);
+    }
+  };
+
+  const dispatched = dispatchBackgroundSession({
+    agentType: REFINEMENT_AGENT_TYPE,
     projectId: input.projectId,
     // No epicId: the pass is board-scoped. This is also what forces every
     // MCP call to name its ticket rather than defaulting to one.
-    epicId: null,
-    userStoryId: null,
+    prompt,
+    resolvedAgent,
     // Chat mode. The three-way choice matters here because this session runs
     // in the user's PRIMARY checkout (no worktree, no branch):
     //   - plan refuses mutating MCP tools, which are the whole deliverable;
@@ -227,137 +226,64 @@ export async function dispatchRefinementSession(
     // Chat is the only one that gives the board tools without pointing write
     // access at the user's checkout.
     mode: "chat",
-    provider: resolvedAgent.provider,
-    prompt,
-    logsPath,
-    worktreePath: cwd,
-    cliSessionId,
-    namedAgentId: resolvedAgent.namedAgentId ?? null,
-    namedAgentName: resolvedAgent.name ?? null,
-    model: resolvedAgent.model ?? null,
-    agentType: REFINEMENT_AGENT_TYPE,
-    refinementActions: JSON.stringify(actions),
-    createdAt: now,
-  });
-
-  let settle!: (result: RefinementSessionResult) => void;
-  const settled = new Promise<RefinementSessionResult>((resolve) => {
-    settle = resolve;
-  });
-
-  agentScheduler.submit(input.projectId, sessionId, async () => {
-    let terminal: RefinementSessionResult = {
-      sessionId,
-      success: false,
-      outcome: null,
-      error: "Refinement session did not run",
-      report: null,
-      summary: null,
-    };
-
-    try {
-      markSessionRunning(sessionId);
-      processManager.start(
-        sessionId,
-        {
-          // Must match the persisted session mode — see createQueuedSession.
-          mode: "chat",
-          prompt,
-          cwd,
-          model: resolvedAgent.model,
-          cliSessionId,
-        },
-        resolvedAgent.provider,
-      );
-
-      const info = await waitForProcessCompletion(sessionId);
-      const completedAt = new Date().toISOString();
-      const result = info?.result;
-
-      try {
-        fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-      } catch {
-        // Best-effort log write.
-      }
-
-      const outcome = classifySessionOutcome(result, sessionId);
+    cwd,
+    logPrefix: "[refinement]",
+    session: {
+      worktreePath: cwd,
+      refinementActions: JSON.stringify(actions),
+    },
+    evaluate: ({ result }) => {
       const success = Boolean(result?.success);
-      const error = success
-        ? null
-        : (result?.error ??
-          "The refinement session failed without reporting an error.");
-
-      try {
-        markSessionTerminal(
-          sessionId,
-          { success, error, outcome, usage: extractSessionUsage(result) },
-          completedAt,
-        );
-      } catch (lifecycleError) {
-        if (!isSessionLifecycleConflictError(lifecycleError)) {
-          console.error("[refinement] Failed to finalize session", lifecycleError);
-        }
-      }
-
-      // The report is published for failed runs too: whatever the pass
-      // managed to change is already on the board, and unexplained movement
-      // is worse than a partial report.
-      const published = publishRefinementReport({
+      return {
+        success,
+        error: success
+          ? null
+          : (result?.error ??
+            "The refinement session failed without reporting an error."),
+      };
+    },
+    onTerminal: ({ sessionId, success }) => {
+      published = publishRefinementReport({
         projectId: input.projectId,
         sessionId,
         succeeded: success,
       });
+    },
+    // A launch failure, or a wait that rejects mid-run, can still leave board
+    // writes behind; the same argument as the success path applies.
+    onLaunchFailure: (_error, { sessionId }) => publishAfterFailure(sessionId),
+  });
 
-      terminal = {
-        sessionId,
-        success,
-        outcome,
-        error,
-        report: published.report,
-        summary: published.summary,
-      };
-    } catch (error) {
-      // A throw here (launch failure, or waitForProcessCompletion rejecting
-      // mid-run) can still leave board writes behind, and the same argument
-      // as the success path applies: unexplained movement is worse than a
-      // partial report. Publishing here also drains the change registry,
-      // which is what bounds it — a session whose entries are never taken
-      // stays resident for the life of the process.
-      let published: ReturnType<typeof publishRefinementReport> | null = null;
-      try {
-        published = publishRefinementReport({
-          projectId: input.projectId,
-          sessionId,
-          succeeded: false,
-        });
-      } catch (reportError) {
-        console.error(
-          "[refinement] Failed to publish report after launch failure",
-          reportError,
-        );
-        // Drain regardless, so the registry cannot leak this session's key.
-        takeRefinementChanges(sessionId);
+  const settled: Promise<RefinementSessionResult> = dispatched.settled.then(
+    (run) => {
+      if (run.launchError) {
+        return {
+          sessionId: run.sessionId,
+          success: false,
+          outcome: "error",
+          error:
+            run.launchError instanceof Error
+              ? run.launchError.message
+              : "Refinement launch failed",
+          report: published?.report ?? null,
+          summary: published?.summary ?? null,
+        };
       }
-
-      terminal = {
-        sessionId,
-        success: false,
-        outcome: "error",
-        error:
-          error instanceof Error ? error.message : "Refinement launch failed",
+      return {
+        sessionId: run.sessionId,
+        success: run.success,
+        outcome: run.outcome,
+        error: run.error,
         report: published?.report ?? null,
         summary: published?.summary ?? null,
       };
-      throw error;
-    } finally {
-      settle(terminal);
-    }
-  });
+    },
+  );
 
   return {
     skipped: false,
-    sessionId,
-    provider: resolvedAgent.provider,
+    sessionId: dispatched.sessionId,
+    provider: dispatched.provider,
     ticketCount,
     settled,
   };

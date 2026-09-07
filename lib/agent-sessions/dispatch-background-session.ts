@@ -115,6 +115,17 @@ export interface BackgroundSessionTerminal
   extends BackgroundSessionRun,
     BackgroundSessionVerdict {}
 
+/**
+ * Handed to `onQueued` and `onLaunchFailure`: the row exists; nothing may
+ * have spawned yet.
+ */
+export interface BackgroundSessionQueued {
+  sessionId: string;
+  logsPath: string;
+  /** The row's `created_at`, for dependent rows that should share it. */
+  createdAt: string;
+}
+
 /** Resolution value of {@link DispatchedBackgroundSession.settled}. */
 export interface BackgroundSessionSettled extends BackgroundSessionTerminal {
   /**
@@ -191,7 +202,7 @@ export interface DispatchBackgroundSessionInput {
    * submitted. Where events and dependent rows (a QA report) are written, so
    * they are durable before anything can spawn.
    */
-  onQueued?: (context: { sessionId: string; logsPath: string }) => void;
+  onQueued?: (context: BackgroundSessionQueued) => void;
   /**
    * Derives the terminal verdict from the run. Defaults to the provider's
    * own answer. This runs BEFORE `markSessionTerminal`, so a run that
@@ -210,8 +221,13 @@ export interface DispatchBackgroundSessionInput {
    * rejected. The error is rethrown afterwards: the scheduler still owns the
    * session row and the slot, so this hook adds a write rather than
    * swallowing a failure.
+   *
+   * Takes the queued context because it can fire BEFORE
+   * `dispatchBackgroundSession` returns: the scheduler runs an idle project's
+   * launch closure in the submitting tick, so a spawn that throws reaches
+   * this hook while the caller's own `sessionId` binding does not exist yet.
    */
-  onLaunchFailure?: (error: unknown) => void;
+  onLaunchFailure?: (error: unknown, context: BackgroundSessionQueued) => void;
 }
 
 export interface DispatchedBackgroundSession {
@@ -250,12 +266,28 @@ export function dispatchBackgroundSession(
   const logsPath = createSessionLogsPath(sessionId);
   const cliSessionId = mintAssignedCliSessionId(provider);
 
-  createQueuedSession({
+  // The type already forbids the owned keys on `session`; the two anchors are
+  // stripped at runtime as well, because every other owned key is overwritten
+  // by the spread below while these are forwarded only when the caller passed
+  // them — a cast must not be able to anchor a project-level run to a ticket.
+  const extraColumns: Partial<CreateQueuedSessionInput> = {
     ...(input.session ?? {}),
+  };
+  delete extraColumns.epicId;
+  delete extraColumns.userStoryId;
+
+  createQueuedSession({
+    ...extraColumns,
     id: sessionId,
     projectId: input.projectId,
-    epicId: input.epicId ?? null,
-    userStoryId: input.userStoryId ?? null,
+    // Forwarded only when the caller said something. An omitted epicId stays
+    // omitted — the column is NULL either way, but the payload shape is what
+    // "deliberately project-level" is asserted on — and an explicit null is
+    // kept as an explicit null.
+    ...(input.epicId !== undefined ? { epicId: input.epicId } : {}),
+    ...(input.userStoryId !== undefined
+      ? { userStoryId: input.userStoryId }
+      : {}),
     mode: input.mode,
     provider,
     prompt: input.prompt,
@@ -268,7 +300,8 @@ export function dispatchBackgroundSession(
     createdAt,
   });
 
-  input.onQueued?.({ sessionId, logsPath });
+  const queued: BackgroundSessionQueued = { sessionId, logsPath, createdAt };
+  input.onQueued?.(queued);
 
   let settle!: (value: BackgroundSessionSettled) => void;
   const settled = new Promise<BackgroundSessionSettled>((resolve) => {
@@ -307,7 +340,7 @@ export function dispatchBackgroundSession(
         provider,
       );
     } catch (error) {
-      input.onLaunchFailure?.(error);
+      input.onLaunchFailure?.(error, queued);
       settle(failureSettlement(error));
       // Rethrown unchanged: the scheduler owns the session row and the slot;
       // this catch adds writes, it does not swallow a failure.
@@ -373,7 +406,7 @@ export function dispatchBackgroundSession(
       settlement = { ...run, ...verdict, launchError: null };
       await input.onTerminal?.({ ...run, ...verdict });
     } catch (error) {
-      input.onLaunchFailure?.(error);
+      input.onLaunchFailure?.(error, queued);
       if (settlement) settlement.launchError = error;
       else settlement = failureSettlement(error);
       throw error;

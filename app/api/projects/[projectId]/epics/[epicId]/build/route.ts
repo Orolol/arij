@@ -46,10 +46,8 @@ import {
   createUnresolvedMentionsNotification,
 } from "@/lib/notifications/create";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
-import {
-  isResumableProvider,
-  providerAcceptsAssignedSessionId,
-} from "@/lib/agent-sessions/resume-capability";
+import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
+import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
 import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 import {
   emitSessionStarted,
@@ -232,11 +230,8 @@ export async function POST(request: NextRequest, { params }: Params) {
       resumeSession = true;
     }
   }
-  if (
-    !cliSessionId &&
-    providerAcceptsAssignedSessionId(resolvedAgent.provider)
-  ) {
-    cliSessionId = crypto.randomUUID();
+  if (!cliSessionId) {
+    cliSessionId = mintAssignedCliSessionId(resolvedAgent.provider);
   }
 
   // Create session
