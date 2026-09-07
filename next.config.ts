@@ -1,8 +1,36 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
+import { extractHost, isLoopbackHost } from "./bin/launch-plan.mjs";
+
+// Prevent unauthenticated remote binding when Next is invoked directly without the launcher
+if (
+  process.argv[1]?.includes("next") &&
+  (process.argv[2] === "dev" || process.argv[2] === "start")
+) {
+  try {
+    const hostInfo = extractHost(process.argv.slice(3));
+    const host = hostInfo.value ?? process.env.ARIJ_HOST?.trim();
+    const effectiveHost = host ?? "0.0.0.0";
+    if (!isLoopbackHost(effectiveHost) && !process.env.ARIJ_REMOTE_TOKEN?.trim()) {
+      throw new Error(
+        `Arij refuses to bind remote interface (${effectiveHost}) without an access credential. Start with 'arij' or set ARIJ_REMOTE_TOKEN.`
+      );
+    }
+  } catch (err: any) {
+    if (err.message?.includes("Arij refuses to bind remote")) {
+      throw err;
+    }
+  }
+}
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["better-sqlite3", "pdf-parse", "pdfjs-dist"],
+
+  logging: {
+    incomingRequests: {
+      ignore: [/^\/api\/auth\/remote/],
+    },
+  },
 
   /**
    * The loopback hosts `proxy.ts` already accepts for `/api/*`.

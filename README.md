@@ -334,7 +334,7 @@ Arij is listening on 0.0.0.0:3000 — NOT just this machine.
 A per-boot access credential was generated. /api/* now requires it.
 
   Open this once, in the browser you want to use:
-  http://<this-machine>:3000/api/auth/remote?token=<per-boot credential>
+  http://<this-machine>:3000/api/auth/remote#token=<per-boot credential>
 ```
 
 Open it once in the browser you want to use. The route checks the token,
@@ -350,10 +350,11 @@ Details worth knowing:
 - **The credential is per boot.** Restart Arij and the old one is dead; open
   the new URL. To pin a stable one instead, set `ARIJ_REMOTE_TOKEN` yourself
   and Arij will adopt it rather than mint one.
-- **Setting `ARIJ_REMOTE_TOKEN` is what turns remote mode on**, whatever
-  started the server. If you bypass the launcher (`next start -H 0.0.0.0`
-  directly, or `npm run dev -- -H 0.0.0.0`), set it yourself — otherwise you
-  are back to an open API on every interface.
+- **Remote binding requires authentication.** Starting the app on a non-loopback
+  host (via `arij start --host 0.0.0.0`, `npm run dev -- -H 0.0.0.0`, or
+  `npm run start -- -H 0.0.0.0`) automatically generates a per-boot credential
+  and arms remote mode. Direct invocations of Next that attempt to bind a remote
+  interface without `ARIJ_REMOTE_TOKEN` are refused at startup.
 - **Serving from a different origin** (a reverse proxy, a tunnel hostname)
   needs that origin in `ALLOWED_ORIGINS`, comma-separated:
   `ALLOWED_ORIGINS=https://arij.example.internal`. Same-origin browsing needs

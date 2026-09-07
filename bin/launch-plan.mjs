@@ -63,39 +63,119 @@ function mintToken() {
 }
 
 /**
- * Pull `--host`/`-H` and `--port`/`-p` out of the user's arguments, keeping
- * everything else in order for `next`. Both `--host x` and `--host=x` are
- * accepted, because both work on every other CLI the user has just used.
+ * Pull `--host`/`--hostname`/`-H` out of the user's arguments, consuming
+ * ALL host flag variants (including compact -H<host>, repeated flags, and
+ * equals syntax) and rejecting missing arguments.
  */
-function extractFlag(args, flags) {
+export function extractHost(args) {
   const rest = [];
   let value = null;
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
-    const equals = arg.indexOf("=");
-    const name = equals >= 0 ? arg.slice(0, equals) : arg;
 
-    if (!flags.has(name)) {
-      rest.push(arg);
+    if (arg.startsWith("--host=")) {
+      const v = arg.slice("--host=".length).trim();
+      if (!v) throw new Error("Option '-H, --hostname <hostname>' argument missing");
+      value = v;
+      continue;
+    }
+    if (arg.startsWith("--hostname=")) {
+      const v = arg.slice("--hostname=".length).trim();
+      if (!v) throw new Error("Option '-H, --hostname <hostname>' argument missing");
+      value = v;
       continue;
     }
 
-    if (equals >= 0) {
-      value = arg.slice(equals + 1);
+    if (arg === "--host" || arg === "--hostname") {
+      if (i + 1 >= args.length || args[i + 1].startsWith("-")) {
+        throw new Error("Option '-H, --hostname <hostname>' argument missing");
+      }
+      value = args[i + 1];
+      i += 1;
       continue;
     }
-    // A trailing `--host` with nothing after it: hand it back to next, which
-    // owns the argument-error message.
-    if (i + 1 >= args.length) {
-      rest.push(arg);
+
+    if (arg.startsWith("-H=")) {
+      const v = arg.slice("-H=".length).trim();
+      if (!v) throw new Error("Option '-H, --hostname <hostname>' argument missing");
+      value = v;
       continue;
     }
-    value = args[i + 1];
-    i += 1;
+
+    if (arg === "-H") {
+      if (i + 1 >= args.length || args[i + 1].startsWith("-")) {
+        throw new Error("Option '-H, --hostname <hostname>' argument missing");
+      }
+      value = args[i + 1];
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith("-H") && arg.length > 2) {
+      const v = arg.slice(2).trim();
+      if (!v) throw new Error("Option '-H, --hostname <hostname>' argument missing");
+      value = v;
+      continue;
+    }
+
+    rest.push(arg);
   }
 
   return { value, rest };
+}
+
+/**
+ * Read `--port`/`-p` from arguments (including compact -p<port> and equals).
+ * Arguments are left in rest so Next can parse its own port flags.
+ */
+export function extractPort(args) {
+  let value = null;
+
+  for (let i = 0; i < args.length; i += 1) {
+    const arg = args[i];
+
+    if (arg.startsWith("--port=")) {
+      const v = arg.slice("--port=".length).trim();
+      if (!v) throw new Error("Option '-p, --port <port>' argument missing");
+      value = v;
+      continue;
+    }
+
+    if (arg === "--port") {
+      if (i + 1 >= args.length || args[i + 1].startsWith("-")) {
+        throw new Error("Option '-p, --port <port>' argument missing");
+      }
+      value = args[i + 1];
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith("-p=")) {
+      const v = arg.slice("-p=".length).trim();
+      if (!v) throw new Error("Option '-p, --port <port>' argument missing");
+      value = v;
+      continue;
+    }
+
+    if (arg === "-p") {
+      if (i + 1 >= args.length || args[i + 1].startsWith("-")) {
+        throw new Error("Option '-p, --port <port>' argument missing");
+      }
+      value = args[i + 1];
+      i += 1;
+      continue;
+    }
+
+    if (arg.startsWith("-p") && arg.length > 2 && !arg.startsWith("-p-")) {
+      const v = arg.slice(2).trim();
+      if (!v) throw new Error("Option '-p, --port <port>' argument missing");
+      value = v;
+      continue;
+    }
+  }
+
+  return { value };
 }
 
 /**
@@ -166,12 +246,8 @@ export function resolveLaunchPlan(
     };
   }
 
-  const host = extractFlag(args, HOST_FLAGS);
-  // The port is READ, not rewritten: it only feeds the bootstrap URL, and the
-  // user's own flag spelling passes through to Next untouched. Playwright runs
-  // `npm run dev -- --port 3100`, and a launcher that quietly normalised that
-  // to `-p` would be one more thing to notice when it broke.
-  const port = extractFlag(host.rest, PORT_FLAGS);
+  const host = extractHost(args);
+  const port = extractPort(host.rest);
 
   const resolvedHost =
     host.value ?? env[HOST_ENV_VAR]?.trim() ?? DEFAULT_BIND_HOST;
@@ -240,7 +316,7 @@ function remoteNotices(host, port, token, supplied) {
       : `A per-boot access credential was generated. /api/* now requires it.`,
     "",
     "  Open this once, in the browser you want to use:",
-    `  http://${reachable}:${port}${REMOTE_AUTH_BOOTSTRAP_PATH}?token=${token}`,
+    `  http://${reachable}:${port}${REMOTE_AUTH_BOOTSTRAP_PATH}#token=${token}`,
     "",
     "  It sets an HttpOnly cookie and redirects; the credential is gone from",
     "  the address bar. It is valid for this boot only.",

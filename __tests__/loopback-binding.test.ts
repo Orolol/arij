@@ -17,6 +17,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+// @ts-expect-error next/dist/compiled/commander lacks type declarations
+import { Command } from "next/dist/compiled/commander";
 import {
   DEFAULT_BIND_HOST,
   resolveLaunchPlan,
@@ -34,15 +36,20 @@ function readPackageJson(): {
 }
 
 describe("default binding is loopback", () => {
-  it("binds the dev script to loopback", () => {
-    // `next dev` with no -H listens on every interface. The flag is the whole
-    // fix for the checkout path; asserting on the string is honest evidence
-    // about the script, not about what Next then does with it.
-    expect(readPackageJson().scripts.dev).toContain(`-H ${DEFAULT_BIND_HOST}`);
+  it("routes the dev script through credential-aware startup", () => {
+    const devScript = readPackageJson().scripts.dev;
+    expect(devScript).toMatch(/node\s+(\.\/)?bin\/arij\.mjs\s+dev/);
+    const plan = resolveLaunchPlan(["dev"], {});
+    expect(plan.host).toBe(DEFAULT_BIND_HOST);
+    expect(plan.remote).toBe(false);
   });
 
-  it("binds the start script to loopback", () => {
-    expect(readPackageJson().scripts.start).toContain(`-H ${DEFAULT_BIND_HOST}`);
+  it("routes the start script through credential-aware startup", () => {
+    const startScript = readPackageJson().scripts.start;
+    expect(startScript).toMatch(/node\s+(\.\/)?bin\/arij\.mjs\s+start/);
+    const plan = resolveLaunchPlan(["start"], {});
+    expect(plan.host).toBe(DEFAULT_BIND_HOST);
+    expect(plan.remote).toBe(false);
   });
 
   it("defaults the launcher to loopback for dev", () => {
@@ -112,6 +119,16 @@ describe("remote binding is an explicit, credentialled opt-in", () => {
     expect(plan.childEnv.ARIJ_REMOTE_TOKEN).toBe(plan.remoteToken);
   });
 
+  it("arms remote mode for dev and start script overrides", () => {
+    const devPlan = resolveLaunchPlan(["dev", "-H", "0.0.0.0"], {});
+    expect(devPlan.remote).toBe(true);
+    expect(devPlan.childEnv.ARIJ_REMOTE_TOKEN).toBeDefined();
+
+    const startPlan = resolveLaunchPlan(["start", "-H", "0.0.0.0"], {});
+    expect(startPlan.remote).toBe(true);
+    expect(startPlan.childEnv.ARIJ_REMOTE_TOKEN).toBeDefined();
+  });
+
   it("mints a different credential every boot", () => {
     const a = resolveLaunchPlan(["start", "-H", "0.0.0.0"], {});
     const b = resolveLaunchPlan(["start", "-H", "0.0.0.0"], {});
@@ -126,14 +143,14 @@ describe("remote binding is an explicit, credentialled opt-in", () => {
     expect(plan.childEnv.ARIJ_REMOTE_TOKEN).toBe("operator-chosen-secret");
   });
 
-  it("hands the credential over exactly once, as a bootstrap URL", () => {
+  it("hands the credential over exactly once, as a bootstrap URL with a fragment", () => {
     const plan = resolveLaunchPlan(
       ["start", "-H", "192.168.1.10", "--port", "4000"],
       {},
     );
     const printed = plan.notices.join("\n");
     expect(printed).toContain(
-      `http://192.168.1.10:4000/api/auth/remote?token=${plan.remoteToken}`,
+      `http://192.168.1.10:4000/api/auth/remote#token=${plan.remoteToken}`,
     );
     // One handoff, not a token sprayed through every line of the banner.
     expect(printed.split(plan.remoteToken!).length - 1).toBe(1);
@@ -142,6 +159,94 @@ describe("remote binding is an explicit, credentialled opt-in", () => {
   it("still binds the requested remote host", () => {
     const plan = resolveLaunchPlan(["dev", "-H", "0.0.0.0"], {});
     expect(plan.nextArgs).toEqual(["dev", "-H", "0.0.0.0"]);
+  });
+
+  it("parses compact -H<host> flags and emits one authoritative host", () => {
+    const plan = resolveLaunchPlan(["start", "-H0.0.0.0"], {});
+    expect(plan.remote).toBe(true);
+    expect(plan.host).toBe("0.0.0.0");
+    expect(plan.nextArgs).toEqual(["start", "-H", "0.0.0.0"]);
+    expect(plan.remoteToken).toBeDefined();
+  });
+
+  it("parses equals -H=... and --hostname=... flags", () => {
+    const plan1 = resolveLaunchPlan(["start", "-H=0.0.0.0"], {});
+    expect(plan1.remote).toBe(true);
+    expect(plan1.host).toBe("0.0.0.0");
+    expect(plan1.nextArgs).toEqual(["start", "-H", "0.0.0.0"]);
+
+    const plan2 = resolveLaunchPlan(["dev", "--hostname=0.0.0.0"], {});
+    expect(plan2.remote).toBe(true);
+    expect(plan2.host).toBe("0.0.0.0");
+    expect(plan2.nextArgs).toEqual(["dev", "-H", "0.0.0.0"]);
+
+    const plan3 = resolveLaunchPlan(["dev", "--host=0.0.0.0"], {});
+    expect(plan3.remote).toBe(true);
+    expect(plan3.host).toBe("0.0.0.0");
+    expect(plan3.nextArgs).toEqual(["dev", "-H", "0.0.0.0"]);
+  });
+
+  it("resolves repeated host flags with the last flag taking precedence", () => {
+    const plan1 = resolveLaunchPlan(
+      ["start", "-H", "127.0.0.1", "-H0.0.0.0"],
+      {}
+    );
+    expect(plan1.remote).toBe(true);
+    expect(plan1.host).toBe("0.0.0.0");
+    expect(plan1.nextArgs).toEqual(["start", "-H", "0.0.0.0"]);
+
+    const plan2 = resolveLaunchPlan(
+      ["start", "-H0.0.0.0", "-H", "127.0.0.1"],
+      {}
+    );
+    expect(plan2.remote).toBe(false);
+    expect(plan2.host).toBe("127.0.0.1");
+    expect(plan2.nextArgs).toEqual(["start", "-H", "127.0.0.1"]);
+  });
+
+  it("resolves hostname identically when parsed by Next.js Commander parser", () => {
+    for (const testArgs of [
+      ["start", "-H0.0.0.0"],
+      ["start", "-H", "127.0.0.1", "-H0.0.0.0"],
+      ["start", "-H0.0.0.0", "-H", "127.0.0.1"],
+      ["dev", "--hostname=0.0.0.0"],
+      ["dev", "--host=0.0.0.0"],
+      ["dev", "-H=0.0.0.0"],
+    ]) {
+      const plan = resolveLaunchPlan(testArgs, {});
+      const program = new Command();
+      program.option("-H, --hostname <hostname>").option("-p, --port <port>");
+      program.parse(["node", "next", ...plan.nextArgs]);
+      expect(program.opts().hostname).toBe(plan.host);
+      // Ensure only one -H option exists in nextArgs
+      const hostFlagMatches = plan.nextArgs.filter(
+        (arg: string) => arg === "-H" || arg.startsWith("-H") || arg.startsWith("--host")
+      );
+      expect(hostFlagMatches).toEqual(["-H"]);
+    }
+  });
+
+  it("rejects missing host flag arguments", () => {
+    expect(() => resolveLaunchPlan(["start", "-H"], {})).toThrow(
+      /argument missing/i
+    );
+    expect(() => resolveLaunchPlan(["start", "--hostname"], {})).toThrow(
+      /argument missing/i
+    );
+    expect(() => resolveLaunchPlan(["start", "--host"], {})).toThrow(
+      /argument missing/i
+    );
+  });
+
+  it("extracts port correctly for compact and equals forms", () => {
+    const plan1 = resolveLaunchPlan(["start", "-p3000"], {});
+    expect(plan1.port).toBe("3000");
+
+    const plan2 = resolveLaunchPlan(["start", "-p=3000"], {});
+    expect(plan2.port).toBe("3000");
+
+    const plan3 = resolveLaunchPlan(["start", "--port=3000"], {});
+    expect(plan3.port).toBe("3000");
   });
 });
 
