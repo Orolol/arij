@@ -28,6 +28,15 @@ import {
  * plugin's preset, so the silence had no diagnostic at all. A component the
  * compiler never read and a clean one both reported zero errors.
  *
+ * Not every `todo` is that kind of stop. One raised while lowering to HIR
+ * (`finally`, a `throw` inside `try/catch`, a `try` without `catch`) or a
+ * rule suppression comes before the validations and silences them; a value
+ * block (`??`, `?.`, a ternary) inside `try/catch` is raised afterwards, in
+ * `buildReactiveFunction`, once `set-state-in-effect` has already reported —
+ * measured on a synthetic component: both diagnostics appear side by side.
+ * That second kind costs the optimisation, not the lint, and this test
+ * rightly counts such a function as read.
+ *
  * That is not a namespace problem (`react-compiler-namespaced-hooks.test.ts`
  * pins that one): every function here calls its hooks bare. It is a second
  * blind spot with the same symptom. MEASURED on this tip: 79 of the 485

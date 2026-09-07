@@ -8,14 +8,20 @@ const eslintConfig = defineConfig([
   {
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
-      // The React Compiler stops on a function it cannot compile — a
-      // `finally` clause, a `throw` inside `try/catch`, an `eslint-disable` of
-      // `exhaustive-deps`, state derived in an effect — and from then on every
-      // compiler-backed rule above is silent on that whole component, with
-      // nothing to say so. The plugin's preset keeps the three categories that
-      // describe the stop switched off; these are the diagnostic. Warnings,
-      // not errors: the gate is `__tests__/react-compiler-coverage.test.ts`,
-      // which fails on any stop not recorded there with a reason.
+      // The React Compiler stops on a function it cannot compile, and the
+      // plugin's preset keeps the three categories that describe a stop
+      // switched off — so a component nobody read and a clean one both
+      // reported zero errors. These three are the diagnostic. Read a `todo`
+      // by where the compiler raised it: a stop while lowering (a `finally`
+      // clause, a `throw` inside `try/catch`, a `try` without `catch`) or a
+      // rule suppression comes BEFORE the validations, so every
+      // compiler-backed rule above is silent on that whole function; a value
+      // block (`??`, `?.`, a ternary) inside `try/catch` is raised after them,
+      // in `buildReactiveFunction`, so the rules still report and only the
+      // optimisation is lost — measured: `set-state-in-effect` fires beside
+      // that todo. Warnings, not errors: the gate is
+      // `__tests__/react-compiler-coverage.test.ts`, which fails on any
+      // silent function not recorded there with a reason.
       "react-hooks/todo": "warn",
       "react-hooks/rule-suppression": "warn",
       "react-hooks/no-deriving-state-in-effects": "warn",
