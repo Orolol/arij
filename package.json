@@ -34,9 +34,9 @@
     "eslint.config.mjs"
   ],
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev -H 127.0.0.1",
     "build": "next build",
-    "start": "next start",
+    "start": "next start -H 127.0.0.1",
     "lint": "eslint",
     "lint:prune": "eslint --prune-suppressions",
     "test": "vitest run",
