@@ -288,6 +288,13 @@ export async function GET(request: Request) {
     stories: sql`(SELECT count(*) FROM user_stories WHERE user_stories.epic_id = ${epics.id})`,
     priorite: sql`${epics.priority}`,
     activite: sql`julianday(${epics.updatedAt})`,
+    // Runs once per terminal candidate, before the LIMIT — see below. It stays
+    // affordable only because `agent_sessions_epic_cost_idx`
+    // (epic_id, total_cost_usd) makes it index-only: on the plain (epic_id)
+    // index the planner reads each matching session's row, and those rows are
+    // wide enough (`prompt` averages ~78 KB) that the sort's cost tracks row
+    // width rather than session count. Measured at 2000 terminal epics /
+    // 6000 sessions of realistic width: 86 ms non-covering, 2.1 ms covering.
     cout: sql`(SELECT sum(total_cost_usd) FROM agent_sessions WHERE agent_sessions.epic_id = ${epics.id})`,
   }[sort];
 
@@ -295,7 +302,11 @@ export async function GET(request: Request) {
 
   // `(project_id, status)` are the index's two leading columns, so this is one
   // range per project. The caller-chosen sort needs a temporary b-tree over
-  // all candidates before LIMIT; cost/story sorts also aggregate per candidate.
+  // all candidates before LIMIT; cost/story sorts also aggregate per candidate
+  // — twice, in fact, since the `IS NULL` bucket re-evaluates the same scalar
+  // subquery. Both evaluations are index-only: `stories` on
+  // user_stories_epic_position_idx, `cout` on agent_sessions_epic_cost_idx
+  // since 0056.
   // Only the returned rows and their downstream fact queries are bounded.
   // The free-text filter is
   // applied HERE and only here, so a search can reach a released ticket that

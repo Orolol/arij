@@ -285,6 +285,17 @@ export const agentSessions = sqliteTable("agent_sessions", {
   // Ticket detail, pipeline ownership checks and the Full Auto sweep all ask
   // which sessions belong to one epic.
   epicIdx: index("agent_sessions_epic_idx").on(table.epicId),
+  // The registry's cost sort (app/api/tickets/route.ts) sums total_cost_usd
+  // per done/released epic BEFORE its LIMIT, so the aggregate runs once per
+  // terminal candidate on every request. The trailing column is what makes it
+  // index-only: without it the planner reads each matching session's table
+  // row — and these rows are wide (`prompt` averages ~78 KB) — to fetch one
+  // REAL. `epicIdx` is a strict prefix of this index and is kept anyway;
+  // dropping it measured no write saving. See 0056.
+  epicCostIdx: index("agent_sessions_epic_cost_idx").on(
+    table.epicId,
+    table.totalCostUsd
+  ),
 }));
 
 export const agentSessionSequences = sqliteTable("agent_session_sequences", {
