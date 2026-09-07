@@ -13,6 +13,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { withStableKeys } from "@/lib/utils/stable-list-keys";
 
 /**
  * Client-side mirror of lib/agent-sessions/arij-actions.ts#ArijAction
@@ -85,19 +86,28 @@ export function ArijActionsList({ actions }: { actions?: ArijActionItem[] | null
   const t = useTranslations("Shared");
   if (!actions || actions.length === 0) return null;
 
+  // The list is chronological and re-sorts while a session runs: tool calls
+  // parsed from later chunks land between the durable rows already shown, so
+  // an item's position is not its identity. Rows carry no id, so the key is
+  // the content that names the action (with an ordinal for exact repeats).
+  const keyed = withStableKeys(
+    actions,
+    (action) => `${action.kind}|${action.at ?? ""}|${action.summary}`
+  );
+
   return (
     <Card className="mb-6 rounded-[11px] p-4" data-testid="arij-actions">
       <h3 className="mb-3 text-[11.5px] uppercase tracking-[.08em] text-meta">
         {t("arijActions.title")}
       </h3>
       <ul className="space-y-2">
-        {actions.map((action, idx) => {
+        {keyed.map(({ key, item: action }) => {
           const Icon = arijActionIcon(action.kind);
           const color = arijActionColor(action.kind);
           const time = formatArijActionTime(action.at, locale);
           return (
             <li
-              key={idx}
+              key={key}
               className="flex items-start gap-2 text-[13px]"
               data-testid={`arij-action-${action.kind}`}
             >

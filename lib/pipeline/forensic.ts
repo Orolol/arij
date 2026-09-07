@@ -8,12 +8,12 @@
  * an agent ticket comment. It NEVER changes a ticket status, never resolves
  * findings, and never touches the code.
  *
- * Shape mirrors `dispatchMemoryDistillSession` (lib/workflow/memory-distill.ts):
- * a queued session submitted to the per-project scheduler, running the
- * normal lifecycle (queued → running → terminal), deliberately WITHOUT an
- * epicId on the row so the epic/story concurrency guards keep treating the
- * ticket as free — a human must be able to re-dispatch it while forensics
- * are still running.
+ * The run goes through `dispatchBackgroundSession` like memory distillation
+ * (lib/workflow/memory-distill.ts): a queued session submitted to the
+ * per-project scheduler, running the normal lifecycle (queued → running →
+ * terminal), deliberately WITHOUT an epicId on the row so the epic/story
+ * concurrency guards keep treating the ticket as free — a human must be able
+ * to re-dispatch it while forensics are still running.
  *
  * Guard rails ("a forensic run is a dead end"):
  *   - it never runs on another forensic session (no forensic-of-a-forensic),
@@ -28,8 +28,6 @@
  * pipeline run ends.
  */
 
-import fs from "fs";
-import path from "path";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
@@ -40,27 +38,14 @@ import {
   userStories,
 } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
-import { agentScheduler } from "@/lib/agents/scheduler";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
+import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import {
   listSessionChunks,
   type AgentSessionStreamType,
 } from "@/lib/agent-sessions/chunks";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 import { getProjectMemoryContent } from "@/lib/documents/memory";
 import { logTransition } from "@/lib/workflow/log";
 import {
@@ -303,104 +288,26 @@ export async function runForensic(
       null
     );
 
-    const sessionId = createId();
-    const now = new Date().toISOString();
-    const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-    fs.mkdirSync(logsDir, { recursive: true });
-    const logsPath = path.join(logsDir, "logs.json");
-    const cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
-      ? crypto.randomUUID()
-      : undefined;
-
     // No epicId/userStoryId on the row (same rationale as memory_distill):
     // the epic/story concurrency guards must not see a background diagnostic
     // as "an agent is already working on this ticket". The diagnostic comment
     // and the activity entry still anchor to the ticket.
-    createQueuedSession({
-      id: sessionId,
-      projectId: input.projectId,
-      mode: "plan",
-      provider: resolvedAgent.provider,
-      prompt,
-      logsPath,
-      cliSessionId,
-      namedAgentId: resolvedAgent.namedAgentId ?? null,
-      compositeAgentId: resolvedAgent.compositeAgentId ?? null,
+    const { sessionId, settled } = dispatchBackgroundSession({
       agentType: "forensic",
-      namedAgentName: resolvedAgent.name || null,
-      model: resolvedAgent.model || null,
-      batchRunId: input.batchRunId ?? null,
-      createdAt: now,
-    });
-
-    let settle: (result: ForensicStageResult) => void = () => {};
-    const settled = new Promise<ForensicStageResult>((resolve) => {
-      settle = resolve;
-    });
-
-    agentScheduler.submit(input.projectId, sessionId, async () => {
-      let stageResult: ForensicStageResult = {
-        sessionId,
-        success: false,
-        outcome: null,
-        error: "Forensic session did not run",
-      };
-
-      try {
-        markSessionRunning(sessionId);
-
-        processManager.start(
-          sessionId,
-          {
-            mode: "plan",
-            prompt,
-            cwd: project.gitRepoPath || process.cwd(),
-            model: resolvedAgent.model,
-            cliSessionId,
-          },
-          resolvedAgent.provider
-        );
-
-        const info = await waitForProcessCompletion(sessionId, POLL_INTERVAL_MS);
-        const completedAt = new Date().toISOString();
-        const result = info?.result;
-
-        try {
-          fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-        } catch {
-          // Best-effort log write.
-        }
-
-        const outcome = classifySessionOutcome(result, sessionId);
-        stageResult = {
-          sessionId,
-          success: !!result?.success,
-          outcome,
-          error: result?.error ?? null,
-        };
-
-        try {
-          markSessionTerminal(
-            sessionId,
-            {
-              success: !!result?.success,
-              error: result?.error ?? null,
-              outcome,
-              usage: extractSessionUsage(result),
-            },
-            completedAt
-          );
-        } catch (error) {
-          if (!isSessionLifecycleConflictError(error)) {
-            console.error("[forensic] Failed to finalize session", error);
-          }
-        }
-
+      projectId: input.projectId,
+      prompt,
+      resolvedAgent,
+      mode: "plan",
+      cwd: project.gitRepoPath || process.cwd(),
+      pollIntervalMs: POLL_INTERVAL_MS,
+      logPrefix: "[forensic]",
+      session: { batchRunId: input.batchRunId ?? null },
+      onTerminal: ({ sessionId: sid, result, completedAt }) => {
         if (!result?.success) {
           return;
         }
 
-        const diagnostic = resolveSessionOutput(result, sessionId, "").trim();
+        const diagnostic = resolveSessionOutput(result, sid, "").trim();
         if (!diagnostic) {
           // A silent forensic agent has nothing to say — no empty comment.
           return;
@@ -410,27 +317,23 @@ export async function runForensic(
           projectId: input.projectId,
           epicId: input.epicId,
           userStoryId: input.userStoryId,
-          sessionId,
+          sessionId: sid,
           deadSessionId: input.deadSessionId,
           diagnostic,
           createdAt: completedAt,
         });
-      } catch (error) {
-        stageResult = {
-          sessionId,
-          success: false,
-          outcome: "error",
-          error: (error as Error).message,
-        };
-        // Rethrown so the scheduler's safety net finalizes the session row;
-        // `settle` in the finally block keeps the caller's promise resolved.
-        throw error;
-      } finally {
-        settle(stageResult);
-      }
+      },
     });
 
-    return { sessionId, settled };
+    return {
+      sessionId,
+      settled: settled.then(({ sessionId: sid, success, outcome, error }) => ({
+        sessionId: sid,
+        success,
+        outcome,
+        error,
+      })),
+    };
   } catch (error) {
     console.warn("[forensic] Dispatch failed:", (error as Error).message);
     return refused((error as Error).message);

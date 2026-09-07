@@ -9,30 +9,14 @@
  * stored spec.
  */
 
-import fs from "fs";
-import path from "path";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions, epics, namedAgents, projects, releases, userStories } from "@/lib/db/schema";
-import { createId } from "@/lib/utils/nanoid";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import { buildProjectStateSection, buildSpecUpdatePrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import { agentScheduler } from "@/lib/agents/scheduler";
+import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
 import { tryExportArjiJson } from "@/lib/sync/export";
 
 const POLL_INTERVAL_MS = 2000;
@@ -187,111 +171,61 @@ export async function dispatchSpecUpdateSession(
     )
   );
 
-  const sessionId = createId();
-  const now = new Date().toISOString();
-  const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-  fs.mkdirSync(logsDir, { recursive: true });
-  const logsPath = path.join(logsDir, "logs.json");
-  const cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
-    ? crypto.randomUUID()
-    : undefined;
+  /** Sanitised replacement spec, or "" when the run delivered nothing usable. */
+  let output = "";
 
   // Deliberately no epicId: like the memory distill, a spec update is a
   // project-level background run and must not occupy an epic's concurrency
   // slot or anchor to a ticket.
-  createQueuedSession({
-    id: sessionId,
-    projectId: input.projectId,
-    mode: "plan",
-    provider: resolvedAgent.provider,
-    prompt,
-    logsPath,
-    cliSessionId,
-    namedAgentId: resolvedAgent.namedAgentId ?? null,
-    compositeAgentId: resolvedAgent.compositeAgentId ?? null,
+  const { sessionId } = dispatchBackgroundSession({
     agentType: SPEC_UPDATE_AGENT_TYPE,
-    namedAgentName: resolvedAgent.name || null,
-    model: resolvedAgent.model || null,
-    createdAt: now,
-  });
-
-  agentScheduler.submit(input.projectId, sessionId, async () => {
-    markSessionRunning(sessionId);
-
-    processManager.start(
-      sessionId,
-      {
-        mode: "plan",
-        prompt,
-        cwd: project.gitRepoPath ?? undefined,
-        model: resolvedAgent.model || undefined,
-        cliSessionId,
-      },
-      resolvedAgent.provider
-    );
-
-    const info = await waitForProcessCompletion(sessionId, POLL_INTERVAL_MS);
-
-    const completedAt = new Date().toISOString();
-    const result = info?.result;
-
-    try {
-      fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-    } catch {
-      // Best-effort log write.
-    }
-
-    const outcome = classifySessionOutcome(result, sessionId);
-
+    projectId: input.projectId,
+    prompt,
+    resolvedAgent,
+    mode: "plan",
+    cwd: project.gitRepoPath ?? undefined,
+    pollIntervalMs: POLL_INTERVAL_MS,
+    logPrefix: "[spec-update]",
     // Only a delivered answer replaces the spec — silent runs, asked
-    // questions, and failures leave it untouched.
-    const output =
-      result?.success && outcome === "answered"
-        ? sanitizeUpdatedSpec(resolveSessionOutput(result, sessionId, ""))
-        : "";
-
-    try {
-      markSessionTerminal(
-        sessionId,
-        {
-          // A run that produced no usable spec is a failure for this
-          // workflow even when the CLI exited cleanly: the session row must
-          // not claim success over an unchanged document.
-          success: Boolean(result?.success && outcome === "answered" && output),
-          error: output
-            ? null
-            : result?.error ??
-              (result?.success
-                ? outcome === "asked_question"
-                  ? "The agent asked a question — the saved spec was left unchanged."
-                  : "The agent finished without returning an updated spec — the saved spec was left unchanged."
-                : "The spec update session failed without reporting an error."),
-          outcome,
-          usage: extractSessionUsage(result),
-        },
-        completedAt
-      );
-    } catch (error) {
-      if (!isSessionLifecycleConflictError(error)) {
-        console.error("[spec-update] Failed to finalize session", error);
+    // questions, and failures leave it untouched. A run that produced no
+    // usable spec is a failure for this workflow even when the CLI exited
+    // cleanly: the session row must not claim success over an unchanged
+    // document. `evaluate` always runs before `onTerminal`, which is what
+    // lets the sanitised output be resolved from the chunks exactly once.
+    evaluate: ({ sessionId: sid, result, outcome }) => {
+      output =
+        result?.success && outcome === "answered"
+          ? sanitizeUpdatedSpec(resolveSessionOutput(result, sid, ""))
+          : "";
+      return {
+        success: Boolean(result?.success && outcome === "answered" && output),
+        error: output
+          ? null
+          : result?.error ??
+            (result?.success
+              ? outcome === "asked_question"
+                ? "The agent asked a question — the saved spec was left unchanged."
+                : "The agent finished without returning an updated spec — the saved spec was left unchanged."
+              : "The spec update session failed without reporting an error."),
+      };
+    },
+    onTerminal: ({ completedAt }) => {
+      if (!output) {
+        return;
       }
-    }
 
-    if (!output) {
-      return;
-    }
+      try {
+        db.update(projects)
+          .set({ spec: output, updatedAt: completedAt })
+          .where(eq(projects.id, input.projectId))
+          .run();
+      } catch (error) {
+        console.error("[spec-update] Failed to save updated spec", error);
+        return;
+      }
 
-    try {
-      db.update(projects)
-        .set({ spec: output, updatedAt: completedAt })
-        .where(eq(projects.id, input.projectId))
-        .run();
-    } catch (error) {
-      console.error("[spec-update] Failed to save updated spec", error);
-      return;
-    }
-
-    tryExportArjiJson(input.projectId);
+      tryExportArjiJson(input.projectId);
+    },
   });
 
   return { sessionId };

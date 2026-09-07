@@ -8,8 +8,10 @@
  * Inline editing of the title and the description is deliberately dropped in
  * the redesign — the frame draws no affordance for either, and `updateEpic`
  * stays wired for status and priority only. The markdown renderer is the same
- * one `components/kanban/InlineEdit.tsx` used, so stored descriptions render
- * exactly as they did in the old panel.
+ * one `components/kanban/InlineEdit.tsx` used to reach for, so stored
+ * descriptions render exactly as they did in the old panel. `InlineEdit` has
+ * no markdown branch left: its read state is a real `<button>`, which cannot
+ * legally hold the `<p>`/`<a>` that renderer emits.
  *
  * The card disappears entirely only when it would have nothing at all to
  * show: an image-only bug report (no prose, no meta) still gets its card.

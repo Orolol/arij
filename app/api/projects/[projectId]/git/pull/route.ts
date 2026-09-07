@@ -33,10 +33,8 @@ import {
   classifySessionOutcome,
   extractSessionUsage,
 } from "@/lib/claude/resolve-session-output";
-import {
-  isResumableProvider,
-  providerAcceptsAssignedSessionId,
-} from "@/lib/agent-sessions/resume-capability";
+import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
+import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
 import fs from "fs";
 import path from "path";
 
@@ -160,8 +158,8 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
               resumeSession = true;
             }
           }
-          if (!cliSessionId && providerAcceptsAssignedSessionId(provider)) {
-            cliSessionId = crypto.randomUUID();
+          if (!cliSessionId) {
+            cliSessionId = mintAssignedCliSessionId(provider);
           }
         }
 

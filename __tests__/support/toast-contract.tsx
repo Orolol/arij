@@ -34,17 +34,19 @@ export function expectSharedToastContract(
 ): void {
   const toast = screen.getByTestId(testId);
 
-  // 1. Portalled: outside the page's own tree, mounted straight on the body.
+  // 1. Portalled: outside the page's own tree, mounted straight on the body,
+  //    and reachable as the region it claims to be.
   //
-  // Looked up structurally rather than with `getByRole("region")` on purpose —
-  // a toast raised while a Radix dialog is open sits under the `aria-hidden`
-  // the dialog stamps on the body's other children, so the ROLE query misses
-  // it. That the labelled region is a real region is pinned once, dialog-free,
-  // in `../toast-stack.test.tsx`.
-  const region = toast.closest("section[aria-label='Notifications']");
+  // The role query is the assertion, not a convenience. The story surface
+  // below raises its toast with a Radix dialog still open, and the
+  // `aria-hidden` such a dialog stamps on the body's other children used to
+  // take this region with it — so the query needed `hidden: true` to find
+  // anything at all. `ToastStack` now takes `aria-hidden`'s `[aria-live]`
+  // opt-out; the boundary is pinned in `../toast-under-open-dialog.test.tsx`.
+  const region = screen.getByRole("region", { name: "Notifications" });
   expect(container).not.toContainElement(toast);
-  expect(region).not.toBeNull();
-  expect(region?.parentElement).toBe(document.body);
+  expect(region).toContainElement(toast);
+  expect(region.parentElement).toBe(document.body);
 
   // 2. Announced — a success is polite, anything else interrupts.
   expect(toast).toHaveAttribute("role", tone === "success" ? "status" : "alert");
@@ -56,14 +58,10 @@ export function expectSharedToastContract(
   if (typeof message === "string") expect(toast.textContent).toContain(message);
   else expect(toast.textContent).toMatch(message);
 
-  // 5. Dismissible by hand, whatever the tone. `hidden: true` for the same
-  //    dialog reason as above — the accessible NAME is still computed, only
-  //    the aria-hidden filter is lifted.
+  // 5. Dismissible by hand, whatever the tone — including from under an open
+  //    dialog, which is why this query no longer lifts the aria-hidden filter.
   fireEvent.click(
-    within(toast).getByRole("button", {
-      name: "Dismiss notification",
-      hidden: true,
-    }),
+    within(toast).getByRole("button", { name: "Dismiss notification" }),
   );
   expect(screen.queryByTestId(testId)).not.toBeInTheDocument();
 }
