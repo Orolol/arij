@@ -10,6 +10,13 @@
 -- SQLite cannot drop a NOT NULL constraint in place, so this is the usual
 -- rebuild-and-rename, following 0003 and 0012. Re-running it is harmless: the
 -- second pass copies an already-migrated table into an identical shape.
+--
+-- Nothing references `git_sync_log`, so the DROP below cannot orphan a child
+-- row. That matters, because the `PRAGMA foreign_keys=OFF` on the next line is
+-- a no-op: drizzle's migrator wraps the batch in BEGIN/COMMIT and SQLite
+-- ignores the pragma inside a transaction. What actually protects a rebuild of
+-- a *referenced* parent is `initDb()` suspending foreign keys on the
+-- connection before migrate() (B-arij-251) — not this line.
 PRAGMA foreign_keys=OFF;--> statement-breakpoint
 CREATE TABLE `__new_git_sync_log` (
 	`id` text PRIMARY KEY NOT NULL,

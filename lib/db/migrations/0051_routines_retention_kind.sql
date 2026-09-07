@@ -6,6 +6,12 @@
 -- Nothing references `routines`, so the drop cannot orphan a child row; the
 -- three indexes go with the dropped table and are recreated below.
 --
+-- The `PRAGMA foreign_keys=OFF` on the next line is a no-op: drizzle's migrator
+-- wraps the batch in BEGIN/COMMIT and SQLite ignores the pragma inside a
+-- transaction. A rebuild of a *referenced* parent is protected by `initDb()`
+-- suspending foreign keys on the connection before migrate() (B-arij-251),
+-- never by this line.
+--
 -- Re-running it is harmless: the second pass copies an already-migrated table
 -- into an identical shape.
 PRAGMA foreign_keys=OFF;--> statement-breakpoint

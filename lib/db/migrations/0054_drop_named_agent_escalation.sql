@@ -8,7 +8,9 @@
 --
 -- Not written as a table rebuild: named_agents is referenced by
 -- agent_provider_defaults, chat_conversations, qa_reports, agent_sessions and
--- composite_agent_members, and a rebuild would need foreign_keys OFF — which
--- is a no-op inside drizzle's migration transaction (B-arij-251). SQLite's
--- ALTER TABLE ... DROP COLUMN handles a self-referential FK column directly.
+-- composite_agent_members, and a rebuild would need foreign_keys OFF — which an
+-- in-file `PRAGMA foreign_keys=OFF` cannot deliver, because drizzle wraps the
+-- batch in a transaction (B-arij-251; `initDb()` now suspends them on the
+-- connection instead). SQLite's ALTER TABLE ... DROP COLUMN handles a
+-- self-referential FK column directly and needs neither.
 ALTER TABLE named_agents DROP COLUMN escalates_to;

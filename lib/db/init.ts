@@ -348,6 +348,81 @@ function stampLegacyBaseline(
 }
 
 /**
+ * How many migrations drizzle has recorded, or 0 when the bookkeeping table
+ * does not exist yet (fresh database).
+ */
+function appliedMigrationCount(connection: Database.Database): number {
+  if (!tableExists(connection, "__drizzle_migrations")) return 0;
+  const row = connection
+    .prepare('SELECT COUNT(*) AS n FROM "__drizzle_migrations"')
+    .get() as { n: number };
+  return row.n;
+}
+
+/**
+ * Apply the migration chain with foreign keys suspended on the CONNECTION,
+ * then prove the result is still referentially sound.
+ *
+ * A rebuild-and-rename migration (SQLite's only way to drop a NOT NULL, widen
+ * a CHECK or reorder columns) drops the table it is rebuilding. With foreign
+ * keys enforced, that DROP fires every cascade hanging off the parent: the
+ * children are deleted, SET NULL links are cleared, and a NO ACTION link
+ * aborts the migration outright.
+ *
+ * The `PRAGMA foreign_keys=OFF` those migrations write into their own SQL does
+ * NOT prevent this. Drizzle's sqlite migrator runs `BEGIN` before the whole
+ * batch and `COMMIT` after it (`SQLiteSyncDialect.migrate`), and SQLite
+ * ignores `PRAGMA foreign_keys` while a transaction is open — so the pragma is
+ * a silent no-op wherever it appears inside a migration file. It only takes
+ * effect out here, before the migrator opens its transaction.
+ *
+ * The pragma is restored to whatever the caller had set — including when
+ * `migrate()` throws — so a failed startup never leaves the connection
+ * unenforced. On a run that actually applied something, `foreign_key_check`
+ * then has to come back empty: a migration that leaves a dangling reference
+ * behind refuses startup rather than serving a corrupt database.
+ */
+function migrateWithForeignKeysSuspended(
+  connection: Database.Database,
+  migrationsFolder: string,
+): void {
+  const foreignKeysWereOn =
+    connection.pragma("foreign_keys", { simple: true }) === 1;
+  const migrationsBefore = appliedMigrationCount(connection);
+
+  connection.pragma("foreign_keys = OFF");
+  try {
+    migrate(drizzle(connection), { migrationsFolder });
+  } finally {
+    if (foreignKeysWereOn) connection.pragma("foreign_keys = ON");
+  }
+
+  // Nothing ran: there is no migration result to validate, and a database that
+  // was already inconsistent for unrelated reasons must not be bricked here.
+  if (appliedMigrationCount(connection) === migrationsBefore) return;
+
+  const violations = connection.pragma("foreign_key_check") as Array<{
+    table: string;
+    rowid: number | null;
+    parent: string;
+    fkid: number;
+  }>;
+  if (violations.length === 0) return;
+
+  const sample = violations
+    .slice(0, 5)
+    .map(
+      (violation) =>
+        `${violation.table}.rowid=${violation.rowid} -> ${violation.parent}`,
+    )
+    .join(", ");
+  throw new Error(
+    `Migrations left ${violations.length} foreign key violation(s) behind; refusing to start. ` +
+      `First offenders: ${sample}`,
+  );
+}
+
+/**
  * Seed the global default named agent. Idempotent: keyed on the unique agent
  * name. Uses raw sqlite to avoid a circular dependency with
  * lib/agent-config/agent-resolution.ts.
@@ -389,6 +464,10 @@ function seedDefaultNamedAgent(connection: Database.Database): void {
  * - legacy (push-created) -> baseline stamped, only post-baseline no-op
  *                            migrations run
  * - up to date            -> nothing happens
+ *
+ * This is also the only place foreign keys may legitimately be suspended for a
+ * table rebuild — see `migrateWithForeignKeysSuspended`. A `PRAGMA
+ * foreign_keys=OFF` written inside a migration file does nothing.
  */
 export function initDb(
   connection: Database.Database,
@@ -399,6 +478,6 @@ export function initDb(
 
   repairReviewVerdictMigrationCollision(connection, migrationsFolder);
   stampLegacyBaseline(connection, migrationsFolder);
-  migrate(drizzle(connection), { migrationsFolder });
+  migrateWithForeignKeysSuspended(connection, migrationsFolder);
   seedDefaultNamedAgent(connection);
 }
