@@ -472,9 +472,23 @@ export default function ProjectDeskPage() {
           <div className="flex h-full flex-col">
             {/* Project-scoped controls the desk's own chrome does not carry:
                 the Full Auto CONFIGURATION dialog (the header pill is an on/off
-                switch) and the Refinement pass. */}
+                switch) and the Refinement pass.
+
+                A row that FOLDS, not a fixed line — B-arij-jcJeNQZnT1X9. This
+                bar lives inside the chat panel's slot, so beside the collapsed
+                chat strip it has ~301px of content at 390px and ~231px at
+                320px; the two buttons are `shrink-0` (a crushed label is no
+                better than a clipped one) and Full Auto's live badge alone is
+                ~240px when armed. On one fixed 46px line the hint was the only
+                thing left to squeeze ("⌘-…", 31px of 231 at 390) and Agent
+                Refinement was painted past the bar — 477px into a 390px screen
+                with Full Auto armed — where the `overflow-hidden` hosts cut it
+                off. Wrapping is width-driven rather than breakpoint-driven on
+                purpose: the expanded chat panel narrows this slot on a desktop
+                too. 46px stays as the FLOOR, so the one-line desktop bar keeps
+                exactly its height. */}
             <div
-              className="flex h-[46px] shrink-0 items-center gap-[12px] border-b border-border bg-card px-[22px]"
+              className="flex min-h-[46px] shrink-0 flex-wrap items-center gap-x-[12px] gap-y-[6px] border-b border-border bg-card px-[22px] py-[8px]"
               data-testid="board-capture-bar"
             >
               <AutoModeToggle
@@ -495,7 +509,13 @@ export default function ProjectDeskPage() {
                 }
                 onFinished={handleRefinementFinished}
               />
-              <span className="ml-auto truncate text-[12.5px] text-muted-foreground">
+              {/* `ml-auto` still hugs the right edge once the hint has wrapped
+                  onto its own line; `truncate` is the last resort for a slot
+                  narrower than the hint itself, not the rendering at 390px. */}
+              <span
+                className="ml-auto truncate text-[12.5px] text-muted-foreground"
+                data-testid="board-capture-hint"
+              >
                 ⌘-clic sur un ticket pour le sélectionner
               </span>
             </div>
