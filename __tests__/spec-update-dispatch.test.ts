@@ -156,6 +156,10 @@ describe("dispatchSpecUpdateSession", () => {
     expect(sessions[0].id).toBe(sessionId);
     expect(sessions[0].status).toBe("completed");
     expect(sessions[0].mode).toBe("plan");
+    // Project-level on purpose: a spec rewrite must never occupy an epic's
+    // concurrency slot, so the row carries no ticket anchor at all.
+    expect(sessions[0].epicId).toBeNull();
+    expect(sessions[0].userStoryId).toBeNull();
 
     const row = db
       .select()

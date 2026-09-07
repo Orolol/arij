@@ -1,7 +1,7 @@
 import type { PipelineStage, PipelineState } from "./constants";
 import { PIPELINE_REASONS } from "./constants";
 import type { ReviewVerdictSource } from "./findings";
-import type { VerifyGate, VerifyGateOutcome } from "./verify";
+import type { VerifyGate } from "./verify";
 import type { RegressionReportPayload } from "@/lib/verify/regression-report";
 import type { VerificationResult } from "@/lib/verify/runner";
 import type {
@@ -12,6 +12,12 @@ import type {
   GradingEntry,
   GradingFailureContext,
 } from "@/lib/grading/report";
+import { awaitStageSettled } from "./runner-cancel-watch";
+import { createPipelineRunContext, sizeStageBudget } from "./runner-context";
+import { handleStageFailure } from "./runner-retry";
+import { handleCodeStageSuccess } from "./runner-stage-code";
+import { handleGradingStageSuccess } from "./runner-stage-grading";
+import { handleReviewStageSuccess } from "./runner-stage-review";
 
 /**
  * Autonomous pipeline state machine (build → review → auto-fix → forensic).
@@ -36,6 +42,19 @@ import type {
  *
  * Callbacks are invoked synchronously and must not throw (the caller wraps
  * its own side effects) — same convention as WaveRunnerCallbacks.
+ *
+ * This module owns the contract (the exported types) and the loop. The
+ * engine is decomposed along the stage boundaries, one module each:
+ *   runner-context.ts                    — per-run state + finish/readStatus
+ *   runner-cancel-watch.ts               — cancellation policy (queued-stop rescue)
+ *   runner-dispatch.ts                   — session cap, target-conflict and
+ *                                          review-status guards, stage dispatch
+ *   runner-retry.ts                      — retry ladder + forensic post-mortem
+ *   runner-stage-code.ts                 — build/fix success → verify → gate → next
+ *   runner-deterministic-verification.ts — Arij-owned test/lint/build commands
+ *   runner-regression-gate.ts            — bug-ticket red→green gate
+ *   runner-stage-grading.ts              — acceptance grading (opt-in)
+ *   runner-stage-review.ts               — blocking-findings assessment
  */
 
 /**
@@ -311,18 +330,6 @@ export interface RunPipelineOptions {
   ) => void;
 }
 
-const RUNNING_STATE_BY_STAGE: Record<PipelineStageKind, PipelineState> = {
-  build: "running_build",
-  grading: "running_grading",
-  review: "running_review",
-  fix: "running_fix",
-};
-
-/**
- * Executes one pipeline run to its terminal state. Resolves with the
- * terminal summary; per-stage launch/session failures never reject (they
- * feed the retry ladder). A rejection here is an engine bug.
- */
 /**
  * Why the ladder is about to advance, in the words the activity entry uses.
  *
@@ -340,788 +347,62 @@ function descentReasonFor(result: PipelineStageResult): string {
   return "the session failed";
 }
 
+/**
+ * Executes one pipeline run to its terminal state. Resolves with the
+ * terminal summary; per-stage launch/session failures never reject (they
+ * feed the retry ladder). A rejection here is an engine bug.
+ */
 export async function runPipeline(
   options: RunPipelineOptions
 ): Promise<PipelineTerminalSummary> {
-  const callbacks = options.callbacks ?? {};
-  const pollMs = options.cancelPollIntervalMs ?? 2000;
-
-  const sessionIds: string[] = [options.initialBuild.sessionId];
-  let stage: PipelineStageKind = "build";
-  let stageAttempt = 1;
-  /**
-   * Attempts the CURRENT stage may spend. `maxAttempts` for a simple agent;
-   * the member count for a composite. Re-asked at every stage entry, because
-   * a run can hold a composite for its code stages and a simple agent for its
-   * review (or the reverse).
-   *
-   * Seeded with the configured cap and then SIZED FOR THE BUILD STAGE before
-   * the loop runs. The initial build is attempt 1 of the build stage, but the
-   * ROUTE dispatched it, so it never passes through `dispatch()` where every
-   * other stage's budget is asked. Leaving the seed in place made
-   * `pipeline_max_attempts` — not the member count — govern a build
-   * composite's ladder, which is the one stage a build composite exists for.
-   */
-  let stageMaxAttempts = options.maxAttempts;
-  let fixCycles = 0;
-  let lastCodeSessionId: string | null = null;
-  let reviewStageStartedAt = "";
-  let handle: PipelineStageHandle = {
-    sessionId: options.initialBuild.sessionId,
-    settled: options.initialBuild.settled,
-    compositeDescent: null,
-  };
-  let currentRequest: PipelineStageRequest | null = null;
-  /**
-   * Passing mechanical evidence from the latest code stage. Grading sits
-   * between that stage and review, so the report has to outlive the dispatch
-   * that carried it in order to still reach the reviewer's prompt.
-   */
-  let lastVerificationReport: VerificationReport | undefined;
-
-  /**
-   * Size the ladder for one stage entry.
-   *
-   * Asked ONCE per stage entry (attempt 1), never per attempt: a composite
-   * whose members were edited mid-run must not change the ladder under a run
-   * already climbing it. A budget that cannot be read leaves the configured
-   * cap in place rather than failing the run — the ladder is a retry policy,
-   * not a correctness gate.
-   */
-  const sizeStageBudget = async (
-    forStage: PipelineStageKind
-  ): Promise<void> => {
-    stageMaxAttempts = options.maxAttempts;
-    if (!options.attemptBudget) return;
-    try {
-      const budget = await options.attemptBudget(forStage);
-      if (Number.isFinite(budget) && budget >= 1) {
-        stageMaxAttempts = Math.floor(budget);
-      }
-    } catch (error) {
-      console.warn(
-        "[pipeline] Failed to size the attempt ladder; using the configured cap:",
-        error instanceof Error ? error.message : error
-      );
-    }
-  };
-
-  const readStatusSafe = (sessionId: string): string | null => {
-    try {
-      return options.readSessionStatus(sessionId);
-    } catch {
-      return null;
-    }
-  };
-
-  const finish = (
-    state: PipelineTerminalState,
-    reason: string | null
-  ): PipelineTerminalSummary => {
-    const summary: PipelineTerminalSummary = {
-      state,
-      reason,
-      sessionIds: [...sessionIds],
-      fixCycles,
-    };
-    callbacks.onFinish?.(summary);
-    return summary;
-  };
-
-  /**
-   * Awaits a stage settle with the cancel watch: when the session row turns
-   * 'cancelled' before the closure settles (queued session removed from the
-   * scheduler by the user's stop), a synthesized failure settles the wait.
-   * First resolution wins; the post-settle status re-read keeps the race
-   * benign (both paths see the cancelled row).
-   */
-  const awaitSettled = (
-    current: PipelineStageHandle
-  ): Promise<PipelineStageResult> => {
-    const sessionId = current.sessionId;
-    if (!sessionId) return current.settled;
-
-    return new Promise<PipelineStageResult>((resolve) => {
-      let done = false;
-      let timer: ReturnType<typeof setTimeout> | null = null;
-
-      const settle = (result: PipelineStageResult): void => {
-        if (done) return;
-        done = true;
-        if (timer) clearTimeout(timer);
-        resolve(result);
-      };
-
-      current.settled.then(settle, (error: unknown) =>
-        // Settled promises never reject by contract — belt and braces.
-        settle({
-          sessionId,
-          success: false,
-          outcome: null,
-          error:
-            error instanceof Error ? error.message : "Stage settled rejected",
-        })
-      );
-
-      const tick = (): void => {
-        if (done) return;
-        if (readStatusSafe(sessionId) === "cancelled") {
-          settle({
-            sessionId,
-            success: false,
-            outcome: null,
-            error: "Cancelled by user",
-          });
-          return;
-        }
-        timer = setTimeout(tick, pollMs);
-      };
-      timer = setTimeout(tick, pollMs);
-    });
-  };
-
-  /**
-   * Guards + dispatches one stage. Returns null when the stage is in flight
-   * (`handle` updated), or the terminal summary when a guard tripped.
-   */
-  const dispatch = async (
-    request: PipelineStageRequest
-  ): Promise<PipelineTerminalSummary | null> => {
-    // Guard (a): hard session cap.
-    if (sessionIds.length >= options.maxSessions) {
-      callbacks.onTrace?.(PIPELINE_REASONS.failedSessionCap, null);
-      return finish("failed", "session cap reached");
-    }
-
-    // Guard (b): another agent took the ticket between stages.
-    let guard: PipelineGuardCheck;
-    try {
-      guard = options.checkGuards([...sessionIds]);
-    } catch {
-      guard = { conflictSessionId: null, reviewTargetStatus: null };
-    }
-    if (guard.conflictSessionId) {
-      callbacks.onTrace?.(
-        PIPELINE_REASONS.failedTargetBusy,
-        guard.conflictSessionId
-      );
-      return finish("failed", "target busy: another agent took the ticket");
-    }
-
-    // Guard (c): observational grading and review both require the delivered
-    // target to still sit in review|done.
-    if (
-      (request.stage === "grading" || request.stage === "review") &&
-      guard.reviewTargetStatus !== "review" &&
-      guard.reviewTargetStatus !== "done"
-    ) {
-      callbacks.onTrace?.(PIPELINE_REASONS.failedTicketNotInReview, null);
-      return finish("failed", "ticket left review before the review stage");
-    }
-
-    stage = request.stage;
-    stageAttempt = request.attempt;
-    currentRequest = request;
-
-    if (request.attempt === 1) {
-      await sizeStageBudget(request.stage);
-    }
-
-    callbacks.onStageChange?.(
-      RUNNING_STATE_BY_STAGE[request.stage],
-      request.stage,
-      request.attempt,
-      fixCycles
-    );
-
-    if (request.stage === "review") {
-      // Findings window: everything the reviewer files lands at or after
-      // this instant (submit_findings writes explicit ISO timestamps).
-      reviewStageStartedAt = new Date().toISOString();
-    }
-
-    try {
-      handle = await options.launchStage(request);
-    } catch (error) {
-      handle = {
-        sessionId: null,
-        settled: Promise.resolve({
-          sessionId: "",
-          success: false,
-          outcome: null,
-          error:
-            error instanceof Error ? error.message : "Stage dispatch failed",
-        }),
-        compositeDescent: null,
-      };
-    }
-
-    if (handle.sessionId) {
-      sessionIds.push(handle.sessionId);
-      callbacks.onSessionAdded?.(handle.sessionId, request.stage);
-    }
-
-    // First attempts announce the stage; retries were announced by the
-    // retry trace at the failure decision.
-    if (request.attempt === 1) {
-      if (request.stage === "review") {
-        callbacks.onTrace?.(PIPELINE_REASONS.reviewStarted, handle.sessionId);
-      } else if (request.stage === "grading") {
-        // A rubric-free dispatch writes its own explicit skip journal entry.
-        if (handle.sessionId) {
-          callbacks.onTrace?.(
-            PIPELINE_REASONS.gradingStarted,
-            handle.sessionId
-          );
-        }
-      } else if (request.stage === "fix") {
-        callbacks.onTrace?.(
-          PIPELINE_REASONS.fixStarted(request.fixCycle, options.maxFixCycles),
-          handle.sessionId
-        );
-      }
-    }
-
-    if (handle.compositeDescent) {
-      callbacks.onTrace?.(
-        PIPELINE_REASONS.compositeRankDown(
-          request.stage,
-          handle.compositeDescent.from,
-          handle.compositeDescent.to,
-          request.descentReason ?? "failed",
-          request.attempt,
-          stageMaxAttempts
-        ),
-        handle.sessionId
-      );
-    }
-
-    return null;
-  };
-
-  /**
-   * Failure path for the current stage: climb the retry ladder, or exhaust
-   * into the forensic post-mortem and terminal failure.
-   */
-  const handleStageFailure = async (
-    descentReason?: string
-  ): Promise<PipelineTerminalSummary | null> => {
-    // The hard session ceiling cuts the ladder as well as the forensic
-    // dispatch. Without this a composite longer than the sessions a run has
-    // left would keep asking for members it can never spend.
-    const sessionsLeft = sessionIds.length < options.maxSessions;
-    if (stageAttempt < stageMaxAttempts && sessionsLeft) {
-      const nextAttempt = stageAttempt + 1;
-      callbacks.onTrace?.(
-        PIPELINE_REASONS.retry(stage, nextAttempt, stageMaxAttempts),
-        handle.sessionId
-      );
-      return dispatch({
-        stage,
-        attempt: nextAttempt,
-        fixCycle: fixCycles,
-        previousAttemptSessionId: handle.sessionId,
-        lastCodeSessionId,
-        ...(descentReason ? { descentReason } : {}),
-        ...(currentRequest?.verifyFailure
-          ? { verifyFailure: currentRequest.verifyFailure }
-          : {}),
-        ...(currentRequest?.gradingFailure
-          ? { gradingFailure: currentRequest.gradingFailure }
-          : {}),
-        ...(currentRequest?.verificationFailure
-          ? { verificationFailure: currentRequest.verificationFailure }
-          : {}),
-        ...(currentRequest?.verificationReport
-          ? { verificationReport: currentRequest.verificationReport }
-          : {}),
-      });
-    }
-
-    // Ladder exhausted — post-mortem, then terminal failure. The terminal
-    // reason is always the stage failure; the forensic run is best-effort
-    // diagnostics and never changes how the run ends (nor does the session
-    // cap blocking its dispatch).
-    const failedStage = stage;
-    const attempts = stageAttempt;
-    const reason =
-      stageAttempt < stageMaxAttempts
-        ? `stage ${failedStage} failed after ${attempts} attempts (session ceiling reached)`
-        : `stage ${failedStage} failed after ${attempts} attempts`;
-    callbacks.onTrace?.(
-      PIPELINE_REASONS.failedStage(failedStage, attempts),
-      handle.sessionId
-    );
-
-    const deadSessionId = handle.sessionId;
-    if (deadSessionId && sessionIds.length < options.maxSessions) {
-      callbacks.onStageChange?.("running_forensic", "forensic", 1, fixCycles);
-      try {
-        const forensic = await options.runForensic({
-          deadSessionId,
-          stage: failedStage,
-          attempts,
-        });
-        if (forensic.sessionId) {
-          sessionIds.push(forensic.sessionId);
-          callbacks.onSessionAdded?.(forensic.sessionId, "forensic");
-        }
-        // Any result (success, failure, refusal) → the run still fails.
-        // Awaited through the cancel watch: a forensic session stopped while
-        // still QUEUED is removed from the scheduler without its closure ever
-        // running, so its settled promise would hang this engine forever.
-        await awaitSettled({
-          sessionId: forensic.sessionId,
-          settled: forensic.settled,
-        });
-      } catch (error) {
-        console.warn(
-          "[pipeline] Forensic dispatch failed:",
-          error instanceof Error ? error.message : error
-        );
-      }
-    }
-
-    return finish("failed", reason);
-  };
+  const ctx = createPipelineRunContext(options);
+  const { callbacks, state } = ctx;
 
   // The initial build is attempt 1 of the build stage and bypassed
   // `dispatch()`, so this is the only place its ladder can be sized. Without
   // it a build composite's members past `pipeline_max_attempts` are
   // unreachable, and a composite SHORTER than that cap sends `launchStage`
   // asking for a rank that does not exist.
-  await sizeStageBudget("build");
+  await sizeStageBudget(ctx, "build");
 
   // -------------------------------------------------------------------
   // Main loop — one settled stage per iteration.
   // -------------------------------------------------------------------
   for (;;) {
-    const result = await awaitSettled(handle);
+    const result = await awaitStageSettled(ctx, state.handle);
 
     // User stop wins over whatever the closure reported.
     if (
-      handle.sessionId &&
-      readStatusSafe(handle.sessionId) === "cancelled"
+      state.handle.sessionId &&
+      ctx.readStatusSafe(state.handle.sessionId) === "cancelled"
     ) {
-      callbacks.onTrace?.(PIPELINE_REASONS.cancelled, handle.sessionId);
-      return finish("cancelled", "stopped by user");
+      callbacks.onTrace?.(PIPELINE_REASONS.cancelled, state.handle.sessionId);
+      return ctx.finish("cancelled", "stopped by user");
     }
 
     // asked_question at ANY stage pauses the run; the stage closure already
     // held the ticket, notified, and logged via handleAskedQuestionOutcome.
     if (result.outcome === "asked_question") {
       callbacks.onTrace?.(
-        PIPELINE_REASONS.pausedQuestion(stage),
-        handle.sessionId
+        PIPELINE_REASONS.pausedQuestion(state.stage),
+        state.handle.sessionId
       );
-      return finish("paused_question", `agent asked a question (${stage})`);
+      return ctx.finish(
+        "paused_question",
+        `agent asked a question (${state.stage})`
+      );
     }
 
+    let summary: PipelineTerminalSummary | null;
     if (!result.success) {
-      const summary = await handleStageFailure(descentReasonFor(result));
-      if (summary) return summary;
-      continue;
+      summary = await handleStageFailure(ctx, descentReasonFor(result));
+    } else if (state.stage === "build" || state.stage === "fix") {
+      summary = await handleCodeStageSuccess(ctx);
+    } else if (state.stage === "grading") {
+      summary = await handleGradingStageSuccess(ctx, result);
+    } else {
+      summary = await handleReviewStageSuccess(ctx);
     }
-
-    // Success: Arij-owned deterministic commands, then the bug-specific
-    // regression gate, then review. Neither mechanical check creates an
-    // agent session or enters sessionIds, so the hard ceiling remains an
-    // agent-session ceiling.
-    if (stage === "build" || stage === "fix") {
-      lastCodeSessionId = handle.sessionId ?? lastCodeSessionId;
-      let verificationReport: VerificationResult | undefined;
-      try {
-        if (options.runDeterministicVerification) {
-          const verification =
-            await options.runDeterministicVerification(lastCodeSessionId);
-          if (verification.ran) {
-            if (!verification.result) {
-              throw new Error("Verification ran without producing a report");
-            }
-
-            if (verification.result.status === "pass") {
-              verificationReport = verification.result;
-              callbacks.onTrace?.(
-                PIPELINE_REASONS.deterministicVerificationPassed(
-                  verification.result.commands.length
-                ),
-                handle.sessionId
-              );
-            } else {
-              const failedCommand =
-                verification.result.commands.find(
-                  (command) => command.exitCode !== 0
-                ) ?? verification.result.commands.at(-1);
-              if (!failedCommand) {
-                throw new Error(
-                  "Failed verification report contains no command result"
-                );
-              }
-
-              callbacks.onTrace?.(
-                PIPELINE_REASONS.deterministicVerificationFailed(
-                  failedCommand.name
-                ),
-                handle.sessionId
-              );
-
-              if (fixCycles >= options.maxFixCycles) {
-                callbacks.onTrace?.(
-                  PIPELINE_REASONS.failedDeterministicVerification(fixCycles),
-                  handle.sessionId
-                );
-                try {
-                  options.parkRejectedTicket?.(
-                    lastCodeSessionId,
-                    "Deterministic verification rejected the branch"
-                  );
-                } catch (parkError) {
-                  console.warn(
-                    "[pipeline] Failed to park verification-rejected ticket:",
-                    parkError instanceof Error
-                      ? parkError.message
-                      : parkError
-                  );
-                }
-                return finish(
-                  "failed",
-                  `deterministic verification still failing after ${fixCycles} fix cycles`
-                );
-              }
-
-              fixCycles += 1;
-              const summary = await dispatch({
-                stage: "fix",
-                fixCycle: fixCycles,
-                attempt: 1,
-                previousAttemptSessionId: null,
-                lastCodeSessionId,
-                verificationFailure: failedCommand,
-              });
-              if (summary) return summary;
-              continue;
-            }
-          } else if (verification.skipReason) {
-            callbacks.onTrace?.(
-              PIPELINE_REASONS.deterministicVerificationSkipped(
-                verification.skipReason
-              ),
-              handle.sessionId
-            );
-          }
-        }
-      } catch (error) {
-        console.warn(
-          "[pipeline] Deterministic verification crashed:",
-          error instanceof Error ? error.message : error
-        );
-        callbacks.onTrace?.(
-          PIPELINE_REASONS.failedDeterministicVerificationCrashed,
-          handle.sessionId
-        );
-        try {
-          options.parkRejectedTicket?.(
-            lastCodeSessionId,
-            "Deterministic verification crashed before it could verify the branch"
-          );
-        } catch (parkError) {
-          console.warn(
-            "[pipeline] Failed to park verification-crashed ticket:",
-            parkError instanceof Error ? parkError.message : parkError
-          );
-        }
-        return finish("failed", "deterministic verification crashed");
-      }
-
-      let gate: VerifyGateOutcome = { ran: false, passed: null, result: null };
-      try {
-        if (options.runVerifyGate) {
-          gate = await options.runVerifyGate(lastCodeSessionId);
-        }
-      } catch (error) {
-        console.warn(
-          "[pipeline] Regression gate crashed:",
-          error instanceof Error ? error.message : error
-        );
-        callbacks.onTrace?.(
-          PIPELINE_REASONS.failedRegressionGateCrashed,
-          handle.sessionId
-        );
-        try {
-          options.parkRejectedTicket?.(
-            lastCodeSessionId,
-            "Regression gate crashed before it could verify the branch"
-          );
-        } catch (parkError) {
-          console.warn(
-            "[pipeline] Failed to park regression-crashed ticket:",
-            parkError instanceof Error ? parkError.message : parkError
-          );
-        }
-        return finish("failed", "regression gate crashed");
-      }
-      if (gate.ran && !gate.passed && gate.result) {
-        const payload: RegressionReportPayload = {
-          regression: {
-            status: gate.result.status,
-            reason: gate.result.reason,
-            testFiles: gate.result.testFiles,
-            detail: gate.result.detail,
-            checkedAt: new Date().toISOString(),
-          },
-        };
-
-        // command_error means the command failed to execute (environment or
-        // configuration fault, e.g. runner missing or timeout). An agent in
-        // a fix cycle cannot fix an environment fault — fail immediately
-        // rather than burning the fix budget.
-        if (gate.result.reason === "command_error") {
-          callbacks.onTrace?.(
-            PIPELINE_REASONS.failedRegressionCommandError,
-            handle.sessionId
-          );
-          try {
-            options.parkRejectedTicket?.(
-              lastCodeSessionId,
-              "Regression test command could not run — the branch was never verified"
-            );
-          } catch (parkError) {
-            console.warn(
-              "[pipeline] Failed to park regression-rejected ticket:",
-              parkError instanceof Error ? parkError.message : parkError
-            );
-          }
-          return finish(
-            "failed",
-            `regression command error: ${gate.result.detail ?? "could not run command"}`
-          );
-        }
-
-        if (fixCycles >= options.maxFixCycles) {
-          callbacks.onTrace?.(
-            PIPELINE_REASONS.failedRegression(fixCycles),
-            handle.sessionId
-          );
-          // The code stage already moved the ticket to review; a gate
-          // rejection is the opposite of approval-ready. Park it back in
-          // in_progress like the negative-review path does — best effort,
-          // it must not change how the run terminates.
-          try {
-            options.parkRejectedTicket?.(
-              lastCodeSessionId,
-              "Mandatory regression test rejected the branch (red → green)"
-            );
-          } catch (parkError) {
-            console.warn(
-              "[pipeline] Failed to park regression-rejected ticket:",
-              parkError instanceof Error ? parkError.message : parkError
-            );
-          }
-          return finish(
-            "failed",
-            `mandatory regression test still failing after ${fixCycles} fix cycles`
-          );
-        }
-        fixCycles += 1;
-        callbacks.onTrace?.(
-          PIPELINE_REASONS.regressionFailed(fixCycles, options.maxFixCycles),
-          handle.sessionId
-        );
-        const summary = await dispatch({
-          stage: "fix",
-          attempt: 1,
-          fixCycle: fixCycles,
-          previousAttemptSessionId: null,
-          lastCodeSessionId,
-          verifyFailure: payload,
-        });
-        if (summary) return summary;
-        continue;
-      }
-      lastVerificationReport = verificationReport;
-      const summary = await dispatch({
-        stage: options.gradingEnabled ? "grading" : "review",
-        attempt: 1,
-        fixCycle: fixCycles,
-        previousAttemptSessionId: null,
-        lastCodeSessionId,
-        ...(verificationReport ? { verificationReport } : {}),
-      });
-      if (summary) return summary;
-      continue;
-    }
-
-    // Grading success is assessed only from the exact structured report id
-    // returned by this stage. A rubric-free target is an intentional no-op.
-    if (stage === "grading") {
-      if (result.gradingSkipped) {
-        const summary = await dispatch({
-          stage: "review",
-          attempt: 1,
-          fixCycle: fixCycles,
-          previousAttemptSessionId: null,
-          lastCodeSessionId,
-          // Grading sits between the code stage and review, so the passing
-          // mechanical evidence has to survive the hop to reach the reviewer.
-          ...(lastVerificationReport
-            ? { verificationReport: lastVerificationReport }
-            : {}),
-        });
-        if (summary) return summary;
-        continue;
-      }
-
-      let grading: PipelineGradingAssessment;
-      try {
-        if (!result.gradingReportId || !options.assessGrading) {
-          throw new Error("Grading stage completed without a readable report");
-        }
-        grading = await options.assessGrading({
-          sessionId: handle.sessionId ?? "",
-          reportId: result.gradingReportId,
-        });
-      } catch {
-        const summary = await handleStageFailure();
-        if (summary) return summary;
-        continue;
-      }
-
-      if (grading.missed.length === 0) {
-        callbacks.onTrace?.(PIPELINE_REASONS.gradingPassed, handle.sessionId);
-        const summary = await dispatch({
-          stage: "review",
-          attempt: 1,
-          fixCycle: fixCycles,
-          previousAttemptSessionId: null,
-          lastCodeSessionId,
-          // Grading sits between the code stage and review, so the passing
-          // mechanical evidence has to survive the hop to reach the reviewer.
-          ...(lastVerificationReport
-            ? { verificationReport: lastVerificationReport }
-            : {}),
-        });
-        if (summary) return summary;
-        continue;
-      }
-
-      if (fixCycles >= options.maxFixCycles) {
-        callbacks.onTrace?.(
-          PIPELINE_REASONS.failedGrading(grading.missed.length, fixCycles),
-          handle.sessionId
-        );
-        try {
-          options.parkRejectedTicket?.(
-            lastCodeSessionId,
-            "Acceptance grading found missed criteria after the fix-cycle budget was exhausted"
-          );
-        } catch (parkError) {
-          console.warn(
-            "[pipeline] Failed to park grading-rejected ticket:",
-            parkError instanceof Error ? parkError.message : parkError
-          );
-        }
-        return finish(
-          "failed",
-          `${grading.missed.length} acceptance ${grading.missed.length === 1 ? "criterion remains" : "criteria remain"} missed after ${fixCycles} fix cycles`
-        );
-      }
-
-      fixCycles += 1;
-      callbacks.onTrace?.(
-        PIPELINE_REASONS.gradingMissed(
-          grading.missed.length,
-          fixCycles,
-          options.maxFixCycles
-        ),
-        handle.sessionId
-      );
-      const summary = await dispatch({
-        stage: "fix",
-        attempt: 1,
-        fixCycle: fixCycles,
-        previousAttemptSessionId: null,
-        lastCodeSessionId,
-        gradingFailure: {
-          reportId: grading.reportId,
-          summary: grading.summary,
-          missed: grading.missed,
-        },
-      });
-      if (summary) return summary;
-      continue;
-    }
-
-    // Review success: assess blocking findings.
-    let assessment: PipelineReviewAssessment;
-    try {
-      assessment = await options.assessReview({
-        sessionId: handle.sessionId ?? "",
-        stageStartedAt: reviewStageStartedAt,
-      });
-    } catch {
-      // An assessment crash must never green-light the change — treat it
-      // as a failed review attempt and let the ladder decide.
-      const summary = await handleStageFailure();
-      if (summary) return summary;
-      continue;
-    }
-
-    if (!assessment.blocking) {
-      // Success end-state: green review awaiting human sign-off. The
-      // pipeline NEVER auto-approves — review → done stays human-gated by
-      // the workflow engine.
-      callbacks.onTrace?.(PIPELINE_REASONS.finished, handle.sessionId);
-      return finish("succeeded", null);
-    }
-
-    if (assessment.unverifiable && assessment.blockingCount === 0) {
-      // The review delivered nothing Arij can read, and NOTHING was recovered
-      // from its prose either — so there is nothing for a fix agent to do.
-      // Dispatching one anyway hands it "fix every [critical] and [major]
-      // item" with an empty list, and it no-ops or invents changes to a
-      // branch nothing faulted. This is a FAILED REVIEW ATTEMPT: the ladder
-      // re-runs the review (a fresh session usually gets a working channel),
-      // and exhausting it fails the run with a forensic, exactly like a
-      // reviewer that crashed.
-      //
-      // The `blockingCount` half is not a detail. A broken channel does not
-      // mean no evidence: assessReviewOutcome runs ingestProseFindings first,
-      // and Arij parsed that report itself, independent of MCP. Those rows
-      // carry agent_session_id NULL, so they never prove the channel worked —
-      // the review stays unverifiable WITH a non-empty findings list. Sending
-      // that to the ladder would discard real, anchored findings and re-ingest
-      // the same report on every fresh review window, leaving duplicate open
-      // rows nothing ever fixes. When there is something to fix, fix it: the
-      // rows are open, so review → done still refuses, and the session still
-      // has no verdict and no rows of its own, so the merge gate still calls
-      // it not clean. Nothing becomes mergeable — the fix cycle just gets the
-      // findings it was denied.
-      const summary = await handleStageFailure();
-      if (summary) return summary;
-      continue;
-    }
-
-    if (fixCycles >= options.maxFixCycles) {
-      // Nothing crashed — the open findings + trace are the diagnostic, so
-      // no forensic here.
-      callbacks.onTrace?.(
-        PIPELINE_REASONS.failedFindings(fixCycles),
-        handle.sessionId
-      );
-      return finish(
-        "failed",
-        `blocking findings remain after ${fixCycles} fix cycles`
-      );
-    }
-
-    fixCycles += 1;
-    const summary = await dispatch({
-      stage: "fix",
-      attempt: 1,
-      fixCycle: fixCycles,
-      previousAttemptSessionId: null,
-      lastCodeSessionId,
-    });
     if (summary) return summary;
   }
 }

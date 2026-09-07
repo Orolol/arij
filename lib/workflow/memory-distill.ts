@@ -27,8 +27,6 @@
  * nothing else, so the tag alone wires them up.
  */
 
-import fs from "fs";
-import path from "path";
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import {
@@ -38,26 +36,12 @@ import {
   settings,
   userStories,
 } from "@/lib/db/schema";
-import { createId } from "@/lib/utils/nanoid";
-import { agentScheduler } from "@/lib/agents/scheduler";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
+import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import { extractLastNonEmptyTextFromFile } from "@/lib/agent-sessions/last-text";
 import { buildMemoryDistillPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
 import {
   getProjectMemoryContent,
   isProjectMemoryChangedError,
@@ -580,15 +564,6 @@ export async function dispatchMemoryDistillSession(
     systemPrompt
   );
 
-  const sessionId = createId();
-  const now = new Date().toISOString();
-  const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-  fs.mkdirSync(logsDir, { recursive: true });
-  const logsPath = path.join(logsDir, "logs.json");
-  const cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
-    ? crypto.randomUUID()
-    : undefined;
-
   // Last-resort race guard, under NO await: the callers' pending checks ran
   // before `resolveAgentPrompt` above, so a dream (or another distill) could
   // have taken the document during that suspension. Everything from here to
@@ -607,171 +582,126 @@ export async function dispatchMemoryDistillSession(
   // build is work that run caused, so its cost must land inside the run's
   // cost cap and morning summary instead of escaping both. (No epicId means
   // the summary counts it in the run total, not against a single epic.)
-  createQueuedSession({
-    id: sessionId,
-    projectId: input.projectId,
-    mode: "plan",
-    provider: resolvedAgent.provider,
-    prompt,
-    logsPath,
-    cliSessionId,
-    namedAgentId: resolvedAgent.namedAgentId ?? null,
-    compositeAgentId: resolvedAgent.compositeAgentId ?? null,
+  const { sessionId } = dispatchBackgroundSession({
     agentType: "memory_distill",
-    namedAgentName: resolvedAgent.name || null,
-    model: resolvedAgent.model || null,
-    batchRunId: sourceContext?.batchRunId ?? null,
-    createdAt: now,
-  });
-
-  try {
-    emitSessionStarted(
-      input.projectId,
-      sourceContext?.epicId ?? "",
-      sessionId,
-      "memory_distill"
-    );
-  } catch {
-    // Non-critical event emission
-  }
-  agentScheduler.submit(input.projectId, sessionId, async () => {
-    markSessionRunning(sessionId);
-
-    processManager.start(
-      sessionId,
-      {
-        mode: "plan",
-        prompt,
-        cwd: project.gitRepoPath || process.cwd(),
-        model: resolvedAgent.model,
-        cliSessionId,
-      },
-      resolvedAgent.provider
-    );
-
-    const info = await waitForProcessCompletion(sessionId, POLL_INTERVAL_MS);
-
-    const completedAt = new Date().toISOString();
-    const result = info?.result;
-
-    try {
-      fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-    } catch {
-      // Best-effort log write.
-    }
-
-    const outcome = classifySessionOutcome(result, sessionId);
-
-    try {
-      markSessionTerminal(
-        sessionId,
-        {
-          success: !!result?.success,
-          error: result?.error ?? null,
-          outcome,
-          usage: extractSessionUsage(result),
-        },
-        completedAt
-      );
-    } catch (error) {
-      if (!isSessionLifecycleConflictError(error)) {
-        console.error("[memory-distill] Failed to finalize session", error);
+    projectId: input.projectId,
+    prompt,
+    resolvedAgent,
+    mode: "plan",
+    cwd: project.gitRepoPath || process.cwd(),
+    pollIntervalMs: POLL_INTERVAL_MS,
+    logPrefix: "[memory-distill]",
+    session: { batchRunId: sourceContext?.batchRunId ?? null },
+    onQueued: ({ sessionId: sid }) => {
+      try {
+        emitSessionStarted(
+          input.projectId,
+          sourceContext?.epicId ?? "",
+          sid,
+          "memory_distill"
+        );
+      } catch {
+        // Non-critical event emission
       }
-    }
+    },
+    onTerminal: ({ sessionId: sid, result, outcome, completedAt }) => {
+      try {
+        eventBus.emit({
+          type:
+            result?.success && outcome === "answered"
+              ? "session:completed"
+              : "session:failed",
+          projectId: input.projectId,
+          data: { sessionId: sid, agentType: "memory_distill" },
+          timestamp: completedAt,
+        });
+      } catch {
+        // Non-critical event emission
+      }
+      // Only a delivered answer replaces the memory doc — silent runs, asked
+      // questions, and failures leave it untouched.
+      if (!result?.success || outcome !== "answered") {
+        return;
+      }
 
-    try {
-      eventBus.emit({
-        type: result?.success && outcome === "answered" ? "session:completed" : "session:failed",
-        projectId: input.projectId,
-        data: { sessionId, agentType: "memory_distill" },
-        timestamp: completedAt,
-      });
-    } catch {
-      // Non-critical event emission
-    }
-    // Only a delivered answer replaces the memory doc — silent runs, asked
-    // questions, and failures leave it untouched.
-    if (!result?.success || outcome !== "answered") {
-      return;
-    }
+      const output = sanitizeDistilledMemory(
+        resolveSessionOutput(result, sid, "")
+      );
+      if (!output) {
+        return;
+      }
 
-    const output = sanitizeDistilledMemory(
-      resolveSessionOutput(result, sessionId, "")
-    );
-    if (!output) {
-      return;
-    }
-
-    try {
-      // `expectedPrevious` is the memory this distill actually REASONED FROM,
-      // captured at prompt time above. A plan session runs long enough for
-      // someone to save an edit in the Docs tab meanwhile; writing blindly
-      // would throw that edit away in favour of text derived from the version
-      // before it. The human edit is the newer intent and wins — a distill can
-      // just be run again. (No snapshot: the single archive row is the undo
-      // for the last DREAM, and a distill must not spend it.)
-      saveProjectMemoryGuarded(input.projectId, output, {
-        expectedPrevious: currentMemory,
-      });
-    } catch (error) {
-      if (isProjectMemoryChangedError(error)) {
-        console.info(
-          "[memory-distill] discarded: the memory was edited while the" +
-            ` distill ran (its output is still readable on session ${sessionId})`
+      try {
+        // `expectedPrevious` is the memory this distill actually REASONED FROM,
+        // captured at prompt time above. A plan session runs long enough for
+        // someone to save an edit in the Docs tab meanwhile; writing blindly
+        // would throw that edit away in favour of text derived from the version
+        // before it. The human edit is the newer intent and wins — a distill can
+        // just be run again. (No snapshot: the single archive row is the undo
+        // for the last DREAM, and a distill must not spend it.)
+        saveProjectMemoryGuarded(input.projectId, output, {
+          expectedPrevious: currentMemory,
+        });
+      } catch (error) {
+        if (isProjectMemoryChangedError(error)) {
+          console.info(
+            "[memory-distill] discarded: the memory was edited while the" +
+              ` distill ran (its output is still readable on session ${sid})`
+          );
+          return;
+        }
+        console.error(
+          "[memory-distill] Failed to save distilled memory",
+          error
         );
         return;
       }
-      console.error(
-        "[memory-distill] Failed to save distilled memory",
-        error
-      );
-      return;
-    }
 
-    // Story 3: record who wrote the document and tell every open memory view
-    // to re-fetch — the single channel every other write path uses.
-    try {
-      recordMemoryWriteProvenance(input.projectId, {
-        source: "distill",
-        sessionId,
-      });
-      eventBus.emit({
-        type: "memory:changed",
-        projectId: input.projectId,
-        data: { source: "distill" },
-        timestamp: new Date().toISOString(),
-      });
-      createMemoryDistilledNotification({
-        projectId: input.projectId,
-        sessionId,
-        sourceSessionId: input.sourceSessionId,
-      });
-    } catch (error) {
-      console.warn(
-        "[memory-distill] Failed to record the distilled memory write",
-        error
-      );
-    }
+      // Story 3: record who wrote the document and tell every open memory view
+      // to re-fetch — the single channel every other write path uses.
+      try {
+        recordMemoryWriteProvenance(input.projectId, {
+          source: "distill",
+          sessionId: sid,
+        });
+        eventBus.emit({
+          type: "memory:changed",
+          projectId: input.projectId,
+          data: { source: "distill" },
+          timestamp: new Date().toISOString(),
+        });
+        createMemoryDistilledNotification({
+          projectId: input.projectId,
+          sessionId: sid,
+          sourceSessionId: input.sourceSessionId,
+        });
+      } catch (error) {
+        console.warn(
+          "[memory-distill] Failed to record the distilled memory write",
+          error
+        );
+      }
 
-    if (sourceContext?.epicId) {
-      const epicStatus =
-        db
-          .select({ status: epics.status })
-          .from(epics)
-          .where(eq(epics.id, sourceContext.epicId))
-          .get()?.status ?? "done";
-      // from == to: nothing moved, the entry records the memory update
-      // (same auditing pattern as the asked_question hold).
-      logTransition({
-        projectId: input.projectId,
-        epicId: sourceContext.epicId,
-        fromStatus: epicStatus,
-        toStatus: epicStatus,
-        actor: "system",
-        reason: MEMORY_UPDATED_REASON,
-        sessionId,
-      });
-    }
+      if (sourceContext?.epicId) {
+        const epicStatus =
+          db
+            .select({ status: epics.status })
+            .from(epics)
+            .where(eq(epics.id, sourceContext.epicId))
+            .get()?.status ?? "done";
+        // from == to: nothing moved, the entry records the memory update
+        // (same auditing pattern as the asked_question hold).
+        logTransition({
+          projectId: input.projectId,
+          epicId: sourceContext.epicId,
+          fromStatus: epicStatus,
+          toStatus: epicStatus,
+          actor: "system",
+          reason: MEMORY_UPDATED_REASON,
+          sessionId: sid,
+        });
+      }
+    },
   });
 
   return { sessionId };

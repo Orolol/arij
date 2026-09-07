@@ -47,10 +47,8 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
 import { createMergeRetryFailedNotification } from "@/lib/notifications/create";
-import {
-  isResumableProvider,
-  providerAcceptsAssignedSessionId,
-} from "@/lib/agent-sessions/resume-capability";
+import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
+import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
 import { applyTransition } from "@/lib/workflow/transition-service";
 import { resolveOpenReviewComments } from "@/lib/workflow/merge-approval";
 import type { KanbanStatus } from "@/lib/types/kanban";
@@ -262,8 +260,8 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
       resumeSession = true;
     }
   }
-  if (!cliSessionId && providerAcceptsAssignedSessionId(provider)) {
-    cliSessionId = crypto.randomUUID();
+  if (!cliSessionId) {
+    cliSessionId = mintAssignedCliSessionId(provider);
   }
 
   createQueuedSession({

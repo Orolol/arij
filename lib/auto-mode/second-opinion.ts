@@ -1,5 +1,4 @@
 import fs from "fs";
-import path from "path";
 import simpleGit from "simple-git";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -12,22 +11,9 @@ import {
   userStories,
 } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
-import { agentScheduler } from "@/lib/agents/scheduler";
 import { getRunningSessionForTarget } from "@/lib/agents/concurrency";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
+import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import {
   findLastSuccessfulBuildProvider,
   findLastSuccessfulReviewProvider,
@@ -404,15 +390,6 @@ export async function dispatchSecondOpinion(input: {
       isMcpToolsEnabled() && providerSupportsMcp(provider)
     );
 
-    const sessionId = createId();
-    const createdAt = new Date().toISOString();
-    const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-    fs.mkdirSync(logsDir, { recursive: true });
-    const logsPath = path.join(logsDir, "logs.json");
-    const cliSessionId = providerAcceptsAssignedSessionId(provider)
-      ? crypto.randomUUID()
-      : undefined;
-
     // Availability checks and worktree attachment can take seconds. Repeat
     // both mutable guards immediately before the session row is created so a
     // human move or another dispatch in that window wins.
@@ -445,102 +422,67 @@ export async function dispatchSecondOpinion(input: {
       };
     }
 
-    createQueuedSession({
-      id: sessionId,
+    const { sessionId } = dispatchBackgroundSession({
+      agentType: SECOND_OPINION_AGENT_TYPE,
       projectId: input.projectId,
+      // Ticket-scoped on purpose: the gate occupies the epic like a review,
+      // so the concurrency guards keep a second agent off it meanwhile.
       epicId: input.epicId,
+      prompt,
+      // The gate has no named agent: its provider is the segregation pick —
+      // chosen to differ from both builder and reviewer — and nothing else
+      // (model, agent name) is set.
+      resolvedAgent: { provider },
       // Code mode so the gate can call submit_findings (plan mode refuses
       // mutating MCP tools); the prompt itself forbids editing files.
       mode: "code",
-      orchestrationMode: "solo",
-      provider,
-      prompt,
-      logsPath,
-      branchName: epic.branchName,
-      worktreePath,
-      cliSessionId,
-      namedAgentId: null,
-      agentType: SECOND_OPINION_AGENT_TYPE,
-      namedAgentName: null,
-      model: null,
-      batchRunId: autoRunId(input.projectId),
-      createdAt,
-    });
-    emitSessionStarted(
-      input.projectId,
-      input.epicId,
-      sessionId,
-      SECOND_OPINION_AGENT_TYPE
-    );
-
-    agentScheduler.submit(input.projectId, sessionId, async () => {
-      markSessionRunning(sessionId);
-      processManager.start(
-        sessionId,
-        {
-          mode: "code",
-          prompt,
-          cwd: worktreePath,
-          cliSessionId,
-        },
-        provider
-      );
-
-      const info = await waitForProcessCompletion(sessionId);
-      const completedAt = new Date().toISOString();
-      const result = info?.result;
-      try {
-        fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-      } catch {
-        // Session rows/chunks remain authoritative if the convenience file fails.
-      }
-
-      const outcome = classifySessionOutcome(result, sessionId);
-      try {
-        markSessionTerminal(
-          sessionId,
-          {
-            success: !!result?.success,
-            error: result?.error || null,
-            outcome,
-            usage: extractSessionUsage(result),
-          },
-          completedAt
-        );
-      } catch (error) {
-        if (!isSessionLifecycleConflictError(error)) {
-          console.error(
-            "[auto-mode/second-opinion] Failed to finalize session",
-            error
-          );
-        }
-      }
-
-      db.insert(ticketComments)
-        .values({
-          id: createId(),
-          epicId: input.epicId,
-          author: "agent",
-          content: `**Independent second opinion**\n\n${resolveSessionOutput(
-            result,
-            sessionId,
-            "Second-opinion agent completed without output."
-          )}`,
-          agentSessionId: sessionId,
-          createdAt: completedAt,
-        })
-        .run();
-
-      if (result?.success) {
-        emitSessionCompleted(input.projectId, input.epicId, sessionId);
-      } else {
-        emitSessionFailed(
+      cwd: worktreePath,
+      logPrefix: "[auto-mode/second-opinion]",
+      session: {
+        orchestrationMode: "solo",
+        branchName: epic.branchName,
+        worktreePath,
+        batchRunId: autoRunId(input.projectId),
+      },
+      onQueued: ({ sessionId }) => {
+        emitSessionStarted(
           input.projectId,
           input.epicId,
           sessionId,
-          result?.error || "Second opinion failed"
+          SECOND_OPINION_AGENT_TYPE
         );
-      }
+      },
+      evaluate: ({ result }) => ({
+        success: !!result?.success,
+        error: result?.error || null,
+      }),
+      onTerminal: ({ sessionId, result, completedAt }) => {
+        db.insert(ticketComments)
+          .values({
+            id: createId(),
+            epicId: input.epicId,
+            author: "agent",
+            content: `**Independent second opinion**\n\n${resolveSessionOutput(
+              result,
+              sessionId,
+              "Second-opinion agent completed without output."
+            )}`,
+            agentSessionId: sessionId,
+            createdAt: completedAt,
+          })
+          .run();
+
+        if (result?.success) {
+          emitSessionCompleted(input.projectId, input.epicId, sessionId);
+        } else {
+          emitSessionFailed(
+            input.projectId,
+            input.epicId,
+            sessionId,
+            result?.error || "Second opinion failed"
+          );
+        }
+      },
     });
 
     return { sessionId, error: null, conflictSessionId: null };

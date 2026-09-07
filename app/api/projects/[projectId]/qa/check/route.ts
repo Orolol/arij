@@ -1,19 +1,11 @@
 import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
 import { NextRequest, NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { qaReports } from "@/lib/db/schema";
 import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { createId } from "@/lib/utils/nanoid";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import {
   buildTechCheckPrompt,
   buildE2eTestPrompt,
@@ -21,15 +13,8 @@ import {
 } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
+import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
 import type { AgentType } from "@/lib/agent-config/constants";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import { agentScheduler } from "@/lib/agents/scheduler";
 import { collectFailureDigestEvidence } from "@/lib/telescope/collect";
 import {
   failQaReportLaunch,
@@ -183,144 +168,80 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
       : buildTechCheckPrompt(project, customPrompt, systemPrompt);
   const mode = checkType === "failure_digest" ? "plan" : "code";
 
-  const sessionId = createId();
-  const reportId = createId();
-  const now = new Date().toISOString();
-  const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-  fs.mkdirSync(logsDir, { recursive: true });
-  const logsPath = path.join(logsDir, "logs.json");
-  const cliSessionId = providerAcceptsAssignedSessionId(resolvedAgent.provider)
-    ? crypto.randomUUID()
-    : undefined;
+  // Assigned in `onQueued`, which fires synchronously inside the dispatch
+  // once the session row exists — so the report id is minted after the
+  // session id, and both `onLaunchFailure` and the response can read it.
+  let reportId!: string;
 
-  createQueuedSession({
-    id: sessionId,
-    projectId,
-    mode,
-    provider: resolvedAgent.provider,
-    prompt,
-    logsPath,
-    cliSessionId,
-    namedAgentId: resolvedAgent.namedAgentId ?? null,
-    compositeAgentId: resolvedAgent.compositeAgentId ?? null,
+  const { sessionId } = dispatchBackgroundSession({
     agentType,
-    namedAgentName: resolvedAgent.name || null,
-    model: resolvedAgent.model || null,
-    createdAt: now,
-  });
-
-  db.insert(qaReports)
-    .values({
-      id: reportId,
-      projectId,
-      status: "running",
-      agentSessionId: sessionId,
-      namedAgentId,
-      promptUsed: prompt,
-      customPromptId,
-      checkType,
-      createdAt: now,
-    })
-    .run();
-
-  // Scheduled QA launch via the per-project scheduler: the closure spawns
-  // the agent, waits for completion, and finalizes the report.
-  //
-  // Both halves are wrapped because the scheduler's safety net
-  // (`handleLaunchFailure`) finalizes the SESSION when a launch rejects and
-  // knows nothing about `qa_reports` — without this the row would sit on
-  // `running` until the next boot sweep, which on a long-lived dev server can
-  // be days away. The report write lives here rather than in the scheduler so
-  // the generic queue never has to know what a QA report is.
-  //
-  // THE PROLOGUE IS DELIBERATELY NOT INSIDE AN `async` FUNCTION. Spawning is
-  // synchronous, and a missing CLI or a vanished worktree is the launch failure
-  // that actually happens; a plain try/catch catches it in the same tick, so
-  // the report is already terminal when this request returns. Wrapping the same
-  // code in `async` would defer the catch to a microtask and make that a timing
-  // accident instead of a guarantee. The scheduler documents the synchronous
-  // throw as a supported path and funnels it into the same rejection handling.
-  agentScheduler.submit(projectId, sessionId, () => {
-    try {
-      markSessionRunning(sessionId);
-
-      processManager.start(
+    projectId,
+    // No epicId: a QA check is project-level. It must not occupy an epic's
+    // concurrency slot, and its MCP token has no ticket to default to.
+    prompt,
+    resolvedAgent,
+    mode,
+    cwd: project.gitRepoPath,
+    pollIntervalMs: POLL_INTERVAL_MS,
+    logPrefix: "[qa-check]",
+    // The report row is the durable journal of this check, written while the
+    // session is still queued so it exists before anything can spawn.
+    onQueued: ({ sessionId, createdAt }) => {
+      reportId = createId();
+      db.insert(qaReports)
+        .values({
+          id: reportId,
+          projectId,
+          status: "running",
+          agentSessionId: sessionId,
+          namedAgentId,
+          promptUsed: prompt,
+          customPromptId,
+          checkType,
+          createdAt,
+        })
+        .run();
+    },
+    // The scheduler's safety net (`handleLaunchFailure`) finalizes the
+    // SESSION when a launch rejects and knows nothing about `qa_reports` —
+    // without this the row would sit on `running` until the next boot sweep,
+    // which on a long-lived dev server can be days away. The report write
+    // lives here rather than in the scheduler so the generic queue never has
+    // to know what a QA report is.
+    //
+    // For a spawn that throws, the dispatch fires this in the launch
+    // closure's own synchronous tick, so the report is already terminal when
+    // this request returns. A rejection after the spawn (the process manager
+    // settling abnormally, the finalizing statements throwing) reaches it a
+    // microtask later, which is the best available and still ends the same
+    // way: no boot sweep needed.
+    onLaunchFailure: (error) => failQaReportLaunch(reportId, error),
+    onTerminal: ({ sessionId, result, status, completedAt }) => {
+      const fallbackLabel = CHECK_TYPE_LABELS[checkType];
+      const output = resolveSessionOutput(
+        result,
         sessionId,
-        {
-          mode,
-          prompt,
-          cwd: project.gitRepoPath,
-          model: resolvedAgent.model,
-          cliSessionId,
-        },
-        resolvedAgent.provider,
+        `${fallbackLabel} completed without output.`,
       );
-    } catch (error) {
-      failQaReportLaunch(reportId, error);
-      // Rethrown unchanged: the scheduler still owns the session row and the
-      // slot; this catch adds a report write, it does not swallow a failure.
-      throw error;
-    }
 
-    // Everything after the spawn. A rejection here (the process manager
-    // settling abnormally, the finalizing statements throwing) reaches the
-    // report a microtask later rather than synchronously, which is the best
-    // available and still ends the same way: no boot sweep needed.
-    return awaitCheckCompletion().catch((error) => {
-      failQaReportLaunch(reportId, error);
-      throw error;
-    });
+      const reportStatus =
+        status === "cancelled"
+          ? "cancelled"
+          : result?.success
+            ? "completed"
+            : "failed";
+
+      db.update(qaReports)
+        .set({
+          status: reportStatus,
+          reportContent: output,
+          summary: extractSummary(output, checkType),
+          completedAt,
+        })
+        .where(eq(qaReports.id, reportId))
+        .run();
+    },
   });
-
-  async function awaitCheckCompletion(): Promise<void> {
-    const info = await waitForProcessCompletion(sessionId, POLL_INTERVAL_MS);
-
-    const completedAt = new Date().toISOString();
-    const result = info?.result;
-
-    try {
-      fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-    } catch {
-      // Ignore best-effort log writes.
-    }
-
-    try {
-      markSessionTerminal(
-        sessionId,
-        {
-          success: !!result?.success,
-          error: result?.error ?? null,
-          outcome: classifySessionOutcome(result, sessionId),
-          usage: extractSessionUsage(result),
-        },
-        completedAt,
-      );
-    } catch (error) {
-      if (!isSessionLifecycleConflictError(error)) {
-        console.error("[qa-check] Failed to finalize session", error);
-      }
-    }
-
-    const fallbackLabel = CHECK_TYPE_LABELS[checkType];
-    const output = resolveSessionOutput(result, sessionId, `${fallbackLabel} completed without output.`);
-
-    const reportStatus =
-      info?.status === "cancelled"
-        ? "cancelled"
-        : result?.success
-          ? "completed"
-          : "failed";
-
-    db.update(qaReports)
-      .set({
-        status: reportStatus,
-        reportContent: output,
-        summary: extractSummary(output, checkType),
-        completedAt,
-      })
-      .where(eq(qaReports.id, reportId))
-      .run();
-  }
 
   return NextResponse.json({
     data: {
