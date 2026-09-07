@@ -348,20 +348,8 @@ function stampLegacyBaseline(
 }
 
 /**
- * How many migrations drizzle has recorded, or 0 when the bookkeeping table
- * does not exist yet (fresh database).
- */
-function appliedMigrationCount(connection: Database.Database): number {
-  if (!tableExists(connection, "__drizzle_migrations")) return 0;
-  const row = connection
-    .prepare('SELECT COUNT(*) AS n FROM "__drizzle_migrations"')
-    .get() as { n: number };
-  return row.n;
-}
-
-/**
  * Apply the migration chain with foreign keys suspended on the CONNECTION,
- * then prove the result is still referentially sound.
+ * then prove the result is referentially sound.
  *
  * A rebuild-and-rename migration (SQLite's only way to drop a NOT NULL, widen
  * a CHECK or reorder columns) drops the table it is rebuilding. With foreign
@@ -378,9 +366,11 @@ function appliedMigrationCount(connection: Database.Database): number {
  *
  * The pragma is restored to whatever the caller had set — including when
  * `migrate()` throws — so a failed startup never leaves the connection
- * unenforced. On a run that actually applied something, `foreign_key_check`
- * then has to come back empty: a migration that leaves a dangling reference
- * behind refuses startup rather than serving a corrupt database.
+ * unenforced. `foreign_key_check` must come back empty on every startup: a
+ * migration that leaves a dangling reference behind refuses startup rather
+ * than serving a corrupt database. This integrity check runs on every startup
+ * so that a validation refusal cannot fail open across server restarts (drizzle
+ * commits the migration before validation throws).
  *
  * The suspension is read back rather than assumed: the very reason the in-file
  * pragma fails is that it runs inside a transaction, and an `initDb()` called
@@ -393,7 +383,6 @@ function migrateWithForeignKeysSuspended(
 ): void {
   const foreignKeysWereOn =
     connection.pragma("foreign_keys", { simple: true }) === 1;
-  const migrationsBefore = appliedMigrationCount(connection);
 
   connection.pragma("foreign_keys = OFF");
   if (connection.pragma("foreign_keys", { simple: true }) === 1) {
@@ -410,10 +399,6 @@ function migrateWithForeignKeysSuspended(
   } finally {
     if (foreignKeysWereOn) connection.pragma("foreign_keys = ON");
   }
-
-  // Nothing ran: there is no migration result to validate, and a database that
-  // was already inconsistent for unrelated reasons must not be bricked here.
-  if (appliedMigrationCount(connection) === migrationsBefore) return;
 
   const violations = connection.pragma("foreign_key_check") as Array<{
     table: string;

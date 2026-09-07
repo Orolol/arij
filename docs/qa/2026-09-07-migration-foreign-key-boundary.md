@@ -24,14 +24,15 @@ enforced.
 `initDb()` now calls `migrateWithForeignKeysSuspended()`
 (`lib/db/init.ts`): it suspends `foreign_keys` on the **connection**, outside
 drizzle's transaction, restores the caller's previous setting in a `finally`
-(so a throwing migration cannot leave the connection unenforced), and — when
-the run actually applied at least one migration — requires
-`PRAGMA foreign_key_check` to come back empty, throwing and refusing startup
-otherwise.
+(so a throwing migration cannot leave the connection unenforced), and
+requires `PRAGMA foreign_key_check` to come back empty on every startup,
+throwing and refusing startup otherwise.
 
-The check is deliberately skipped when nothing was applied: a database that was
-already inconsistent for unrelated reasons must not be bricked by a routine
-startup that ran no DDL.
+The check runs unconditionally on every startup so that validation failures
+persist across server restarts: because drizzle commits the migration before
+post-migration validation runs, skipping the check when 0 migrations are
+pending would fail open on restart. Checking foreign keys on a healthy dev
+database takes ~93 ms and guarantees referential consistency.
 
 The suspension is read back rather than assumed. The defect's own mechanism
 applies one level up: an `initDb()` called from inside an open transaction
@@ -86,7 +87,7 @@ no violations — the fix is inert on the ordinary startup path.
 
 ## Automated coverage
 
-`__tests__/db-init-foreign-keys.test.ts` (7 tests) drives the real `initDb()`
+`__tests__/db-init-foreign-keys.test.ts` (8 tests) drives the real `initDb()`
 entry point:
 
 - a rebuild of `agent_sessions` staged onto the real migration chain preserves
@@ -103,13 +104,17 @@ entry point:
 - a migration that leaves a dangling reference behind refuses startup (red
   before the fix: the offending insert simply failed under enforcement, so the
   `foreign_key_check` gate was never reached);
+- startup refusal persists across reopen when a migration left foreign-key
+  violations behind (red before the fix: drizzle commits the migration before
+  validation throws, so a check skipped on 0 pending migrations failed open on
+  the second startup);
 - a self-contained parent/child fixture covering CASCADE, SET NULL and NO
   ACTION explicitly.
 
 Red state proven by hand, not only by construction: with the merge-base
-`lib/db/init.ts` (`git show HEAD~1:lib/db/init.ts`) restored over the fix, 5 of
-the 7 tests fail with exactly the symptoms above; restoring the fix returns all
-7 to green. The two that pass on both sides are the guards that the fix must
+`lib/db/init.ts` (`git show HEAD~1:lib/db/init.ts`) restored over the fix, 6 of
+the 8 tests fail with exactly the symptoms above; restoring the fix returns all
+8 to green. The two that pass on both sides are the guards that the fix must
 not *weaken* — foreign keys still enforced after a successful run, and the
 pragma restored on a throwing migration.
 

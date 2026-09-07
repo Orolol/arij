@@ -382,6 +382,46 @@ describe("initDb foreign-key boundary", () => {
       connection.close();
     }
   });
+
+  it("persists the startup refusal across reopen when a migration left foreign-key violations behind", () => {
+    const file = tempDbPath();
+    const connection = openProductionLike(file);
+    let folder = "";
+    try {
+      initDb(connection);
+
+      folder = stageMigrations(
+        [
+          {
+            tag: "9001_orphan_chunk",
+            sql: `INSERT INTO agent_session_chunks (id, session_id, stream_type, sequence, content)
+                  VALUES ('orphan', 'no-such-session', 'stdout', 1, 'x');`,
+          },
+        ],
+        { base: defaultMigrationsFolder() },
+      );
+
+      expect(() => initDb(connection, { migrationsFolder: folder })).toThrow(
+        /foreign key violation\(s\) behind; refusing to start/i,
+      );
+    } finally {
+      connection.close();
+    }
+
+    // Reopening the database on a fresh connection must STILL refuse startup.
+    // Drizzle committed the migration entry before foreign_key_check threw,
+    // so no new migrations are pending on restart. The validation refusal must
+    // not fail open on subsequent boots.
+    const connection2 = openProductionLike(file);
+    try {
+      expect(() => initDb(connection2, { migrationsFolder: folder })).toThrow(
+        /foreign key violation\(s\) behind; refusing to start/i,
+      );
+      expect(foreignKeysOn(connection2)).toBe(true);
+    } finally {
+      connection2.close();
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
