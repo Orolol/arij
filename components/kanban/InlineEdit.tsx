@@ -1,31 +1,34 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useId } from "react";
 import { useTranslations } from "next-intl";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { MarkdownContent } from "@/components/chat/MarkdownContent";
 import { cn } from "@/lib/utils";
 
 interface InlineEditProps {
   value: string;
   onSave: (value: string) => void;
   multiline?: boolean;
-  markdown?: boolean;
   className?: string;
   /**
-   * Id of the form control this field renders while editing, so a caller's
-   * visible `<label htmlFor={...}>` associates with it the plain HTML way.
-   * The read state is a `<div>`, which is not labelable — that half of the
-   * association is `aria-labelledby` below.
+   * Id of this field's control, applied to *both* of its states: the read
+   * state is a real `<button>`, which HTML counts as labelable, so a caller's
+   * single visible `<label htmlFor={...}>` associates the plain way whichever
+   * state is mounted — and stays clickable in the read state, which is the one
+   * users land on. It used to reach the editing control only, so `htmlFor`
+   * resolved to nothing until the field was already open.
    */
   id?: string;
   /**
-   * Id of the element naming this field. Applied to the read state, which is
-   * announced as a button ("Description, button") rather than as anonymous
-   * text: an `aria-labelledby` on a role-less `<div>` contributes no
-   * accessible name at all, so the role is what makes the association real
-   * instead of merely present in the DOM.
+   * Id of the element naming this field. Composed with the read state's own
+   * value below rather than used alone: `aria-labelledby` overrides name from
+   * content, so pointing it at the label by itself computed the region's name
+   * to "Description" and dropped the stored text — a screen reader in focus
+   * mode then announced the field and nothing about what it holds.
+   *
+   * Optional. A caller that names nothing leaves the button named from its
+   * content, which is the value, so the field is never anonymous.
    */
   "aria-labelledby"?: string;
 }
@@ -34,7 +37,6 @@ export function InlineEdit({
   value,
   onSave,
   multiline = false,
-  markdown = false,
   className = "",
   id,
   "aria-labelledby": ariaLabelledBy,
@@ -43,12 +45,16 @@ export function InlineEdit({
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(value);
   const inputRef = useRef<HTMLInputElement | HTMLTextAreaElement>(null);
-  const readRef = useRef<HTMLDivElement>(null);
+  const readRef = useRef<HTMLButtonElement>(null);
+  // Names the value inside the read state so it can be composed into the
+  // field's accessible name. Generated: two mounted copies sharing a static id
+  // would both point at the first one's text.
+  const valueId = useId();
   /**
    * Set only by the keyboard exits below. Leaving edit mode unmounts the
    * focused control, so without this focus falls to <body> and the next Tab
    * restarts at the top of the document — WCAG 2.4.3, on the very journey the
-   * read state's `role="button"` exists to enable.
+   * read state's button role exists to enable.
    *
    * A blur is deliberately NOT a keyboard exit: clicking or tabbing elsewhere
    * is the user aiming somewhere, and pulling focus back would fight them.
@@ -91,38 +97,42 @@ export function InlineEdit({
 
   if (!editing) {
     return (
-      <div
+      <button
+        // A real element rather than a div wearing `role="button"`: that is
+        // what makes `id` labelable above, and it retires the hand-rolled
+        // tabIndex and Enter/Space handling this used to carry, since the
+        // browser supplies both.
+        type="button"
         ref={readRef}
-        role="button"
-        tabIndex={0}
-        aria-labelledby={ariaLabelledBy}
+        id={id}
+        aria-labelledby={
+          ariaLabelledBy ? `${ariaLabelledBy} ${valueId}` : undefined
+        }
         onClick={() => setEditing(true)}
-        onKeyDown={(e) => {
-          // A click target that only answers to a mouse is unreachable for
-          // the same readers the label association is for.
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            setEditing(true);
-          }
-        }}
         className={cn(
           "-mx-2 cursor-pointer rounded-[7px] px-2 py-[2px] transition-colors hover:bg-band",
-          // Tab order now reaches this region, so it has to show where focus
-          // is. Same ring the Piscine controls paint, and deliberately with no
+          // A button is inline-block and centres its text where the <div> was
+          // a left-aligned block, so both have to be restored by hand. The
+          // width is the <div>'s own box: a block box with `-mx-2` measured
+          // 100% + 1rem, and a button does not fill its line on `display:
+          // block` alone — `w-full` would shrink the hover band by that 1rem
+          // and shift it left.
+          "block w-[calc(100%+1rem)] text-left",
+          // Tab order reaches this region, so it has to show where focus is.
+          // Same ring the Piscine controls paint, and deliberately with no
           // `outline-none` beside it — the two cancel in Tailwind v4 and the
           // ring silently stops being drawn (B-arij-JJ5FdaHpX7d6).
           "focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring",
           className,
         )}
       >
-        {value ? (
-          markdown ? <MarkdownContent content={value} /> : value
-        ) : (
-          <span className="italic text-muted-foreground">
-            {t("inlineEdit.empty")}
-          </span>
-        )}
-      </div>
+        <span
+          id={valueId}
+          className={cn(!value && "italic text-muted-foreground")}
+        >
+          {value || t("inlineEdit.empty")}
+        </span>
+      </button>
     );
   }
 
