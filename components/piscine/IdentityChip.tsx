@@ -64,6 +64,8 @@ export interface IdentityChipProps {
   /** Swaps the fill to the card colour, keeping the deep text (6a DependencyRow). */
   onGround?: boolean;
   onClick?: () => void;
+  /** `data-testid` on the button (when onClick is given) or span. */
+  testId?: string;
   className?: string;
 }
 
@@ -75,6 +77,7 @@ export function IdentityChip({
   live = false,
   onGround = false,
   onClick,
+  testId,
   className,
 }: IdentityChipProps) {
   const classes = cn(
@@ -98,6 +101,7 @@ export function IdentityChip({
       <button
         type="button"
         data-slot="identity-chip"
+        data-testid={testId}
         data-tone={tone}
         onClick={onClick}
         className={cn(
@@ -113,7 +117,7 @@ export function IdentityChip({
   }
 
   return (
-    <span data-slot="identity-chip" data-tone={tone} className={classes}>
+    <span data-slot="identity-chip" data-testid={testId} data-tone={tone} className={classes}>
       {label}
       {dot}
     </span>
