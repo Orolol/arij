@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Sparkles } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { PillButton, projectTone } from "@/components/piscine";
 import { ToastStack } from "@/components/notifications/ToastStack";
 import { useToastStack } from "@/components/notifications/useToastStack";
+import type { AgentSelection } from "@/components/shared/AgentSelectPill";
 import { useTicketOverlay } from "@/components/ticket/TicketOverlayProvider";
 import { useChat } from "@/hooks/useChat";
 import { useControlDesk } from "@/hooks/useControlDesk";
@@ -28,8 +30,11 @@ import { isLegacyConversationGenerating } from "@/lib/chat/parity-contract";
 import type { ControlDeskPayload, DeskProject } from "@/lib/control-desk/types";
 import { cn } from "@/lib/utils";
 
-import { agentSelectionPatch } from "./agent-selection";
-import { ChatComposer, type ChatAgentChoice } from "./ChatComposer";
+import {
+  agentSelectionPatch,
+  selectionForConversation,
+} from "./agent-selection";
+import { ChatComposer } from "./ChatComposer";
 import {
   ChatPaneSwitcher,
   DEFAULT_CHAT_PANE,
@@ -284,6 +289,12 @@ export function ChatPageView({
   );
 }
 
+/** No conversation to run: the pill names nothing rather than a default. */
+const EMPTY_AGENT_SELECTION: AgentSelection = {
+  namedAgentId: null,
+  provider: null,
+};
+
 /**
  * The page body, shared by the empty state and the real workspace.
  *
@@ -299,8 +310,31 @@ const CHAT_BODY_CLASS =
  * The middle pane. `tabIndex={-1}` is not decoration: picking a conversation
  * on a phone destroys the pane holding the card you just tapped, and without
  * somewhere to put focus it would fall to `<body>`.
+ *
+ * AND THAT HAND-OFF IS A KEYBOARD EVENT, so the pane owes a ring (B-arij-231).
+ * `outline-none` alone made the destination of that focus invisible. Measured
+ * in Chrome at 390x844 on the unfixed tree, tabbing to a roster card and
+ * pressing Enter (`e2e/chat-thread-pane-focus.spec.ts` re-measures it):
+ *
+ *   activeElement          chat-thread-pane
+ *   matches(":focus-visible")  true
+ *   outline-style          none      <- nothing drawn, focus went nowhere visible
+ *
+ * The pane is NOT the TicketOverlay case that `NO_AFFORDANCE_NEEDED` exempts.
+ * It never enters the Tab order (30 presses at 390, 40 at 1440: never reached)
+ * and it is not a scroll container (`overflow: visible`, `scrollHeight ===
+ * clientHeight`, the transcript scrolls inside a Radix viewport further down),
+ * so no browser tabs to it on its own. But it IS the target of a keyboard
+ * hand-off, and `:focus-visible` matches exactly then — never after a tap,
+ * where the same measurement reads `false` and this ring stays unpainted.
+ *
+ * ONE LITERAL, on one line, deliberately: `__tests__/helpers/class-list-scan.ts`
+ * resolves a `const NAME = "…"` into its use sites only for a plain string or a
+ * no-substitution template. Splitting this across a `+` would take the whole
+ * class list out of the scan — and the rule would then pass because it no
+ * longer SEES the pane, which is the one failure mode this fix must not create.
  */
-const THREAD_PANE_CLASS = "min-h-0 min-w-0 flex-1 flex-col gap-[10px] outline-none";
+const THREAD_PANE_CLASS = "min-h-0 min-w-0 flex-1 flex-col gap-[10px] outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring";
 
 /**
  * The right rail. `overflow-y-auto` belongs to the stacked layout, where the
@@ -351,7 +385,7 @@ function EmptyChatWorkspace() {
           projects={[]}
           project={null}
           onSelectProject={() => {}}
-          agentLabel="—"
+          agentSelection={EMPTY_AGENT_SELECTION}
           onSelectAgent={() => {}}
           agentLocked
           disabled
@@ -406,6 +440,14 @@ function ChatWorkspace({
     restartPersistentSession,
     refresh: refreshConversations,
   } = useConversations(projectId);
+
+  const t = useTranslations("Chat");
+  /*
+    `placement.ts` is a pattern-3 table of FULL dotted keys read by a module a
+    hook cannot reach, so it resolves through the namespace-less translator —
+    the same split `components/piscine/TopBar.tsx` makes for `NAV_CATEGORIES`.
+  */
+  const tKey = useTranslations();
 
   const {
     messages,
@@ -506,6 +548,15 @@ function ChatWorkspace({
   const activeAgentLabel = activeConversation
     ? agentLabelFor(activeConversation)
     : "—";
+
+  /**
+   * What the composer's pill selects on. `agentLabelFor` stays: the thread and
+   * the roster name the same agent, and only the pill derives its own label.
+   */
+  const activeAgentSelection: AgentSelection = useMemo(
+    () => selectionForConversation(activeConversation),
+    [activeConversation],
+  );
 
   /* ---- per-message epics ----------------------------------------------- */
 
@@ -610,14 +661,14 @@ function ChatWorkspace({
       const seeded = createdMeta.get(epicId);
       const readableId = row?.readableId ?? seeded?.readableId ?? null;
       const placement =
-        longPlacement(row?.status ?? null, row?.rank ?? null) ??
-        longPlacement(seeded?.status ?? null, null);
+        longPlacement(row?.status ?? null, row?.rank ?? null, tKey) ??
+        longPlacement(seeded?.status ?? null, null, tKey);
       return { readableId, placement };
     },
-    [ticketsById, createdMeta],
+    [ticketsById, createdMeta, tKey],
   );
 
-  /* ---- "Créé dans ce chat" --------------------------------------------- */
+  /* ---- the CREATED IN THIS CHAT rail ----------------------------------- */
 
   const createdHere: CreatedHereEntry[] = useMemo(() => {
     const ids: string[] = [];
@@ -643,8 +694,8 @@ function ChatWorkspace({
         readableId: row?.readableId ?? seeded?.readableId ?? null,
         title: row?.title ?? parsedTitle ?? null,
         placement:
-          shortPlacement(row?.status ?? null, row?.rank ?? null) ??
-          shortPlacement(seeded?.status ?? null, null),
+          shortPlacement(row?.status ?? null, row?.rank ?? null, tKey) ??
+          shortPlacement(seeded?.status ?? null, null, tKey),
       };
     });
   }, [
@@ -653,6 +704,7 @@ function ChatWorkspace({
     ticketsById,
     createdMeta,
     epicsByMessage,
+    tKey,
   ]);
 
   const ticketCounts = useMemo(() => {
@@ -731,15 +783,17 @@ function ChatWorkspace({
   );
 
   const handleSelectAgent = useCallback(
-    (choice: ChatAgentChoice) => {
+    (choice: AgentSelection) => {
       // The agent cannot change mid-conversation.
       if (!activeId || hasMessages) return;
-      void updateConversation(activeId, agentSelectionPatch(choice));
+      const patch = agentSelectionPatch(choice);
+      if (!patch) return;
+      void updateConversation(activeId, patch);
     },
     [activeId, hasMessages, updateConversation],
   );
 
-  /* ---- "Proposer l'ajout" ---------------------------------------------- */
+  /* ---- the TOWARD THE SPEC proposal ------------------------------------ */
 
   const [proposing, setProposing] = useState(false);
   const [specHref, setSpecHref] = useState<string | null>(null);
@@ -752,7 +806,13 @@ function ChatWorkspace({
 
     setProposing(true);
     try {
-      const instruction = `Intègre à la spec la décision prise dans cette conversation :\n${lastAssistant.content.slice(0, 4000)}`;
+      // AGENT-FACING, so it is NOT a catalogue key and never follows the
+      // interface locale (lib/i18n/catalogue.ts, §5) — a model reads it, not a
+      // user. Pinned to English for the same reason the prompt builders are:
+      // the specification it is asking to edit is English, as is the project
+      // memory injected alongside it, and a French instruction over English
+      // context is exactly the mix that degrades the rewrite.
+      const instruction = `Integrate into the spec the decision made in this conversation:\n${lastAssistant.content.slice(0, 4000)}`;
       const res = await fetch(`/api/projects/${projectId}/spec/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -763,17 +823,17 @@ function ChatWorkspace({
         // 409 SPEC_UPDATE_PENDING and 400 (stale named agent) both carry a
         // readable `error`. Neither is retried: a second rewrite would race
         // the first, last-write-wins.
-        onToast("error", body.error || "Failed to propose the spec addition");
+        onToast("error", body.error || t("towardSpec.proposalFailed"));
         return;
       }
       setSpecHref(`/projects/${projectId}/spec`);
-      onToast("success", "Proposition envoyée à la spec");
+      onToast("success", t("towardSpec.proposalSent"));
     } catch {
-      onToast("error", "Failed to propose the spec addition");
+      onToast("error", t("towardSpec.proposalFailed"));
     } finally {
       setProposing(false);
     }
-  }, [messages, projectId, onToast]);
+  }, [messages, projectId, onToast, t]);
 
   /* ---- the fallback epic path ------------------------------------------ */
 
@@ -804,10 +864,10 @@ function ChatWorkspace({
             size="sm"
             icon={Sparkles}
             pending={epicCreating}
-            pendingLabel="Création…"
+            pendingLabel={t("thread.createEpicPending")}
             onClick={() => void handleCreateEpicFallback()}
           >
-            Create Epic &amp; Generate Stories
+            {t("thread.createEpic")}
           </PillButton>
         ) : null}
         {isBrainstorm ? (
@@ -816,18 +876,18 @@ function ChatWorkspace({
             size="sm"
             icon={Sparkles}
             pending={generatingSpec}
-            pendingLabel="Génération…"
+            pendingLabel={t("thread.generateSpecPending")}
             onClick={generateSpec}
           >
-            Generate Spec &amp; Plan
+            {t("thread.generateSpec")}
           </PillButton>
         ) : null}
       </div>
     ) : null;
 
   const emptyMessage = isEpicCreation
-    ? "Describe your epic idea and I'll help you structure it with user stories and acceptance criteria."
-    : "Start a conversation to brainstorm your project with Claude";
+    ? t("thread.emptyEpic")
+    : t("thread.emptyBrainstorm");
 
   return (
     <div className={CHAT_BODY_CLASS}>
@@ -851,7 +911,7 @@ function ChatWorkspace({
         ref={threadPaneRef}
         data-testid="chat-thread-pane"
         tabIndex={-1}
-        aria-label="Fil de la conversation"
+        aria-label={t("thread.paneLabel")}
         className={cn(THREAD_PANE_CLASS, chatPaneClass(pane, "thread"))}
       >
         <ChatThread
@@ -883,7 +943,7 @@ function ChatWorkspace({
           projects={projects}
           project={project}
           onSelectProject={onSelectProject}
-          agentLabel={activeAgentLabel}
+          agentSelection={activeAgentSelection}
           onSelectAgent={handleSelectAgent}
           agentLocked={!activeId || hasMessages}
           attachmentsDisabled={activeProvider === OPENAI_COMPATIBLE_PROVIDER}

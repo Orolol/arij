@@ -166,7 +166,7 @@ Count what the test owns instead — the ids it created, or a marker narrowed wi
 `/qa`. Exact counts stay meaningful under `?project=`.
 
 **On a truncating surface, narrowing the locator is not enough.** `RegistryTable`
-renders `GROUP_PREVIEW[group]` rows and hides the rest behind "+ n autres", so on
+renders `GROUP_PREVIEW[group]` rows and hides the rest behind "+ n more", so on
 an unfiltered `/tickets` a spec's own rows are not merely outnumbered by a
 sibling's — they leave the DOM, and `.filter({ hasText: … })` cannot reach a row
 that was never rendered. Presence there is exactly as unreliable as a count. The

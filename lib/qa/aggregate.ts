@@ -18,8 +18,15 @@
 
 import { FINDING_SEVERITY_PREFIXES } from "@/lib/review/finding-severity";
 
+// The LEAF module, not `lifecycle.ts`: this file is pure and reaches the client
+// through `QaScreen`, and `lifecycle.ts` imports `@/lib/db` — importing it here
+// pulled `better-sqlite3` into the browser bundle.
+import { TERMINAL_STATUSES } from "@/lib/agent-sessions/lifecycle-status";
+
 import {
   QA_VERDICT_LIMIT,
+  type QaCheck,
+  type QaCheckTotals,
   type QaQueuedRun,
   type QaRun,
   type QaSeverityTier,
@@ -206,6 +213,190 @@ export function runLastLine(run: QaRun): string {
 }
 
 /* ------------------------------------------------------------------ */
+/* QA CHECKS                                                           */
+/* ------------------------------------------------------------------ */
+
+/** One `qa_reports` row, projected. The two blob columns are never selected. */
+export interface QaCheckRow {
+  id: string;
+  projectId: string;
+  status: string | null;
+  checkType: string | null;
+  /** Already clipped in SQL — see QA_CHECK_SUMMARY_LIMIT. */
+  summary: string | null;
+  agentSessionId: string | null;
+  /**
+   * `agent_sessions.status` for {@link agentSessionId}, from a LEFT JOIN —
+   * `null` when the report carries no session id, or when the session row is
+   * gone (the FK is `ON DELETE SET NULL`). This, not the report's own column,
+   * is what says whether the check is still going. See {@link isCheckLive}.
+   */
+  sessionStatus: string | null;
+  createdAt: string | null;
+  completedAt: string | null;
+}
+
+/**
+ * Is this check still going?
+ *
+ * NOT `report.status === "running"`, and the difference is the whole point.
+ * `qa_reports.status` has exactly ONE writer — the tail of the scheduler
+ * closure in `app/api/projects/[projectId]/qa/check/route.ts` — so it is only
+ * ever moved off `running` by a run that reaches its own end. Three ordinary
+ * paths skip that tail and strand the row on `running` forever:
+ *
+ * - a server restart mid-check: `failOrphanedRunningSessions()` fixes the
+ *   session row and never looks at `qa_reports`;
+ * - a launch closure that rejects: `handleLaunchFailure` marks the session
+ *   terminal, and the update after the `await` never runs;
+ * - cancelling a still-queued check: `agentScheduler.remove()` splices the
+ *   closure out, so nothing throws and nothing updates the report.
+ *
+ * Every one of them leaves the SESSION terminal. So the session is the source
+ * of truth for liveness, and the report's column is only trusted once it says
+ * something other than `running`.
+ *
+ * A `running` report with no session at all is not live either: the FK is
+ * `ON DELETE SET NULL`, and the one writer that stores a NULL session id — the
+ * empty failure digest — records `completed`, never `running`.
+ *
+ * `reconcileStrandedQaReports()` (`lib/qa/boot-cleanup.ts`) settles the rows at
+ * boot using this same predicate, so a database that has booted since carries
+ * no historical stranded row. This function stays necessary all the same: it is
+ * what keeps the reading honest for a row stranded DURING the current process's
+ * uptime, which no boot pass can have seen.
+ */
+export function isCheckLive(row: {
+  status: string | null;
+  sessionStatus: string | null;
+}): boolean {
+  if ((row.status ?? "running") !== "running") return false;
+  if (row.sessionStatus === null) return false;
+  return !TERMINAL_STATUSES.has(row.sessionStatus);
+}
+
+/**
+ * The word a report that never finalized carries.
+ *
+ * Written by `lib/qa/boot-cleanup.ts` and derived by {@link checkStatusLabel};
+ * one definition, so the boot sweep stores exactly what the screen reads.
+ */
+export const QA_CHECK_INTERRUPTED_STATUS = "interrupted";
+
+/**
+ * The word the row prints.
+ *
+ * A stranded report gets `interrupted` rather than either of the two lies
+ * available: `running` (its own column, contradicted by the dead session and by
+ * the dot that is not breathing beside it) and the session's own outcome —
+ * `completed` would claim a report that was never written, since
+ * `report_content` is filled by the same statement that moves the status.
+ *
+ * The word is also what `reconcileStrandedQaReports()`
+ * (`lib/qa/boot-cleanup.ts`) STORES at boot, through this very function — so a
+ * reconciled row reads identically to the stranded row it used to be, and this
+ * branch stays the answer for a row stranded since the current process booted.
+ */
+export function checkStatusLabel(row: {
+  status: string | null;
+  sessionStatus: string | null;
+}): string {
+  const stored = row.status ?? "running";
+  if (stored !== "running") return stored;
+  return isCheckLive(row) ? "running" : QA_CHECK_INTERRUPTED_STATUS;
+}
+
+/**
+ * The stamp word for a check type.
+ *
+ * `qa_reports.check_type` is free-form TEXT, so an unrecognised value prints
+ * ITSELF, upper-cased, rather than being folded into TECH. A row written by
+ * some later check kind must not be mislabelled as a tech check — that is the
+ * data-gap rule this module follows everywhere, applied to a word instead of a
+ * figure. `app/projects/[projectId]/qa/page.tsx` draws the same three badges;
+ * this is the shared answer, and that page reads it rather than keeping a
+ * second copy.
+ */
+export function checkTypeLabel(checkType: string | null | undefined): string {
+  switch (checkType) {
+    case "e2e_test":
+      return "E2E";
+    case "failure_digest":
+      return "DIGEST";
+    case "tech_check":
+      return "TECH";
+    default:
+      return typeof checkType === "string" && checkType.trim().length > 0
+        ? checkType.trim().toUpperCase()
+        : "CHECK";
+  }
+}
+
+/**
+ * The band's meta figures for the projects currently in scope.
+ *
+ * The route counts per project; this adds up the ones the screen is showing, so
+ * the unfiltered `/qa` sums every project and a project-scoped mount sums one.
+ * A project with no report has no key, and a missing key is zero — never a
+ * fabricated row.
+ */
+export function sumCheckTotals(
+  byProject: Record<string, QaCheckTotals>,
+  projectIds: readonly string[],
+): QaCheckTotals {
+  return projectIds.reduce<QaCheckTotals>(
+    (acc, projectId) => {
+      const totals = byProject[projectId];
+      if (!totals) return acc;
+      return {
+        running: acc.running + totals.running,
+        total: acc.total + totals.total,
+      };
+    },
+    { running: 0, total: 0 },
+  );
+}
+
+/**
+ * The QA CHECKS band's rows.
+ *
+ * LIVE FIRST, then newest first — the same order the SQL asks for, repeated
+ * here because the derivation must not depend on the driver's row order to be
+ * correct. A live check is the one thing on this band the user is waiting on,
+ * and it must never be pushed off the end by six checks started after it.
+ *
+ * "Live" is {@link isCheckLive}, not the report's own column, and the SQL uses
+ * the SAME rule. If the two ever disagreed the band would sort by one answer
+ * and paint by the other — which is precisely how a stranded report came to
+ * pin itself to the top.
+ *
+ * A row with no `created_at` sorts last rather than first: an empty string
+ * compares below every timestamp, and a missing stamp is not a fresh one.
+ */
+export function deriveChecks(rows: readonly QaCheckRow[]): QaCheck[] {
+  return rows
+    .map(
+      (row) =>
+        ({
+          reportId: row.id,
+          projectId: row.projectId,
+          checkType: row.checkType ?? "tech_check",
+          checkLabel: checkTypeLabel(row.checkType),
+          status: checkStatusLabel(row),
+          live: isCheckLive(row),
+          summary: row.summary,
+          agentSessionId: row.agentSessionId,
+          createdAt: row.createdAt,
+          completedAt: row.completedAt,
+        }) satisfies QaCheck,
+    )
+    .sort((a, b) => {
+      if (a.live !== b.live) return a.live ? -1 : 1;
+      return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
+    });
+}
+
+/* ------------------------------------------------------------------ */
 /* VERDICTS RÉCENTS                                                    */
 /* ------------------------------------------------------------------ */
 
@@ -227,20 +418,36 @@ export interface QaVerdictEpic {
 }
 
 /**
- * The short reason an unverifiable review row prints.
+ * The sentences a verdict row can print, resolved by the caller.
  *
- * NOT `UNVERIFIABLE_REVIEW_REASON` (`lib/pipeline/findings.ts`): that sentence
- * is written for a prompt and does not fit a 12.5px row. The frame's own
- * "tests timeout" was sample data and would be a lie — the rule is about a
- * `submit_findings` call that never landed, not about tests.
+ * THIS MODULE HOLDS NO COPY. It is a pure derivation that the QA route calls
+ * per request, so it takes the RESOLVED PHRASES rather than a translator —
+ * `lib/i18n/catalogue.ts`, pattern 3. The route is the one that knows the
+ * locale (`translatorFor(resolveUiLocaleForRequest(request), "Qa")`), and the
+ * key literals stay at a real call site where the coverage gate can see them.
+ *
+ * The unverifiable line is NOT `UNVERIFIABLE_REVIEW_REASON`
+ * (`lib/pipeline/findings.ts`): that sentence is written for a prompt and does
+ * not fit a 12.5px row. The frame's own "tests timeout" was sample data and
+ * would be a lie — the rule is about a `submit_findings` call that never
+ * landed, not about tests.
  */
-export const QA_UNVERIFIABLE_TEXT = "review unverifiable · findings jamais reçues";
+export interface QaVerdictCopy {
+  unverifiable: string;
+  changesRequested: (count: number) => string;
+  cleanNoFindings: string;
+  cleanWithFindings: (count: number) => string;
+  noStructuredVerdict: string;
+  outcomeLanded: string;
+  outcomeReady: string;
+  outcomeYourTurn: string;
+}
 
 /** Where the ticket went, from its CURRENT status. Verbatim, arrow included. */
-export function outcomeArrow(status: string): string {
-  if (status === "done" || status === "released") return "→ landed";
-  if (status === "to_merge") return "→ ready";
-  return "→ your turn";
+export function outcomeArrow(status: string, copy: QaVerdictCopy): string {
+  if (status === "done" || status === "released") return copy.outcomeLanded;
+  if (status === "to_merge") return copy.outcomeReady;
+  return copy.outcomeYourTurn;
 }
 
 /**
@@ -263,6 +470,7 @@ export function deriveVerdicts(
   rows: readonly QaVerdictSessionRow[],
   epicsById: ReadonlyMap<string, QaVerdictEpic>,
   unverifiableEpicIds: ReadonlySet<string>,
+  copy: QaVerdictCopy,
   limit: number = QA_VERDICT_LIMIT,
 ): QaVerdict[] {
   const newestByEpic = new Map<string, QaVerdictSessionRow>();
@@ -278,7 +486,6 @@ export function deriveVerdicts(
     .map((row) => {
       const epic = epicsById.get(row.epicId);
       const n = row.findingsFiled;
-      const plural = n === 1 ? "" : "s";
       const structured =
         row.reviewVerdict === "approved" ||
         row.reviewVerdict === "approved_with_minor_issues" ||
@@ -289,20 +496,17 @@ export function deriveVerdicts(
 
       if (!structured && unverifiableEpicIds.has(row.epicId)) {
         kind = "attention";
-        verdictText = QA_UNVERIFIABLE_TEXT;
+        verdictText = copy.unverifiable;
       } else if (row.reviewVerdict === "changes_requested") {
         kind = "attention";
-        verdictText = `changes requested · ${n} finding${plural}`;
+        verdictText = copy.changesRequested(n);
       } else if (structured) {
-        verdictText =
-          n === 0
-            ? "review clean · 0 findings"
-            : `clean après review · ${n} finding${plural} filed`;
+        verdictText = n === 0 ? copy.cleanNoFindings : copy.cleanWithFindings(n);
       } else {
         // No structured verdict and not unverifiable: an MCP-less provider
         // reviewed through prose. Saying so is honest; calling it approved
         // would not be.
-        verdictText = "review sans verdict structuré";
+        verdictText = copy.noStructuredVerdict;
       }
 
       return {
@@ -312,7 +516,7 @@ export function deriveVerdicts(
         title: epic?.title ?? "",
         verdictText,
         kind,
-        outcome: outcomeArrow(epic?.status ?? ""),
+        outcome: outcomeArrow(epic?.status ?? "", copy),
         at: row.at,
       };
     });

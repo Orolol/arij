@@ -268,13 +268,18 @@ describe("initDb", () => {
       conn.exec("DROP INDEX IF EXISTS review_comments_session_idx");
       conn.exec("ALTER TABLE review_comments DROP COLUMN agent_session_id");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN review_verdict");
-      conn.exec("ALTER TABLE named_agents DROP COLUMN escalates_to");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN mcp_channel");
       conn.exec("ALTER TABLE named_agents DROP COLUMN options");
       conn.exec("ALTER TABLE named_agents DROP COLUMN persona_prompt");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN cli_options");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN estimated_prompt_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN estimated_prompt_breakdown");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN refinement_actions");
+      // 0053/0055 (composite agents). Dropped for the same reason as every
+      // column above: the replay re-adds them, and an ADD COLUMN is not a
+      // no-op the second time.
+      conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
     });
 
     withDb(file, (conn) => {
@@ -368,13 +373,18 @@ describe("initDb", () => {
       conn.exec("DROP INDEX IF EXISTS review_comments_session_idx");
       conn.exec("ALTER TABLE review_comments DROP COLUMN agent_session_id");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN review_verdict");
-      conn.exec("ALTER TABLE named_agents DROP COLUMN escalates_to");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN mcp_channel");
       conn.exec("ALTER TABLE named_agents DROP COLUMN options");
       conn.exec("ALTER TABLE named_agents DROP COLUMN persona_prompt");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN cli_options");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN estimated_prompt_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN estimated_prompt_breakdown");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN refinement_actions");
+      // 0053/0055 (composite agents). Dropped for the same reason as every
+      // column above: the replay re-adds them, and an ADD COLUMN is not a
+      // no-op the second time.
+      conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
       conn.exec("DROP TABLE ticket_read_cursors");
     });
 
@@ -498,13 +508,18 @@ describe("migration journal", () => {
       conn.exec("DROP INDEX IF EXISTS review_comments_session_idx");
       conn.exec("ALTER TABLE review_comments DROP COLUMN agent_session_id");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN review_verdict");
-      conn.exec("ALTER TABLE named_agents DROP COLUMN escalates_to");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN mcp_channel");
       conn.exec("ALTER TABLE named_agents DROP COLUMN options");
       conn.exec("ALTER TABLE named_agents DROP COLUMN persona_prompt");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN cli_options");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN estimated_prompt_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN estimated_prompt_breakdown");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN refinement_actions");
+      // 0053/0055 (composite agents). Dropped for the same reason as every
+      // column above: the replay re-adds them, and an ADD COLUMN is not a
+      // no-op the second time.
+      conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
+      conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
 
       expect(() => initDb(conn)).not.toThrow();
 

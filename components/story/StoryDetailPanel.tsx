@@ -1,5 +1,7 @@
 "use client";
 
+import { useId } from "react";
+import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import { InlineEdit } from "@/components/kanban/InlineEdit";
 import {
@@ -48,6 +50,20 @@ interface StoryDetailPanelProps {
 }
 
 export function StoryDetailPanel({ story, onUpdate }: StoryDetailPanelProps) {
+  // Namespace-less: the status table below holds full dotted paths.
+  const t = useTranslations();
+  // Generated rather than static: the panel is a component, and two mounted
+  // copies sharing hard-coded ids would point every label at the first one.
+  const fieldId = useId();
+  const statusId = `${fieldId}-status`;
+  const descriptionId = `${fieldId}-description`;
+  const descriptionLabelId = `${descriptionId}-label`;
+  const criteriaId = `${fieldId}-acceptance-criteria`;
+  const criteriaLabelId = `${criteriaId}-label`;
+  // An unknown status keeps rendering its raw value, exactly as before.
+  const statusLabelKey =
+    USER_STORY_STATUS_LABELS[story.status as UserStoryStatus]?.labelKey;
+
   return (
     <div className="p-6 space-y-6">
       {/* Title */}
@@ -62,31 +78,42 @@ export function StoryDetailPanel({ story, onUpdate }: StoryDetailPanelProps) {
       {/* Status & Metadata */}
       <div className="flex items-center gap-3">
         <div>
-          <label className="text-xs text-muted-foreground block mb-1">
-            Status
+          <label
+            htmlFor={statusId}
+            className="text-xs text-muted-foreground block mb-1"
+          >
+            {t("Story.detail.status")}
           </label>
           <Select
             value={story.status}
             onValueChange={(v) => onUpdate({ status: v })}
           >
-            <SelectTrigger className="h-8 text-xs w-32">
+            <SelectTrigger id={statusId} className="h-8 text-xs w-32">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               {USER_STORY_STATUSES.map((s) => (
                 <SelectItem key={s} value={s}>
-                  {USER_STORY_STATUS_LABELS[s]}
+                  {t(USER_STORY_STATUS_LABELS[s].labelKey)}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
         </div>
         <div>
-          <label className="text-xs text-muted-foreground block mb-1">
+          {/*
+            Pure spacer: it lines the badge up with the select beside it and
+            names nothing, so it must not be a <label> — an empty label is a
+            label pointing at no control.
+          */}
+          <span
+            aria-hidden="true"
+            className="text-xs text-muted-foreground block mb-1"
+          >
             &nbsp;
-          </label>
+          </span>
           <Badge className={STATUS_COLORS[story.status] || STATUS_COLORS.todo}>
-            {USER_STORY_STATUS_LABELS[story.status as UserStoryStatus] || story.status}
+            {statusLabelKey ? t(statusLabelKey) : story.status}
           </Badge>
         </div>
       </div>
@@ -94,7 +121,9 @@ export function StoryDetailPanel({ story, onUpdate }: StoryDetailPanelProps) {
       {/* Epic info */}
       {story.epic && (
         <div className="bg-muted/30 rounded-lg p-3 space-y-1">
-          <p className="text-xs text-muted-foreground">Parent Epic</p>
+          <p className="text-xs text-muted-foreground">
+            {t("Story.detail.parentEpic")}
+          </p>
           <p className="text-sm font-medium">{story.epic.title}</p>
           {story.epic.branchName && (
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-mono">
@@ -107,10 +136,16 @@ export function StoryDetailPanel({ story, onUpdate }: StoryDetailPanelProps) {
 
       {/* Description */}
       <div>
-        <label className="text-xs text-muted-foreground block mb-1">
-          Description
+        <label
+          id={descriptionLabelId}
+          htmlFor={descriptionId}
+          className="text-xs text-muted-foreground block mb-1"
+        >
+          {t("Story.detail.description")}
         </label>
         <InlineEdit
+          id={descriptionId}
+          aria-labelledby={descriptionLabelId}
           value={story.description || ""}
           onSave={(v) => onUpdate({ description: v })}
           multiline
@@ -120,10 +155,16 @@ export function StoryDetailPanel({ story, onUpdate }: StoryDetailPanelProps) {
 
       {/* Acceptance Criteria */}
       <div>
-        <label className="text-xs text-muted-foreground block mb-1">
-          Acceptance Criteria
+        <label
+          id={criteriaLabelId}
+          htmlFor={criteriaId}
+          className="text-xs text-muted-foreground block mb-1"
+        >
+          {t("Story.detail.acceptanceCriteria")}
         </label>
         <InlineEdit
+          id={criteriaId}
+          aria-labelledby={criteriaLabelId}
           value={story.acceptanceCriteria || ""}
           onSave={(v) => onUpdate({ acceptanceCriteria: v })}
           multiline

@@ -23,7 +23,7 @@
  */
 
 import * as React from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -141,8 +141,22 @@ vi.mock("@/hooks/useChat", () => ({
   }),
 }));
 
+/**
+ * The composer no longer takes an `agentLabel` string: the merged
+ * `AgentSelectPill` derives the label from the selection and this roster (see
+ * `components/shared/AgentSelectPill.tsx`). So the long name that this file
+ * exists to measure has to arrive as a named agent, not as a prop.
+ */
+const namedAgents = vi.hoisted(() => ({
+  current: [] as { id: string; name: string; provider: string }[],
+}));
+
 vi.mock("@/hooks/useNamedAgentsList", () => ({
-  useNamedAgentsList: () => ({ agents: [], loading: false, refresh: vi.fn() }),
+  useNamedAgentsList: () => ({
+    agents: namedAgents.current,
+    loading: false,
+    refresh: vi.fn(),
+  }),
 }));
 
 vi.mock("@/hooks/useSpecGeneration", () => ({
@@ -227,7 +241,7 @@ describe("chat page — the three panes on a narrow viewport", () => {
     // must not gain a second control row (see ChatPageView's header comment).
     expect(classTokens(switcher)).toContain("lg:hidden");
 
-    for (const label of ["Conversations", "Fil", "Contexte"]) {
+    for (const label of ["Conversations", "Thread", "Context"]) {
       expect(
         screen.getByRole("button", { name: label }),
       ).toBeInTheDocument();
@@ -294,7 +308,7 @@ describe("chat page — the three panes on a narrow viewport", () => {
     // `--tw-outline-style: none`, and `outline-2` resolves its style from that
     // variable. jsdom cannot see the ring, so this pins the token that draws
     // it; `e2e/chat-mobile-layout.spec.ts` is where the keyboard path runs.
-    for (const label of ["Conversations", "Fil", "Contexte"]) {
+    for (const label of ["Conversations", "Thread", "Context"]) {
       expect(
         classTokens(screen.getByRole("button", { name: label })),
         `the ${label} segment has no focus-visible outline style`,
@@ -311,12 +325,12 @@ describe("chat page — the three panes on a narrow viewport", () => {
     expect(isShowing(screen.getByTestId("chat-thread-pane"))).toBe(false);
     expect(isShowing(screen.getByTestId("chat-context"))).toBe(false);
 
-    await user.click(screen.getByRole("button", { name: "Contexte" }));
+    await user.click(screen.getByRole("button", { name: "Context" }));
     expect(isShowing(screen.getByTestId("chat-context"))).toBe(true);
     expect(isShowing(screen.getByTestId("chat-roster"))).toBe(false);
     expect(isShowing(screen.getByTestId("chat-thread-pane"))).toBe(false);
 
-    await user.click(screen.getByRole("button", { name: "Fil" }));
+    await user.click(screen.getByRole("button", { name: "Thread" }));
     expect(isShowing(screen.getByTestId("chat-thread-pane"))).toBe(true);
   });
 
@@ -365,7 +379,12 @@ describe("chat composer — the row a long agent name has to share", () => {
   const LONG_AGENT_NAME =
     "Claude Code — Architecture, implementation et revue des interfaces du projet Arij — raisonnement approfondi";
 
-  async function renderComposer(agentLabel: string) {
+  async function renderComposer(agentName: string) {
+    // The label travels through the roster now; the geometry under test is
+    // unchanged, and so are the four assertions below.
+    namedAgents.current = [
+      { id: "long-agent", name: agentName, provider: "claude-code" },
+    ];
     await act(async () => {
       render(
         <ChatComposer
@@ -373,7 +392,7 @@ describe("chat composer — the row a long agent name has to share", () => {
           projects={[PROJECT]}
           project={PROJECT}
           onSelectProject={vi.fn()}
-          agentLabel={agentLabel}
+          agentSelection={{ namedAgentId: "long-agent", provider: "claude-code" }}
           onSelectAgent={vi.fn()}
           agentLocked={false}
           onSend={vi.fn()}
@@ -381,6 +400,10 @@ describe("chat composer — the row a long agent name has to share", () => {
       );
     });
   }
+
+  afterEach(() => {
+    namedAgents.current = [];
+  });
 
   /** The agent pill — `ink` toned, as against the project pill's `project`. */
   function agentPill(): Element {

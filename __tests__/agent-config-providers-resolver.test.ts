@@ -36,6 +36,9 @@ describe("Agent assignment resolver", () => {
     const { resolveAgent } = await import("@/lib/agent-config/agent-resolution");
     dbMockState.getQueue = [
       { provider: "codex", namedAgentId: null },
+      // resolveAgent() probes the designated default composite — one
+      // settings read — before the seeded catch-all agent.
+      null, // no designated default composite
       {
         id: "seeded-agent",
         name: "Claude Code",
@@ -111,6 +114,77 @@ describe("Agent assignment resolver", () => {
     expect(chat?.source).toBe("global");
     expect(ticketBuild?.provider).toBe("claude-code");
     expect(ticketBuild?.source).toBe("builtin");
+  });
+
+  /**
+   * `resolveAssignedAgent` is the half of `resolveAgent` that answers "did the
+   * user choose?" rather than "what should run?". The chat-mode default needs
+   * that distinction — it applies its own preference only over a non-choice —
+   * and `resolveAgent` cannot supply it, because an unassigned role and a role
+   * assigned to the seeded agent produce the same return value.
+   */
+  describe("resolveAssignedAgent", () => {
+    it("returns the assignment when the user made one", async () => {
+      const { resolveAssignedAgent } = await import(
+        "@/lib/agent-config/agent-resolution"
+      );
+      dbMockState.getQueue = [
+        // project-scoped agent_provider_defaults row…
+        { provider: "claude-code", namedAgentId: "codex-builder" },
+        // …and the named agent it points at.
+        {
+          id: "codex-builder",
+          name: "Codex Builder",
+          provider: "codex",
+          model: "gpt-5-codex",
+        },
+      ];
+
+      expect(resolveAssignedAgent("chat", "proj-1")).toMatchObject({
+        provider: "codex",
+        namedAgentId: "codex-builder",
+        model: "gpt-5-codex",
+      });
+    });
+
+    it("returns null for an unassigned role, where resolveAgent returns the seeded agent", async () => {
+      const { resolveAgent, resolveAssignedAgent } = await import(
+        "@/lib/agent-config/agent-resolution"
+      );
+      const seeded = {
+        id: "seeded-agent",
+        name: "Claude Code",
+        provider: "claude-code",
+        model: "",
+      };
+
+      dbMockState.getQueue = [null, null];
+      expect(resolveAssignedAgent("chat", "proj-1")).toBeNull();
+
+      // Same DB state, and resolveAgent still answers — which is exactly why
+      // its answer cannot be read as evidence of a choice.
+      // The third null is the designated-default-composite probe
+      // resolveAgent() makes before the seeded catch-all agent.
+      dbMockState.getQueue = [null, null, null, seeded];
+      expect(await resolveAgent("chat", "proj-1")).toMatchObject({
+        provider: "claude-code",
+        namedAgentId: "seeded-agent",
+      });
+    });
+
+    it("does not count a legacy CLI-only row as an assignment", async () => {
+      const { resolveAssignedAgent } = await import(
+        "@/lib/agent-config/agent-resolution"
+      );
+      // A row with no namedAgentId is configuration the user can no longer
+      // see or edit; treating it as a choice would pin the role invisibly.
+      dbMockState.getQueue = [
+        { provider: "gemini-cli", namedAgentId: null },
+        { provider: "codex", namedAgentId: null },
+      ];
+
+      expect(resolveAssignedAgent("chat", "proj-1")).toBeNull();
+    });
   });
 
   it("resolveAgent returns provider + model from named agent assignment", async () => {

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { agentSessions } from "@/lib/db/schema";
+import { agentSessions, namedAgents } from "@/lib/db/schema";
 import { and, eq, getTableColumns } from "drizzle-orm";
 import { processManager } from "@/lib/claude/process-manager";
 import { agentScheduler } from "@/lib/agents/scheduler";
@@ -42,6 +42,7 @@ import {
   markSessionCancelled,
 } from "@/lib/agent-sessions/lifecycle";
 import { runBackfillRecentSessionLastNonEmptyTextOnce } from "@/lib/agent-sessions/backfill";
+import { cancelQaReportsForSession } from "@/lib/qa/report-lifecycle";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 
 /**
@@ -354,6 +355,19 @@ export async function GET(
     return NextResponse.json({ error: "Session not found" }, { status: 404 });
   }
 
+  // The composite that DISPATCHED this run, when one did. `namedAgentId` on
+  // the row is the member that actually ran, so without this the detail page
+  // cannot tell two runs apart whose resolved configuration differed only in
+  // which list produced them. Read by id rather than joined so a deleted
+  // composite (ON DELETE SET NULL) simply yields nothing.
+  const compositeAgentName = session.compositeAgentId
+    ? (db
+        .select({ name: namedAgents.name })
+        .from(namedAgents)
+        .where(eq(namedAgents.id, session.compositeAgentId))
+        .get()?.name ?? null)
+    : null;
+
   const logsRead = readSessionLogs(session.logsPath);
 
   // A preview of each stream, so a client that only wants the tail of a run
@@ -415,6 +429,7 @@ export async function GET(
       chunkStreams,
       ...(chunkStreamsUnavailable ? { chunkStreamsUnavailable: true } : {}),
       lastNonEmptyText,
+      compositeAgentName,
       arijActions,
       ...(arijActionsUnavailable ? { arijActionsUnavailable: true } : {}),
     },
@@ -472,6 +487,17 @@ export async function DELETE(
     }
     throw error;
   }
+
+  // A QA check owns a `qa_reports` row, and that row's ONLY writer is the tail
+  // of the launch closure in the QA check route. Cancelling a check that is
+  // still queued splices that closure out of the scheduler, so nothing throws
+  // and nothing ever moves the report off `running` — the row is stranded until
+  // a restart runs `reconcileStrandedQaReports()`. Writing it here settles it in
+  // the request that cancelled it. A no-op for every other kind of session, and
+  // for a check whose closure already finalized its report (compare-and-set on
+  // `running`, see lib/qa/report-lifecycle.ts). Deliberately after the session
+  // transition: a refused cancellation is not a cancelled check.
+  cancelQaReportsForSession(sessionId, now);
 
   return NextResponse.json({ data: { cancelled: true } });
 }

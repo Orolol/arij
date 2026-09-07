@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 import { useState, useCallback } from "react";
 import { usePolling } from "@/hooks/usePolling";
 
@@ -21,19 +23,32 @@ export type TicketCommentsTarget =
 
 /**
  * Loads and polls (5s) the comment thread of an epic or story.
- * Epic targets with a null epicId resolve to an empty, non-polling thread.
+ * Epic targets with a null epicId — and any target on an unresolved project —
+ * resolve to an empty, non-polling thread.
  */
-export function useTicketComments(projectId: string, target: TicketCommentsTarget) {
+export function useTicketComments(
+  projectId: string | null | undefined,
+  target: TicketCommentsTarget,
+) {
+  const tErrors = useTranslations("ClientErrors");
   const kind = target.kind;
   const epicId = kind === "epic" ? target.epicId : null;
   const storyId = kind === "story" ? target.storyId : null;
 
-  const commentsUrl =
-    kind === "epic"
+  // An unresolved project is not an id: `/api/projects//stories/s1/comments`
+  // collapses to `/api/projects/stories/s1/comments`, a route nothing serves.
+  // The epic branch below guards `epicId`, which says nothing about the
+  // project, so the project needs its own guard — before the request, and on
+  // both branches, since this thread polls every 5 seconds.
+  const resolvedProjectId = projectId?.trim() ? projectId.trim() : null;
+
+  const commentsUrl = !resolvedProjectId
+    ? null
+    : kind === "epic"
       ? epicId
-        ? `/api/projects/${projectId}/epics/${epicId}/comments`
+        ? `/api/projects/${resolvedProjectId}/epics/${epicId}/comments`
         : null
-      : `/api/projects/${projectId}/stories/${storyId}/comments`;
+      : `/api/projects/${resolvedProjectId}/stories/${storyId}/comments`;
 
   const [loadedComments, setComments] = useState<TicketComment[]>([]);
   const [isLoading, setLoading] = useState(true);
@@ -71,14 +86,14 @@ export function useTicketComments(projectId: string, target: TicketCommentsTarge
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || data.error) {
-        throw new Error(data.error || "Failed to add comment");
+        throw new Error(data.error || tErrors("failedToAddComment"));
       }
       if (data.data) {
         setComments((prev) => [...prev, data.data]);
       }
       return data.data;
     },
-    [commentsUrl]
+    [commentsUrl, tErrors]
   );
 
   return { comments, loading, addComment, refresh: loadComments };

@@ -3,57 +3,29 @@
 import * as React from "react";
 import { useRef, useState } from "react";
 import { ImagePlus, Sparkles } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { MentionTextarea } from "@/components/documents/MentionTextarea";
 import { PillButton, SelectPill, StrataBand, projectTone } from "@/components/piscine";
+import {
+  AGENT_PILL_IN_COMPOSER,
+  AgentSelectPill,
+  type AgentSelection,
+} from "@/components/shared/AgentSelectPill";
 import { ImageAttachmentStrip } from "@/components/shared/ImageAttachmentStrip";
-import {
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { useImageAttachments } from "@/hooks/useImageAttachments";
-import { useNamedAgentsList } from "@/hooks/useNamedAgentsList";
-import {
-  OPENAI_COMPATIBLE_PROVIDER,
-  PERSISTENT_CHAT_PROVIDER_OPTIONS,
-  PROVIDER_LABELS,
-  PROVIDER_OPTIONS,
-  type AgentProvider,
-  type ChatModeProvider,
-} from "@/lib/agent-config/constants";
 import type { DeskProject } from "@/lib/control-desk/types";
 import { cn } from "@/lib/utils";
-
-export const CHAT_COMPOSER_PLACEHOLDER =
-  "Écris — ⏎ envoie, ⇧⏎ saute une ligne, @ cite un doc";
-
-/**
- * The largest share an agent pill may take — of two different rows.
- *
- * WRAPPED, the pill shares its row with the attach button and the project
- * pill and nothing else, so 45% of the band is affordable and is what a phone
- * has always rendered. ONE ROW, it shares with the FIELD, and 30% of the
- * composer is the share the 36rem wrap threshold below is computed from.
- *
- * Measured: giving the wrapped row the tighter cap truncated "Claude Code" —
- * an ordinary provider label, not a long one — from 116px to 109px at 390.
- * The single-row cap is in `cqw` rather than `%` because a percentage
- * resolves against the band's content box while the threshold that justifies
- * it is expressed on the container; keeping both on the container is what
- * makes the arithmetic below checkable.
- *
- * Literal classes rather than numbers: Tailwind cannot see a computed one.
- */
-const AGENT_PILL_MAX = "max-w-[45%] @min-[36rem]:max-w-[30cqw]";
 
 /**
  * The linden composer band (frame 11a).
  *
  * ⏎ SENDS, ⇧⏎ IS A NEWLINE — the OPPOSITE of `DeskComposer`'s contract, and
- * exactly what the frame's own placeholder promises. The IME guard is the same
- * one `DeskComposer` carries: without it an Enter that only closes a candidate
- * window sends half a word.
+ * exactly what the frame's own placeholder promises — the catalogue's
+ * `Chat.composer.placeholder`, which is where that promise now lives. The IME
+ * guard is the same one `DeskComposer` carries: without it an Enter that only
+ * closes a candidate window sends half a word.
  *
  * The ground comes from `StrataBand stratum="feed"`, never a hand-rolled
  * linden: the band also carries the `.stratum-feed` figure-colour scope, and a
@@ -68,19 +40,14 @@ const AGENT_PILL_MAX = "max-w-[45%] @min-[36rem]:max-w-[30cqw]";
  * NO DRAG-AND-DROP: `useImageAttachments` exposes drop handlers and this screen
  * deliberately does not wire them (house rule).
  */
-export interface ChatAgentChoice {
-  namedAgentId: string | null;
-  provider: ChatModeProvider;
-}
-
 export interface ChatComposerProps {
   projectId: string | null;
   projects: readonly DeskProject[];
   project: DeskProject | null;
   onSelectProject: (projectId: string) => void;
-  /** Label for the agent pill — a named agent, or the provider's label. */
-  agentLabel: string;
-  onSelectAgent: (choice: ChatAgentChoice) => void;
+  /** What the conversation runs on; the pill names it itself. */
+  agentSelection: AgentSelection;
+  onSelectAgent: (choice: AgentSelection) => void;
   /** The picker is locked once the conversation has a message. */
   agentLocked: boolean;
   /** The active provider cannot take images (OpenAI-compatible fast mode). */
@@ -94,17 +61,16 @@ export function ChatComposer({
   projects,
   project,
   onSelectProject,
-  agentLabel,
+  agentSelection,
   onSelectAgent,
   agentLocked,
   attachmentsDisabled = false,
   disabled = false,
   onSend,
 }: ChatComposerProps) {
+  const t = useTranslations("Chat");
   const [value, setValue] = useState("");
   const composingRef = useRef(false);
-  const { agents } = useNamedAgentsList();
-  const safeAgents = Array.isArray(agents) ? agents : [];
 
   const {
     attachments,
@@ -180,7 +146,7 @@ export function ChatComposer({
         36rem is arithmetic, not taste. A single row spends 96px on the glyph,
         the four gaps and the attach button, up to 100px on the project pill
         (`shortProjectName` caps its label at 8 characters) and up to
-        `AGENT_PILL_MAX` of the band on the agent pill, which leaves the field
+        `AGENT_PILL_IN_COMPOSER` of the band on the agent pill, which leaves the field
         `0.7 x band - 232`. That crosses the 160px the e2e calls a usable field
         at 560px of band, and 36rem is the first round number above it. A
         628px desktop band stays one row, so the 1280 and 1440 frames are
@@ -221,12 +187,12 @@ export function ChatComposer({
             onCompositionEnd={() => {
               composingRef.current = false;
             }}
-            placeholder={CHAT_COMPOSER_PLACEHOLDER}
-            aria-label="Écris un message"
+            placeholder={t("composer.placeholder")}
+            aria-label={t("composer.label")}
             data-testid="chat-composer-input"
             rows={1}
             disabled={disabled}
-            className="min-h-[24px] max-h-[120px] min-w-0 flex-1 resize-none rounded-none border-0 bg-transparent p-0 py-[17px] text-[13.5px] font-medium text-foreground shadow-none placeholder:text-strata-feed-deep placeholder:opacity-90 focus-visible:border-0 focus-visible:ring-0"
+            className="min-h-[24px] max-h-[120px] min-w-0 flex-1 resize-none rounded-none border-0 bg-transparent p-0 py-[17px] text-[13.5px] font-medium text-foreground shadow-none placeholder:truncate placeholder:text-strata-feed-deep placeholder:opacity-90 focus-visible:border-0 focus-visible:ring-0"
           />
         </div>
 
@@ -239,7 +205,7 @@ export function ChatComposer({
           disabled={disabled || attachmentsDisabled || uploading}
           className="h-[28px] w-[28px]"
         >
-          Joindre une image
+          {t("composer.attachImage")}
         </PillButton>
 
         <SelectPill
@@ -259,99 +225,23 @@ export function ChatComposer({
         </SelectPill>
 
         {/*
-          A named agent's name is an arbitrary string — `createNamedAgentSchema`
-          only refuses a blank one — and `SelectPill` is `shrink-0`, which is
-          right for the project pill's 8-character short name and wrong here.
-          Measured with a 107-character name: the pill took its max-content
-          width of 663px, overflowed the band, was clipped by the thread
-          column, and left the field at ZERO at 640, 768, 1024, 1280 and 1440.
-          The page never scrolled sideways — the field simply collapsed.
+          The cap, its measurement and the reason it is applied here rather
+          than inside the component all live on `AGENT_PILL_IN_COMPOSER`.
 
-          Three tokens, one behaviour: `max-w` in `cqw` is a share of the
-          composer rather than of the window, so the cap holds in the narrow
-          three-column band as well as on a phone; `min-w-0` lets the label's
-          own `truncate` engage; `shrink` makes the PILL the item that yields
-          when the row is over-subscribed, which is what the field used to do.
+          IT IS SHARED, NOT COPIED, since B-arij-OZUKyqpxmKaT: the desk's
+          composer turned out to have the same row — a field beside an
+          uncapped pill — and measured the same 0px field. Two mounts with one
+          behaviour is one constant; the project panel's header and the
+          ticket's AGENTS band still take neither, because no field shares
+          their row.
         */}
-        <SelectPill
-          label={agentLabel}
-          tone="ink"
+        <AgentSelectPill
+          mode="chat"
+          selection={agentSelection}
+          onSelect={onSelectAgent}
           disabled={agentLocked}
-          className={cn(AGENT_PILL_MAX, "min-w-0 shrink")}
-        >
-          <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-            Direct API
-          </DropdownMenuLabel>
-          <DropdownMenuItem
-            data-testid="chat-option-openai-compatible"
-            onSelect={() =>
-              onSelectAgent({
-                namedAgentId: null,
-                provider: OPENAI_COMPATIBLE_PROVIDER,
-              })
-            }
-          >
-            {PROVIDER_LABELS[OPENAI_COMPATIBLE_PROVIDER]}
-          </DropdownMenuItem>
-
-          {safeAgents.length > 0 ? (
-            <>
-              <DropdownMenuSeparator />
-              <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-                Named Agents
-              </DropdownMenuLabel>
-              {safeAgents.map((agent) => (
-                <DropdownMenuItem
-                  key={agent.id}
-                  data-testid={`chat-option-agent-${agent.id}`}
-                  onSelect={() =>
-                    // A named agent OWNS its provider: the PATCH route
-                    // re-derives it from the agent row, so sending a provider
-                    // alongside it is silently ignored.
-                    onSelectAgent({
-                      namedAgentId: agent.id,
-                      provider: agent.provider as ChatModeProvider,
-                    })
-                  }
-                >
-                  {agent.name}
-                </DropdownMenuItem>
-              ))}
-            </>
-          ) : null}
-
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-            Persistent CLI
-          </DropdownMenuLabel>
-          {PERSISTENT_CHAT_PROVIDER_OPTIONS.map((provider) => (
-            <DropdownMenuItem
-              key={provider}
-              data-testid={`chat-option-provider-${provider}`}
-              onSelect={() =>
-                onSelectAgent({ namedAgentId: null, provider })
-              }
-            >
-              {PROVIDER_LABELS[provider]}
-            </DropdownMenuItem>
-          ))}
-
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-            CLI Providers
-          </DropdownMenuLabel>
-          {PROVIDER_OPTIONS.map((provider: AgentProvider) => (
-            <DropdownMenuItem
-              key={provider}
-              data-testid={`chat-option-provider-${provider}`}
-              onSelect={() =>
-                onSelectAgent({ namedAgentId: null, provider })
-              }
-            >
-              {`${PROVIDER_LABELS[provider]} (CLI)`}
-            </DropdownMenuItem>
-          ))}
-        </SelectPill>
+          className={AGENT_PILL_IN_COMPOSER}
+        />
 
         <input {...fileInputProps} />
       </StrataBand>

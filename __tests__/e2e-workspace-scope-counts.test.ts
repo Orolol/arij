@@ -30,7 +30,7 @@ import { GROUP_PREVIEW } from "@/lib/tickets-registry/aggregate";
  *
  * THE SECOND HALF OF THE RULE: on a surface that TRUNCATES, narrowing the
  * locator is not enough. `RegistryTable` renders `GROUP_PREVIEW[group]` rows
- * and hides the rest behind "+ n autres", so a sibling spec's rows do not just
+ * and hides the rest behind "+ n more", so a sibling spec's rows do not just
  * inflate a count on `/tickets` — they push the owned row out of the DOM
  * entirely, and `.filter({ hasText: … })` then finds nothing. Reproduced with
  * five interfering `review` rows in `e2e/tickets-registry-filters.spec.ts`.
@@ -191,7 +191,7 @@ function scanSource(fileName: string, text: string): ScanResult {
             if (name) {
               const literal = ts.isStringLiteral(name.initializer) || ts.isNoSubstitutionTemplateLiteral(name.initializer);
               const value = name.initializer.getText(source);
-              if (literal && /Tous les projets/.test(value)) {
+              if (literal && /All projects/.test(value)) {
                 events.push({ pos: node.getStart(source), kind: "scope", global: true });
               } else if (!literal && /\bproject\b/.test(value)) {
                 events.push({ pos: node.getStart(source), kind: "scope", global: false });
@@ -288,7 +288,7 @@ function scanSource(fileName: string, text: string): ScanResult {
         if (narrowed.has(TRUNCATED_COLLECTIONS[truncated])) continue;
         record(
           `counts \`${truncated}\` on a truncating surface in workspace scope — sibling rows push the ` +
-            `owned row past the "+ n autres" line, where \`.filter({ hasText: … })\` cannot reach it; ` +
+            `owned row past the "+ n more" line, where \`.filter({ hasText: … })\` cannot reach it; ` +
             `narrow the surface itself with \`getByTestId("${TRUNCATED_COLLECTIONS[truncated]}").fill(<owned marker>)\` first`,
         );
         continue;
@@ -375,7 +375,7 @@ describe("the scan itself", () => {
 
   it("is not satisfied by a locator filter on a truncating surface", () => {
     // The finding this rule was added for: identity, unnarrowed. It reads as a
-    // repair, and it still loses the row to the "+ n autres" line.
+    // repair, and it still loses the row to the "+ n more" line.
     const filtered = `
       test("x", async ({ page }) => {
         await page.goto("/tickets");

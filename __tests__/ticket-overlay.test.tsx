@@ -1,3 +1,4 @@
+import { catalogueValue } from "@/lib/i18n/catalogue";
 /**
  * The frame-6a ticket overlay: header, the workflow-aware status control,
  * derived-state reset, the polling gate, the non-live collapse, and the three
@@ -13,9 +14,9 @@ import type { ComponentProps, ReactNode } from "react";
 
 import { TicketOverlay } from "@/components/ticket/TicketOverlay";
 import {
-  REASON_MERGE_REQUIRED,
-  REASON_RELEASED_SYSTEM_ONLY,
-  REASON_SESSION_RUNNING,
+  REASON_MERGE_REQUIRED_KEY,
+  REASON_RELEASED_SYSTEM_ONLY_KEY,
+  REASON_SESSION_RUNNING_KEY,
 } from "@/lib/kanban/status-transitions";
 
 const mockUseEpicDetail = vi.hoisted(() => vi.fn());
@@ -26,7 +27,7 @@ const mockUseGitHubConfig = vi.hoisted(() => vi.fn());
 const mockUseEpicDependencies = vi.hoisted(() => vi.fn());
 const mockUseProjectEpicsList = vi.hoisted(() => vi.fn());
 const mockUseNamedAgentsList = vi.hoisted(() => vi.fn());
-const mockFetchUnifiedSessions = vi.hoisted(() => vi.fn());
+const mockFindUnifiedSession = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/useEpicDetail", () => ({
   useEpicDetail: (...args: unknown[]) => mockUseEpicDetail(...args),
@@ -56,8 +57,8 @@ vi.mock("@/hooks/useProjectEvents", () => ({
   useProjectEvents: () => ({ status: "connected", pollTick: 0 }),
 }));
 vi.mock("@/lib/agent-sessions/session-list", () => ({
-  fetchUnifiedSessions: (...args: unknown[]) =>
-    mockFetchUnifiedSessions(...args),
+  findUnifiedSession: (...args: unknown[]) =>
+    mockFindUnifiedSession(...args),
 }));
 vi.mock("@/components/review/DiffViewer", () => ({
   DiffViewer: () => <div data-testid="diff-viewer" />,
@@ -214,7 +215,7 @@ beforeEach(() => {
   mockUseEpicDependencies.mockReturnValue({ predecessors: [], successors: [] });
   mockUseProjectEpicsList.mockReturnValue({ epics: [] });
   mockUseNamedAgentsList.mockReturnValue({ agents: [] });
-  mockFetchUnifiedSessions.mockResolvedValue([]);
+  mockFindUnifiedSession.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -421,7 +422,7 @@ describe("TicketOverlay non-live collapse", () => {
   it("renders no progress track when no session is running", async () => {
     const { container } = renderSubject();
     await waitFor(() =>
-      expect(mockFetchUnifiedSessions).toHaveBeenCalledTimes(1),
+      expect(mockFindUnifiedSession).toHaveBeenCalledTimes(1),
     );
     expect(container.querySelector('[data-slot="progress-track"]')).toBeNull();
     expect(screen.queryByTestId("ticket-agent-timeline")).toBeNull();
@@ -503,3 +504,9 @@ describe("TicketOverlay closing", () => {
     expect(onClose).not.toHaveBeenCalled();
   });
 });
+
+const REASON_MERGE_REQUIRED = catalogueValue("en", REASON_MERGE_REQUIRED_KEY);
+
+const REASON_RELEASED_SYSTEM_ONLY = catalogueValue("en", REASON_RELEASED_SYSTEM_ONLY_KEY);
+
+const REASON_SESSION_RUNNING = catalogueValue("en", REASON_SESSION_RUNNING_KEY);

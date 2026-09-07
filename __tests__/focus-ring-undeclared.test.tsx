@@ -35,7 +35,9 @@ import {
   undeclaredFocusSites,
 } from "./helpers/class-list-scan";
 import {
+  THEMES,
   classTokens,
+  colorPaints,
   resolveFocusVisibleOutline,
 } from "./helpers/tailwind-outline";
 
@@ -83,6 +85,16 @@ const undeclared = scanSources(undeclaredFocusSites);
  * Elements allowed to clear the outline and declare nothing. Every entry must
  * match a real site, so an exception that stops applying fails rather than
  * quietly widening the rule.
+ *
+ * THE CHAT THREAD PANE IS NOT ONE OF THEM, and it was the obvious candidate:
+ * `tabIndex={-1}`, focused programmatically, never in the Tab order. It went
+ * red here on `main` for two days (B-arij-231), and the measurement is what
+ * settled it — Chrome matches `:focus-visible` on that pane, because the
+ * programmatic focus is the direct consequence of pressing Enter on a
+ * conversation card. "Never keyboard-focused" is false for it, so it took a
+ * ring. See `__tests__/chat-thread-pane-focus-ring.test.tsx` for the readings
+ * and `e2e/chat-thread-pane-focus.spec.ts` for the browser they came from —
+ * an entry added here later would have to answer them.
  */
 const NO_AFFORDANCE_NEEDED: ReadonlyArray<{
   file: string;
@@ -176,11 +188,21 @@ async function expectPaintedRing(element: Element, where: string) {
       `so no ring is painted. Class list: ${element.className}`,
   ).toBe(true);
   expect(resolved.width, `${where} outline-width`).toBe("2px");
-  // Not asserted: the colour. `outline-ring` resolves through `--color-ring`,
-  // which lives in `app/globals.css`, and the helper compiles against the bare
-  // `@import "tailwindcss"` theme — so `resolved.color` is undefined here for
-  // every control in the app, correct ones included. The painted colour is
-  // read in real Chrome by `e2e/focus-ring.spec.ts`.
+  // The colour, once per theme. `outline-ring` resolves through `--color-ring`
+  // to `--ring`, which `app/globals.css` sets under `:root` for day and `.dark`
+  // for night; the helper compiles that sheet and substitutes both. A ring the
+  // style and width assertions accept can still be `transparent`, or a token
+  // blanked in one theme — that is what this catches (`focus-ring-color.test.ts`).
+  // Whether the colour contrasts with the ground it sits on is read in real
+  // Chrome by `e2e/focus-ring-inputs.spec.ts`.
+  expect(resolved.color, `${where} outline-color`).toBeDefined();
+  for (const theme of THEMES) {
+    expect(
+      colorPaints(resolved.colorIn[theme]),
+      `${where}: outline-color resolves to ${resolved.colorIn[theme]} in ` +
+        `${theme} (declared ${resolved.color}), which paints nothing`,
+    ).toBe(true);
+  }
 }
 
 describe("the ⌘K command palette input", () => {

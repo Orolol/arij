@@ -1,12 +1,14 @@
 "use client";
 
 import { Loader2, RotateCcw, Sparkles } from "lucide-react";
+import { useTranslations } from "next-intl";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  ChatProviderSelect,
-  type ChatAgentSelection,
-} from "@/components/chat/ChatProviderSelect";
+  AgentSelectPill,
+  type AgentSelection,
+} from "@/components/shared/AgentSelectPill";
+import { selectionForConversation } from "@/components/chat-page/agent-selection";
 import type { Conversation } from "@/hooks/useConversations";
 import { resolveLegacyConversationLabel } from "@/lib/chat/parity-contract";
 import { isPersistentChatProvider } from "@/lib/agent-config/constants";
@@ -16,13 +18,16 @@ interface ChatWorkspaceHeaderProps {
   activeProvider: string;
   hasMessages: boolean;
   isBusy: boolean;
-  onSelectAgentOrProvider: (selection: ChatAgentSelection) => void;
+  onSelectAgentOrProvider: (selection: AgentSelection) => void;
   onRestartPersistentSession?: () => void;
 }
 
 /**
  * Right-hand meta cluster of the conversation tab row: the provider marker
- * (read by tests) and the unified chat provider / named-agent picker.
+ * (read by tests) and the shared agent picker in `chat` mode — the same
+ * component the desk and the chat page mount, so the three menus can no longer
+ * drift. The trigger is the Piscine `SelectPill`; the shadcn `Select` this
+ * surface used to draw is gone.
  */
 export function ChatWorkspaceHeader({
   activeConversation,
@@ -32,7 +37,13 @@ export function ChatWorkspaceHeader({
   onSelectAgentOrProvider,
   onRestartPersistentSession = () => {},
 }: ChatWorkspaceHeaderProps) {
+  const t = useTranslations("ChatLegacy");
   const isPersistent = isPersistentChatProvider(activeConversation?.provider);
+  // Shared with the chat page: `provider` is a free-form column, and a
+  // conversation stored before a provider cleanup (`gemini-cli`, `pi`) has no
+  // item in the menu — the pill labels it with the raw string rather than
+  // blanking the trigger.
+  const selection: AgentSelection = selectionForConversation(activeConversation);
   const isHot = activeConversation?.persistentSessionState === "hot";
   return (
     <div className="flex items-center gap-2">
@@ -49,7 +60,7 @@ export function ChatWorkspaceHeader({
           }
           data-testid="persistent-session-state"
         >
-          {isHot ? "session warm" : "session cold"}
+          {isHot ? t("header.sessionWarm") : t("header.sessionCold")}
         </Badge>
       ) : (
         // Non-persistent CLI conversations still resume from a stored session
@@ -60,7 +71,7 @@ export function ChatWorkspaceHeader({
             className="border-agent-border text-[10px] text-agent"
             data-testid="linked-session-state"
           >
-            session linked
+            {t("header.sessionLinked")}
           </Badge>
         )
       )}
@@ -74,15 +85,16 @@ export function ChatWorkspaceHeader({
           size="icon"
           variant="ghost"
           className="h-7 w-7"
-          title={isBusy ? "Stop and restart session" : "Restart session"}
-          aria-label="Restart persistent chat session"
+          title={isBusy ? t("header.restartBusy") : t("header.restart")}
+          aria-label={t("header.restartAria")}
           onClick={onRestartPersistentSession}
         >
           <RotateCcw className="h-3.5 w-3.5" />
         </Button>
       )}
-      <ChatProviderSelect
-        activeConversation={activeConversation}
+      <AgentSelectPill
+        mode="chat"
+        selection={selection}
         onSelect={onSelectAgentOrProvider}
         disabled={!activeConversation || hasMessages || isBusy}
       />
@@ -114,6 +126,8 @@ export function ChatProposalCard({
   epicCreating,
   onCreateEpic,
 }: ChatProposalCardProps) {
+  const t = useTranslations("ChatLegacy");
+
   if (!showCreateEpic && !showGenerateSpec) return null;
 
   return (
@@ -124,7 +138,7 @@ export function ChatProposalCard({
           data-testid="chat-proposed-epic"
         >
           <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
-            Proposed epic
+            {t("proposal.label")}
           </span>
           <span className="text-[13.5px] font-medium leading-[1.4]">
             {resolveLegacyConversationLabel(
@@ -146,7 +160,7 @@ export function ChatProposalCard({
               ) : (
                 <Sparkles className="mr-1 h-3 w-3" />
               )}
-              Create Epic & Generate Stories
+              {t("proposal.createEpic")}
             </Button>
           </div>
         </div>
@@ -167,7 +181,7 @@ export function ChatProposalCard({
             ) : (
               <Sparkles className="mr-1 h-3 w-3" />
             )}
-            Generate Spec & Plan
+            {t("proposal.generateSpec")}
           </Button>
         </div>
       )}
