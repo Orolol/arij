@@ -118,6 +118,43 @@ describe("Start QA check dialog accessibility", () => {
     );
   });
 
+  it("names the save-prompt name input independently of its placeholder", async () => {
+    await renderDialog();
+
+    // `getByLabelText` is the deliberate query here: unlike the accessible-name
+    // computation, it does NOT fall back to `placeholder`. A control whose only
+    // name is its placeholder is invisible to it, which is precisely the state
+    // this test has to reject.
+    expect(screen.getByLabelText("Prompt name for reuse")).toBe(
+      screen.getByPlaceholderText("Prompt name for reuse"),
+    );
+  });
+
+  it("names every text control in the dialog from the author, not the placeholder", async () => {
+    const { baseElement } = await renderDialog();
+
+    // The class-level guard. `placeholder` is a last-resort fallback in the
+    // accessible-name spec, so `getByRole(..., { name })` would resolve a
+    // placeholder-only control and report the dialog as named. This walks the
+    // author-supplied naming routes only.
+    const unnamed = Array.from(
+      baseElement.querySelectorAll("input, textarea"),
+    ).filter((control) => {
+      if (control.getAttribute("type") === "hidden") return false;
+      if (control.getAttribute("aria-label")?.trim()) return false;
+      if (control.getAttribute("aria-labelledby")?.trim()) return false;
+      if (control.closest("label")) return false;
+      const id = control.getAttribute("id");
+      return !(id && baseElement.querySelector(`label[for="${id}"]`));
+    });
+
+    expect(
+      unnamed.map(
+        (control) => control.getAttribute("placeholder") ?? control.outerHTML,
+      ),
+    ).toEqual([]);
+  });
+
   it("leaves no label in the dialog that names nothing", async () => {
     const { baseElement } = await renderDialog();
 

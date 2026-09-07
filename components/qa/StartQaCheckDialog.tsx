@@ -405,7 +405,16 @@ export function StartQaCheckDialog({
           </div>
 
           <div className="flex items-center gap-2">
+            {/*
+              The row is a compact input+button pair with no room for a visible
+              label, so the name is authored on the control. It is NOT the
+              placeholder doing double duty: a placeholder is dropped by some
+              screen readers and is only a last-resort fallback in the
+              accessible-name spec, so a control named that way reads as unnamed
+              exactly when the user has typed into it.
+            */}
             <Input
+              aria-label={t("checkDialog.promptNameLabel")}
               value={savePromptName}
               onChange={(event) => setSavePromptName(event.target.value)}
               placeholder={t("checkDialog.promptNamePlaceholder")}
