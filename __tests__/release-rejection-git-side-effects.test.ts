@@ -52,6 +52,8 @@ vi.mock("@/lib/agent-sessions/wait-for-completion", () => ({
 }));
 
 const mockCreateDraftRelease = vi.hoisted(() => vi.fn());
+const mockLogSyncOperation = vi.hoisted(() => vi.fn());
+vi.mock("@/lib/github/sync-log", () => ({ logSyncOperation: mockLogSyncOperation }));
 vi.mock("@/lib/github/releases", () => ({
   createDraftRelease: mockCreateDraftRelease,
   publishRelease: vi.fn(),
@@ -97,7 +99,7 @@ async function showRef(git: SimpleGit): Promise<string[]> {
 
 let projectSeq = 0;
 
-function seedProject(gitRepoPath: string): string {
+function seedProject(gitRepoPath: string, githubOwnerRepo?: string): string {
   const id = `proj_${++projectSeq}`;
   testDb
     .insert(schema.projects)
@@ -106,6 +108,7 @@ function seedProject(gitRepoPath: string): string {
       name: `Release Test ${id}`,
       gitRepoPath,
       defaultBranch: "main",
+      githubOwnerRepo: githubOwnerRepo ?? null,
     })
     .run();
   return id;
@@ -252,6 +255,34 @@ describe("POST /api/projects/:id/releases — rejected requests are side-effect 
     expect(
       testDb.select().from(schema.releases).all().filter((r) => r.projectId === projectId)
     ).toHaveLength(0);
+  });
+
+  it("publishes nothing to GitHub for a request it is going to reject", async () => {
+    // The original report could only infer this half from source ordering:
+    // the tag push and the draft release ran before the status check, so a
+    // rejected release of an unfinished ticket was one `pushToGitHub` away
+    // from publishing a tag and a draft nobody asked for.
+    const { dir, git } = await createTempRepo();
+    const projectId = seedProject(dir, "owner/repo");
+    const epicId = seedEpic(projectId, "review", "Awaiting review");
+
+    const refsBefore = await showRef(git);
+
+    const { POST } = await releaseRoute();
+    const res = await POST(
+      releaseRequest(projectId, {
+        version: "0.0.95",
+        epicIds: [epicId],
+        generateChangelog: false,
+        pushToGitHub: true,
+      }),
+      mockRouteContext({ projectId })
+    );
+
+    expect(res.status).toBe(400);
+    expect(mockCreateDraftRelease).not.toHaveBeenCalled();
+    expect(mockLogSyncOperation).not.toHaveBeenCalled();
+    expect(await showRef(git)).toEqual(refsBefore);
   });
 
   it("still creates the branch, the tag and the release row for a valid request", async () => {
