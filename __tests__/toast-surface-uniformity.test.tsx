@@ -2,13 +2,19 @@
  * Every surface that raises a toast raises it through ONE stack.
  *
  * `ec3cbaf` introduced `components/notifications/ToastStack.tsx` and moved the
- * desk and its project host onto it. Five surfaces kept a stack written by
+ * desk and its project host onto it. Six surfaces kept a stack written by
  * hand — pinned bottom-right instead of top-right, trapped inside whatever
  * scroll container happened to wrap them, with no close button, no
  * `role="status"`/`role="alert"`, a hard 4–5 s expiry and no ceiling. A user
  * therefore met a different notification depending on the screen they were on.
  *
- * This file renders the five and asserts the shared contract on each. The
+ * The sixth, `/projects/:id/github-issues`, was outside the five the migration
+ * ticket named and was found only by reading the tree afterwards. That is the
+ * reason this file is an ENUMERATION and not a set of independent tests: a
+ * surface is caught by being ABSENT from it, so a seventh has to be added here
+ * to be dismissed.
+ *
+ * This file renders the six and asserts the shared contract on each. The
  * contract itself lives in `./support/toast-contract`; the behaviour behind it
  * (success expiry, hover/focus pause, the MAX_TOASTS ceiling) is pinned once
  * against the primitive in `./toast-stack.test.tsx`.
@@ -67,13 +73,24 @@ vi.mock("@/hooks/useWorktrees", () => ({
   }),
 }));
 
+/**
+ * Mutable so the github-issues surface can render CONFIGURED: unconfigured, its
+ * Sync button is disabled and nothing can raise a toast at all. The other
+ * surfaces only read it to stay quiet, so the default is the unconfigured one.
+ */
+const githubConfig = vi.hoisted(() => ({
+  isConfigured: false,
+  ownerRepo: null as string | null,
+  tokenSet: false,
+  loading: false,
+}));
+
+function setGitHubConfig(next: Partial<typeof githubConfig>): void {
+  Object.assign(githubConfig, next);
+}
+
 vi.mock("@/hooks/useGitHubConfig", () => ({
-  useGitHubConfig: () => ({
-    isConfigured: false,
-    ownerRepo: null,
-    tokenSet: false,
-    loading: false,
-  }),
+  useGitHubConfig: () => githubConfig,
 }));
 
 vi.mock("@/hooks/useReleasePublish", () => ({
@@ -262,6 +279,7 @@ import { ChatPageView } from "@/components/chat-page/ChatPageView";
 import ReleasesPage from "@/app/projects/[projectId]/releases/page";
 import GitSyncPage from "@/app/projects/[projectId]/git-sync/page";
 import StoryDetailPage from "@/app/projects/[projectId]/stories/[storyId]/page";
+import GitHubIssuesPage from "@/app/projects/[projectId]/github-issues/page";
 
 function jsonRes(body: unknown, init: { ok?: boolean; status?: number } = {}): Response {
   return {
@@ -274,6 +292,7 @@ function jsonRes(body: unknown, init: { ok?: boolean; status?: number } = {}): R
 beforeEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  setGitHubConfig({ isConfigured: false, ownerRepo: null, tokenSet: false, loading: false });
 });
 
 /* ---- 1. /qa ---------------------------------------------------------- */
@@ -426,6 +445,67 @@ describe("toast uniformity — /projects/:id/stories/:storyId", () => {
       testId: "story-toast",
       tone: "error",
       message: "Story is owned by a running session",
+    });
+  });
+});
+
+/* ---- 6. /projects/:id/github-issues ---------------------------------- */
+
+describe("toast uniformity — /projects/:id/github-issues", () => {
+  it("raises both sync outcomes through the shared stack", async () => {
+    // The first sync fails, the second succeeds, so the ONE surface that
+    // raises both tones is checked on both: the hand-written stack encoded
+    // them as a background colour and nothing else, and Piscine reserves
+    // colour for stratum and identity — the tone has to survive as `role`
+    // and `data-toast-type`.
+    let syncCalls = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.includes("/github/issues/sync") && init?.method === "POST") {
+          syncCalls += 1;
+          return syncCalls === 1
+            ? jsonRes({ error: "GitHub API rate limit exceeded" }, {
+                ok: false,
+                status: 502,
+              })
+            : jsonRes({ data: { synced: 0 } });
+        }
+        if (url.includes("/github/issues/triage")) return jsonRes({ data: [] });
+        if (url.includes("/github/label-mapping")) {
+          return jsonRes({ data: { featureLabels: [], bugLabels: [] } });
+        }
+        return jsonRes({ data: null });
+      }),
+    );
+    setGitHubConfig({
+      isConfigured: true,
+      ownerRepo: "orolol/arij",
+      tokenSet: true,
+      loading: false,
+    });
+
+    const { container } = render(<GitHubIssuesPage />);
+    const sync = await screen.findByRole("button", { name: "Sync" });
+    await waitFor(() => expect(sync).toBeEnabled());
+
+    fireEvent.click(sync);
+    await screen.findByTestId("github-issues-toast");
+    // Leaves the stack empty, so the success below cannot be read off the
+    // failure that preceded it.
+    expectSharedToastContract(container, {
+      testId: "github-issues-toast",
+      tone: "error",
+      message: "GitHub API rate limit exceeded",
+    });
+
+    fireEvent.click(sync);
+    await screen.findByTestId("github-issues-toast");
+    expectSharedToastContract(container, {
+      testId: "github-issues-toast",
+      tone: "success",
+      message: "Issues synced",
     });
   });
 });
