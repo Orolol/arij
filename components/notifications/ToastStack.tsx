@@ -50,7 +50,41 @@ export function ToastStack({ items, onDismiss, testId }: {
   const mounted = useSyncExternalStore(subscribe, clientSnapshot, serverSnapshot);
   if (!mounted) return null;
   return createPortal(
-    <section aria-label={t("stack.label")} className="pointer-events-none fixed right-4 top-[76px] z-[100] flex max-h-[calc(100dvh-92px)] w-[380px] max-w-[calc(100vw-32px)] flex-col gap-3 overflow-y-auto">
+    /*
+      `aria-live` is what keeps this region out of a modal's hidden subtree,
+      and it is load-bearing rather than decorative.
+
+      A Radix `DialogContent` calls `hideOthers(content)` from `aria-hidden`,
+      which stamps `aria-hidden="true"` on every other child of `document.body`
+      — this portal included. The toast stayed painted over the dialog
+      (`z-[100]` against `z-50`) while the region, the `alert` and the dismiss
+      button all dropped out of the accessibility tree, so a failure raised
+      from an open dialog was never announced. That is not an edge case: the
+      story detail page keeps its delete dialog open when the DELETE fails and
+      raises the error toast over it, `/projects/:id` raises toasts from its
+      epic, quick-capture and bug dialogs, and `QaScreen` raises one from
+      `DismissDialog`.
+
+      `hideOthers` sweeps `[aria-live], script` and adds those nodes to the set
+      it keeps — its documented opt-out for exactly this case. It has to sit on
+      the SECTION, not on a toast: the sweep snapshots the DOM when the dialog
+      opens, and by then the section exists (it renders empty) while the toast
+      that the failure is about does not.
+
+      `off` is the value because it is already the computed default, so writing
+      it claims the opt-out and changes nothing else. `polite` here would make
+      the container a second live region and announce the same insertion twice.
+      Measured in Chrome over this exact shape: the region exposes no live
+      property at all, while the `alert` inside it still computes
+      `live: assertive`, `atomic: true` — an ancestor `off` does not suppress a
+      descendant that declares its own. Pinned in
+      `__tests__/toast-under-open-dialog.test.tsx`.
+
+      The dialog stays modal, so its focus trap still owns Tab while it is
+      open — the announcement is restored, not the tab order. See that test
+      file for the boundary.
+    */
+    <section aria-label={t("stack.label")} aria-live="off" className="pointer-events-none fixed right-4 top-[76px] z-[100] flex max-h-[calc(100dvh-92px)] w-[380px] max-w-[calc(100vw-32px)] flex-col gap-3 overflow-y-auto">
       {items.slice(-MAX_TOASTS).map((item) => (
         <Toast key={item.id} item={item} onDismiss={onDismiss} testId={testId} />
       ))}
