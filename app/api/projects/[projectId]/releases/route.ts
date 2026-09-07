@@ -89,6 +89,39 @@ export const POST = withAgentResolutionErrors(async function POST(
     .where(and(inArray(epics.id, epicIds), eq(epics.projectId, projectId)))
     .all();
 
+  // ---------------------------------------------------------------------
+  // Validate the whole request BEFORE any side effect (B-arij-239).
+  //
+  // Branch creation, the CHANGELOG commit, the tag, the changelog agent and
+  // the GitHub push all used to run ahead of the status check, so a request
+  // rejected with 400 still left refs/heads/release/v<version> and
+  // refs/tags/v<version> pointing at a commit no release row referenced.
+  // Every membership and status rule now runs here, before the first write
+  // to the repository, the provider or GitHub.
+  // ---------------------------------------------------------------------
+  const foundEpicIds = new Set(selectedEpics.map((e) => e.id));
+  const missingEpicIds = epicIds.filter((id) => !foundEpicIds.has(id));
+  if (missingEpicIds.length > 0) {
+    return NextResponse.json(
+      {
+        error: `Ticket(s) not found in this project: ${missingEpicIds.join(", ")}`,
+      },
+      { status: 400 }
+    );
+  }
+
+  for (const epic of selectedEpics) {
+    const fromStatus = (epic.status ?? "backlog") as KanbanStatus;
+    if (fromStatus !== "done") {
+      return NextResponse.json(
+        {
+          error: `Epic "${epic.title}" has status "${fromStatus}" — only "done" epics can be released.`,
+        },
+        { status: 400 }
+      );
+    }
+  }
+
   // Resolve which agent to use for changelog generation
   const resolvedAgent = resolveAgentByNamedId("release_notes", projectId, namedAgentId);
   const agentProvider = resolvedAgent.provider;
@@ -416,17 +449,6 @@ ${ticketContext}
 
   // Save release and transition epics atomically
   const id = createId();
-
-  // Pre-validate all epic transitions before committing anything
-  for (const epic of selectedEpics) {
-    const fromStatus = (epic.status ?? "backlog") as KanbanStatus;
-    if (fromStatus !== "done") {
-      return NextResponse.json(
-        { error: `Epic "${epic.title}" has status "${fromStatus}" — only "done" epics can be released.` },
-        { status: 400 }
-      );
-    }
-  }
 
   db.transaction((tx) => {
     tx.insert(releases)
