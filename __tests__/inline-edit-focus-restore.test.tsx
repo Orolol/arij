@@ -17,6 +17,11 @@ import { StoryDetailPanel } from "@/components/story/StoryDetailPanel";
  * Restoration is deliberately scoped to *keyboard* exits. A blur caused by
  * clicking or tabbing elsewhere is the user moving focus on purpose, and
  * yanking it back would be its own bug; the last two cases pin that boundary.
+ *
+ * The read state is a real <button> now, so Enter and Space are the browser's
+ * to handle rather than the component's, and the field's accessible name
+ * composes its label with its value ("Title original") — which is why the
+ * queries below match an anchored pattern instead of the bare label.
  */
 
 const story = {
@@ -68,7 +73,7 @@ describe("InlineEdit focus restoration", () => {
     const user = userEvent.setup();
     render(<StoryDetailPanel story={story} onUpdate={vi.fn()} />);
 
-    const field = screen.getByRole("button", { name: "Description" });
+    const field = screen.getByRole("button", { name: /^Description/ });
     field.focus();
     await user.keyboard("{Enter}");
 
@@ -81,7 +86,7 @@ describe("InlineEdit focus restoration", () => {
     // The read state is back, and focus is on it — not on <body>, which would
     // send the next Tab to the top of the page.
     expect(document.activeElement).not.toBe(document.body);
-    expect(screen.getByRole("button", { name: "Description" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /^Description/ })).toHaveFocus();
   });
 
   it("returns focus to the field after Enter saves a single-line edit", async () => {
@@ -89,7 +94,7 @@ describe("InlineEdit focus restoration", () => {
     const onSave = vi.fn();
     render(<LabelledInlineEdit onSave={onSave} />);
 
-    screen.getByRole("button", { name: "Title" }).focus();
+    screen.getByRole("button", { name: /^Title/ }).focus();
     await user.keyboard("{Enter}");
 
     const editor = screen.getByRole("textbox");
@@ -100,14 +105,14 @@ describe("InlineEdit focus restoration", () => {
 
     expect(onSave).toHaveBeenCalledWith("renamed");
     expect(document.activeElement).not.toBe(document.body);
-    expect(screen.getByRole("button", { name: "Title" })).toHaveFocus();
+    expect(screen.getByRole("button", { name: /^Title/ })).toHaveFocus();
   });
 
   it("keeps the field reachable by Tab after an Escape round trip", async () => {
     const user = userEvent.setup();
     render(<LabelledInlineEdit after />);
 
-    screen.getByRole("button", { name: "Title" }).focus();
+    screen.getByRole("button", { name: /^Title/ }).focus();
     await user.keyboard("{Enter}");
     await user.keyboard("{Escape}");
 
@@ -125,7 +130,7 @@ describe("InlineEdit focus restoration", () => {
     const user = userEvent.setup();
     render(<LabelledInlineEdit after />);
 
-    screen.getByRole("button", { name: "Title" }).focus();
+    screen.getByRole("button", { name: /^Title/ }).focus();
     await user.keyboard("{Enter}");
     expect(screen.getByRole("textbox")).toHaveFocus();
 
@@ -138,7 +143,7 @@ describe("InlineEdit focus restoration", () => {
     const user = userEvent.setup();
     render(<LabelledInlineEdit after />);
 
-    screen.getByRole("button", { name: "Title" }).focus();
+    screen.getByRole("button", { name: /^Title/ }).focus();
     await user.keyboard("{Enter}");
     expect(screen.getByRole("textbox")).toHaveFocus();
 

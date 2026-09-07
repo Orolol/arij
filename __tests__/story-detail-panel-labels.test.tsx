@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { StoryDetailPanel } from "@/components/story/StoryDetailPanel";
 import {
   THEMES,
@@ -15,9 +16,14 @@ import {
  * pushed the status badge down to line up with the select beside it.
  *
  * Description and Acceptance Criteria are `InlineEdit` fields, so they have two
- * states: a click-to-edit region and, once activated, a real textarea. Both
+ * states: a click-to-edit button and, once activated, a real textarea. Both
  * states are asserted — naming only the textarea would leave the field
  * anonymous in the state a user actually lands on.
+ *
+ * The read state's accessible name composes the label with the field's value
+ * ("Description The panel must name its fields."), so it is matched here by an
+ * anchored pattern; `inline-edit-read-state.test.tsx` pins that composition,
+ * and the `htmlFor` that now reaches the read state, as their own contracts.
  *
  * Everything is queried through the accessible name on purpose; a test-id
  * query would pass while the association stayed broken.
@@ -51,7 +57,7 @@ describe("Story detail panel accessibility", () => {
   it("names the description field in its read state", () => {
     renderPanel();
 
-    const field = screen.getByRole("button", { name: "Description" });
+    const field = screen.getByRole("button", { name: /^Description/ });
     expect(field).toHaveTextContent("The panel must name its fields.");
     expect(screen.getByLabelText("Description")).toBe(field);
   });
@@ -59,7 +65,7 @@ describe("Story detail panel accessibility", () => {
   it("names the acceptance criteria field in its read state", () => {
     renderPanel();
 
-    const field = screen.getByRole("button", { name: "Acceptance Criteria" });
+    const field = screen.getByRole("button", { name: /^Acceptance Criteria/ });
     expect(field).toHaveTextContent(
       "Given a screen reader, when the panel opens, then...",
     );
@@ -69,20 +75,30 @@ describe("Story detail panel accessibility", () => {
   it("keeps the description named once it becomes an editable textarea", () => {
     renderPanel();
 
-    fireEvent.click(screen.getByRole("button", { name: "Description" }));
+    fireEvent.click(screen.getByRole("button", { name: /^Description/ }));
 
     const textarea = screen.getByLabelText("Description");
     expect(textarea.tagName).toBe("TEXTAREA");
     expect(textarea).toHaveValue("The panel must name its fields.");
   });
 
-  it("opens the description editor from the keyboard", () => {
+  /**
+   * Keyboard activation is the browser's now: the read state is a real
+   * <button>, so it is in the tab order without a `tabindex` and answers Enter
+   * and Space without a handler. Driven through userEvent rather than a raw
+   * `fireEvent.keyDown`, because the behaviour under test is the default
+   * action a bare keydown does not carry.
+   */
+  it("opens the description editor from the keyboard", async () => {
+    const user = userEvent.setup();
     renderPanel();
 
-    const field = screen.getByRole("button", { name: "Description" });
-    expect(field).toHaveAttribute("tabindex", "0");
+    const field = screen.getByRole("button", { name: /^Description/ });
+    expect(field.tagName).toBe("BUTTON");
+    expect(field).not.toHaveAttribute("tabindex");
 
-    fireEvent.keyDown(field, { key: "Enter" });
+    field.focus();
+    await user.keyboard("{Enter}");
 
     expect(screen.getByLabelText("Description").tagName).toBe("TEXTAREA");
   });
@@ -98,7 +114,7 @@ describe("Story detail panel accessibility", () => {
   it("paints a focus ring on the field it just made focusable", async () => {
     renderPanel();
 
-    const field = screen.getByRole("button", { name: "Description" });
+    const field = screen.getByRole("button", { name: /^Description/ });
     const resolved = await resolveFocusVisibleOutline(
       classTokens(field.className),
     );
