@@ -252,9 +252,10 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN outcome");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN input_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN output_tokens");
-      // 0047 covers this column, and SQLite refuses to drop a column an
-      // index still references. The replay re-creates the index.
+      // 0047 and 0056 both index this column, and SQLite refuses to drop a
+      // column an index still references. The replay re-creates both.
       conn.exec("DROP INDEX IF EXISTS agent_sessions_named_agent_activity_idx");
+      conn.exec("DROP INDEX IF EXISTS agent_sessions_epic_cost_idx");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN total_cost_usd");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN batch_run_id");
       conn.exec("ALTER TABLE projects DROP COLUMN clone_source");
@@ -357,9 +358,10 @@ describe("initDb", () => {
       conn.exec('DROP TABLE "__drizzle_migrations"');
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN input_tokens");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN output_tokens");
-      // 0047 covers this column, and SQLite refuses to drop a column an
-      // index still references. The replay re-creates the index.
+      // 0047 and 0056 both index this column, and SQLite refuses to drop a
+      // column an index still references. The replay re-creates both.
       conn.exec("DROP INDEX IF EXISTS agent_sessions_named_agent_activity_idx");
+      conn.exec("DROP INDEX IF EXISTS agent_sessions_epic_cost_idx");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN total_cost_usd");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN batch_run_id");
       conn.exec("ALTER TABLE projects DROP COLUMN clone_source");

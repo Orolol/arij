@@ -287,10 +287,17 @@ describe("0046_core_table_indexes", () => {
       ).toContain(
         "SEARCH agent_sessions USING INDEX agent_sessions_project_created_at_idx (project_id=?)"
       );
+      // Either index is a correct answer here, and which one the planner picks
+      // is its business: 0056 added agent_sessions_epic_cost_idx
+      // (epic_id, total_cost_usd), and `epic_id` is a strict prefix of it, so
+      // it serves this lookup as well as the narrow index does — on an empty
+      // database it is in fact the one chosen. What 0046 guarantees, and what
+      // this asserts, is that the lookup is a SEARCH on epic_id rather than a
+      // SCAN of agent_sessions.
       expect(
         queryPlan(conn, "SELECT id FROM agent_sessions WHERE epic_id = 'e'")
-      ).toContain(
-        "SEARCH agent_sessions USING INDEX agent_sessions_epic_idx (epic_id=?)"
+      ).toMatch(
+        /SEARCH agent_sessions USING (COVERING )?INDEX agent_sessions_epic(_cost)?_idx \(epic_id=\?\)/
       );
       expect(
         queryPlan(conn, "SELECT id FROM ticket_comments WHERE epic_id = 'e'")
