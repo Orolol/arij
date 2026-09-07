@@ -162,11 +162,14 @@ function parseSteps(source: string): WorkflowStep[] {
 }
 
 /**
- * The three commands the project treats as verification but CI did not run.
+ * The gates the project expects CI to enforce: unit tests and audit in `test`,
+ * and type check, lint, and a production build in `verify`.
  * `npm run lint` is anchored so it does not match `npm run lint:prune`, which
  * appears inside the workflow's failure-explanation echo.
  */
 const GATES = [
+  { label: "unit tests (`npm test`)", pattern: /(?:^|\s)npm\s+test(?:\s|$)/ },
+  { label: "audit (`npm audit --audit-level=high`)", pattern: /(?:^|\s)npm\s+audit\s+--audit-level=high(?:\s|$)/ },
   { label: "type check (`npx tsc --noEmit`)", pattern: /(?:^|\s)(?:npx\s+)?tsc\s+--noEmit(?:\s|$)/ },
   { label: "lint (`npm run lint`)", pattern: /(?:^|\s)npm\s+run\s+lint(?:\s|$)/ },
   { label: "build (`npm run build`)", pattern: /(?:^|\s)npm\s+run\s+build(?:\s|$)/ },
@@ -206,6 +209,17 @@ function gateViolations(source: string): string[] {
     }
   }
 
+  // An audit failure must never hide test execution: npm test must run before
+  // npm audit in the test job.
+  const testJobSteps = steps.filter((step) => step.job === "test");
+  const testIdx = testJobSteps.findIndex((step) => /(?:^|\s)npm\s+test(?:\s|$)/.test(step.run ?? ""));
+  const auditIdx = testJobSteps.findIndex((step) => /(?:^|\s)npm\s+audit(?:\s|$)/.test(step.run ?? ""));
+  if (testIdx !== -1 && auditIdx !== -1 && auditIdx < testIdx) {
+    problems.push(
+      "ordering: audit (`npm audit`) precedes unit tests (`npm test`) in job `test`, which can hide test failures behind audit failures",
+    );
+  }
+
   // The reason this criterion exists: an inherited `NODE_ENV=development` makes
   // `next build` die on a spurious prerender error. Agent sessions in this repo
   // inherit exactly that from the dev server that spawned them, so the value
@@ -239,10 +253,13 @@ describe("the CI workflow", () => {
     expect(workflowSource).toMatch(/^\s{2}pull_request:\s*$/m);
   });
 
-  it("runs the unit suite", () => {
-    expect(stepsRunning(parseSteps(workflowSource), /(?:^|\s)npm\s+test(?:\s|$)/)).not.toHaveLength(
-      0,
-    );
+  it("runs the unit suite before npm audit in the test job", () => {
+    const testSteps = parseSteps(workflowSource).filter((step) => step.job === "test");
+    const testIndex = testSteps.findIndex((step) => /(?:^|\s)npm\s+test(?:\s|$)/.test(step.run ?? ""));
+    const auditIndex = testSteps.findIndex((step) => /(?:^|\s)npm\s+audit(?:\s|$)/.test(step.run ?? ""));
+    expect(testIndex).toBeGreaterThanOrEqual(0);
+    expect(auditIndex).toBeGreaterThanOrEqual(0);
+    expect(testIndex).toBeLessThan(auditIndex);
   });
 
   it.each(GATES)("runs $label", ({ pattern }) => {
@@ -272,11 +289,18 @@ describe("the CI workflow", () => {
  * the gates were being removed.
  */
 describe("the workflow analyser rejects a weakened workflow", () => {
-  const workflow = (verifySteps: string) => `name: CI
+  const workflow = (
+    verifySteps: string,
+    testSteps = "      - run: npm ci\n      - run: npm test\n      - run: npm audit --audit-level=high",
+  ) => `name: CI
 on:
   push:
   pull_request:
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+${testSteps}
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -353,6 +377,139 @@ ${verifySteps}
     const hintOnly = healthy.replace("run: npm run lint", "run: echo 'try npm run lint:prune'");
     expect(gateViolations(hintOnly)).toEqual([
       "missing: no CI step runs lint (`npm run lint`)",
+    ]);
+  });
+
+  it("reports when npm audit precedes npm test in the test job", () => {
+    const auditFirst = workflow(
+      `      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Production build
+        env:
+          NODE_ENV: production
+        run: npm run build`,
+      `      - run: npm ci
+      - run: npm audit --audit-level=high
+      - run: npm test`,
+    );
+    expect(gateViolations(auditFirst)).toEqual([
+      "ordering: audit (`npm audit`) precedes unit tests (`npm test`) in job `test`, which can hide test failures behind audit failures",
+    ]);
+  });
+
+  it("reports when unit tests are marked continue-on-error", () => {
+    const tolerated = workflow(
+      `      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Production build
+        env:
+          NODE_ENV: production
+        run: npm run build`,
+      `      - run: npm ci
+      - run: npm test
+        continue-on-error: true
+      - run: npm audit --audit-level=high`,
+    );
+    expect(gateViolations(tolerated)).toEqual([
+      "neutered: unit tests (`npm test`) in job `test` has continue-on-error: true",
+    ]);
+  });
+
+  it("reports when unit tests swallow failure", () => {
+    const swallowed = workflow(
+      `      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Production build
+        env:
+          NODE_ENV: production
+        run: npm run build`,
+      `      - run: npm ci
+      - run: npm test || true
+      - run: npm audit --audit-level=high`,
+    );
+    expect(gateViolations(swallowed)).toEqual([
+      "neutered: unit tests (`npm test`) in job `test` swallows a non-zero exit in its run command",
+    ]);
+  });
+
+  it("reports an audit gate marked continue-on-error", () => {
+    const tolerated = workflow(
+      `      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Production build
+        env:
+          NODE_ENV: production
+        run: npm run build`,
+      `      - run: npm ci
+      - run: npm test
+      - run: npm audit --audit-level=high
+        continue-on-error: true`,
+    );
+    expect(gateViolations(tolerated)).toEqual([
+      "neutered: audit (`npm audit --audit-level=high`) in job `test` has continue-on-error: true",
+    ]);
+  });
+
+  it("reports an audit gate that swallows failure", () => {
+    const swallowed = workflow(
+      `      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Production build
+        env:
+          NODE_ENV: production
+        run: npm run build`,
+      `      - run: npm ci
+      - run: npm test
+      - run: npm audit --audit-level=high || true`,
+    );
+    expect(gateViolations(swallowed)).toEqual([
+      "neutered: audit (`npm audit --audit-level=high`) in job `test` swallows a non-zero exit in its run command",
+    ]);
+  });
+
+  it("reports a deleted audit gate", () => {
+    const withoutAudit = workflow(
+      `      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Production build
+        env:
+          NODE_ENV: production
+        run: npm run build`,
+      `      - run: npm ci
+      - run: npm test`,
+    );
+    expect(gateViolations(withoutAudit)).toEqual([
+      "missing: no CI step runs audit (`npm audit --audit-level=high`)",
+    ]);
+  });
+
+  it("reports a deleted unit test gate", () => {
+    const withoutTest = workflow(
+      `      - name: Type check
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Production build
+        env:
+          NODE_ENV: production
+        run: npm run build`,
+      `      - run: npm ci
+      - run: npm audit --audit-level=high`,
+    );
+    expect(gateViolations(withoutTest)).toEqual([
+      "missing: no CI step runs unit tests (`npm test`)",
     ]);
   });
 });
