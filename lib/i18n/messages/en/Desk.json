@@ -145,6 +145,7 @@
     "storyDeleted": "User story deleted permanently",
     "epicDeleted": "Epic deleted permanently",
     "epicCreated": "Epic created",
+    "bugCreated": "Bug created",
     "branchMerged": "Branch merged into main",
     "sessionCompleted": "Agent #{id} completed",
     "sessionFailed": "Agent #{id} failed: {error}",

@@ -736,13 +736,20 @@ export default function ProjectDeskPage() {
 
       <ToastStack items={visibleToasts} onDismiss={dismissToast} testId="board-toast" />
 
+      {/* Both dialogs share the desk composer's contract: confirm through the
+          page's toast stack, then open the ticket that was just created. The
+          overlay is not decoration here — a fresh row is `backlog`, which no
+          stratum on this desk draws, so without it the dialog closes on a
+          screen that does not change. The id is `""` when the route answered
+          without one; the toast still confirms and the desk refreshes. */}
       <EpicCreateDialog
         projectId={projectId}
         open={epicDialogOpen}
         onOpenChange={setEpicDialogOpen}
-        onCreated={() => {
+        onCreated={(epicId) => {
           setRefreshTrigger((t) => t + 1);
           addToast("success", t("projectDesk.epicCreated"));
+          if (epicId) handlePrimaryTicketClick(epicId);
         }}
       />
 
@@ -750,7 +757,11 @@ export default function ProjectDeskPage() {
         projectId={projectId}
         open={bugDialogOpen}
         onOpenChange={setBugDialogOpen}
-        onCreated={() => setRefreshTrigger((t) => t + 1)}
+        onCreated={(bugId) => {
+          setRefreshTrigger((t) => t + 1);
+          addToast("success", t("projectDesk.bugCreated"));
+          if (bugId) handlePrimaryTicketClick(bugId);
+        }}
         namedAgentId={namedAgentId}
       />
 
