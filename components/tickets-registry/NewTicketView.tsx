@@ -113,14 +113,15 @@ export function NewTicketView({ projectId }: NewTicketViewProps) {
             ? String(body.error)
             : t("Registry.newTicket.refused", { status: res.status }),
         );
-        return;
+      } else {
+        router.push(`/tickets?project=${encodeURIComponent(project.id)}`);
       }
-      router.push(`/tickets?project=${encodeURIComponent(project.id)}`);
     } catch {
       setError(t("Registry.newTicket.unreachable"));
-    } finally {
-      setBusy(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setBusy(false);
   }, [busy, description, isBug, priority, project, router, status, t, title]);
 
   return (

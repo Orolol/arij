@@ -100,9 +100,13 @@ function VerticalMarker({
 export function PipelineChain({
   steps,
   orientation = "horizontal",
-  markerSize = orientation === "vertical" ? 8 : 20,
+  markerSize: markerSizeProp,
   className,
 }: PipelineChainProps) {
+  // Not a default in the parameter list: a default that reads a sibling prop
+  // is an expression the React Compiler "cannot safely reorder", and it stops
+  // reading the component there.
+  const markerSize = markerSizeProp ?? (orientation === "vertical" ? 8 : 20);
   if (orientation === "vertical") {
     return (
       <div

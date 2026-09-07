@@ -458,6 +458,24 @@ export type AgentRosterStatsStatus = "loading" | "ready" | "unavailable";
  * previous poll's rows would leave a live dot breathing next to numbers no
  * server currently vouches for.
  */
+/**
+ * The aggregate, or a throw. Kept out of the hook because a `throw` inside a
+ * `try` is one of the constructs the React Compiler stops on — and stopping
+ * there left `useAgentRosterStats` unread by every compiler rule.
+ */
+async function readRosterStats(): Promise<Record<string, AgentDayStats>> {
+  const res = await fetch("/api/agent-config/named-agents/all/stats");
+  if (!res.ok) throw new Error(`Roster stats responded ${res.status}`);
+  const json = await res.json();
+  const rows: unknown = json?.data?.agents;
+  if (!Array.isArray(rows)) {
+    throw new Error("Roster stats payload carries no agents array");
+  }
+  const next: Record<string, AgentDayStats> = {};
+  for (const row of rows as AgentDayStats[]) next[row.namedAgentId] = row;
+  return next;
+}
+
 export function useAgentRosterStats(): {
   data: Record<string, AgentDayStats>;
   status: AgentRosterStatsStatus;
@@ -468,16 +486,7 @@ export function useAgentRosterStats(): {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch("/api/agent-config/named-agents/all/stats");
-      if (!res.ok) throw new Error(`Roster stats responded ${res.status}`);
-      const json = await res.json();
-      const rows: unknown = json?.data?.agents;
-      if (!Array.isArray(rows)) {
-        throw new Error("Roster stats payload carries no agents array");
-      }
-      const next: Record<string, AgentDayStats> = {};
-      for (const row of rows as AgentDayStats[]) next[row.namedAgentId] = row;
-      setData(next);
+      setData(await readRosterStats());
       setStatus("ready");
     } catch {
       // A missing aggregate collapses the card figures to em-dashes; it must

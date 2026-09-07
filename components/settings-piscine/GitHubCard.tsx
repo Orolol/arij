@@ -134,17 +134,18 @@ export function GitHubCard({ hasSavedToken, oauthMeta = null }: GitHubCardProps)
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.data?.valid) {
         setError(payload?.error ?? t("github.validationFailed"));
-        return;
+      } else {
+        const login = payload?.data?.login;
+        setMessage(
+          login ? t("github.tokenValidFor", { login }) : t("github.tokenValid"),
+        );
       }
-      const login = payload?.data?.login;
-      setMessage(
-        login ? t("github.tokenValidFor", { login }) : t("github.tokenValid"),
-      );
     } catch {
       setError(t("github.validationOffline"));
-    } finally {
-      setValidating(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setValidating(false);
   }
 
   /**
@@ -206,20 +207,19 @@ export function GitHubCard({ hasSavedToken, oauthMeta = null }: GitHubCardProps)
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         setError(payload?.error ?? t("github.saveFailed"));
-        return;
+      } else {
+        // A hand-pasted token supersedes whatever the device flow left behind,
+        // so any running sign-in is now pointing at a token nobody wants.
+        flow.cancel();
+        setTokenOverride(true);
+        setMetaOverride(manualMeta);
+        setToken("");
+        setMessage(t("github.tokenSaved"));
       }
-      // A hand-pasted token supersedes whatever the device flow left behind,
-      // so any running sign-in is now pointing at a token nobody wants.
-      flow.cancel();
-      setTokenOverride(true);
-      setMetaOverride(manualMeta);
-      setToken("");
-      setMessage(t("github.tokenSaved"));
     } catch {
       setError(t("github.saveOffline"));
-    } finally {
-      setSaving(false);
     }
+    setSaving(false);
   }
 
   async function disconnect() {
@@ -240,101 +240,22 @@ export function GitHubCard({ hasSavedToken, oauthMeta = null }: GitHubCardProps)
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         setError(payload?.error ?? t("github.disconnectFailed"));
-        return;
+      } else {
+        flow.cancel();
+        setTokenOverride(false);
+        setMetaOverride(null);
+        setMessage(t("github.disconnected"));
       }
-      flow.cancel();
-      setTokenOverride(false);
-      setMetaOverride(null);
-      setMessage(t("github.disconnected"));
     } catch {
       setError(t("github.disconnectOffline"));
-    } finally {
-      setDisconnecting(false);
     }
+    setDisconnecting(false);
   }
 
-  return (
-    <SettingsSection testId="github-settings" heading={t("github.heading")}>
-      <StrataBand stratum="card">
-        <BandHeader
-          stratum="card"
-          label={t("github.label")}
-          meta={
-            <span className="font-sans text-[11.5px] leading-normal">
-              {t("github.meta")}
-            </span>
-          }
-        />
-
-        {renderConnection()}
-
-        <div className="flex flex-col gap-[8px] border-t border-border pt-[12px]">
-          <Mono size={10.5} tone="muted" as="div">
-            {t("github.manualHint")}
-          </Mono>
-
-          <div className="flex flex-wrap items-end gap-[12px]">
-            <SettingField
-              kicker={t("github.pat")}
-              stratum="card"
-              htmlFor="github-pat"
-              flex={1}
-              className="min-w-[240px]"
-            >
-              <SettingInput
-                id="github-pat"
-                data-testid="github-pat"
-                chrome="paper"
-                type="password"
-                placeholder={t("github.patPlaceholder")}
-                value={token}
-                onChange={(event) => setToken(event.target.value)}
-              />
-            </SettingField>
-            {/* Neither is filled any more: the card's ONE filled slot is
-                "Se connecter avec GitHub". Within the fallback, save still
-                outranks validate — action outline over neutral. */}
-            <PillButton
-              variant="outline"
-              outlineTone="neutral"
-              size="lg"
-              onClick={() => void validate()}
-              pending={validating}
-              pendingLabel={t("github.validating")}
-            >
-              {t("github.validate")}
-            </PillButton>
-            <PillButton
-              variant="outline"
-              outlineTone="action"
-              size="lg"
-              onClick={() => void save()}
-              pending={saving}
-              pendingLabel={t("github.savingToken")}
-            >
-              {t("github.saveToken")}
-            </PillButton>
-          </div>
-        </div>
-
-        <div role="status" aria-live="polite">
-          {message ? (
-            <Mono size={10.5} tone="muted" as="div">
-              {message}
-            </Mono>
-          ) : null}
-        </div>
-        <div role="alert">
-          {error ? (
-            <Mono size={10.5} tone="danger" as="div">
-              {error}
-            </Mono>
-          ) : null}
-        </div>
-      </StrataBand>
-    </SettingsSection>
-  );
-
+  // Declared BEFORE the return, not after it: a function declaration hoisted
+  // from behind the return is "unreachable code that may contain hoisted
+  // declarations", one of the constructs the React Compiler stops on — and it
+  // stopped reading this component there.
   /**
    * The connection region, in precedence order. A sign-in the user is in the
    * middle of outranks the stored state: they can see the code they are typing
@@ -483,4 +404,86 @@ export function GitHubCard({ hasSavedToken, oauthMeta = null }: GitHubCardProps)
       </div>
     );
   }
+
+  return (
+    <SettingsSection testId="github-settings" heading={t("github.heading")}>
+      <StrataBand stratum="card">
+        <BandHeader
+          stratum="card"
+          label={t("github.label")}
+          meta={
+            <span className="font-sans text-[11.5px] leading-normal">
+              {t("github.meta")}
+            </span>
+          }
+        />
+
+        {renderConnection()}
+
+        <div className="flex flex-col gap-[8px] border-t border-border pt-[12px]">
+          <Mono size={10.5} tone="muted" as="div">
+            {t("github.manualHint")}
+          </Mono>
+
+          <div className="flex flex-wrap items-end gap-[12px]">
+            <SettingField
+              kicker={t("github.pat")}
+              stratum="card"
+              htmlFor="github-pat"
+              flex={1}
+              className="min-w-[240px]"
+            >
+              <SettingInput
+                id="github-pat"
+                data-testid="github-pat"
+                chrome="paper"
+                type="password"
+                placeholder={t("github.patPlaceholder")}
+                value={token}
+                onChange={(event) => setToken(event.target.value)}
+              />
+            </SettingField>
+            {/* Neither is filled any more: the card's ONE filled slot is
+                "Se connecter avec GitHub". Within the fallback, save still
+                outranks validate — action outline over neutral. */}
+            <PillButton
+              variant="outline"
+              outlineTone="neutral"
+              size="lg"
+              onClick={() => void validate()}
+              pending={validating}
+              pendingLabel={t("github.validating")}
+            >
+              {t("github.validate")}
+            </PillButton>
+            <PillButton
+              variant="outline"
+              outlineTone="action"
+              size="lg"
+              onClick={() => void save()}
+              pending={saving}
+              pendingLabel={t("github.savingToken")}
+            >
+              {t("github.saveToken")}
+            </PillButton>
+          </div>
+        </div>
+
+        <div role="status" aria-live="polite">
+          {message ? (
+            <Mono size={10.5} tone="muted" as="div">
+              {message}
+            </Mono>
+          ) : null}
+        </div>
+        <div role="alert">
+          {error ? (
+            <Mono size={10.5} tone="danger" as="div">
+              {error}
+            </Mono>
+          ) : null}
+        </div>
+      </StrataBand>
+    </SettingsSection>
+  );
 }

@@ -333,9 +333,10 @@ function CustomReviewAgentRow({
       if (!saved) setError(t("prompts.saveReviewFailed"));
     } catch {
       setError(t("prompts.saveReviewFailedConnection"));
-    } finally {
-      setSaving(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSaving(false);
   }
 
   async function handleDelete() {
@@ -347,9 +348,8 @@ function CustomReviewAgentRow({
       if (!deleted) setError(t("prompts.deleteReviewFailed"));
     } catch {
       setError(t("prompts.deleteReviewFailedConnection"));
-    } finally {
-      setDeleting(false);
     }
+    setDeleting(false);
   }
 
   return (
@@ -496,9 +496,8 @@ function NewReviewAgentForm({
               }
             } catch {
               setError(t("prompts.createReviewFailedConnection"));
-            } finally {
-              setCreating(false);
             }
+            setCreating(false);
           }}
         >
           {t("common.create")}

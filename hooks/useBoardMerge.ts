@@ -71,12 +71,13 @@ export function useBoardMerge(
       inFlightRef.current = epicId;
       setActiveEpicId(epicId);
       patch(epicId, { pending: true, action, error: null, conflict: false });
-      try {
-        await request();
-      } finally {
+      // A `.finally` call, not a `finally` clause: the React Compiler stops
+      // at the clause, and stopping left this hook unread by every compiler
+      // rule. A rejection still reaches the caller.
+      await request().finally(() => {
         inFlightRef.current = null;
         setActiveEpicId(null);
-      }
+      });
     },
     [patch]
   );

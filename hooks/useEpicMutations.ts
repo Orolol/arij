@@ -74,16 +74,16 @@ export function useEpicMutations(
 
       if (!res.ok || data.error) {
         setDeleteEpicError(data.error || tErrors("failedToDeleteEpic"));
-        return;
+      } else {
+        onDeleteSuccess?.();
       }
-
-      onDeleteSuccess?.();
     } catch {
       setDeleteEpicError(tErrors("failedToDeleteEpic"));
-    } finally {
-      deleteInFlightRef.current = false;
-      setDeletingEpic(false);
     }
+    // Both branches land here — what the `finally` clause did before it; the
+    // React Compiler stops at a `finally` clause.
+    deleteInFlightRef.current = false;
+    setDeletingEpic(false);
   }, [projectId, epicId, onDeleteSuccess, tErrors]);
 
   return {

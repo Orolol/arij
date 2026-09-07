@@ -389,7 +389,7 @@ export default function ImportProjectPage() {
   async function handleValidate(data: ImportData) {
     resetFeedback();
     setValidating(true);
-    try {
+    const validate = async () => {
       const projectResult = await sendJson<{ id: string }>(
         "/api/projects",
         {
@@ -438,9 +438,11 @@ export default function ImportProjectPage() {
       }
 
       router.push(`/projects/${projectId}`);
-    } finally {
-      setValidating(false);
-    }
+    };
+    // A `.finally` call, not a `finally` clause: the React Compiler stops at
+    // the clause, and stopping left this page unread by every compiler rule.
+    // A rejection still reaches the caller.
+    await validate().finally(() => setValidating(false));
   }
 
   return (

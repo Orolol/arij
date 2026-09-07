@@ -127,6 +127,7 @@ export function DocsCard({ projectId, initialDocuments, className }: DocsCardPro
       setUploading(true);
       setError(null);
       try {
+        let failed = false;
         for (const file of list) {
           const body = new FormData();
           body.append("file", file);
@@ -139,15 +140,18 @@ export function DocsCard({ projectId, initialDocuments, className }: DocsCardPro
             setError(
               json.error || t("docs.errors.importFile", { name: file.name }),
             );
-            return;
+            failed = true;
+            break;
           }
         }
-        load();
+        if (!failed) load();
       } catch {
         setError(t("docs.errors.import"));
-      } finally {
-        setUploading(false);
       }
+      // Trailing, not in a `finally` clause: the React Compiler stops at the
+      // clause, and stopping left this component unread by every compiler
+      // rule.
+      setUploading(false);
     },
     [projectId, load, t],
   );

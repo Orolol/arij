@@ -21,27 +21,30 @@ export function useReleasePublish(projectId: string): UseReleasePublishReturn {
       setIsPublishing(true);
       setError(null);
 
-      try {
-        const res = await fetch(
-          `/api/projects/${projectId}/releases/${releaseId}/publish`,
-          { method: "POST" }
-        );
+      const request = async (): Promise<boolean> => {
+        try {
+          const res = await fetch(
+            `/api/projects/${projectId}/releases/${releaseId}/publish`,
+            { method: "POST" }
+          );
 
-        const data = await res.json();
+          const data = await res.json();
 
-        if (!res.ok) {
-          setError(data.error || tErrors("failedToPublishRelease"));
+          if (!res.ok) {
+            setError(data.error || tErrors("failedToPublishRelease"));
+            return false;
+          }
+
+          return true;
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : tErrors("networkError");
+          setError(msg);
           return false;
         }
-
-        return true;
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : tErrors("networkError");
-        setError(msg);
-        return false;
-      } finally {
-        setIsPublishing(false);
-      }
+      };
+      // A `.finally` call, not a `finally` clause: the React Compiler stops at
+      // the clause, and stopping left this hook unread by every compiler rule.
+      return request().finally(() => setIsPublishing(false));
     },
     [projectId, tErrors]
   );

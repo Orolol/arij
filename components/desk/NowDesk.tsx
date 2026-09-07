@@ -195,22 +195,24 @@ export function NowDesk({
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           reportFailure(res, body, t("toasts.replyFailed"), item.projectId);
-          return;
+        } else {
+          // The reply is also the read: the durable cursor move is what keeps
+          // the row from coming straight back on the next poll.
+          await fetch("/api/inbox/read", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ epicId: item.epicId }),
+          }).catch(() => {});
+          raise("success", t("toasts.replySent"));
+          changed();
         }
-        // The reply is also the read: the durable cursor move is what keeps the
-        // row from coming straight back on the next poll.
-        await fetch("/api/inbox/read", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ epicId: item.epicId }),
-        }).catch(() => {});
-        raise("success", t("toasts.replySent"));
-        changed();
       } catch {
         raise("error", t("toasts.replyFailed"));
-      } finally {
-        markPending(item.epicId, false);
       }
+      // Trailing, not in a `finally` clause, here and in every handler below:
+      // the React Compiler stops at the clause, and stopping left this
+      // component unread by every compiler rule.
+      markPending(item.epicId, false);
     },
     [markPending, raise, reportFailure, changed, t],
   );
@@ -239,15 +241,14 @@ export function NowDesk({
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           reportFailure(res, body, t("toasts.buildFailed"), item.projectId);
-          return;
+        } else {
+          raise("success", t("toasts.sentToDev"));
+          changed();
         }
-        raise("success", t("toasts.sentToDev"));
-        changed();
       } catch {
         raise("error", t("toasts.buildFailed"));
-      } finally {
-        markPending(item.epicId, false);
       }
+      markPending(item.epicId, false);
     },
     [markPending, namedAgentId, raise, reportFailure, changed, t],
   );
@@ -284,15 +285,14 @@ export function NowDesk({
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           reportFailure(res, body, t("toasts.retryFailed"), item.projectId);
-          return;
+        } else {
+          raise("success", t("toasts.retrying"));
+          changed();
         }
-        raise("success", t("toasts.retrying"));
-        changed();
       } catch {
         raise("error", t("toasts.retryFailed"));
-      } finally {
-        markPending(item.epicId, false);
       }
+      markPending(item.epicId, false);
     },
     [markPending, namedAgentId, raise, reportFailure, changed, t],
   );
@@ -322,14 +322,13 @@ export function NowDesk({
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           raise("error", t("toasts.dismissFailed"));
-          return;
+        } else {
+          changed();
         }
-        changed();
       } catch {
         raise("error", t("toasts.dismissFailed"));
-      } finally {
-        markPending(item.epicId, false);
       }
+      markPending(item.epicId, false);
     },
     [markPending, raise, changed, t],
   );
@@ -349,20 +348,20 @@ export function NowDesk({
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           reportFailure(res, body, t("toasts.resolveFailed"), item.projectId);
-          return;
+        } else {
+          // Two outcomes: a clean re-merge landed the branch, or a conflict
+          // agent was dispatched and the row goes back to ordinary agent
+          // activity.
+          if (body.data?.resolved) raise("success", t("toasts.merged"));
+          else if (body.data?.sessionId) {
+            raise("success", t("toasts.conflictAgentDispatched"));
+          }
+          changed();
         }
-        // Two outcomes: a clean re-merge landed the branch, or a conflict agent
-        // was dispatched and the row goes back to ordinary agent activity.
-        if (body.data?.resolved) raise("success", t("toasts.merged"));
-        else if (body.data?.sessionId) {
-          raise("success", t("toasts.conflictAgentDispatched"));
-        }
-        changed();
       } catch {
         raise("error", t("toasts.resolveFailed"));
-      } finally {
-        markPending(item.epicId, false);
       }
+      markPending(item.epicId, false);
     },
     [markPending, raise, reportFailure, changed, t],
   );

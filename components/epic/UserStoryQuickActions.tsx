@@ -56,9 +56,14 @@ export function UserStoryQuickActions({
         }
       );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error)
-        throw new Error(data.error || t("actions.sendToDevError"));
-      onRefresh();
+      // Not a `throw` into the catch below, here and twice more: a `throw`
+      // inside `try/catch` is a construct the React Compiler stops on, and
+      // stopping left this component unread by every compiler rule.
+      if (!res.ok || data.error) {
+        setError(data.error || t("actions.sendToDevError"));
+      } else {
+        onRefresh();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : t("actions.sendToDevError"));
     }
@@ -78,9 +83,11 @@ export function UserStoryQuickActions({
         }
       );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error)
-        throw new Error(data.error || t("actions.reviewError"));
-      onRefresh();
+      if (!res.ok || data.error) {
+        setError(data.error || t("actions.reviewError"));
+      } else {
+        onRefresh();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : t("actions.reviewError"));
     }
@@ -99,11 +106,13 @@ export function UserStoryQuickActions({
         }
       );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error)
-        throw new Error(data.error || t("actions.approveError"));
-      // Story approval closes the story only — the epic closes through its
-      // own merge (to_merge → done).
-      onRefresh();
+      if (!res.ok || data.error) {
+        setError(data.error || t("actions.approveError"));
+      } else {
+        // Story approval closes the story only — the epic closes through its
+        // own merge (to_merge → done).
+        onRefresh();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : t("actions.approveError"));
     }

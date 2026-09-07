@@ -150,30 +150,29 @@ export function RefinementButton({
       if (!response.ok) {
         // The route's own refusal wins over this fallback.
         onError(payload?.error ?? t("refinement.errors.start"));
-        return;
-      }
-      if (payload?.data?.started === false) {
+      } else if (payload?.data?.started === false) {
         // Nothing to refine — a real answer on a 200, not a failure. The
         // route names the reason; this is only what stands in for silence.
-        const reason = payload.data.reason ?? t("refinement.errors.nothingToRefine");
+        const reason =
+          payload.data.reason ?? t("refinement.errors.nothingToRefine");
         (onNotice ?? onError)(reason);
         setConfiguring(false);
-        return;
+      } else {
+        setConfiguring(false);
+        wasRunning.current = true;
+        setStatus({
+          running: true,
+          sessionId: payload?.data?.sessionId ?? null,
+          ticketCount: payload?.data?.ticketCount ?? 0,
+        });
+        if (payload?.data?.sessionId) onStarted?.(payload.data.sessionId);
       }
-
-      setConfiguring(false);
-      wasRunning.current = true;
-      setStatus({
-        running: true,
-        sessionId: payload?.data?.sessionId ?? null,
-        ticketCount: payload?.data?.ticketCount ?? 0,
-      });
-      if (payload?.data?.sessionId) onStarted?.(payload.data.sessionId);
     } catch {
       onError(t("refinement.errors.start"));
-    } finally {
-      setStarting(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setStarting(false);
   }, [projectId, onError, onNotice, onStarted, starting, isRunning, t]);
 
   const running = status?.running === true;

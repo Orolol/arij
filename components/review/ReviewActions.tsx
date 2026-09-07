@@ -54,68 +54,68 @@ export function ReviewActions({
   const canMerge = epicStatus === "to_merge";
 
   async function handleBackToDev() {
-    setSendingBack(true);
-    try {
-      // Build the rework comment from open review comments.
-      //
-      // NOT COPY, and deliberately absent from the catalogue: this markdown is
-      // the prompt an agent reads on the next iteration, and it is persisted on
-      // the ticket. Agent-facing and persisted text is pinned to English at its
-      // own site rather than following the interface locale
-      // (lib/i18n/catalogue.ts, exclusion 5).
-      const openComments = comments.filter((c) => c.status === "open");
-      const parts: string[] = [];
+    // Build the rework comment from open review comments.
+    //
+    // NOT COPY, and deliberately absent from the catalogue: this markdown is
+    // the prompt an agent reads on the next iteration, and it is persisted on
+    // the ticket. Agent-facing and persisted text is pinned to English at its
+    // own site rather than following the interface locale
+    // (lib/i18n/catalogue.ts, exclusion 5).
+    const openComments = comments.filter((c) => c.status === "open");
+    const parts: string[] = [];
 
-      if (openComments.length > 0) {
-        parts.push("## Review Comments\n");
-        // Group by file
-        const byFile = new Map<string, ReviewComment[]>();
-        for (const c of openComments) {
-          const existing = byFile.get(c.filePath) || [];
-          existing.push(c);
-          byFile.set(c.filePath, existing);
-        }
-        for (const [filePath, fileComments] of byFile) {
-          parts.push(`### ${filePath}`);
-          for (const c of fileComments) {
-            parts.push(`- **Line ${c.lineNumber}**: ${c.body}`);
-          }
-          parts.push("");
-        }
+    if (openComments.length > 0) {
+      parts.push("## Review Comments\n");
+      // Group by file
+      const byFile = new Map<string, ReviewComment[]>();
+      for (const c of openComments) {
+        const existing = byFile.get(c.filePath) || [];
+        existing.push(c);
+        byFile.set(c.filePath, existing);
       }
-
-      if (additionalComment.trim()) {
-        parts.push("## Additional Instructions\n");
-        parts.push(additionalComment.trim());
+      for (const [filePath, fileComments] of byFile) {
+        parts.push(`### ${filePath}`);
+        for (const c of fileComments) {
+          parts.push(`- **Line ${c.lineNumber}**: ${c.body}`);
+        }
+        parts.push("");
       }
-
-      const fullComment = parts.join("\n");
-      await onBackToDev(fullComment);
-      setBackToDevOpen(false);
-      setAdditionalComment("");
-    } finally {
-      setSendingBack(false);
     }
+
+    if (additionalComment.trim()) {
+      parts.push("## Additional Instructions\n");
+      parts.push(additionalComment.trim());
+    }
+
+    const fullComment = parts.join("\n");
+    setSendingBack(true);
+    // An async wrapper and a `.finally` call, not a `finally` clause, here and
+    // in the two handlers below: the React Compiler stops at the clause, and
+    // stopping left this component unread by every compiler rule. The wrapper
+    // is what makes the call equivalent — these callbacks come from outside,
+    // and `Promise<unknown>` does not stop one from throwing BEFORE it returns
+    // a promise, which would unwind past a `.finally` attached to that return
+    // value and leave the spinner running for good. Settling the call inside
+    // the wrapper turns either ending into a rejection first. A rejection
+    // still reaches the caller, and still skips the resets after it.
+    const sendBack = async () => onBackToDev(fullComment);
+    await sendBack().finally(() => setSendingBack(false));
+    setBackToDevOpen(false);
+    setAdditionalComment("");
   }
 
   async function handleMerge() {
     setMerging(true);
-    try {
-      // The merge is the approval: the route resolves whatever comments
-      // remain open as part of the same action.
-      await onMerge();
-    } finally {
-      setMerging(false);
-    }
+    // The merge is the approval: the route resolves whatever comments
+    // remain open as part of the same action.
+    const merge = async () => onMerge();
+    await merge().finally(() => setMerging(false));
   }
 
   async function handleResolveAll() {
     setResolvingAll(true);
-    try {
-      await onResolveAll();
-    } finally {
-      setResolvingAll(false);
-    }
+    const resolveAll = async () => onResolveAll();
+    await resolveAll().finally(() => setResolvingAll(false));
   }
 
   return (

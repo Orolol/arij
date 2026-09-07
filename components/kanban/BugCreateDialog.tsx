@@ -122,73 +122,79 @@ export function BugCreateDialog({
 
     const images = attachments.map((a) => a.filePath).filter(Boolean);
 
-    try {
-      const createRes = await fetch(`/api/projects/${projectId}/bugs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: title.trim(),
-          description: description.trim() || null,
-          priority: Number(priority),
-          // Omitted entirely when nothing is attached, so a bug without a
-          // screenshot posts exactly the payload it posted before.
-          ...(images.length > 0 ? { images } : {}),
-        }),
-      });
+    const submit = async () => {
+      try {
+        const createRes = await fetch(`/api/projects/${projectId}/bugs`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: title.trim(),
+            description: description.trim() || null,
+            priority: Number(priority),
+            // Omitted entirely when nothing is attached, so a bug without a
+            // screenshot posts exactly the payload it posted before.
+            ...(images.length > 0 ? { images } : {}),
+          }),
+        });
 
-      const createData = await createRes.json().catch(() => ({}));
-      if (!createRes.ok || createData.error) {
-        // Through apiErrorMessage so a rejected field says which one and why,
-        // instead of the schema layer's bare "Validation failed".
-        setError(apiErrorMessage(createData, t("bugCreate.errors.create")));
-        return;
-      }
-
-      const createdBugId = createData?.data?.id as string | undefined;
-      if (mode === "create_and_fix") {
-        if (!createdBugId) {
-          setError(t("bugCreate.errors.fixAgentMissingId"));
-          resetForm();
-          onCreated?.("");
+        const createData = await createRes.json().catch(() => ({}));
+        if (!createRes.ok || createData.error) {
+          // Through apiErrorMessage so a rejected field says which one and why,
+          // instead of the schema layer's bare "Validation failed".
+          setError(apiErrorMessage(createData, t("bugCreate.errors.create")));
           return;
         }
 
-        const buildRes = await fetch(
-          `/api/projects/${projectId}/epics/${createdBugId}/build`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ namedAgentId }),
+        const createdBugId = createData?.data?.id as string | undefined;
+        if (mode === "create_and_fix") {
+          if (!createdBugId) {
+            setError(t("bugCreate.errors.fixAgentMissingId"));
+            resetForm();
+            onCreated?.("");
+            return;
           }
-        );
-        const buildData = await buildRes.json().catch(() => ({}));
-        if (!buildRes.ok || buildData.error) {
-          // The build route's own words when it named a reason; otherwise the
-          // bare sentence.
-          setError(
-            buildData.error
-              ? t("bugCreate.errors.fixAgentReason", { reason: buildData.error })
-              : t("bugCreate.errors.fixAgent"),
-          );
-          resetForm();
-          onCreated?.(createdBugId);
-          return;
-        }
-      }
 
-      resetForm();
-      onOpenChange(false);
-      onCreated?.(createdBugId ?? "");
-    } catch {
-      setError(
-        mode === "create_and_fix"
-          ? t("bugCreate.errors.createAndFix")
-          : t("bugCreate.errors.create")
-      );
-    } finally {
+          const buildRes = await fetch(
+            `/api/projects/${projectId}/epics/${createdBugId}/build`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ namedAgentId }),
+            }
+          );
+          const buildData = await buildRes.json().catch(() => ({}));
+          if (!buildRes.ok || buildData.error) {
+            // The build route's own words when it named a reason; otherwise the
+            // bare sentence.
+            setError(
+              buildData.error
+                ? t("bugCreate.errors.fixAgentReason", { reason: buildData.error })
+                : t("bugCreate.errors.fixAgent"),
+            );
+            resetForm();
+            onCreated?.(createdBugId);
+            return;
+          }
+        }
+
+        resetForm();
+        onOpenChange(false);
+        onCreated?.(createdBugId ?? "");
+      } catch {
+        setError(
+          mode === "create_and_fix"
+            ? t("bugCreate.errors.createAndFix")
+            : t("bugCreate.errors.create")
+        );
+      }
+    };
+    // A `.finally` call, not a `finally` clause: the React Compiler stops at
+    // the clause, and stopping left this component unread by every compiler
+    // rule.
+    await submit().finally(() => {
       submitLockRef.current = false;
       setSubmitMode(null);
-    }
+    });
   }
 
   return (

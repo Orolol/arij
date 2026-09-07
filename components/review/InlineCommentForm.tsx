@@ -24,12 +24,16 @@ export function InlineCommentForm({
   async function handleSubmit() {
     if (!value.trim() || submitting) return;
     setSubmitting(true);
-    try {
-      await onSubmit(value.trim());
-      setValue("");
-    } finally {
-      setSubmitting(false);
-    }
+    // An async wrapper and a `.finally` call, not a `finally` clause: the
+    // React Compiler stops at the clause, and stopping left this component
+    // unread by every compiler rule. `onSubmit` belongs to the caller and may
+    // throw synchronously as well as reject; settling it inside the wrapper
+    // makes both endings a rejection, so `submitting` clears either way rather
+    // than sticking on a throw that never reached `.finally`. The rejection
+    // still reaches the caller.
+    const submit = async () => onSubmit(value.trim());
+    await submit().finally(() => setSubmitting(false));
+    setValue("");
   }
 
   return (

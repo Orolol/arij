@@ -118,9 +118,10 @@ export function AddAgentCard({
       }
     } catch {
       setError(t("roster.createFailedConnection"));
-    } finally {
-      setCreating(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setCreating(false);
   }
 
   const shell =

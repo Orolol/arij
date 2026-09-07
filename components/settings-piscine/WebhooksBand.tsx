@@ -67,18 +67,19 @@ export function WebhooksBand() {
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         setError(payload?.error ?? t("webhooks.saveFailed"));
-        return;
+      } else {
+        setMessage(
+          row.url.trim()
+            ? t("webhooks.saved", { project: row.projectName })
+            : t("webhooks.cleared", { project: row.projectName }),
+        );
       }
-      setMessage(
-        row.url.trim()
-          ? t("webhooks.saved", { project: row.projectName })
-          : t("webhooks.cleared", { project: row.projectName }),
-      );
     } catch {
       setError(t("webhooks.saveOffline"));
-    } finally {
-      setSavingId(null);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSavingId(null);
   }
 
   return (

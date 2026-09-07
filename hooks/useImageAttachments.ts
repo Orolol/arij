@@ -119,16 +119,16 @@ export function useImageAttachments({
       const session = stagingSessionRef.current;
       setPendingUploads((pending) => pending + 1);
 
-      let outcomes: UploadOutcome[] = [];
-      try {
-        outcomes = await Promise.all(accepted.map(uploadFile));
-      } finally {
-        // A cleared session already zeroed the counter; decrementing on its
-        // behalf would drive the next transfer's count negative.
+      // A `.finally` call, not a `finally` clause (the React Compiler stops at
+      // the clause). A cleared session already zeroed the counter; decrementing
+      // on its behalf would drive the next transfer's count negative.
+      const outcomes: UploadOutcome[] = await Promise.all(
+        accepted.map(uploadFile)
+      ).finally(() => {
         if (stagingSessionRef.current === session) {
           setPendingUploads((pending) => pending - 1);
         }
-      }
+      });
 
       // Answered into a form the caller has since submitted and reset. Staging
       // it now would attach a screenshot the user never sees to whatever they

@@ -116,19 +116,20 @@ export function OpenAiCard({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         setError(payload?.error ?? t("openAi.saveFailed"));
-        return;
+      } else {
+        if (apiKey.trim().length > 0) {
+          setKeySaved(true);
+          setKeyCleared(false);
+        }
+        setApiKey("");
+        setMessage(t("openAi.saved"));
       }
-      if (apiKey.trim().length > 0) {
-        setKeySaved(true);
-        setKeyCleared(false);
-      }
-      setApiKey("");
-      setMessage(t("openAi.saved"));
     } catch {
       setError(t("openAi.saveOffline"));
-    } finally {
-      setSaving(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSaving(false);
   }
 
   async function clearKey() {
@@ -144,17 +145,16 @@ export function OpenAiCard({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         setError(payload?.error ?? t("openAi.clearFailed"));
-        return;
+      } else {
+        setKeyCleared(true);
+        setKeySaved(false);
+        setApiKey("");
+        setMessage(t("openAi.cleared"));
       }
-      setKeyCleared(true);
-      setKeySaved(false);
-      setApiKey("");
-      setMessage(t("openAi.cleared"));
     } catch {
       setError(t("openAi.clearOffline"));
-    } finally {
-      setClearing(false);
     }
+    setClearing(false);
   }
 
   async function test() {
@@ -166,19 +166,18 @@ export function OpenAiCard({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.data?.valid) {
         setError(payload?.error ?? t("openAi.testFailed"));
-        return;
+      } else {
+        const testedModel = payload?.data?.model;
+        setMessage(
+          testedModel
+            ? t("openAi.testSucceededWithModel", { model: testedModel })
+            : t("openAi.testSucceeded"),
+        );
       }
-      const testedModel = payload?.data?.model;
-      setMessage(
-        testedModel
-          ? t("openAi.testSucceededWithModel", { model: testedModel })
-          : t("openAi.testSucceeded"),
-      );
     } catch {
       setError(t("openAi.testOffline"));
-    } finally {
-      setTesting(false);
     }
+    setTesting(false);
   }
 
   return (

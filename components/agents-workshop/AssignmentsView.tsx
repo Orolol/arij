@@ -93,9 +93,10 @@ export function AssignmentsView({ projectId }: { projectId?: string }) {
         ...current,
         [agentType]: t("assignments.updateFailedRetry"),
       }));
-    } finally {
-      setSavingRole(null);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSavingRole(null);
   }
 
   if (loading || agentsLoading) return <PageLoading />;

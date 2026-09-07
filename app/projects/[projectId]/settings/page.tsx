@@ -61,17 +61,18 @@ function ProjectTokenBudgetSection({ projectId }: { projectId: string }) {
       });
       if (!res.ok) {
         setMessage(t("tokenBudget.saveFailed"));
-        return;
+      } else {
+        setBudget(val === null ? "" : String(val));
+        setMessage(
+          val === null ? t("tokenBudget.cleared") : t("tokenBudget.saved")
+        );
       }
-      setBudget(val === null ? "" : String(val));
-      setMessage(
-        val === null ? t("tokenBudget.cleared") : t("tokenBudget.saved")
-      );
     } catch {
       setMessage(t("tokenBudget.saveFailed"));
-    } finally {
-      setSaving(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSaving(false);
   }
 
   return (

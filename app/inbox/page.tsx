@@ -84,9 +84,10 @@ function InboxRow({
       setReplyText("");
     } catch (e) {
       setError(e instanceof Error ? e.message : t("row.replyError"));
-    } finally {
-      setBusy(null);
     }
+    // Trailing, not in a `finally` clause, here and below: the React Compiler
+    // stops at the clause, and stopping left this component unread.
+    setBusy(null);
   }
 
   // Reading is the whole action: it moves the epic's read cursor through the
@@ -100,9 +101,8 @@ function InboxRow({
       await onMarkRead(item.epicId);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("row.markReadError"));
-    } finally {
-      setBusy(null);
     }
+    setBusy(null);
   }
 
   // "Send to Dev" shortcut: a plain POST to the existing per-epic build
@@ -125,15 +125,15 @@ function InboxRow({
       );
       const body = await res.json().catch(() => ({}));
       if (!res.ok || body.error) {
-        throw new Error(body.error || t("row.dispatchError"));
+        setError(body.error || t("row.dispatchError"));
+      } else {
+        setReplyText("");
+        await onMarkRead(item.epicId);
       }
-      setReplyText("");
-      await onMarkRead(item.epicId);
     } catch (e) {
       setError(e instanceof Error ? e.message : t("row.dispatchError"));
-    } finally {
-      setBusy(null);
     }
+    setBusy(null);
   }
 
   return (

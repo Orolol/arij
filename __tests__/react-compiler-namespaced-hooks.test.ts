@@ -97,32 +97,6 @@ const CONVERTED = [
 ] as const;
 
 /**
- * The components among those 26 that the React Compiler declines to analyse AT
- * ALL — a bail, which is a second and entirely separate blind spot from the
- * namespace one. Their hooks are bare like everyone else's, and the rules still
- * read nothing: a freshly injected `useState`/`useEffect` violation at the top
- * of the component body draws no diagnostic. Measured IDENTICAL before and
- * after the conversion, so converting them changed nothing here.
- *
- * This is not confined to the converted set. The same probe over the whole app
- * finds 48 bailed components out of 113 probeable ones — `AgentsWorkshopView`,
- * `NightRunDialog`, `RefinementButton`, most of `app/projects/[projectId]/*`
- * and more. That is a much larger defect than this ticket, and it is filed
- * separately rather than smuggled into a mechanical conversion; the sweep here
- * stays scoped to the files this change touched.
- *
- * This list is a known gap, not a permission. Shrinking it should FAIL this
- * test — delete the entry and keep the win. Growing it means a converted
- * component just went dark.
- */
-const KNOWN_BAILED = [
-  "components/chat-page/DraftedEpicCard.tsx",
-  "components/desk/DeskComposer.tsx",
-  "components/desk/NowDesk.tsx",
-  "components/qa/QaScreen.tsx",
-] as const;
-
-/**
  * The five violations the conversion revealed, with the mutation that puts each
  * one back. Reverting a fix must make the rule speak again: that is what tells
  * a fixed component from one that merely stopped being read.
@@ -410,7 +384,7 @@ describe("React Compiler rules and `React.`-namespaced hooks", () => {
     expect(checked.length).toBeGreaterThanOrEqual(4);
   }, 30_000);
 
-  it("pins the components the compiler still declines to analyse", async () => {
+  it("finds no converted file the compiler declines to analyse", async () => {
     const bailed: string[] = [];
     for (const rel of CONVERTED) {
       const probed = withBailProbe(read(rel));
@@ -421,16 +395,21 @@ describe("React Compiler rules and `React.`-namespaced hooks", () => {
     }
 
     /*
-      Every component here is dark to the React Compiler for a reason that is
-      NOT the namespace: their hooks are already bare. `NowDesk` is the clearest
-      case — `react-hooks/rules-of-hooks` fires inside it while every
-      compiler-backed rule stays silent, including a violation injected at the
-      very first line of the component body.
+      Four of these — `DraftedEpicCard`, `DeskComposer`, `NowDesk`, `QaScreen`
+      — were dark for a reason that was NOT the namespace: their hooks were
+      already bare, and a `finally` clause (five of them in `NowDesk`) stopped
+      the compiler before any rule ran. `NowDesk` was the clearest case:
+      `react-hooks/rules-of-hooks` fired inside it while every compiler-backed
+      rule stayed silent, including a violation injected at the very first
+      line of the component body. They were pinned here as KNOWN_BAILED until
+      the clauses were rewritten (9niAS9OwiaOJ).
 
-      Left as a separate defect rather than folded into the conversion, because
-      finding what makes each component un-compilable is real work, not a
-      mechanical rewrite.
+      The app-wide ledger of what the compiler still declines to read lives in
+      `react-compiler-coverage.test.ts`, which enumerates every component and
+      hook rather than these 26 files. This stays as the converted set's own
+      regression: a construct the compiler stops on, slipping back into one of
+      them, shows up here by name.
     */
-    expect(bailed.sort()).toEqual([...KNOWN_BAILED].sort());
+    expect(bailed).toEqual([]);
   }, 30_000);
 });

@@ -124,8 +124,12 @@ export function useSettingsDraft(): SettingsDraft {
         const loadedValue = editors[key];
         if (Object.is(next, loadedValue)) {
           if (!(key in current)) return current;
-          const { [key]: _dropped, ...rest } = current;
-          return rest;
+          // Not `const { [key]: _, ...rest } = current`: a computed key in a
+          // destructuring pattern is one of the constructs the React Compiler
+          // has not implemented, and it stops reading the hook there.
+          return Object.fromEntries(
+            Object.entries(current).filter(([name]) => name !== key),
+          );
         }
         if (Object.is(current[key], next)) return current;
         return { ...current, [key]: next };
@@ -187,20 +191,22 @@ export function useSettingsDraft(): SettingsDraft {
           typeof payload?.error === "string" ? payload.error : saveRefusedMessage,
         );
         setMessageTone("danger");
-        return;
+      } else {
+        // Feed the stored values back through the readers: that is what shows
+        // a clamped breaker, a re-joined pattern list and reformatted verify
+        // JSON.
+        setData((current) => ({ ...current, ...body }));
+        setDraft({});
+        setMessageState(savedMessage);
+        setMessageTone("muted");
       }
-      // Feed the stored values back through the readers: that is what shows a
-      // clamped breaker, a re-joined pattern list and reformatted verify JSON.
-      setData((current) => ({ ...current, ...body }));
-      setDraft({});
-      setMessageState(savedMessage);
-      setMessageTone("muted");
     } catch {
       setMessageState(saveOfflineMessage);
       setMessageTone("danger");
-    } finally {
-      setSaving(false);
     }
+    // Every branch above falls through here — what the `finally` did before
+    // it; the React Compiler stops at a `finally` clause.
+    setSaving(false);
   }, [draft, t, savedMessage, saveRefusedMessage, saveOfflineMessage]);
 
   return {

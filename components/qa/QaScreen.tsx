@@ -184,15 +184,17 @@ export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           reportFailure(res, body, t("toasts.buildFailed"), finding.projectId);
-          return;
+        } else {
+          raise("success", t("toasts.buildLaunched"));
+          await refresh();
         }
-        raise("success", t("toasts.buildLaunched"));
-        await refresh();
       } catch {
         raise("error", t("toasts.buildFailed"));
-      } finally {
-        markPending(finding.findingId, false);
       }
+      // Trailing, not in a `finally` clause, here and in the handlers below:
+      // the React Compiler stops at the clause, and stopping left this
+      // component unread by every compiler rule.
+      markPending(finding.findingId, false);
     },
     [markPending, raise, reportFailure, refresh, t],
   );
@@ -225,34 +227,32 @@ export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           raise("error", body.error || t("toasts.dismissFailed"));
-          return;
+        } else {
+          const echoed = await fetch(
+            `/api/projects/${finding.projectId}/epics/${finding.epicId}/comments`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                author: "user",
+                content: `**Finding dismissed** on \`${finding.filePath}:${finding.lineNumber}\`\n\n${reason}`,
+              }),
+            },
+          )
+            .then((response) => response.ok)
+            .catch(() => false);
+
+          if (echoed) raise("success", t("toasts.findingDismissed"));
+          else raise("warning", t("toasts.findingDismissedWithoutReason"));
+
+          setDismissTarget(null);
+          await refresh();
         }
-
-        const echoed = await fetch(
-          `/api/projects/${finding.projectId}/epics/${finding.epicId}/comments`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              author: "user",
-              content: `**Finding dismissed** on \`${finding.filePath}:${finding.lineNumber}\`\n\n${reason}`,
-            }),
-          },
-        )
-          .then((response) => response.ok)
-          .catch(() => false);
-
-        if (echoed) raise("success", t("toasts.findingDismissed"));
-        else raise("warning", t("toasts.findingDismissedWithoutReason"));
-
-        setDismissTarget(null);
-        await refresh();
       } catch {
         raise("error", t("toasts.dismissFailed"));
-      } finally {
-        markPending(finding.findingId, false);
-        setDismissPending(false);
       }
+      markPending(finding.findingId, false);
+      setDismissPending(false);
     },
     [markPending, raise, refresh, t],
   );
@@ -280,15 +280,14 @@ export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           reportFailure(res, body, t("toasts.reviewFailed"), target.projectId);
-          return;
+        } else {
+          raise("success", t("toasts.reviewLaunched"));
+          await refresh();
         }
-        raise("success", t("toasts.reviewLaunched"));
-        await refresh();
       } catch {
         raise("error", t("toasts.reviewFailed"));
-      } finally {
-        setRunPending(false);
       }
+      setRunPending(false);
     },
     [raise, reportFailure, refresh, t],
   );
