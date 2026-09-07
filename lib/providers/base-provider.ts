@@ -40,6 +40,11 @@ import type {
   ProviderSpawnOptions,
   ProviderType,
 } from "./types";
+import {
+  isChildAlive,
+  signalChild,
+  createChildKiller,
+} from "./process-signals";
 
 export interface BaseProviderChunkCallbacks {
   onRawChunk?: (chunk: {
@@ -82,48 +87,6 @@ export interface ProviderExitInfo {
   spawnContext?: ProviderSpawnContext;
 }
 
-/**
- * Whether the child is still running.
- *
- * NOT `child.killed`, which only reports that a signal was successfully
- * delivered — it flips to true the instant `kill()` returns and says nothing
- * about whether the process died. A process still holds the CPU until one of
- * `exitCode` / `signalCode` is set.
- */
-function isChildAlive(child: ChildProcess): boolean {
-  // Only an explicitly-set exit field proves death. Anything else — including
-  // a handle that does not report these at all — is treated as alive, because
-  // on a kill path a redundant signal costs nothing and a skipped one leaves
-  // an agent running loose.
-  const exited = child.exitCode !== null && child.exitCode !== undefined;
-  const signalled = child.signalCode !== null && child.signalCode !== undefined;
-  return !exited && !signalled;
-}
-
-/**
- * Signals the child's whole process GROUP, falling back to the child alone.
- *
- * A CLI agent is a tree, not a process: it spawns shells, test runners and
- * dev servers of its own. Signalling only the process at the head leaves that
- * tree running, re-parented to init and invisible to Arij — the concrete
- * symptom being a dev server still bound to a port hours after the session
- * that started it was cancelled.
- *
- * `-pid` addresses the group, which exists because the spawn is `detached`.
- * ESRCH simply means everything is already gone.
- */
-function signalChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
-  if (child.pid === undefined) return;
-  try {
-    process.kill(-child.pid, signal);
-  } catch {
-    try {
-      child.kill(signal);
-    } catch {
-      // Already reaped — nothing left to signal.
-    }
-  }
-}
 
 /**
  * Abstract base class for CLI agent providers.
@@ -508,7 +471,6 @@ export abstract class BaseCliProvider implements AgentProvider {
     }
 
     let child: ChildProcess | null = null;
-    let killed = false;
 
     const promise = new Promise<ProviderResult>((resolve) => {
       const startTime = Date.now();
@@ -600,9 +562,10 @@ export abstract class BaseCliProvider implements AgentProvider {
         const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
         const stderr = Buffer.concat(stderrChunks).toString("utf-8");
 
+        killer.clear();
         try {
           const providerResult = this.handleExit(
-            { code, stdout, stderr, duration, killed, options, spawnContext },
+            { code, stdout, stderr, duration, killed: killer.isKilled(), options, spawnContext },
             callbacks,
             logCtx,
           );
@@ -613,25 +576,8 @@ export abstract class BaseCliProvider implements AgentProvider {
       });
     });
 
-    const kill = () => {
-      if (!child || !isChildAlive(child)) return;
-      killed = true;
-      signalChild(child, "SIGTERM");
-
-      // Force kill whatever is still standing 5s later. The guard reads the
-      // exit fields, NOT `child.killed`: Node sets `killed` as soon as a
-      // signal has been *delivered*, so `!child.killed` is already false here
-      // and the escalation this timer exists for could never fire. An agent
-      // that ignored or outran SIGTERM therefore survived its own
-      // cancellation — which is how a session marked `cancelled` in the
-      // database kept writing to a worktree that a live session had meanwhile
-      // been handed.
-      setTimeout(() => {
-        if (child && isChildAlive(child)) {
-          signalChild(child, "SIGKILL");
-        }
-      }, 5000);
-    };
+    const killer = createChildKiller(() => child, options.killGraceMs);
+    const kill = killer.kill;
 
     // The prompt is not in argv when it rides stdin — show the redirection so
     // the command in the UI still accounts for it.

@@ -34,12 +34,31 @@ export const DEFAULT_COMPLETION_POLL_INTERVAL_MS = 2000;
  */
 export async function waitForProcessCompletion(
   sessionId: string,
-  pollIntervalMs: number = DEFAULT_COMPLETION_POLL_INTERVAL_MS
+  pollIntervalMs: number = DEFAULT_COMPLETION_POLL_INTERVAL_MS,
+  graceMs?: number,
 ): Promise<SessionInfo | null> {
   let info = processManager.getStatus(sessionId);
   while (info && info.status === "running") {
-    await new Promise((r) => setTimeout(r, pollIntervalMs));
+    const closePromise = processManager.getClosePromise?.(sessionId);
+    if (closePromise) {
+      await Promise.race([
+        closePromise,
+        new Promise((r) => setTimeout(r, pollIntervalMs)),
+      ]);
+    } else {
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+    }
     info = processManager.getStatus(sessionId);
   }
+
+  // Once the session is no longer running (e.g. cancelled, failed, or completed),
+  // wait for the underlying child process to actually close (or bounded grace)
+  // before returning to the caller. This ensures worktree slots are not reused
+  // while the cancelled process could still be writing to disk.
+  if (info && typeof processManager.waitForClose === "function") {
+    await processManager.waitForClose(sessionId, graceMs);
+    info = processManager.getStatus(sessionId);
+  }
+
   return info;
 }

@@ -171,6 +171,8 @@ export interface ProviderSpawnOptions {
    * is exactly what it was before the registry existed.
    */
   cliOptions?: NamedAgentCliOptions;
+  /** Grace period in ms before SIGTERM escalates to SIGKILL (defaults to 5000ms). */
+  killGraceMs?: number;
 }
 
 export interface ProviderResult {

@@ -56,6 +56,10 @@ export interface TrackedSession {
   providerSession?: ProviderSession;
   /** Temp `--mcp-config` file for claude-code spawns, cleared on teardown. */
   mcpConfigPath?: string;
+  /** Settle promise for the underlying child process / provider spawn. */
+  closePromise?: Promise<void>;
+  /** Whether the underlying process has emitted close / exited. */
+  processClosed?: boolean;
 }
 
 export interface SessionInfo {
@@ -67,6 +71,7 @@ export interface SessionInfo {
   duration?: number;
   result?: ClaudeResult;
   cliSessionId?: string;
+  processClosed?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +472,11 @@ class ClaudeProcessManager {
       }
     }
 
+    let markProcessClosed!: () => void;
+    const closePromise = new Promise<void>((resolve) => {
+      markProcessClosed = resolve;
+    });
+
     const session: TrackedSession = {
       sessionId,
       status: "running",
@@ -477,6 +487,8 @@ class ClaudeProcessManager {
       kill,
       providerSession,
       mcpConfigPath,
+      closePromise,
+      processClosed: false,
     };
 
     this.sessions.set(sessionId, session);
@@ -531,6 +543,13 @@ class ClaudeProcessManager {
             duration: Date.now() - tracked.startedAt.getTime(),
           };
         }
+      })
+      .finally(() => {
+        const tracked = this.sessions.get(sessionId);
+        if (tracked) {
+          tracked.processClosed = true;
+        }
+        markProcessClosed();
       });
 
     return this.toSessionInfo(session);
@@ -575,6 +594,47 @@ class ClaudeProcessManager {
     if (!session) return null;
 
     return this.toSessionInfo(session);
+  }
+
+  /**
+   * Returns the settlement promise for the session's underlying child process.
+   * Resolves when the process emits close/error, regardless of whether the session
+   * ended normally or was cancelled.
+   */
+  getClosePromise(sessionId: string): Promise<void> | null {
+    return this.sessions.get(sessionId)?.closePromise ?? null;
+  }
+
+  /**
+   * Whether the underlying process has exited. Unknown sessions are considered closed.
+   */
+  isProcessClosed(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    return !session || session.processClosed === true;
+  }
+
+  /**
+   * Waits until the session's underlying child process has actually closed,
+   * bounded by an optional grace period (defaults to 8000ms).
+   */
+  async waitForClose(
+    sessionId: string,
+    graceMs: number = 8000
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.processClosed || !session.closePromise) return;
+
+    let timer: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, graceMs);
+      timer.unref?.();
+    });
+
+    try {
+      await Promise.race([session.closePromise, timeoutPromise]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   /**
@@ -731,6 +791,10 @@ class ClaudeProcessManager {
 
     if (session.cliSessionId) {
       info.cliSessionId = session.cliSessionId;
+    }
+
+    if (session.processClosed !== undefined) {
+      info.processClosed = session.processClosed;
     }
 
     return info;

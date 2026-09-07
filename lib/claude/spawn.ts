@@ -15,6 +15,11 @@ import {
   type NamedAgentCliOptions,
 } from "@/lib/providers/options-registry";
 import type { McpSpawnConfig } from "@/lib/providers/types";
+import {
+  createChildKiller,
+  isChildAlive,
+  signalChild,
+} from "@/lib/providers/process-signals";
 
 export interface ClaudeOptions {
   /**
@@ -49,6 +54,8 @@ export interface ClaudeOptions {
    * empty leaves the argv exactly as it was before the option registry.
    */
   cliOptions?: NamedAgentCliOptions;
+  /** Grace period in ms before SIGTERM escalates to SIGKILL (defaults to 5000ms). */
+  killGraceMs?: number;
 }
 
 export interface ClaudeResult {
@@ -261,7 +268,6 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
   }
 
   let child: ChildProcess | null = null;
-  let killed = false;
   let logEnded = false;
 
   const promise = new Promise<ClaudeResult>((resolve) => {
@@ -287,6 +293,7 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
       cwd: effectiveCwd,
       env: { ...process.env },
       stdio: [promptOnStdin ? "pipe" : "ignore", "pipe", "pipe"],
+      detached: true,
     });
 
     if (promptOnStdin) {
@@ -328,7 +335,9 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
     });
 
     child.on("close", (code) => {
+      killer.clear();
       const duration = Date.now() - startTime;
+      const killed = killer.isKilled();
       // Session end (normal exit, failure, or kill) — drop the token file.
       cleanupMcpConfigFile(mcpConfigPath);
       finishLog(code, killed ? "Process was cancelled." : undefined);
@@ -373,19 +382,8 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
     });
   });
 
-  const kill = () => {
-    if (child && !child.killed) {
-      killed = true;
-      child.kill("SIGTERM");
-
-      // Force kill after 5 seconds if still running
-      setTimeout(() => {
-        if (child && !child.killed) {
-          child.kill("SIGKILL");
-        }
-      }, 5000);
-    }
-  };
+  const killer = createChildKiller(() => child, options.killGraceMs);
+  const kill = killer.kill;
 
   // Build display command (replace prompt with <prompt>; the --mcp-config
   // value is an ephemeral temp path that means nothing in the UI, so it is
@@ -484,6 +482,7 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
         cwd: effectiveCwd,
         env: { ...process.env },
         stdio: [promptOnStdin ? "pipe" : "ignore", "pipe", "pipe"],
+        detached: true,
       });
 
       if (promptOnStdin) {
@@ -626,6 +625,7 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
       });
 
       child.on("close", (code) => {
+        killer.clear();
         cleanupMcpConfigFile(mcpConfigPath);
 
         // Process any remaining buffer
@@ -643,22 +643,12 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
       });
     },
     cancel() {
-      if (child && !child.killed) {
-        child.kill("SIGTERM");
-      }
+      killer.kill();
     },
   });
 
-  const kill = () => {
-    if (child && !child.killed) {
-      child.kill("SIGTERM");
-      setTimeout(() => {
-        if (child && !child.killed) {
-          child.kill("SIGKILL");
-        }
-      }, 5000);
-    }
-  };
+  const killer = createChildKiller(() => child, options.killGraceMs);
+  const kill = killer.kill;
 
   return { stream, kill };
 }
