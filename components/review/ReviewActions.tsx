@@ -81,11 +81,17 @@ export function ReviewActions({
 
     const fullComment = parts.join("\n");
     setSendingBack(true);
-    // A `.finally` call, not a `finally` clause, here and in the two handlers
-    // below: the React Compiler stops at the clause, and stopping left this
-    // component unread by every compiler rule. A rejection still reaches the
-    // caller, and skips the resets after it as before.
-    await onBackToDev(fullComment).finally(() => setSendingBack(false));
+    // An async wrapper and a `.finally` call, not a `finally` clause, here and
+    // in the two handlers below: the React Compiler stops at the clause, and
+    // stopping left this component unread by every compiler rule. The wrapper
+    // is what makes the call equivalent — these callbacks come from outside,
+    // and `Promise<unknown>` does not stop one from throwing BEFORE it returns
+    // a promise, which would unwind past a `.finally` attached to that return
+    // value and leave the spinner running for good. Settling the call inside
+    // the wrapper turns either ending into a rejection first. A rejection
+    // still reaches the caller, and still skips the resets after it.
+    const sendBack = async () => onBackToDev(fullComment);
+    await sendBack().finally(() => setSendingBack(false));
     setBackToDevOpen(false);
     setAdditionalComment("");
   }
@@ -94,12 +100,14 @@ export function ReviewActions({
     setMerging(true);
     // The merge is the approval: the route resolves whatever comments
     // remain open as part of the same action.
-    await onMerge().finally(() => setMerging(false));
+    const merge = async () => onMerge();
+    await merge().finally(() => setMerging(false));
   }
 
   async function handleResolveAll() {
     setResolvingAll(true);
-    await onResolveAll().finally(() => setResolvingAll(false));
+    const resolveAll = async () => onResolveAll();
+    await resolveAll().finally(() => setResolvingAll(false));
   }
 
   return (

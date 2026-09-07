@@ -32,7 +32,11 @@
  * the name and the hooks or JSX that the inference then rejects (a rest
  * parameter, a bare last `return;`) is still listed — with the rejection as
  * its reason — because a component the compiler declines to recognise is
- * exactly as unread as one it stops on.
+ * exactly as unread as one it stops on. The same goes for a default export
+ * the compiler cannot name at all (`export default function () {}`) or names
+ * outside its conventions: mirroring the inference is the point, agreeing
+ * with it about what EXISTS would let a rename delete a component from the
+ * population and take every rule inside it with it.
  *
  * It lives in `__tests__/helpers/` on purpose: vitest's include glob is
  * `**\/*.test.{ts,tsx,mjs}`, so nothing here is collected as a test.
@@ -180,6 +184,31 @@ function invalidParams(fn: Fn): string | null {
   return "a second parameter that is not named as a ref";
 }
 
+/**
+ * `export default function …`, named or not — including
+ * `export default () => …`.
+ *
+ * The compiler names a function through `getFunctionName`, and a function it
+ * cannot name is one `getComponentOrHookLike` never takes for a component. So
+ * is one whose name is neither PascalCase nor `use`-prefixed. Mirroring that
+ * inference is right; agreeing with it about what EXISTS is not — the
+ * function would vanish from the population instead of being reported as
+ * unread, and renaming any page to `export default function ()` would silence
+ * every compiler rule inside it with the sweep still green. A default export
+ * is a top-level entry point, never a callback the compiler folds into a
+ * queued parent, so enumerating it costs nothing and closes that hole.
+ */
+function isDefaultExport(fn: Fn): boolean {
+  if (ts.isFunctionDeclaration(fn)) {
+    const modifiers = ts.getModifiers(fn) ?? [];
+    return (
+      modifiers.some((m) => m.kind === ts.SyntaxKind.ExportKeyword) &&
+      modifiers.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword)
+    );
+  }
+  return ts.isExportAssignment(fn.parent) && fn.parent.isExportEquals !== true;
+}
+
 const unparen = (node: ts.Expression): ts.Expression =>
   ts.isParenthesizedExpression(node) ? unparen(node.expression) : node;
 
@@ -246,7 +275,22 @@ function inferType(fn: Fn): { kind: "Component" | "Hook"; name: string; declined
     (isReactApiCall(fn.parent, "memo") || isReactApiCall(fn.parent, "forwardRef"))
   ) {
     const api = isReactApiCall(fn.parent, "memo") ? "memo" : "forwardRef";
-    return { kind: "Component", name: name ?? `(${api} callback)`, declined: [] };
+    return { kind: "Component", name: name ?? `(${api}-callback)`, declined: [] };
+  }
+  // Everything above is the compiler's inference; this is the population's
+  // own floor. A default export that renders is a component whatever the
+  // compiler manages to call it, so it is listed — with the naming as its
+  // reason — rather than dropped.
+  if (isDefaultExport(fn)) {
+    return {
+      kind: "Component",
+      name: name ?? "(anonymous-default)",
+      declined: [
+        name === null
+          ? "an anonymous `export default`: the compiler names a function before it takes it for a component, and there is no name to take"
+          : `an \`export default\` named \`${name}\`, which is neither PascalCase nor \`use\`-prefixed`,
+      ],
+    };
   }
   return null;
 }
