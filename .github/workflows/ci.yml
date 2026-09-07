@@ -24,8 +24,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm audit --audit-level=high
       - run: npm test
+      - run: npm audit --audit-level=high
 
   # The verification gates the project expects but did not previously enforce:
   # type check, lint, and a production build.
