@@ -26,10 +26,14 @@ export interface UnderlineTabNavItem {
    * avoid — mark the index tab `exact`.
    */
   exact?: boolean;
+  /** `data-testid` on the tab link itself. */
+  testId?: string;
 }
 
 export interface UnderlineTabNavProps {
   items: UnderlineTabNavItem[];
+  /** `data-testid` on the nav container itself. */
+  testId?: string;
   className?: string;
 }
 
@@ -38,12 +42,13 @@ function isActive(pathname: string, item: UnderlineTabNavItem): boolean {
   return pathname === item.href || pathname.startsWith(`${item.href}/`);
 }
 
-export function UnderlineTabNav({ items, className }: UnderlineTabNavProps) {
+export function UnderlineTabNav({ items, testId, className }: UnderlineTabNavProps) {
   const pathname = usePathname() ?? "";
 
   return (
     <nav
       data-slot="underline-tab-nav"
+      data-testid={testId}
       className={cn("flex items-center gap-[16px]", className)}
     >
       {items.map((item) => {
@@ -52,6 +57,7 @@ export function UnderlineTabNav({ items, className }: UnderlineTabNavProps) {
           <Link
             key={item.href}
             href={item.href}
+            data-testid={item.testId}
             aria-current={active ? "page" : undefined}
             data-active={active ? "" : undefined}
             className={cn(

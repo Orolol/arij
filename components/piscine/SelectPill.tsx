@@ -59,6 +59,9 @@ export interface SelectPillProps
    */
   fill?: "card" | "transparent";
   disabled?: boolean;
+  /** `data-testid` on the trigger button itself. */
+  testId?: string;
+  "data-testid"?: string;
   className?: string;
   /** Menu contents. */
   children: React.ReactNode;
@@ -70,6 +73,8 @@ export function SelectPill({
   projectTone = 1,
   fill = "card",
   disabled = false,
+  testId,
+  "data-testid": dataTestId,
   className,
   children,
   ...rest
@@ -81,6 +86,7 @@ export function SelectPill({
           {...rest}
           type="button"
           data-slot="select-pill"
+          data-testid={testId ?? dataTestId}
           data-tone={tone}
           disabled={disabled}
           className={cn(
