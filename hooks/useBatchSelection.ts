@@ -82,42 +82,44 @@ export function useBatchSelection(projectId: string) {
               selectedTicketIds,
             };
           });
-          return;
+        } else {
+          const json = await res.json();
+          const all = new Set<string>(json.data?.all ?? selectedTicketIds);
+          const auto = new Set<string>(json.data?.autoIncluded ?? []);
+
+          setState((prev) => {
+            if (!sameSelection(prev.selectedTicketIds, selectedTicketIds)) {
+              return prev;
+            }
+            return {
+              allSelected: all,
+              userSelected: new Set(userSelected),
+              autoIncluded: auto,
+              selectedTicketIds,
+            };
+          });
         }
-
-        const json = await res.json();
-        const all = new Set<string>(json.data?.all ?? selectedTicketIds);
-        const auto = new Set<string>(json.data?.autoIncluded ?? []);
-
-        setState((prev) => {
-          if (!sameSelection(prev.selectedTicketIds, selectedTicketIds)) {
-            return prev;
-          }
-          return {
-            allSelected: all,
-            userSelected: new Set(userSelected),
-            autoIncluded: auto,
-            selectedTicketIds,
-          };
-        });
       } catch (e) {
-        if ((e as Error).name === "AbortError") return;
-        // Fallback: just use user selection
-        setState((prev) => {
-          if (!sameSelection(prev.selectedTicketIds, selectedTicketIds)) {
-            return prev;
-          }
-          return {
-            allSelected: new Set(userSelected),
-            userSelected: new Set(userSelected),
-            autoIncluded: new Set(),
-            selectedTicketIds,
-          };
-        });
-      } finally {
-        if (fetchController.current === controller) {
-          setLoading(false);
+        // A superseded request is not a failed one; anything else falls back
+        // to the user selection.
+        if ((e as Error).name !== "AbortError") {
+          setState((prev) => {
+            if (!sameSelection(prev.selectedTicketIds, selectedTicketIds)) {
+              return prev;
+            }
+            return {
+              allSelected: new Set(userSelected),
+              userSelected: new Set(userSelected),
+              autoIncluded: new Set(),
+              selectedTicketIds,
+            };
+          });
         }
+      }
+      // Every path above lands here — what the `finally` clause did before
+      // it; the React Compiler stops at a `finally` clause.
+      if (fetchController.current === controller) {
+        setLoading(false);
       }
     },
     [projectId]

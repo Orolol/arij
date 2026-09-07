@@ -77,18 +77,19 @@ export function MonthlyCapTile({ cap, onSaved }: MonthlyCapTileProps) {
       });
       if (!response.ok) {
         setMessage("Échec de l'enregistrement du plafond.");
-        return;
+      } else {
+        setEditing(false);
+        setMessage(null);
+        // A plain refresh: the cap lives in Arij's own database, so forcing
+        // the route's live-quota re-poll would spawn two CLIs for nothing.
+        onSaved();
       }
-      setEditing(false);
-      setMessage(null);
-      // A plain refresh: the cap lives in Arij's own database, so forcing the
-      // route's live-quota re-poll would spawn two CLIs for nothing.
-      onSaved();
     } catch {
       setMessage("Échec de l'enregistrement du plafond.");
-    } finally {
-      setSaving(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSaving(false);
   }
 
   return (

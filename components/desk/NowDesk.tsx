@@ -193,22 +193,24 @@ export function NowDesk({
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           reportFailure(res, body, "Failed to post the reply", item.projectId);
-          return;
+        } else {
+          // The reply is also the read: the durable cursor move is what keeps
+          // the row from coming straight back on the next poll.
+          await fetch("/api/inbox/read", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ epicId: item.epicId }),
+          }).catch(() => {});
+          raise("success", "Réponse envoyée");
+          changed();
         }
-        // The reply is also the read: the durable cursor move is what keeps the
-        // row from coming straight back on the next poll.
-        await fetch("/api/inbox/read", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ epicId: item.epicId }),
-        }).catch(() => {});
-        raise("success", "Réponse envoyée");
-        changed();
       } catch {
         raise("error", "Failed to post the reply");
-      } finally {
-        markPending(item.epicId, false);
       }
+      // Trailing, not in a `finally` clause, here and in every handler below:
+      // the React Compiler stops at the clause, and stopping left this
+      // component unread by every compiler rule.
+      markPending(item.epicId, false);
     },
     [markPending, raise, reportFailure, changed],
   );
@@ -237,15 +239,14 @@ export function NowDesk({
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           reportFailure(res, body, "Failed to launch the build", item.projectId);
-          return;
+        } else {
+          raise("success", "Envoyé en dev");
+          changed();
         }
-        raise("success", "Envoyé en dev");
-        changed();
       } catch {
         raise("error", "Failed to launch the build");
-      } finally {
-        markPending(item.epicId, false);
       }
+      markPending(item.epicId, false);
     },
     [markPending, namedAgentId, raise, reportFailure, changed],
   );
@@ -282,15 +283,14 @@ export function NowDesk({
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           reportFailure(res, body, "Failed to retry build", item.projectId);
-          return;
+        } else {
+          raise("success", "Retrying build for epic");
+          changed();
         }
-        raise("success", "Retrying build for epic");
-        changed();
       } catch {
         raise("error", "Failed to retry build");
-      } finally {
-        markPending(item.epicId, false);
       }
+      markPending(item.epicId, false);
     },
     [markPending, namedAgentId, raise, reportFailure, changed],
   );
@@ -320,14 +320,13 @@ export function NowDesk({
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           raise("error", "Impossible d'écarter ce signal");
-          return;
+        } else {
+          changed();
         }
-        changed();
       } catch {
         raise("error", "Impossible d'écarter ce signal");
-      } finally {
-        markPending(item.epicId, false);
       }
+      markPending(item.epicId, false);
     },
     [markPending, raise, changed],
   );
@@ -347,20 +346,20 @@ export function NowDesk({
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
           reportFailure(res, body, "Failed to resolve the merge", item.projectId);
-          return;
+        } else {
+          // Two outcomes: a clean re-merge landed the branch, or a conflict
+          // agent was dispatched and the row goes back to ordinary agent
+          // activity.
+          if (body.data?.resolved) raise("success", "Merged into the base branch");
+          else if (body.data?.sessionId) {
+            raise("success", "Merge conflict — resolution agent dispatched");
+          }
+          changed();
         }
-        // Two outcomes: a clean re-merge landed the branch, or a conflict agent
-        // was dispatched and the row goes back to ordinary agent activity.
-        if (body.data?.resolved) raise("success", "Merged into the base branch");
-        else if (body.data?.sessionId) {
-          raise("success", "Merge conflict — resolution agent dispatched");
-        }
-        changed();
       } catch {
         raise("error", "Failed to resolve the merge");
-      } finally {
-        markPending(item.epicId, false);
       }
+      markPending(item.epicId, false);
     },
     [markPending, raise, reportFailure, changed],
   );

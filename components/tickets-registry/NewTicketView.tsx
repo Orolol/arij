@@ -103,14 +103,15 @@ export function NewTicketView({ projectId }: NewTicketViewProps) {
         // The typed title is KEPT on failure, so a rejected POST costs a retry
         // and not a re-type.
         setError(body?.error ? String(body.error) : `Création refusée (${res.status})`);
-        return;
+      } else {
+        router.push(`/tickets?project=${encodeURIComponent(project.id)}`);
       }
-      router.push(`/tickets?project=${encodeURIComponent(project.id)}`);
     } catch {
       setError("Création impossible — le serveur n'a pas répondu");
-    } finally {
-      setBusy(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setBusy(false);
   }, [busy, description, isBug, priority, project, router, status, title]);
 
   return (

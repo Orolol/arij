@@ -318,9 +318,10 @@ function CustomReviewAgentRow({
       setError(
         "Could not save this review agent. Check the connection and try again.",
       );
-    } finally {
-      setSaving(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSaving(false);
   }
 
   async function handleDelete() {
@@ -334,9 +335,8 @@ function CustomReviewAgentRow({
       setError(
         "Could not delete this review agent. Check the connection and try again.",
       );
-    } finally {
-      setDeleting(false);
     }
+    setDeleting(false);
   }
 
   return (
@@ -486,9 +486,8 @@ function NewReviewAgentForm({
               setError(
                 "Could not create this review agent. Check the connection and try again.",
               );
-            } finally {
-              setCreating(false);
             }
+            setCreating(false);
           }}
         >
           Create

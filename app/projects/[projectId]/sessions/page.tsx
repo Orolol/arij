@@ -185,11 +185,10 @@ export default function SessionsPage() {
    * project's first paint is the previous project's session list under the
    * new project's URL. Adjusting here means that paint never happens.
    *
-   * Not lint-enforced here, and deliberately not trusted to be: the React
-   * Compiler rules do not read this component at all. Probed by mutation — a
-   * textbook `set-state-in-effect` injected into this file draws no
-   * diagnostic, while the same injection in `hooks/useAgentPolling.ts` and in
-   * `app/projects/[projectId]/page.tsx` is reported. Filed separately.
+   * Lint-enforced here since the compiler reads this component again
+   * (`react-compiler-coverage.test.ts` pins it by name): the `eslint-disable`
+   * on the load effect and the `finally` in `loadSessions` were two stops
+   * that kept every compiler rule silent on this page, B-arij-212.
    */
   const [loadedProjectId, setLoadedProjectId] = useState(projectId);
   if (loadedProjectId !== projectId) {
@@ -231,49 +230,58 @@ export default function SessionsPage() {
     // writer wins, and the longer, older list does not pollute the new
     // project's list so much as replace it.
     const controller = new AbortController();
-    loadSessions(controller.signal);
-    return () => controller.abort();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId]);
+    const { signal } = controller;
 
-  /**
-   * The route serves keyset pages; this follows them to the end so the list,
-   * the synthesis band and both sort orders still cover every session. Each
-   * page is painted as it lands, so the newest sessions show immediately
-   * instead of waiting on the tail.
-   *
-   * `signal` both stops the paging and disowns the run: it is checked before
-   * every state write, because aborting cannot unwind a request that already
-   * succeeded and is only having its body read.
-   */
-  async function loadSessions(signal: AbortSignal) {
-    try {
-      await fetchUnifiedSessions<UnifiedSession>(projectId, {
-        signal,
-        onPage: (rowsSoFar) => {
-          if (signal.aborted) return;
-          setItems([...rowsSoFar]);
-          setLoading(false);
-        },
-      });
-    } catch (error) {
-      // A cancelled load is not a failed one. Its rows belong to a project
-      // that is no longer on screen, so the banner — which claims the list
-      // BELOW it is a prefix — would be a lie about the project that is.
-      if (signal.aborted) return;
-      // Keep whatever is already on screen rather than blanking the list —
-      // but never present a prefix as the list. The counts in the synthesis
-      // band and both sort orders are derived from every row, so a missing
-      // tail is wrong data, not just less of it.
-      setIncomplete(
-        error instanceof UnifiedSessionListIncompleteError
-          ? error.message
-          : "Could not load every session; the list below may be incomplete."
-      );
-    } finally {
+    /**
+     * The route serves keyset pages; this follows them to the end so the
+     * list, the synthesis band and both sort orders still cover every
+     * session. Each page is painted as it lands, so the newest sessions show
+     * immediately instead of waiting on the tail.
+     *
+     * `signal` both stops the paging and disowns the run: it is checked
+     * before every state write, because aborting cannot unwind a request
+     * that already succeeded and is only having its body read.
+     *
+     * Owned by the effect on purpose. The React Compiler reads this component
+     * again (`react-compiler-coverage.test.ts` pins it by name), and its
+     * `set-state-in-effect` rule objects to any component-level function an
+     * effect calls that sets state — hoisted, memoized, even after an
+     * `await` — while a loader the effect defines is the shape it accepts.
+     */
+    const loadSessions = async () => {
+      try {
+        await fetchUnifiedSessions<UnifiedSession>(projectId, {
+          signal,
+          onPage: (rowsSoFar) => {
+            if (signal.aborted) return;
+            setItems([...rowsSoFar]);
+            setLoading(false);
+          },
+        });
+      } catch (error) {
+        // A cancelled load is not a failed one. Its rows belong to a project
+        // that is no longer on screen, so the banner — which claims the list
+        // BELOW it is a prefix — would be a lie about the project that is.
+        //
+        // Otherwise keep whatever is already on screen rather than blanking
+        // the list — but never present a prefix as the list. The counts in
+        // the synthesis band and both sort orders are derived from every
+        // row, so a missing tail is wrong data, not just less of it.
+        if (!signal.aborted) {
+          setIncomplete(
+            error instanceof UnifiedSessionListIncompleteError
+              ? error.message
+              : "Could not load every session; the list below may be incomplete."
+          );
+        }
+      }
+      // Both branches fall through here — what a `finally` did before; the
+      // React Compiler stops at a `finally` clause.
       if (!signal.aborted) setLoading(false);
-    }
-  }
+    };
+    void loadSessions();
+    return () => controller.abort();
+  }, [projectId]);
 
   function getDuration(session: AgentSession): string {
     if (!session.startedAt) return "-";

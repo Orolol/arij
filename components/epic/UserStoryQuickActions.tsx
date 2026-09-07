@@ -52,8 +52,14 @@ export function UserStoryQuickActions({
         }
       );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) throw new Error(data.error || "Failed to send to dev");
-      onRefresh();
+      // Not a `throw` into the catch below, here and twice more: a `throw`
+      // inside `try/catch` is a construct the React Compiler stops on, and
+      // stopping left this component unread by every compiler rule.
+      if (!res.ok || data.error) {
+        setError(data.error || "Failed to send to dev");
+      } else {
+        onRefresh();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to send to dev");
     }
@@ -73,8 +79,11 @@ export function UserStoryQuickActions({
         }
       );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) throw new Error(data.error || "Failed to dispatch review");
-      onRefresh();
+      if (!res.ok || data.error) {
+        setError(data.error || "Failed to dispatch review");
+      } else {
+        onRefresh();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to dispatch review");
     }
@@ -93,10 +102,13 @@ export function UserStoryQuickActions({
         }
       );
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) throw new Error(data.error || "Failed to approve");
-      // Story approval closes the story only — the epic closes through its
-      // own merge (to_merge → done).
-      onRefresh();
+      if (!res.ok || data.error) {
+        setError(data.error || "Failed to approve");
+      } else {
+        // Story approval closes the story only — the epic closes through its
+        // own merge (to_merge → done).
+        onRefresh();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to approve");
     }

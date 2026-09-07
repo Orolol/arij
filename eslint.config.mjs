@@ -8,6 +8,17 @@ const eslintConfig = defineConfig([
   {
     rules: {
       "@typescript-eslint/no-explicit-any": "off",
+      // The React Compiler stops on a function it cannot compile — a
+      // `finally` clause, a `throw` inside `try/catch`, an `eslint-disable` of
+      // `exhaustive-deps`, state derived in an effect — and from then on every
+      // compiler-backed rule above is silent on that whole component, with
+      // nothing to say so. The plugin's preset keeps the three categories that
+      // describe the stop switched off; these are the diagnostic. Warnings,
+      // not errors: the gate is `__tests__/react-compiler-coverage.test.ts`,
+      // which fails on any stop not recorded there with a reason.
+      "react-hooks/todo": "warn",
+      "react-hooks/rule-suppression": "warn",
+      "react-hooks/no-deriving-state-in-effects": "warn",
       "@typescript-eslint/no-unused-vars": [
         "warn",
         {

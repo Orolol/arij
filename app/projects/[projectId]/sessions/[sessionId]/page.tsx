@@ -78,10 +78,16 @@ export default function SessionDetailPage() {
       const res = await fetch(
         `/api/projects/${projectId}/sessions/${sessionId}?include=prompt`
       );
-      if (!res.ok) throw new Error(`Prompt request failed (${res.status})`);
-      const data = await res.json();
-      setPrompt(data.data?.prompt ?? null);
-      setPromptState("loaded");
+      // Not a `throw` into the catch below: a `throw` inside `try/catch` is a
+      // construct the React Compiler stops on, and stopping left this page
+      // unread by every compiler rule.
+      if (!res.ok) {
+        setPromptState("error");
+      } else {
+        const data = await res.json();
+        setPrompt(data.data?.prompt ?? null);
+        setPromptState("loaded");
+      }
     } catch {
       setPromptState("error");
     }
@@ -112,9 +118,9 @@ export default function SessionDetailPage() {
       }
     } catch {
       setStopError("Could not stop this session.");
-    } finally {
-      setStopping(false);
     }
+    // Trailing, not in a `finally` clause (the compiler stops at one).
+    setStopping(false);
     loadSession();
   }
 
@@ -130,17 +136,16 @@ export default function SessionDetailPage() {
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setDistillError(data.error || "Failed to start memory distillation.");
-        return;
-      }
-      const distillSessionId = data.data?.sessionId;
-      if (distillSessionId) {
-        router.push(`/projects/${projectId}/sessions/${distillSessionId}`);
+      } else {
+        const distillSessionId = data.data?.sessionId;
+        if (distillSessionId) {
+          router.push(`/projects/${projectId}/sessions/${distillSessionId}`);
+        }
       }
     } catch {
       setDistillError("Failed to start memory distillation.");
-    } finally {
-      setDistilling(false);
     }
+    setDistilling(false);
   }
 
   function handleExportLogs() {

@@ -80,7 +80,7 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
     ) => {
       if (!targetPath) return;
       setDispatching(true);
-      try {
+      const build = async () => {
         const body: Record<string, unknown> = { comment, namedAgentId };
         if (resumeSessionId) body.resumeSessionId = resumeSessionId;
         // Only sent when the caller made an explicit choice — omitting the
@@ -89,9 +89,11 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
         const data = await requestJson(`${targetPath}/build`, body);
         await pollSessions();
         return data;
-      } finally {
-        setDispatching(false);
-      }
+      };
+      // A `.finally` call, not a `finally` clause, here and below: the React
+      // Compiler stops at the clause, and stopping left this hook unread by
+      // every compiler rule. The rejection still reaches the caller.
+      return build().finally(() => setDispatching(false));
     },
     [targetPath, requestJson, pollSessions]
   );
@@ -100,15 +102,14 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
     async (reviewTypes: string[], namedAgentId?: string | null, resumeSessionId?: string) => {
       if (!targetPath) return;
       setDispatching(true);
-      try {
+      const review = async () => {
         const body: Record<string, unknown> = { reviewTypes, namedAgentId };
         if (resumeSessionId) body.resumeSessionId = resumeSessionId;
         const data = await requestJson(`${targetPath}/review`, body);
         await pollSessions();
         return data;
-      } finally {
-        setDispatching(false);
-      }
+      };
+      return review().finally(() => setDispatching(false));
     },
     [targetPath, requestJson, pollSessions]
   );
@@ -118,15 +119,14 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
     async (namedAgentId?: string | null) => {
       if (kind !== "epic" || !targetPath) return;
       setDispatching(true);
-      try {
+      const grade = async () => {
         const data = await requestJson(`${targetPath}/grading`, {
           namedAgentId,
         });
         await pollSessions();
         return data;
-      } finally {
-        setDispatching(false);
-      }
+      };
+      return grade().finally(() => setDispatching(false));
     },
     [kind, targetPath, requestJson, pollSessions],
   );
@@ -136,16 +136,15 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
     async (namedAgentId?: string | null, resumeSessionId?: string) => {
       if (kind !== "epic" || !targetPath) return;
       setDispatching(true);
-      try {
+      const resolve = async () => {
         const body: Record<string, unknown> = {};
         if (namedAgentId) body.namedAgentId = namedAgentId;
         if (resumeSessionId) body.resumeSessionId = resumeSessionId;
         const data = await requestJson(`${targetPath}/resolve-merge`, body);
         await pollSessions();
         return data;
-      } finally {
-        setDispatching(false);
-      }
+      };
+      return resolve().finally(() => setDispatching(false));
     },
     [kind, targetPath, requestJson, pollSessions]
   );

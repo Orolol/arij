@@ -89,30 +89,33 @@ export function useTicketsRegistry(
     // Checked after the last await, so nothing can slip in between the check
     // and the state it guards.
     const stale = () => requestSeq !== requestSeqRef.current || requestSeq <= appliedSeqRef.current;
-    try {
-      const res = await fetch(href);
-      if (!res.ok) {
+    const fetchRegistry = async () => {
+      try {
+        const res = await fetch(href);
+        if (!res.ok) {
+          if (stale()) return;
+          appliedSeqRef.current = requestSeq;
+          setError(`Failed to load the registry (${res.status})`);
+          return;
+        }
+        const body = await res.json();
         if (stale()) return;
         appliedSeqRef.current = requestSeq;
-        setError(`Failed to load the registry (${res.status})`);
-        return;
+        if (body?.error) {
+          setError(String(body.error));
+          return;
+        }
+        setError(null);
+        setData(body.data as TicketsRegistryPayload);
+      } catch {
+        if (stale()) return;
+        appliedSeqRef.current = requestSeq;
+        setError("Failed to load the registry");
       }
-      const body = await res.json();
-      if (stale()) return;
-      appliedSeqRef.current = requestSeq;
-      if (body?.error) {
-        setError(String(body.error));
-        return;
-      }
-      setError(null);
-      setData(body.data as TicketsRegistryPayload);
-    } catch {
-      if (stale()) return;
-      appliedSeqRef.current = requestSeq;
-      setError("Failed to load the registry");
-    } finally {
-      setLoading(false);
-    }
+    };
+    // A `.finally` call, not a `finally` clause: the React Compiler stops at
+    // the clause, and stopping left this hook unread by every compiler rule.
+    await fetchRegistry().finally(() => setLoading(false));
   }, [href]);
 
   const refresh = useCallback(async () => {

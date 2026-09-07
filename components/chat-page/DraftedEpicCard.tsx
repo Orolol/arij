@@ -128,33 +128,33 @@ export function DraftedEpicCard({
     setPending("dev");
     try {
       const id = epicId ?? (await createEpic("todo"));
-      if (!id) return;
-      const res = await fetch(`/api/projects/${projectId}/epics/${id}/build`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(namedAgentId ? { namedAgentId } : {}),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || body.error) {
-        onToast("error", body.error || "Epic créé, mais le build n'a pas démarré");
-        return;
+      if (id) {
+        const res = await fetch(`/api/projects/${projectId}/epics/${id}/build`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(namedAgentId ? { namedAgentId } : {}),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.error) {
+          onToast("error", body.error || "Epic créé, mais le build n'a pas démarré");
+        } else {
+          onToast("success", "Envoyé en dev");
+        }
       }
-      onToast("success", "Envoyé en dev");
     } catch {
       onToast("error", "Failed to launch the build");
-    } finally {
-      setPending(null);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setPending(null);
   }
 
   async function handleBacklog() {
     setPending("backlog");
-    try {
-      const id = await createEpic("backlog");
-      if (id) onToast("success", "Epic créé dans le backlog");
-    } finally {
-      setPending(null);
-    }
+    // A `.finally` call, not a `finally` clause, here and below: the React
+    // Compiler stops at the clause. `createEpic` reports its own failures.
+    const id = await createEpic("backlog").finally(() => setPending(null));
+    if (id) onToast("success", "Epic créé dans le backlog");
   }
 
   /** The 6a overlay already owns story editing; this only makes sure a ticket
@@ -165,12 +165,8 @@ export function DraftedEpicCard({
       return;
     }
     setPending("edit");
-    try {
-      const id = await createEpic("backlog");
-      if (id) onOpenTicket(id);
-    } finally {
-      setPending(null);
-    }
+    const id = await createEpic("backlog").finally(() => setPending(null));
+    if (id) onOpenTicket(id);
   }
 
   return (

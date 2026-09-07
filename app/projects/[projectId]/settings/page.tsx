@@ -61,19 +61,20 @@ function ProjectTokenBudgetSection({ projectId }: { projectId: string }) {
       });
       if (!res.ok) {
         setMessage("Failed to save project prompt token budget.");
-        return;
+      } else {
+        setBudget(val === null ? "" : String(val));
+        setMessage(
+          val === null
+            ? "Project override cleared (using global default)."
+            : "Project budget saved."
+        );
       }
-      setBudget(val === null ? "" : String(val));
-      setMessage(
-        val === null
-          ? "Project override cleared (using global default)."
-          : "Project budget saved."
-      );
     } catch {
       setMessage("Failed to save project prompt token budget.");
-    } finally {
-      setSaving(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSaving(false);
   }
 
   return (

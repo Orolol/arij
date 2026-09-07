@@ -67,9 +67,10 @@ export function AddAgentCard({
       setError(
         "Could not create this agent. Check the connection and try again.",
       );
-    } finally {
-      setCreating(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setCreating(false);
   }
 
   const shell =

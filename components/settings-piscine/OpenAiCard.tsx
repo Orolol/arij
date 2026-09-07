@@ -104,21 +104,22 @@ export function OpenAiCard({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         setError(payload?.error ?? "Failed to save the OpenAI-compatible settings.");
-        return;
+      } else {
+        if (apiKey.trim().length > 0) {
+          setKeySaved(true);
+          setKeyCleared(false);
+        }
+        setApiKey("");
+        setMessage("OpenAI-compatible settings saved.");
       }
-      if (apiKey.trim().length > 0) {
-        setKeySaved(true);
-        setKeyCleared(false);
-      }
-      setApiKey("");
-      setMessage("OpenAI-compatible settings saved.");
     } catch {
       setError(
         "Failed to save the OpenAI-compatible settings. Check your connection and retry.",
       );
-    } finally {
-      setSaving(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSaving(false);
   }
 
   async function clearKey() {
@@ -134,17 +135,16 @@ export function OpenAiCard({
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
         setError(payload?.error ?? "Failed to clear the saved API key.");
-        return;
+      } else {
+        setKeyCleared(true);
+        setKeySaved(false);
+        setApiKey("");
+        setMessage("Saved API key cleared.");
       }
-      setKeyCleared(true);
-      setKeySaved(false);
-      setApiKey("");
-      setMessage("Saved API key cleared.");
     } catch {
       setError("Failed to clear the saved API key. Check your connection and retry.");
-    } finally {
-      setClearing(false);
     }
+    setClearing(false);
   }
 
   async function test() {
@@ -159,21 +159,20 @@ export function OpenAiCard({
           payload?.error ??
             "Connection test failed. Check the Base URL, Model, and API key.",
         );
-        return;
+      } else {
+        const testedModel = payload?.data?.model;
+        setMessage(
+          testedModel
+            ? `Connection successful — model: ${testedModel}.`
+            : "Connection successful.",
+        );
       }
-      const testedModel = payload?.data?.model;
-      setMessage(
-        testedModel
-          ? `Connection successful — model: ${testedModel}.`
-          : "Connection successful.",
-      );
     } catch {
       setError(
         "Could not reach the OpenAI-compatible endpoint. Check your network and try again.",
       );
-    } finally {
-      setTesting(false);
     }
+    setTesting(false);
   }
 
   return (

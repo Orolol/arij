@@ -22,12 +22,11 @@ export function InlineCommentForm({
   async function handleSubmit() {
     if (!value.trim() || submitting) return;
     setSubmitting(true);
-    try {
-      await onSubmit(value.trim());
-      setValue("");
-    } finally {
-      setSubmitting(false);
-    }
+    // A `.finally` call, not a `finally` clause: the React Compiler stops at
+    // the clause, and stopping left this component unread by every compiler
+    // rule. A rejection from `onSubmit` still reaches the caller.
+    await onSubmit(value.trim()).finally(() => setSubmitting(false));
+    setValue("");
   }
 
   return (

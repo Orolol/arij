@@ -68,30 +68,33 @@ export function useQaFindings(
     const stale = () =>
       requestSeq <= appliedSeqRef.current ||
       mutationSeqRef.current !== issuedAtMutation;
-    try {
-      const res = await fetch("/api/qa/findings");
-      if (!res.ok) {
+    const fetchFindings = async () => {
+      try {
+        const res = await fetch("/api/qa/findings");
+        if (!res.ok) {
+          if (stale()) return;
+          appliedSeqRef.current = requestSeq;
+          setError(`Failed to load QA (${res.status})`);
+          return;
+        }
+        const body = await res.json();
         if (stale()) return;
         appliedSeqRef.current = requestSeq;
-        setError(`Failed to load QA (${res.status})`);
-        return;
+        if (body?.error) {
+          setError(body.error);
+          return;
+        }
+        setError(null);
+        setData(body.data as QaPayload);
+      } catch {
+        if (stale()) return;
+        appliedSeqRef.current = requestSeq;
+        setError("Failed to load QA");
       }
-      const body = await res.json();
-      if (stale()) return;
-      appliedSeqRef.current = requestSeq;
-      if (body?.error) {
-        setError(body.error);
-        return;
-      }
-      setError(null);
-      setData(body.data as QaPayload);
-    } catch {
-      if (stale()) return;
-      appliedSeqRef.current = requestSeq;
-      setError("Failed to load QA");
-    } finally {
-      setLoading(false);
-    }
+    };
+    // A `.finally` call, not a `finally` clause: the React Compiler stops at
+    // the clause, and stopping left this hook unread by every compiler rule.
+    await fetchFindings().finally(() => setLoading(false));
   }, []);
 
   /**

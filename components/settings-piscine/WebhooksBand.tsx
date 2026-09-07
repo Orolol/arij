@@ -67,18 +67,19 @@ export function WebhooksBand() {
         setError(
           payload?.error ?? "Failed to save webhook URL. Check the error details and retry.",
         );
-        return;
+      } else {
+        setMessage(
+          row.url.trim()
+            ? `Webhook saved for ${row.projectName}.`
+            : `Webhook cleared for ${row.projectName}.`,
+        );
       }
-      setMessage(
-        row.url.trim()
-          ? `Webhook saved for ${row.projectName}.`
-          : `Webhook cleared for ${row.projectName}.`,
-      );
     } catch {
       setError("Failed to save webhook URL. Check your connection and retry.");
-    } finally {
-      setSavingId(null);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSavingId(null);
   }
 
   return (

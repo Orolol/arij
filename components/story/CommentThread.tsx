@@ -48,9 +48,10 @@ export function CommentThread({
       setInput("");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to add comment");
-    } finally {
-      setSending(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSending(false);
   }
 
   return (

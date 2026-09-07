@@ -70,30 +70,33 @@ export function useControlDesk(
     const stale = () =>
       requestSeq <= appliedSeqRef.current ||
       mutationSeqRef.current !== issuedAtMutation;
-    try {
-      const res = await fetch("/api/control-desk");
-      if (!res.ok) {
+    const fetchDesk = async () => {
+      try {
+        const res = await fetch("/api/control-desk");
+        if (!res.ok) {
+          if (stale()) return;
+          appliedSeqRef.current = requestSeq;
+          setError(`Failed to load the desk (${res.status})`);
+          return;
+        }
+        const body = await res.json();
         if (stale()) return;
         appliedSeqRef.current = requestSeq;
-        setError(`Failed to load the desk (${res.status})`);
-        return;
+        if (body?.error) {
+          setError(body.error);
+          return;
+        }
+        setError(null);
+        setData(body.data as ControlDeskPayload);
+      } catch {
+        if (stale()) return;
+        appliedSeqRef.current = requestSeq;
+        setError("Failed to load the desk");
       }
-      const body = await res.json();
-      if (stale()) return;
-      appliedSeqRef.current = requestSeq;
-      if (body?.error) {
-        setError(body.error);
-        return;
-      }
-      setError(null);
-      setData(body.data as ControlDeskPayload);
-    } catch {
-      if (stale()) return;
-      appliedSeqRef.current = requestSeq;
-      setError("Failed to load the desk");
-    } finally {
-      setLoading(false);
-    }
+    };
+    // A `.finally` call, not a `finally` clause: the React Compiler stops at
+    // the clause, and stopping left this hook unread by every compiler rule.
+    await fetchDesk().finally(() => setLoading(false));
   }, []);
 
   /**

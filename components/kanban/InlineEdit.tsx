@@ -53,9 +53,17 @@ export function InlineEdit({
    */
   const restoreFocusRef = useRef(false);
 
-  useEffect(() => {
+  /**
+   * A new `value` from outside replaces the draft — adjusted DURING RENDER,
+   * not from an effect: the effect form is state derived from a prop, which
+   * the React Compiler refuses outright (and, refusing, stops reading the
+   * whole component). Same idiom as `DismissDialog` and `DeskCommandPalette`.
+   */
+  const [lastValue, setLastValue] = useState(value);
+  if (lastValue !== value) {
+    setLastValue(value);
     setEditValue(value);
-  }, [value]);
+  }
 
   useEffect(() => {
     if (editing) {

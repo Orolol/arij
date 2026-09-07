@@ -52,62 +52,54 @@ export function ReviewActions({
   const canMerge = epicStatus === "to_merge";
 
   async function handleBackToDev() {
-    setSendingBack(true);
-    try {
-      // Build the rework comment from open review comments
-      const openComments = comments.filter((c) => c.status === "open");
-      const parts: string[] = [];
+    // Build the rework comment from open review comments
+    const openComments = comments.filter((c) => c.status === "open");
+    const parts: string[] = [];
 
-      if (openComments.length > 0) {
-        parts.push("## Review Comments\n");
-        // Group by file
-        const byFile = new Map<string, ReviewComment[]>();
-        for (const c of openComments) {
-          const existing = byFile.get(c.filePath) || [];
-          existing.push(c);
-          byFile.set(c.filePath, existing);
-        }
-        for (const [filePath, fileComments] of byFile) {
-          parts.push(`### ${filePath}`);
-          for (const c of fileComments) {
-            parts.push(`- **Line ${c.lineNumber}**: ${c.body}`);
-          }
-          parts.push("");
-        }
+    if (openComments.length > 0) {
+      parts.push("## Review Comments\n");
+      // Group by file
+      const byFile = new Map<string, ReviewComment[]>();
+      for (const c of openComments) {
+        const existing = byFile.get(c.filePath) || [];
+        existing.push(c);
+        byFile.set(c.filePath, existing);
       }
-
-      if (additionalComment.trim()) {
-        parts.push("## Additional Instructions\n");
-        parts.push(additionalComment.trim());
+      for (const [filePath, fileComments] of byFile) {
+        parts.push(`### ${filePath}`);
+        for (const c of fileComments) {
+          parts.push(`- **Line ${c.lineNumber}**: ${c.body}`);
+        }
+        parts.push("");
       }
-
-      const fullComment = parts.join("\n");
-      await onBackToDev(fullComment);
-      setBackToDevOpen(false);
-      setAdditionalComment("");
-    } finally {
-      setSendingBack(false);
     }
+
+    if (additionalComment.trim()) {
+      parts.push("## Additional Instructions\n");
+      parts.push(additionalComment.trim());
+    }
+
+    const fullComment = parts.join("\n");
+    setSendingBack(true);
+    // A `.finally` call, not a `finally` clause, here and in the two handlers
+    // below: the React Compiler stops at the clause, and stopping left this
+    // component unread by every compiler rule. A rejection still reaches the
+    // caller, and skips the resets after it as before.
+    await onBackToDev(fullComment).finally(() => setSendingBack(false));
+    setBackToDevOpen(false);
+    setAdditionalComment("");
   }
 
   async function handleMerge() {
     setMerging(true);
-    try {
-      // The merge is the approval: the route resolves whatever comments
-      // remain open as part of the same action.
-      await onMerge();
-    } finally {
-      setMerging(false);
-    }
+    // The merge is the approval: the route resolves whatever comments
+    // remain open as part of the same action.
+    await onMerge().finally(() => setMerging(false));
   }
 
   async function handleResolveAll() {
     setResolvingAll(true);
-    try {
-      await onResolveAll();
-    } finally {
-      setResolvingAll(false);
-    }
+    await onResolveAll().finally(() => setResolvingAll(false));
   }
 
   return (

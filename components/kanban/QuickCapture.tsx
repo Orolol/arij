@@ -48,9 +48,10 @@ export function QuickCapture({ projectId, onCreated, onError }: QuickCaptureProp
       }
     } catch {
       onError?.("Failed to capture idea");
-    } finally {
-      setSubmitting(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSubmitting(false);
   }
 
   return (

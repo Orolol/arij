@@ -44,17 +44,17 @@ export default function NewProjectPage() {
       const data = await res.json().catch(() => null);
       if (data?.data?.id) {
         router.push(`/projects/${data.data.id}`);
-        return;
+      } else {
+        // A rejected path or a validation error used to leave the form
+        // silently stuck on "Creating..." — say what went wrong instead.
+        setError(data?.error || `Failed to create project (HTTP ${res.status})`);
       }
-
-      // A rejected path or a validation error used to leave the form silently
-      // stuck on "Creating..." — say what went wrong instead.
-      setError(data?.error || `Failed to create project (HTTP ${res.status})`);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create project");
-    } finally {
-      setLoading(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this page unread by every compiler rule.
+    setLoading(false);
   }
 
   return (

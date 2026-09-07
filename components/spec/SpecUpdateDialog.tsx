@@ -65,18 +65,19 @@ export function SpecUpdateDialog({
           json.error || "Failed to start the spec update session.";
         setError(message);
         onError?.(message);
-        return;
+      } else {
+        onOpenChange(false);
+        resetForm();
+        onStarted({ sessionId: json.data.sessionId });
       }
-      onOpenChange(false);
-      resetForm();
-      onStarted({ sessionId: json.data.sessionId });
     } catch {
       const message = "Failed to start the spec update session.";
       setError(message);
       onError?.(message);
-    } finally {
-      setStarting(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setStarting(false);
   }
 
   return (

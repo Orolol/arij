@@ -69,18 +69,17 @@ export function DeskComposer({
     const trimmed = title.trim();
     if (!trimmed || busy || !project) return;
     setBusy(true);
-    try {
-      const ok = await onSubmit({
-        title: trimmed,
-        projectId: project.id,
-        namedAgentId,
-        dispatch,
-      });
-      // Keep the typed title on failure so a retry costs nothing.
-      if (ok) setTitle("");
-    } finally {
-      setBusy(false);
-    }
+    // A `.finally` call, not a `finally` clause: the React Compiler stops at
+    // the clause, and stopping left this component unread by every compiler
+    // rule. A rejection from `onSubmit` still reaches the caller.
+    const ok = await onSubmit({
+      title: trimmed,
+      projectId: project.id,
+      namedAgentId,
+      dispatch,
+    }).finally(() => setBusy(false));
+    // Keep the typed title on failure so a retry costs nothing.
+    if (ok) setTitle("");
   }
 
   return (

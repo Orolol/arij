@@ -81,17 +81,17 @@ export default function StoryDetailPage() {
 
       if (!res.ok || data.error) {
         addToast(data.error || "Failed to delete story");
-        return;
+      } else {
+        setDeleteDialogOpen(false);
+        router.push(`/projects/${projectId}?deleted=story`);
       }
-
-      setDeleteDialogOpen(false);
-      router.push(`/projects/${projectId}?deleted=story`);
     } catch {
       addToast("Failed to delete story");
-    } finally {
-      deleteInFlightRef.current = false;
-      setDeletingStory(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this page unread by every compiler rule.
+    deleteInFlightRef.current = false;
+    setDeletingStory(false);
   }
 
   if (storyLoading) {

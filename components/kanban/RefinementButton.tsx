@@ -147,29 +147,27 @@ export function RefinementButton({
 
       if (!response.ok) {
         onError(payload?.error ?? "Failed to start board refinement");
-        return;
-      }
-      if (payload?.data?.started === false) {
+      } else if (payload?.data?.started === false) {
         // Nothing to refine — a real answer on a 200, not a failure.
         const reason = payload.data.reason ?? "Nothing to refine right now";
         (onNotice ?? onError)(reason);
         setConfiguring(false);
-        return;
+      } else {
+        setConfiguring(false);
+        wasRunning.current = true;
+        setStatus({
+          running: true,
+          sessionId: payload?.data?.sessionId ?? null,
+          ticketCount: payload?.data?.ticketCount ?? 0,
+        });
+        if (payload?.data?.sessionId) onStarted?.(payload.data.sessionId);
       }
-
-      setConfiguring(false);
-      wasRunning.current = true;
-      setStatus({
-        running: true,
-        sessionId: payload?.data?.sessionId ?? null,
-        ticketCount: payload?.data?.ticketCount ?? 0,
-      });
-      if (payload?.data?.sessionId) onStarted?.(payload.data.sessionId);
     } catch {
       onError("Failed to start board refinement");
-    } finally {
-      setStarting(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setStarting(false);
   }, [projectId, onError, onNotice, onStarted, starting, isRunning]);
 
   const running = status?.running === true;

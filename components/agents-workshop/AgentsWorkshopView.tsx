@@ -192,9 +192,10 @@ export function AgentsWorkshopView({ projectId }: { projectId?: string }) {
       }
     } catch {
       setError("Could not save this agent. Check the connection and try again.");
-    } finally {
-      setSaving(false);
     }
+    // Trailing, not in a `finally` clause: the React Compiler stops at the
+    // clause, and stopping left this component unread by every compiler rule.
+    setSaving(false);
   }
 
   function handleDiscard() {
@@ -230,9 +231,8 @@ export function AgentsWorkshopView({ projectId }: { projectId?: string }) {
       setError(
         "Could not delete this agent. Check the connection and try again.",
       );
-    } finally {
-      setDeleting(false);
     }
+    setDeleting(false);
   }
 
   if (loading) return <WorkshopLoading />;
