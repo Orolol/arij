@@ -2,6 +2,7 @@
   "cancel": "Cancel",
   "bugCreate": {
     "title": "New Bug",
+    "dialogDescription": "Report a bug: describe it, attach screenshots, and set its priority.",
     "titleLabel": "Title *",
     "titlePlaceholder": "Bug title...",
     "descriptionLabel": "Description",

@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -205,6 +206,12 @@ export function BugCreateDialog({
           <DialogTitle className="text-[16px] font-semibold">
             {t("bugCreate.title")}
           </DialogTitle>
+          {/* `sr-only`: this dialog paints no subtitle and gains none here.
+              A screen reader still needs to hear what the form is for — and
+              without any description Radix warns on every open. */}
+          <DialogDescription className="sr-only">
+            {t("bugCreate.dialogDescription")}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
