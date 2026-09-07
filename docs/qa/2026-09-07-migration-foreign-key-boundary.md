@@ -33,6 +33,11 @@ The check is deliberately skipped when nothing was applied: a database that was
 already inconsistent for unrelated reasons must not be bricked by a routine
 startup that ran no DDL.
 
+The suspension is read back rather than assumed. The defect's own mechanism
+applies one level up: an `initDb()` called from inside an open transaction
+would have its pragma ignored the same silent way, so that case throws instead
+of migrating with cascades armed.
+
 ## Measurements against a copy of the real dev database
 
 Snapshot taken read-only with better-sqlite3's `backup()` from
@@ -81,7 +86,7 @@ no violations — the fix is inert on the ordinary startup path.
 
 ## Automated coverage
 
-`__tests__/db-init-foreign-keys.test.ts` (6 tests) drives the real `initDb()`
+`__tests__/db-init-foreign-keys.test.ts` (7 tests) drives the real `initDb()`
 entry point:
 
 - a rebuild of `agent_sessions` staged onto the real migration chain preserves
@@ -92,11 +97,28 @@ entry point:
 - foreign keys stay enforced after a successful run (an orphan insert still
   throws);
 - the pragma is restored when a migration throws;
+- `initDb()` called inside an open transaction refuses to migrate rather than
+  proceeding with cascades armed, and leaves every child row untouched (red
+  before the fix: the migration went ahead and failed on `BEGIN`);
 - a migration that leaves a dangling reference behind refuses startup (red
   before the fix: the offending insert simply failed under enforcement, so the
   `foreign_key_check` gate was never reached);
 - a self-contained parent/child fixture covering CASCADE, SET NULL and NO
   ACTION explicitly.
+
+Red state proven by hand, not only by construction: with the merge-base
+`lib/db/init.ts` (`git show HEAD~1:lib/db/init.ts`) restored over the fix, 5 of
+the 7 tests fail with exactly the symptoms above; restoring the fix returns all
+7 to green. The two that pass on both sides are the guards that the fix must
+not *weaken* — foreign keys still enforced after a successful run, and the
+pragma restored on a throwing migration.
+
+## Suite state
+
+Full Vitest suite on the branch: **647 files, 8784 tests, all passed, exit code
+0**, 164.8 s, taken under contention (load average ~10–12; a second session was
+running its own full suite concurrently). `tsc --noEmit` clean with every dev
+server stopped; eslint clean on the changed files.
 
 ## Prose corrected
 

@@ -12,6 +12,13 @@ import { defaultMigrationsFolder } from "./init";
  * The schema comes from the real drizzle migrations in `lib/db/migrations/` —
  * the same chain production databases run — so tests can never drift from the
  * deployed schema the way hand-maintained DDL could.
+ *
+ * `migrate()` is called directly rather than through `initDb()`: this builds an
+ * EMPTY database whose connection never enables foreign keys, so there is no
+ * row for a rebuild migration's DROP TABLE to cascade into and nothing for
+ * `initDb`'s foreign-key boundary to protect. Any code path that migrates a
+ * database holding data must go through `initDb()` instead — see
+ * `migrateWithForeignKeysSuspended` in lib/db/init.ts.
  */
 let migratedTemplate: Buffer | null = null;
 

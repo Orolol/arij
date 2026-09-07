@@ -381,6 +381,11 @@ function appliedMigrationCount(connection: Database.Database): number {
  * unenforced. On a run that actually applied something, `foreign_key_check`
  * then has to come back empty: a migration that leaves a dangling reference
  * behind refuses startup rather than serving a corrupt database.
+ *
+ * The suspension is read back rather than assumed: the very reason the in-file
+ * pragma fails is that it runs inside a transaction, and an `initDb()` called
+ * from inside one would fail the same silent way. That case throws here
+ * instead of quietly migrating with cascades armed.
  */
 function migrateWithForeignKeysSuspended(
   connection: Database.Database,
@@ -391,6 +396,15 @@ function migrateWithForeignKeysSuspended(
   const migrationsBefore = appliedMigrationCount(connection);
 
   connection.pragma("foreign_keys = OFF");
+  if (connection.pragma("foreign_keys", { simple: true }) === 1) {
+    throw new Error(
+      "Refusing to migrate: foreign keys could not be suspended on the connection " +
+        "(SQLite ignores PRAGMA foreign_keys inside a transaction). " +
+        "A rebuild-and-rename migration would cascade-delete child rows. " +
+        "Call initDb() outside any open transaction.",
+    );
+  }
+
   try {
     migrate(drizzle(connection), { migrationsFolder });
   } finally {

@@ -317,6 +317,43 @@ describe("initDb foreign-key boundary", () => {
     }
   });
 
+  it("refuses to migrate when the suspension cannot take effect", () => {
+    // The defect's own mechanism, one level up: inside an open transaction
+    // SQLite ignores `PRAGMA foreign_keys`, so `initDb()` would migrate with
+    // cascades armed. It has to notice and refuse instead of proceeding.
+    const file = tempDbPath();
+    const connection = openProductionLike(file);
+    try {
+      initDb(connection);
+      seedSessionGraph(connection, { withNoActionLink: false });
+
+      const folder = stageMigrations(
+        [
+          {
+            tag: "9001_rebuild_agent_sessions",
+            sql: rebuildTableSql(connection, "agent_sessions"),
+          },
+        ],
+        { base: defaultMigrationsFolder() },
+      );
+
+      const before = sessionGraphCensus(connection);
+      connection.exec("BEGIN");
+      try {
+        expect(() => initDb(connection, { migrationsFolder: folder })).toThrow(
+          /foreign keys could not be suspended/i,
+        );
+      } finally {
+        connection.exec("ROLLBACK");
+      }
+
+      expect(sessionGraphCensus(connection)).toEqual(before);
+      expect(foreignKeysOn(connection)).toBe(true);
+    } finally {
+      connection.close();
+    }
+  });
+
   it("refuses startup when a migration leaves a foreign-key violation behind", () => {
     const file = tempDbPath();
     const connection = openProductionLike(file);
@@ -334,8 +371,11 @@ describe("initDb foreign-key boundary", () => {
         { base: defaultMigrationsFolder() },
       );
 
+      // Under the suspended-foreign-keys window the orphan insert succeeds,
+      // so it is `foreign_key_check` — not SQLite's enforcement — that has to
+      // catch it and refuse the boot.
       expect(() => initDb(connection, { migrationsFolder: folder })).toThrow(
-        /foreign key/i,
+        /foreign key violation\(s\) behind; refusing to start/i,
       );
       expect(foreignKeysOn(connection)).toBe(true);
     } finally {
