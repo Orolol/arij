@@ -30,7 +30,13 @@ interface BugCreateDialogProps {
   projectId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated?: () => void;
+  /**
+   * Fired once the bug row exists, with its id — on the clean path and on
+   * the "created, but the fix agent did not start" paths alike: the ticket
+   * is durable either way, and the host has to show it. `""` when the route
+   * answered without an id, the same convention as EpicCreateDialog.
+   */
+  onCreated?: (bugId: string) => void;
   namedAgentId?: string | null;
 }
 
@@ -142,7 +148,7 @@ export function BugCreateDialog({
         if (!createdBugId) {
           setError(t("bugCreate.errors.fixAgentMissingId"));
           resetForm();
-          onCreated?.();
+          onCreated?.("");
           return;
         }
 
@@ -164,14 +170,14 @@ export function BugCreateDialog({
               : t("bugCreate.errors.fixAgent"),
           );
           resetForm();
-          onCreated?.();
+          onCreated?.(createdBugId);
           return;
         }
       }
 
       resetForm();
       onOpenChange(false);
-      onCreated?.();
+      onCreated?.(createdBugId ?? "");
     } catch {
       setError(
         mode === "create_and_fix"
