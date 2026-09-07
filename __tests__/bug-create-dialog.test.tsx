@@ -50,6 +50,7 @@ describe("BugCreateDialog", () => {
     );
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(onCreated).toHaveBeenCalledWith("bug-1");
   });
 
   it("creates bug and starts fix agent with Create And Fix", async () => {
@@ -82,6 +83,7 @@ describe("BugCreateDialog", () => {
     );
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(onCreated).toHaveBeenCalledWith("bug-1");
   });
 
   it("shows error if bug is created but fix agent fails to start", async () => {
@@ -109,6 +111,7 @@ describe("BugCreateDialog", () => {
       ).toBeInTheDocument()
     );
     expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(onCreated).toHaveBeenCalledWith("bug-1");
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
   });
 
@@ -168,6 +171,7 @@ describe("BugCreateDialog", () => {
     await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(onCreated).toHaveBeenCalledTimes(1);
+    expect(onCreated).toHaveBeenCalledWith("bug-1");
   });
 
   it("ignores Enter while Create And Fix is in flight, so no bug is left undispatched", async () => {

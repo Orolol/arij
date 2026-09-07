@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatConversations, namedAgents } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
-import { resolveAgent } from "@/lib/agent-config/agent-resolution";
 import {
   isChatProvider,
   isPersistentChatProvider,
 } from "@/lib/agent-config/constants";
+import { resolveDefaultChatMode } from "@/lib/chat/default-chat-mode";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { updateConversationSchema } from "@/lib/validation/chat-schemas";
@@ -130,6 +130,7 @@ export async function PATCH(
         .select({
           id: namedAgents.id,
           provider: namedAgents.provider,
+          kind: namedAgents.kind,
         })
         .from(namedAgents)
         .where(eq(namedAgents.id, namedAgentIdInput))
@@ -140,7 +141,9 @@ export async function PATCH(
       }
 
       updates.namedAgentId = namedAgent.id;
-      updates.provider = namedAgent.provider;
+      // A composite owns no provider. Preserve the conversation's real
+      // fallback provider if the named agent is later removed from the roster.
+      if (namedAgent.kind !== "composite") updates.provider = namedAgent.provider;
       updates.cliSessionId = null;
       // Also clear the legacy column so stale legacy-row fallbacks cannot
       // resurrect a session from the previous agent.
@@ -154,9 +157,19 @@ export async function PATCH(
       updates.cliSessionId = null;
       updates.claudeSessionId = null;
     } else {
-      // Clearing a conversation-specific named agent falls back to configured chat default.
-      const resolved = resolveAgent("chat", projectId);
-      updates.namedAgentId = null;
+      // Clearing a conversation-specific named agent without naming a
+      // provider lands the conversation on the same default a NEW one opens
+      // on. Not `resolveAgent("chat", …)`: its return type is `AgentProvider`,
+      // which excludes the `*-persistent` modes and `openai-compatible` by
+      // construction, so a conversation created on the warm Claude process
+      // silently degraded to one-shot claude-code here. The resolution can
+      // also name an agent (the CHAT & SPEC assignment, or the seeded
+      // catch-all), and "back to the default" means back to that one — the
+      // agent id is written from the resolution rather than hard-coded null.
+      // The pill never sends this shape (agentSelectionPatch always pairs a
+      // cleared agent with a provider); it is the API contract for clients.
+      const resolved = await resolveDefaultChatMode(projectId);
+      updates.namedAgentId = resolved.namedAgentId;
       updates.provider = resolved.provider;
       updates.cliSessionId = null;
       updates.claudeSessionId = null;

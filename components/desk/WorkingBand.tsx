@@ -1,6 +1,7 @@
 "use client";
 
 import type * as React from "react";
+import { useTranslations } from "next-intl";
 
 import { BandHeader, StrataBand } from "@/components/piscine";
 import type {
@@ -67,7 +68,8 @@ export function WorkingBand({
   projectId,
   className,
 }: WorkingBandProps) {
-  const meta = `${working.length} agent${working.length === 1 ? "" : "s"} · ${queued.length} queued`;
+  const t = useTranslations("Desk");
+  const meta = t("working.meta", { agents: working.length, queued: queued.length });
   // The two tiles are always the last two cells.
   const cellCount = working.length + 2;
   // The desktop frame's row template, computed for the three columns `lg`
@@ -87,7 +89,7 @@ export function WorkingBand({
       className={cn("mx-[14px] mt-0", className)}
     >
       <BandHeader
-        label="Working"
+        label={t("working.label")}
         stratum="live"
         labelSize={13}
         meta={meta}

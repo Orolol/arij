@@ -23,7 +23,7 @@ const mockUseGitHubConfig = vi.hoisted(() => vi.fn());
 const mockUseEpicDependencies = vi.hoisted(() => vi.fn());
 const mockUseProjectEpicsList = vi.hoisted(() => vi.fn());
 const mockUseNamedAgentsList = vi.hoisted(() => vi.fn());
-const mockFetchUnifiedSessions = vi.hoisted(() => vi.fn());
+const mockFindUnifiedSession = vi.hoisted(() => vi.fn());
 
 vi.mock("@/hooks/useEpicDetail", () => ({
   useEpicDetail: (...args: unknown[]) => mockUseEpicDetail(...args),
@@ -53,8 +53,8 @@ vi.mock("@/hooks/useProjectEvents", () => ({
   useProjectEvents: () => ({ status: "connected", pollTick: 0 }),
 }));
 vi.mock("@/lib/agent-sessions/session-list", () => ({
-  fetchUnifiedSessions: (...args: unknown[]) =>
-    mockFetchUnifiedSessions(...args),
+  findUnifiedSession: (...args: unknown[]) =>
+    mockFindUnifiedSession(...args),
 }));
 vi.mock("@/components/review/DiffViewer", () => ({
   DiffViewer: () => <div data-testid="diff-viewer" />,
@@ -200,7 +200,7 @@ beforeEach(() => {
   mockUseEpicDependencies.mockReturnValue({ predecessors: [], successors: [] });
   mockUseProjectEpicsList.mockReturnValue({ epics: [] });
   mockUseNamedAgentsList.mockReturnValue({ agents: [] });
-  mockFetchUnifiedSessions.mockResolvedValue([]);
+  mockFindUnifiedSession.mockResolvedValue(null);
 });
 
 afterEach(() => {
@@ -215,7 +215,7 @@ describe("GIT band", () => {
     renderSubject();
     expect(screen.getByText("arij/arj-122-sse-logs")).toBeInTheDocument();
     expect(screen.getByTestId("ticket-diffstat")).toHaveTextContent(
-      "worktree isolé",
+      "isolated worktree",
     );
   });
 
@@ -233,11 +233,11 @@ describe("GIT band", () => {
     renderSubject();
     // Before the deferred fetch lands.
     expect(screen.getByTestId("ticket-diffstat")).toHaveTextContent(
-      "— · — files · worktree isolé",
+      "— · — files · isolated worktree",
     );
     await waitFor(() =>
       expect(screen.getByTestId("ticket-diffstat")).toHaveTextContent(
-        "+3−1 · 2 files · worktree isolé",
+        "+3−1 · 2 files · isolated worktree",
       ),
     );
   });

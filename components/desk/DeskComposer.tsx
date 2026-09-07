@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { SelectPill, StrataBand, projectTone } from "@/components/piscine";
 import {
@@ -45,9 +46,6 @@ export interface DeskComposerProps {
   className?: string;
 }
 
-export const COMPOSER_PLACEHOLDER =
-  "Décris une feature — ⏎ rédige l'epic et ses stories, ⇧⏎ l'envoie direct en dev";
-
 export function DeskComposer({
   projects,
   targetProjectId,
@@ -58,6 +56,7 @@ export function DeskComposer({
   disabled = false,
   className,
 }: DeskComposerProps) {
+  const t = useTranslations("Desk");
   const [title, setTitle] = useState("");
   const [busy, setBusy] = useState(false);
   const composingRef = useRef(false);
@@ -135,8 +134,8 @@ export function DeskComposer({
           type="text"
           value={title}
           disabled={disabled || busy || !project}
-          placeholder={COMPOSER_PLACEHOLDER}
-          aria-label="Décris une feature"
+          placeholder={t("composer.placeholder")}
+          aria-label={t("composer.label")}
           data-testid="desk-composer-input"
           onChange={(event) => setTitle(event.target.value)}
           onCompositionStart={() => {
@@ -170,7 +169,13 @@ export function DeskComposer({
           )}
         />
 
+        {/* `data-testid`, unlike on `StrataBand` above, actually reaches the
+            DOM: `SelectPill` extends the button's props and spreads `...rest`.
+            It is what lets a test change the target — the trigger's own label
+            is the CURRENT project's `shortName`, which a test cannot know, and
+            the cross-project desk has no project of its own to fall back on. */}
         <SelectPill
+          data-testid="desk-project-select"
           label={project?.shortName ?? "—"}
           tone="project"
           projectTone={projectTone(project?.colorIndex ?? 0)}
