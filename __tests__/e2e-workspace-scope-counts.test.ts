@@ -3,6 +3,8 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import ts from "typescript";
 
+import { GROUP_PREVIEW } from "@/lib/tickets-registry/aggregate";
+
 /**
  * One database, four workers, and pages that span the whole workspace.
  *
@@ -21,25 +23,52 @@ import ts from "typescript";
  * ids it owns), and `tickets-registry-filters` asserted `toHaveCount(1)` and
  * `toHaveCount(4)` on `tickets-row` after clearing the project filter.
  *
- * The repair both times is the same, and `qa-findings-responsive` already
- * practised it on `/qa`: narrow the locator to a marker the test owns
- * (`.filter({ hasText: … })`) before counting. This test pins that convention
- * so the pattern cannot come back silently.
+ * The repair is to narrow the locator to a marker the test owns
+ * (`.filter({ hasText: … })`) before counting, as `qa-findings-responsive`
+ * already practised on `/qa`. This test pins that convention so the pattern
+ * cannot come back silently.
+ *
+ * THE SECOND HALF OF THE RULE: on a surface that TRUNCATES, narrowing the
+ * locator is not enough. `RegistryTable` renders `GROUP_PREVIEW[group]` rows
+ * and hides the rest behind "+ n autres", so a sibling spec's rows do not just
+ * inflate a count on `/tickets` — they push the owned row out of the DOM
+ * entirely, and `.filter({ hasText: … })` then finds nothing. Reproduced with
+ * five interfering `review` rows in `e2e/tickets-registry-filters.spec.ts`.
+ * There, the only honest repair is to narrow what the surface RENDERS, through
+ * its own search field, so `TRUNCATED_COLLECTIONS` demands that instead.
  *
  * WHAT IT DOES NOT CATCH: it reads syntax, not behaviour. A count laundered
  * through a helper function, a locator built from a value it cannot resolve to
  * a `getByTestId`, or a workspace-wide assertion written with something other
- * than `toHaveCount` all pass unseen. The synthetic controls below pin what the
- * scan does see, so a parser that quietly stops matching fails here rather than
- * reporting a clean sweep.
+ * than `toHaveCount` all pass unseen. Nor can it tell an owned search marker
+ * from any other non-empty string — it checks that the field was narrowed, not
+ * that the needle belongs to the test. The synthetic controls below pin what
+ * the scan does see, so a parser that quietly stops matching fails here rather
+ * than reporting a clean sweep.
  */
 
 const E2E_DIR = join(__dirname, "..", "e2e");
+const REPO_ROOT = join(__dirname, "..");
+
+/**
+ * Collections whose surface renders a capped preview, mapped to the search
+ * field that narrows what it renders.
+ *
+ * One entry today: the registry's rows, capped by `GROUP_PREVIEW` and narrowed
+ * by the `⌘F` field. "the truncation hazard it is keyed on" below re-reads the
+ * source this claim rests on, so an entry cannot rot into a rule about a
+ * surface that no longer truncates — or, worse, stay silent about one that
+ * starts to.
+ */
+const TRUNCATED_COLLECTIONS: Record<string, string> = {
+  "tickets-row": "tickets-filter-field",
+};
 
 interface Violation {
   file: string;
   line: number;
   snippet: string;
+  reason: string;
 }
 
 interface ScanResult {
@@ -48,6 +77,8 @@ interface ScanResult {
   globalEntries: number;
   /** Non-zero `toHaveCount` assertions examined, whatever the scope. */
   countAssertions: number;
+  /** Search fields a test body narrowed, counted at the call. */
+  narrowings: number;
 }
 
 /**
@@ -83,6 +114,7 @@ function scanSource(fileName: string, text: string): ScanResult {
   const violations: Violation[] = [];
   let globalEntries = 0;
   let countAssertions = 0;
+  let narrowings = 0;
 
   // `const rows = page.getByTestId("tickets-row")` — the shape both defects
   // used, so an identifier has to be expanded before it can be classified.
@@ -105,8 +137,17 @@ function scanSource(fileName: string, text: string): ScanResult {
     return out;
   };
 
+  /** Which `TRUNCATED_COLLECTIONS` entry, if any, a locator resolves to. */
+  const truncatedCollection = (expanded: string): string | null =>
+    Object.keys(TRUNCATED_COLLECTIONS).find((testId) =>
+      expanded.includes(`getByTestId("${testId}")`),
+    ) ?? null;
+
   type Event =
     | { pos: number; kind: "scope"; global: boolean }
+    /** A navigation: the view re-mounts and its component state is gone. */
+    | { pos: number; kind: "remount" }
+    | { pos: number; kind: "narrow"; field: string; on: boolean }
     | { pos: number; kind: "count"; call: ts.CallExpression; value: number };
 
   const eventsIn = (body: ts.Node): Event[] => {
@@ -115,10 +156,25 @@ function scanSource(fileName: string, text: string): ScanResult {
       if (ts.isCallExpression(node)) {
         const callee = node.expression;
 
+        // Every navigation re-mounts the view, and the search query is
+        // component state (`TicketsRegistryView`), so it does not survive one.
+        // `goto` additionally says which scope the page lands in; the history
+        // moves do not, so they only drop the narrowing — the safe half.
+        if (
+          ts.isPropertyAccessExpression(callee) &&
+          ["goto", "reload", "goBack", "goForward"].includes(callee.name.text)
+        ) {
+          events.push({ pos: node.getStart(source), kind: "remount" });
+        }
+
         if (ts.isPropertyAccessExpression(callee) && callee.name.text === "goto") {
           const target = node.arguments[0];
           const text = target ? expand(target) : "";
-          events.push({ pos: node.getStart(source), kind: "scope", global: !isProjectScopedTarget(text) });
+          events.push({
+            pos: node.getStart(source),
+            kind: "scope",
+            global: !isProjectScopedTarget(text),
+          });
         }
 
         // Choosing a project in the registry's own filter menu moves the page
@@ -141,6 +197,23 @@ function scanSource(fileName: string, text: string): ScanResult {
                 events.push({ pos: node.getStart(source), kind: "scope", global: false });
               }
             }
+          }
+        }
+
+        // `field.fill("…")` — the one control that narrows what a truncating
+        // surface renders. An empty string is the app's own reset, so it puts
+        // the whole workspace back on screen.
+        if (ts.isPropertyAccessExpression(callee) && callee.name.text === "fill") {
+          const target = expand(callee.expression);
+          const field = Object.values(TRUNCATED_COLLECTIONS).find((testId) =>
+            target.includes(`getByTestId("${testId}")`),
+          );
+          if (field) {
+            const needle = node.arguments[0];
+            const cleared =
+              needle !== undefined && ts.isStringLiteralLike(needle) && needle.text.length === 0;
+            events.push({ pos: node.getStart(source), kind: "narrow", field, on: !cleared });
+            if (!cleared) narrowings += 1;
           }
         }
 
@@ -178,10 +251,20 @@ function scanSource(fileName: string, text: string): ScanResult {
 
   for (const body of testBodies) {
     let workspaceWide = false;
+    const narrowed = new Set<string>();
     for (const event of eventsIn(body)) {
       if (event.kind === "scope") {
         if (event.global && !workspaceWide) globalEntries += 1;
         workspaceWide = event.global;
+        continue;
+      }
+      if (event.kind === "remount") {
+        narrowed.clear();
+        continue;
+      }
+      if (event.kind === "narrow") {
+        if (event.on) narrowed.add(event.field);
+        else narrowed.delete(event.field);
         continue;
       }
       countAssertions += 1;
@@ -189,20 +272,41 @@ function scanSource(fileName: string, text: string): ScanResult {
 
       const argument = expectArgument(event.call)!;
       const expanded = expand(argument);
+      const record = (reason: string): void => {
+        violations.push({
+          file: fileName,
+          line: source.getLineAndCharacterOfPosition(event.call.getStart(source)).line + 1,
+          snippet: event.call.getText(source).replace(/\s+/g, " ").slice(0, 120),
+          reason,
+        });
+      };
+
+      // A truncating surface first: `.filter()` cannot reach a row the
+      // preview never rendered, so only a narrowed surface clears it.
+      const truncated = truncatedCollection(expanded);
+      if (truncated) {
+        if (narrowed.has(TRUNCATED_COLLECTIONS[truncated])) continue;
+        record(
+          `counts \`${truncated}\` on a truncating surface in workspace scope — sibling rows push the ` +
+            `owned row past the "+ n autres" line, where \`.filter({ hasText: … })\` cannot reach it; ` +
+            `narrow the surface itself with \`getByTestId("${TRUNCATED_COLLECTIONS[truncated]}").fill(<owned marker>)\` first`,
+        );
+        continue;
+      }
+
       // Only collection locators are at risk: a form field found by its label
       // is not multiplied by a sibling spec's project.
       if (!expanded.includes("getByTestId(")) continue;
       if (expanded.includes(".filter(")) continue;
 
-      violations.push({
-        file: fileName,
-        line: source.getLineAndCharacterOfPosition(event.call.getStart(source)).line + 1,
-        snippet: event.call.getText(source).replace(/\s+/g, " ").slice(0, 120),
-      });
+      record(
+        "counts a workspace-wide collection — narrow it to a marker this test owns " +
+          "(`.filter({ hasText: … })`) before counting",
+      );
     }
   }
 
-  return { violations, globalEntries, countAssertions };
+  return { violations, globalEntries, countAssertions, narrowings };
 }
 
 const specFiles = readdirSync(E2E_DIR)
@@ -215,22 +319,24 @@ describe("the scan itself", () => {
     expect(specFiles.length).toBeGreaterThanOrEqual(20);
   });
 
-  it("reaches workspace-wide scope and real count assertions across the suite", () => {
+  it("reaches workspace-wide scope, real count assertions and a real narrowing across the suite", () => {
     const totals = specFiles.reduce(
       (accumulator, file) => {
         const result = scanSource(file, readFileSync(join(E2E_DIR, file), "utf8"));
         return {
           globalEntries: accumulator.globalEntries + result.globalEntries,
           countAssertions: accumulator.countAssertions + result.countAssertions,
+          narrowings: accumulator.narrowings + result.narrowings,
         };
       },
-      { globalEntries: 0, countAssertions: 0 },
+      { globalEntries: 0, countAssertions: 0, narrowings: 0 },
     );
-    // Both halves of the rule have to be exercised by the real suite, or a
-    // parser that stopped recognising `goto` / `toHaveCount` would report a
-    // clean sweep.
+    // Every half of the rule has to be exercised by the real suite, or a
+    // parser that stopped recognising `goto` / `toHaveCount` / `fill` would
+    // report a clean sweep.
     expect(totals.globalEntries).toBeGreaterThan(0);
     expect(totals.countAssertions).toBeGreaterThan(10);
+    expect(totals.narrowings).toBeGreaterThan(0);
   });
 
   it("flags the shape that failed, and clears the shape that fixed it", () => {
@@ -243,9 +349,9 @@ describe("the scan itself", () => {
     `;
     const fixed = `
       test("x", async ({ page }) => {
-        await page.goto("/tickets");
-        const rows = page.getByTestId("tickets-row");
-        await expect(rows.filter({ hasText: title })).toHaveCount(1);
+        await page.goto("/qa");
+        const findings = page.getByTestId("qa-finding-row");
+        await expect(findings.filter({ hasText: marker })).toHaveCount(1);
       });
     `;
     const scoped = `
@@ -266,6 +372,80 @@ describe("the scan itself", () => {
     expect(scanSource("scoped.spec.ts", scoped).violations).toHaveLength(0);
     expect(scanSource("form.spec.ts", form).violations).toHaveLength(0);
   });
+
+  it("is not satisfied by a locator filter on a truncating surface", () => {
+    // The finding this rule was added for: identity, unnarrowed. It reads as a
+    // repair, and it still loses the row to the "+ n autres" line.
+    const filtered = `
+      test("x", async ({ page }) => {
+        await page.goto("/tickets");
+        const rows = page.getByTestId("tickets-row");
+        await expect(rows.filter({ hasText: review })).toHaveCount(1);
+      });
+    `;
+    const narrowed = `
+      test("x", async ({ page, project }) => {
+        await page.goto("/tickets");
+        const rows = page.getByTestId("tickets-row");
+        const field = page.getByTestId("tickets-filter-field");
+        await field.fill(project.id);
+        await expect(rows.filter({ hasText: review })).toHaveCount(1);
+      });
+    `;
+    // Clearing the field puts the whole workspace back on screen…
+    const cleared = `
+      test("x", async ({ page, project }) => {
+        await page.goto("/tickets");
+        const rows = page.getByTestId("tickets-row");
+        const field = page.getByTestId("tickets-filter-field");
+        await field.fill(project.id);
+        await field.fill("");
+        await expect(rows.filter({ hasText: review })).toHaveCount(1);
+      });
+    `;
+    // …and so does any navigation, which re-mounts the view and its query
+    // state — a reload and a history move as much as a fresh `goto`.
+    const remounted = `
+      test("x", async ({ page, project }) => {
+        await page.goto("/tickets");
+        const rows = page.getByTestId("tickets-row");
+        await page.getByTestId("tickets-filter-field").fill(project.id);
+        await page.goto("/tickets");
+        await expect(rows.filter({ hasText: review })).toHaveCount(1);
+      });
+    `;
+    const reloaded = `
+      test("x", async ({ page, project }) => {
+        await page.goto("/tickets");
+        const rows = page.getByTestId("tickets-row");
+        await page.getByTestId("tickets-filter-field").fill(project.id);
+        await page.reload();
+        await expect(rows.filter({ hasText: review })).toHaveCount(1);
+      });
+    `;
+    expect(scanSource("filtered.spec.ts", filtered).violations).toHaveLength(1);
+    expect(scanSource("filtered.spec.ts", filtered).violations[0].reason).toContain("truncating surface");
+    expect(scanSource("narrowed.spec.ts", narrowed).violations).toHaveLength(0);
+    expect(scanSource("cleared.spec.ts", cleared).violations).toHaveLength(1);
+    expect(scanSource("remounted.spec.ts", remounted).violations).toHaveLength(1);
+    expect(scanSource("reloaded.spec.ts", reloaded).violations).toHaveLength(1);
+  });
+
+  it("keeps the truncation hazard it is keyed on", () => {
+    // `TRUNCATED_COLLECTIONS` is a claim about the app, not a preference. If
+    // the registry stopped capping its groups, or renamed the row or the
+    // field, the rule above would be enforcing a rule about nothing.
+    for (const [group, cap] of Object.entries(GROUP_PREVIEW)) {
+      expect(cap, `${group} renders every row, so nothing is hidden`).toBeGreaterThan(0);
+      expect(cap, `${group} no longer truncates in any realistic workspace`).toBeLessThan(50);
+    }
+    const read = (path: string): string => readFileSync(join(REPO_ROOT, path), "utf8");
+    expect(read("components/tickets-registry/RegistryTable.tsx")).toContain("GROUP_PREVIEW[group]");
+    expect(read("components/tickets-registry/RegistryRow.tsx")).toContain('data-testid="tickets-row"');
+    expect(read("components/tickets-registry/RegistryFilters.tsx")).toContain(
+      'data-testid="tickets-filter-field"',
+    );
+  });
 });
 
 describe("no e2e spec counts a workspace-wide collection", () => {
@@ -276,8 +456,7 @@ describe("no e2e spec counts a workspace-wide collection", () => {
       violations
         .map(
           (violation) =>
-            `${violation.file}:${violation.line} counts a workspace-wide collection — ` +
-            `narrow it to a marker this test owns (\`.filter({ hasText: … })\`) before counting: ${violation.snippet}`,
+            `${violation.file}:${violation.line} ${violation.reason}: ${violation.snippet}`,
         )
         .join("\n"),
     ).toEqual([]);

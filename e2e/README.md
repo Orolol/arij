@@ -163,11 +163,19 @@ whenever a sibling overlaps. It has bitten twice: the eight-chips test in
 
 Count what the test owns instead — the ids it created, or a marker narrowed with
 `.filter({ hasText: … })`, which is what `qa-findings-responsive.spec.ts` does on
-`/qa`. Exact counts stay meaningful under `?project=`. Note that the registry
-also truncates each group to `GROUP_PREVIEW` rows, so on an unfiltered `/tickets`
-a spec's own rows can be pushed past the "+ n autres" line and disappear
-entirely; presence, not just the count, is unreliable there.
-`__tests__/e2e-workspace-scope-counts.test.ts` fails if the pattern returns.
+`/qa`. Exact counts stay meaningful under `?project=`.
+
+**On a truncating surface, narrowing the locator is not enough.** `RegistryTable`
+renders `GROUP_PREVIEW[group]` rows and hides the rest behind "+ n autres", so on
+an unfiltered `/tickets` a spec's own rows are not merely outnumbered by a
+sibling's — they leave the DOM, and `.filter({ hasText: … })` cannot reach a row
+that was never rendered. Presence there is exactly as unreliable as a count. The
+repair is to narrow what the surface RENDERS, through the registry's own search
+field (`tickets-filter-field`), with a marker the test owns; the first test of
+`tickets-registry-filters.spec.ts` seeds five interfering rows to keep that
+honest. `__tests__/e2e-workspace-scope-counts.test.ts` fails if either pattern
+returns — it demands the search field for `tickets-row` and a locator filter
+everywhere else.
 
 The suite uses `data/e2e.db`, separate from the personal `data/arij.db`.
 `ARIJ_DB_PATH` overrides that path for both the runner and the server.
