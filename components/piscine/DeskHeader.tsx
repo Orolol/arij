@@ -21,6 +21,8 @@ export interface DeskHeaderProps {
   title: string;
   /** When given, the title becomes a link (typically back to the desk). */
   titleHref?: string;
+  /** `data-testid` on the title element (the link when titleHref is given, or the span). */
+  testId?: string;
   /** The screen's own right cluster. Give its first element `ml-auto`. */
   children?: React.ReactNode;
   className?: string;
@@ -32,6 +34,7 @@ const TITLE_CLASS =
 export function DeskHeader({
   title,
   titleHref,
+  testId,
   children,
   className,
 }: DeskHeaderProps) {
@@ -45,11 +48,11 @@ export function DeskHeader({
     >
       <AvatarSquare label="A" tone="action" size={30} />
       {titleHref ? (
-        <Link href={titleHref} className={TITLE_CLASS}>
+        <Link href={titleHref} data-testid={testId} className={TITLE_CLASS}>
           {title}
         </Link>
       ) : (
-        <span className={TITLE_CLASS}>{title}</span>
+        <span data-testid={testId} className={TITLE_CLASS}>{title}</span>
       )}
       {children}
     </header>

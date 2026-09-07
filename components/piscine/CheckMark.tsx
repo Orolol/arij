@@ -32,6 +32,8 @@ export interface CheckMarkProps {
   tone?: "live" | "action";
   onToggle?: () => void;
   disabled?: boolean;
+  /** `data-testid` on the button (when onToggle is given) or span. */
+  testId?: string;
   className?: string;
 }
 
@@ -41,6 +43,7 @@ export function CheckMark({
   tone = "live",
   onToggle,
   disabled = false,
+  testId,
   className,
 }: CheckMarkProps) {
   const classes = cn(
@@ -63,7 +66,13 @@ export function CheckMark({
 
   if (!onToggle) {
     return (
-      <span data-slot="check-mark" data-checked={checked || undefined} aria-hidden="true" className={classes}>
+      <span
+        data-slot="check-mark"
+        data-testid={testId}
+        data-checked={checked || undefined}
+        aria-hidden="true"
+        className={classes}
+      >
         {glyph}
       </span>
     );
@@ -73,6 +82,7 @@ export function CheckMark({
     <button
       type="button"
       data-slot="check-mark"
+      data-testid={testId}
       data-checked={checked || undefined}
       role="checkbox"
       aria-checked={checked}
