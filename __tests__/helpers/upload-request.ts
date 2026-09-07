@@ -22,6 +22,17 @@ import nextConfig from "@/next.config";
 /** Next's documented default when `proxyClientMaxBodySize` is not configured. */
 export const NEXT_DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
 
+export const MAX_DOCUMENT_UPLOAD_BYTES = 20 * 1024 * 1024;
+export const MAX_DOCUMENT_UPLOAD_LABEL = `${MAX_DOCUMENT_UPLOAD_BYTES / 1024 / 1024}MB`;
+
+export function oversizedDocumentUploadReason(bodyBytes: number | null): string {
+  if (bodyBytes === null) {
+    return `Upload too large. Max: ${MAX_DOCUMENT_UPLOAD_LABEL}`;
+  }
+  const megabytes = (bodyBytes / 1024 / 1024).toFixed(1);
+  return `Upload too large (${megabytes}MB including form overhead). Max: ${MAX_DOCUMENT_UPLOAD_LABEL}`;
+}
+
 const SIZE_UNITS: Record<string, number> = {
   b: 1,
   kb: 1024,
