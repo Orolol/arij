@@ -4,6 +4,7 @@ import * as React from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Infinity as InfinityIcon } from "lucide-react";
+import { useTranslations } from "next-intl";
 
 import { PillButton, projectTone } from "@/components/piscine";
 import {
@@ -102,6 +103,7 @@ export function NowDesk({
   className,
 }: NowDeskProps) {
   const router = useRouter();
+  const t = useTranslations("Desk");
   const { openTicket } = useTicketOverlay();
   /**
    * The desk's scope is its host's route and nothing else now: the header rail
@@ -192,7 +194,7 @@ export function NowDesk({
         );
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
-          reportFailure(res, body, "Failed to post the reply", item.projectId);
+          reportFailure(res, body, t("toasts.replyFailed"), item.projectId);
         } else {
           // The reply is also the read: the durable cursor move is what keeps
           // the row from coming straight back on the next poll.
@@ -201,18 +203,18 @@ export function NowDesk({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ epicId: item.epicId }),
           }).catch(() => {});
-          raise("success", "Réponse envoyée");
+          raise("success", t("toasts.replySent"));
           changed();
         }
       } catch {
-        raise("error", "Failed to post the reply");
+        raise("error", t("toasts.replyFailed"));
       }
       // Trailing, not in a `finally` clause, here and in every handler below:
       // the React Compiler stops at the clause, and stopping left this
       // component unread by every compiler rule.
       markPending(item.epicId, false);
     },
-    [markPending, raise, reportFailure, changed],
+    [markPending, raise, reportFailure, changed, t],
   );
 
   const handleSendToDev = useCallback(
@@ -238,17 +240,17 @@ export function NowDesk({
         );
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
-          reportFailure(res, body, "Failed to launch the build", item.projectId);
+          reportFailure(res, body, t("toasts.buildFailed"), item.projectId);
         } else {
-          raise("success", "Envoyé en dev");
+          raise("success", t("toasts.sentToDev"));
           changed();
         }
       } catch {
-        raise("error", "Failed to launch the build");
+        raise("error", t("toasts.buildFailed"));
       }
       markPending(item.epicId, false);
     },
-    [markPending, namedAgentId, raise, reportFailure, changed],
+    [markPending, namedAgentId, raise, reportFailure, changed, t],
   );
 
   /**
@@ -282,17 +284,17 @@ export function NowDesk({
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
-          reportFailure(res, body, "Failed to retry build", item.projectId);
+          reportFailure(res, body, t("toasts.retryFailed"), item.projectId);
         } else {
-          raise("success", "Retrying build for epic");
+          raise("success", t("toasts.retrying"));
           changed();
         }
       } catch {
-        raise("error", "Failed to retry build");
+        raise("error", t("toasts.retryFailed"));
       }
       markPending(item.epicId, false);
     },
-    [markPending, namedAgentId, raise, reportFailure, changed],
+    [markPending, namedAgentId, raise, reportFailure, changed, t],
   );
 
   /**
@@ -319,16 +321,16 @@ export function NowDesk({
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
-          raise("error", "Impossible d'écarter ce signal");
+          raise("error", t("toasts.dismissFailed"));
         } else {
           changed();
         }
       } catch {
-        raise("error", "Impossible d'écarter ce signal");
+        raise("error", t("toasts.dismissFailed"));
       }
       markPending(item.epicId, false);
     },
-    [markPending, raise, changed],
+    [markPending, raise, changed, t],
   );
 
   const handleResolveConflict = useCallback(
@@ -345,23 +347,23 @@ export function NowDesk({
         );
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
-          reportFailure(res, body, "Failed to resolve the merge", item.projectId);
+          reportFailure(res, body, t("toasts.resolveFailed"), item.projectId);
         } else {
           // Two outcomes: a clean re-merge landed the branch, or a conflict
           // agent was dispatched and the row goes back to ordinary agent
           // activity.
-          if (body.data?.resolved) raise("success", "Merged into the base branch");
+          if (body.data?.resolved) raise("success", t("toasts.merged"));
           else if (body.data?.sessionId) {
-            raise("success", "Merge conflict — resolution agent dispatched");
+            raise("success", t("toasts.conflictAgentDispatched"));
           }
           changed();
         }
       } catch {
-        raise("error", "Failed to resolve the merge");
+        raise("error", t("toasts.resolveFailed"));
       }
       markPending(item.epicId, false);
     },
-    [markPending, raise, reportFailure, changed],
+    [markPending, raise, reportFailure, changed, t],
   );
 
   /**
@@ -385,7 +387,7 @@ export function NowDesk({
         );
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
-          reportFailure(res, body, "Failed to merge", row.projectId);
+          reportFailure(res, body, t("toasts.mergeFailed"), row.projectId);
           return "failed";
         }
         return body.data?.autoAgent ? "agent" : "merged";
@@ -393,7 +395,7 @@ export function NowDesk({
         return "failed";
       }
     },
-    [reportFailure],
+    [reportFailure, t],
   );
 
   const handleLand = useCallback(
@@ -402,11 +404,11 @@ export function NowDesk({
       setLandingEpicId(row.epicId);
       const outcome = await landOne(row);
       setLandingEpicId(null);
-      if (outcome === "merged") raise("success", "Merged into the base branch");
-      if (outcome === "agent") raise("success", "Launched merge-fix agent");
+      if (outcome === "merged") raise("success", t("toasts.merged"));
+      if (outcome === "agent") raise("success", t("toasts.mergeFixAgent"));
       changed();
     },
-    [landingEpicId, landingAll, landOne, raise, changed],
+    [landingEpicId, landingAll, landOne, raise, changed, t],
   );
 
   const handleLandAll = useCallback(
@@ -425,17 +427,14 @@ export function NowDesk({
         else failed += 1;
       }
       setLandingAll(false);
-      if (merged > 0) raise("success", `Merged ${merged} epic${merged > 1 ? "s" : ""}`);
+      if (merged > 0) raise("success", t("toasts.mergedCount", { count: merged }));
       if (agentLaunched > 0) {
-        raise(
-          "success",
-          `Launched merge-fix agent for ${agentLaunched} epic${agentLaunched > 1 ? "s" : ""}`,
-        );
+        raise("success", t("toasts.mergeFixAgentCount", { count: agentLaunched }));
       }
-      if (failed > 0) raise("error", `${failed} merge${failed > 1 ? "s" : ""} failed`);
+      if (failed > 0) raise("error", t("toasts.mergesFailed", { count: failed }));
       changed();
     },
-    [landingEpicId, landingAll, landOne, raise, changed],
+    [landingEpicId, landingAll, landOne, raise, changed, t],
   );
 
   const handleStopSession = useCallback(
@@ -448,16 +447,16 @@ export function NowDesk({
           { method: "DELETE" },
         );
         if (!res.ok) {
-          raise("error", "Failed to stop the session");
+          raise("error", t("toasts.stopSessionFailed"));
           return;
         }
-        raise("success", "Session stopped");
+        raise("success", t("toasts.sessionStopped"));
         changed();
       } catch {
-        raise("error", "Failed to stop the session");
+        raise("error", t("toasts.stopSessionFailed"));
       }
     },
-    [data, raise, changed],
+    [data, raise, changed, t],
   );
 
   const handleCompose = useCallback(
@@ -480,15 +479,15 @@ export function NowDesk({
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body.error) {
-          raise("error", body.error || "Failed to capture the idea");
+          raise("error", body.error || t("toasts.captureFailed"));
           return false;
         }
         const epicId: string | undefined = body.data?.id;
         const ticketAction = epicId ? {
           href: `/projects/${input.projectId}?ticket=${epicId}`,
-          label: "Voir le ticket",
+          label: t("toasts.viewTicket"),
         } : undefined;
-        const confirmation = `Ticket créé dans le backlog : ${input.title}`;
+        const confirmation = t("toasts.ticketCreated", { title: input.title });
         if (!input.dispatch || !epicId) {
           raise("success", confirmation, ticketAction);
           changed();
@@ -506,21 +505,35 @@ export function NowDesk({
           );
           const dispatchBody = await dispatched.json().catch(() => ({}));
           if (!dispatched.ok || dispatchBody.error) {
-            raise("warning", `Ticket créé, mais le lancement du build a échoué : ${dispatchBody.error || input.title}`, ticketAction);
+            raise(
+              "warning",
+              t("toasts.ticketCreatedDispatchFailed", {
+                reason: dispatchBody.error || input.title,
+              }),
+              ticketAction,
+            );
           } else {
-            raise("success", `Ticket créé et envoyé en dev : ${input.title}`, ticketAction);
+            raise(
+              "success",
+              t("toasts.ticketCreatedAndDispatched", { title: input.title }),
+              ticketAction,
+            );
           }
         } catch {
-          raise("warning", `Ticket créé, mais le lancement du build n'a pas pu être confirmé : ${input.title}`, ticketAction);
+          raise(
+            "warning",
+            t("toasts.ticketCreatedDispatchUnconfirmed", { title: input.title }),
+            ticketAction,
+          );
         }
         changed();
         return true;
       } catch {
-        raise("error", "Failed to capture the idea");
+        raise("error", t("toasts.captureFailed"));
         return false;
       }
     },
-    [raise, changed],
+    [raise, changed, t],
   );
 
   /**
@@ -580,7 +593,7 @@ export function NowDesk({
         });
         const body = await res.json().catch(() => ({}));
         if (!res.ok || body?.error) {
-          raise("error", "Failed to change the Full Auto agent");
+          raise("error", t("toasts.autoAgentFailed"));
           return;
         }
         setAutoAgents((current) => ({
@@ -591,10 +604,10 @@ export function NowDesk({
           },
         }));
       } catch {
-        raise("error", "Failed to change the Full Auto agent");
+        raise("error", t("toasts.autoAgentFailed"));
       }
     },
-    [raise],
+    [raise, t],
   );
 
   const toggleAutoMode = useCallback(
@@ -606,16 +619,16 @@ export function NowDesk({
           body: JSON.stringify({ enabled }),
         });
         if (!res.ok) {
-          raise("error", "Failed to change Full Auto");
+          raise("error", t("toasts.autoFailed"));
           return;
         }
-        raise("success", enabled ? "Full Auto Mode is on" : "Full Auto Mode is off");
+        raise("success", enabled ? t("toasts.autoOn") : t("toasts.autoOff"));
         changed();
       } catch {
-        raise("error", "Failed to change Full Auto");
+        raise("error", t("toasts.autoFailed"));
       }
     },
-    [raise, changed],
+    [raise, changed, t],
   );
 
   /* ---- render ------------------------------------------------------- */
@@ -672,7 +685,7 @@ export function NowDesk({
                   icon={InfinityIcon}
                   data-testid="desk-full-auto"
                 >
-                  {`Full Auto · ${autoOn}/${projects.length}`}
+                  {t("controls.fullAuto", { on: autoOn, total: projects.length })}
                 </PillButton>
               </PopoverTrigger>
               <PopoverContent

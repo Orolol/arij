@@ -1,5 +1,7 @@
 "use client";
 
+import { useTranslations } from "next-intl";
+
 import { useState, useCallback } from "react";
 import { parseEpicFromConversation } from "@/lib/epic-parsing";
 
@@ -23,6 +25,7 @@ interface UseEpicCreateOptions {
 }
 
 export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCreated }: UseEpicCreateOptions) {
+  const tErrors = useTranslations("ClientErrors");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdEpic, setCreatedEpic] = useState<EpicCreateResult | null>(null);
@@ -36,7 +39,7 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
       const create = async (): Promise<string | null> => {
         try {
           if (!conversationId) {
-            setError("Select an epic creation conversation first.");
+            setError(tErrors("selectAnEpicCreationConversationFirst"));
             return null;
           }
 
@@ -57,13 +60,13 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
 
           const initialMessages = await loadMessages();
           if (!initialMessages) {
-            setError("Unable to load the conversation. Try again.");
+            setError(tErrors("unableToLoadTheConversationTryAgain"));
             return null;
           }
           let messages = initialMessages;
 
           if (messages.length === 0) {
-            setError("No messages found in this conversation yet.");
+            setError(tErrors("noMessagesFoundInThisConversationYet"));
             return null;
           }
 
@@ -123,7 +126,7 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
             const json = await res.json();
 
             if (!res.ok || json.error) {
-              setError(json.error || "Failed to create epic");
+              setError(json.error || tErrors("failedToCreateEpic"));
               return null;
             }
 
@@ -137,7 +140,7 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
             };
 
             if (!result.epicId) {
-              setError("Epic was created but no epic ID was returned.");
+              setError(tErrors("epicWasCreatedButNoEpicIDWasReturned"));
               return null;
             }
 
@@ -147,12 +150,12 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
           }
 
           setError(
-            "I couldn't extract a full epic yet. Ask Claude to provide an epic title and user stories first.",
+            tErrors("iCouldntExtractAFullEpicYetAskClaudeToProvideAnEpicTitleAndUserStoriesFirst"),
           );
           return null;
         } catch (err) {
           const message =
-            err instanceof Error ? err.message : "Failed to create epic";
+            err instanceof Error ? err.message : tErrors("failedToCreateEpic");
           setError(message);
           return null;
         }
@@ -161,7 +164,7 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
       // the clause, and stopping left this hook unread by every compiler rule.
       return create().finally(() => setIsLoading(false));
     },
-    [projectId, conversationId, sendMessage, onEpicCreated]
+    [projectId, conversationId, sendMessage, onEpicCreated, tErrors]
   );
 
   return { createEpic, isLoading, error, createdEpic };

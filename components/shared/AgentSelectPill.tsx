@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useTranslations } from "next-intl";
 
 import { SelectPill } from "@/components/piscine";
 import {
@@ -17,6 +18,7 @@ import {
   PROVIDER_OPTIONS,
   type ChatModeProvider,
 } from "@/lib/agent-config/constants";
+import type { TranslationKey } from "@/lib/i18n/catalogue";
 
 /**
  * The one agent picker. Three menus used to answer "who runs this?" — the
@@ -166,8 +168,16 @@ function checkedValue(selection: AgentSelection): string {
   return DEFAULT_AGENT_VALUE;
 }
 
-export const DEFAULT_AGENT_LABEL = "Default agent";
-export const AGENT_SELECT_LOADING_LABEL = "Loading…";
+/**
+ * The two labels the pill draws for itself rather than reading off an agent
+ * row. Exported as catalogue KEY REFERENCES (`lib/i18n/catalogue.ts`, pattern
+ * 3) so the trigger and the menu item cannot drift apart, and so a test can
+ * assert on the same string the menu resolves.
+ */
+export const DEFAULT_AGENT_LABEL_KEY: TranslationKey =
+  "Shared.agentSelectPill.defaultAgent";
+export const AGENT_SELECT_LOADING_LABEL_KEY: TranslationKey =
+  "Shared.agentSelectPill.loading";
 
 /** Label of a provider, tolerating a legacy value stored before a cleanup. */
 function providerLabel(provider: AgentSelection["provider"]): string | null {
@@ -183,6 +193,10 @@ export function AgentSelectPill({
   className,
   testId = "chat-agent-select",
 }: AgentSelectPillProps) {
+  const t = useTranslations("Shared");
+  // The two exported labels above are full dotted paths, so they resolve
+  // through the namespace-less translator.
+  const tKey = useTranslations();
   const { agents, loading } = useNamedAgentsList();
   const safeAgents: NamedAgentOption[] = Array.isArray(agents) ? agents : [];
 
@@ -199,22 +213,58 @@ export function AgentSelectPill({
     // The name lives in a list that has not landed yet — say so rather than
     // flashing the provider underneath and then swapping it.
     (loading && selection.namedAgentId
-      ? AGENT_SELECT_LOADING_LABEL
+      ? tKey(AGENT_SELECT_LOADING_LABEL_KEY)
       : (providerLabel(selection.provider) ??
-        (mode === "dispatch" ? DEFAULT_AGENT_LABEL : "—")));
+        (mode === "dispatch" ? tKey(DEFAULT_AGENT_LABEL_KEY) : "—")));
 
-  const agentItems = safeAgents.map((agent) => (
-    <DropdownMenuRadioItem
-      key={agent.id}
-      value={agentValue(agent.id)}
-      data-testid={`chat-option-agent-${agent.id}`}
-      onSelect={() =>
-        onSelect({ namedAgentId: agent.id, provider: agent.provider })
-      }
-    >
-      {agent.name}
-    </DropdownMenuRadioItem>
-  ));
+  /**
+   * A COMPOSITE is marked, and its ladder travels in the title.
+   *
+   * The distinction is not cosmetic: picking a composite buys a run a fallback
+   * list whose LENGTH is its attempt budget, and picking a simple agent buys
+   * it that agent retried as itself. A menu that rendered the two identically
+   * would hide the only difference that changes what the run does.
+   */
+  const agentItems = safeAgents.map((agent) => {
+    const isComposite = agent.kind === "composite";
+    // `?? []` rather than a bare `.map`: this list is fetched, and a payload
+    // shaped by an older route (or a stub) must degrade to "a simple agent",
+    // not crash the picker every surface in the app mounts.
+    const members = agent.members ?? [];
+    const ladder = members.map((member) => member.name).join(" → ");
+    return (
+      <DropdownMenuRadioItem
+        key={agent.id}
+        value={agentValue(agent.id)}
+        data-testid={`chat-option-agent-${agent.id}`}
+        title={isComposite ? ladder || t("composite.unusable") : undefined}
+        disabled={isComposite && members.length === 0}
+        onSelect={() =>
+          onSelect({ namedAgentId: agent.id, provider: agent.provider })
+        }
+      >
+        <span className="flex w-full min-w-0 items-center justify-between gap-3">
+          <span className="truncate">{agent.name}</span>
+          {isComposite ? (
+            <span
+              data-testid={`chat-option-agent-kind-${agent.id}`}
+              className="shrink-0 font-mono text-[9.5px] uppercase tracking-[.06em] text-muted-foreground"
+            >
+              {members.length > 0
+                ? t("composite.count", { count: members.length })
+                : t("composite.empty")}
+            </span>
+          ) : null}
+        </span>
+      </DropdownMenuRadioItem>
+    );
+  });
+
+  // The server resolves "Default agent" through the designated composite when
+  // one exists (resolveAgent → readDefaultCompositeAgentId), so the row names
+  // it. Saying only "Default agent" while a composite answers for it would
+  // leave the picker describing a resolution it no longer performs.
+  const defaultComposite = safeAgents.find((agent) => agent.isDefault);
 
   return (
     <SelectPill
@@ -237,7 +287,17 @@ export function AgentSelectPill({
             data-testid="chat-option-default-agent"
             onSelect={() => onSelect({ namedAgentId: null, provider: null })}
           >
-            {DEFAULT_AGENT_LABEL}
+            <span className="flex w-full min-w-0 items-center justify-between gap-3">
+              <span className="truncate">{tKey(DEFAULT_AGENT_LABEL_KEY)}</span>
+              {defaultComposite ? (
+                <span
+                  data-testid="chat-option-default-agent-target"
+                  className="shrink-0 font-mono text-[9.5px] uppercase tracking-[.06em] text-muted-foreground"
+                >
+                  {defaultComposite.name}
+                </span>
+              ) : null}
+            </span>
           </DropdownMenuRadioItem>
           {agentItems.length > 0 ? (
             <>
@@ -249,7 +309,7 @@ export function AgentSelectPill({
       ) : (
         <>
           <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-            Direct API
+            {t("agentSelectPill.directApi")}
           </DropdownMenuLabel>
           <DropdownMenuRadioItem
             value={providerValue(OPENAI_COMPATIBLE_PROVIDER)}
@@ -268,7 +328,7 @@ export function AgentSelectPill({
             <>
               <DropdownMenuSeparator />
               <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-                Named Agents
+                {t("agentSelectPill.namedAgents")}
               </DropdownMenuLabel>
               {agentItems}
             </>
@@ -276,7 +336,7 @@ export function AgentSelectPill({
 
           <DropdownMenuSeparator />
           <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-            Persistent CLI
+            {t("agentSelectPill.persistentCli")}
           </DropdownMenuLabel>
           {PERSISTENT_CHAT_PROVIDER_OPTIONS.map((provider) => (
             <DropdownMenuRadioItem
@@ -291,7 +351,7 @@ export function AgentSelectPill({
 
           <DropdownMenuSeparator />
           <DropdownMenuLabel className="text-[11px] text-muted-foreground">
-            CLI Providers
+            {t("agentSelectPill.cliProviders")}
           </DropdownMenuLabel>
           {PROVIDER_OPTIONS.map((provider) => (
             <DropdownMenuRadioItem
@@ -300,7 +360,9 @@ export function AgentSelectPill({
               data-testid={`chat-option-provider-${provider}`}
               onSelect={() => onSelect({ namedAgentId: null, provider })}
             >
-              {`${PROVIDER_LABELS[provider]} (CLI)`}
+              {t("agentSelectPill.cliProvider", {
+                label: PROVIDER_LABELS[provider],
+              })}
             </DropdownMenuRadioItem>
           ))}
         </>

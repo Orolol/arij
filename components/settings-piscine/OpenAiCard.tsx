@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import {
   BandHeader,
@@ -9,6 +10,7 @@ import {
   SegmentedControl,
   StrataBand,
 } from "@/components/piscine";
+import type { TranslationKey } from "@/lib/i18n/catalogue";
 import {
   OPENAI_API_KEY_SETTING_KEY,
   OPENAI_BASE_URL_SETTING_KEY,
@@ -37,11 +39,18 @@ export interface OpenAiCardProps {
   hasSavedKey: boolean;
 }
 
-const EFFORTS: readonly { value: OpenAiReasoningEffort; label: string }[] = [
-  { value: "off", label: "Off" },
-  { value: "low", label: "Low" },
-  { value: "medium", label: "Medium" },
-  { value: "high", label: "High" },
+/**
+ * A module-scope copy table, so it holds catalogue KEY REFERENCES and the card
+ * resolves them at render — `lib/i18n/catalogue.ts`, pattern 3.
+ */
+const EFFORTS: readonly {
+  value: OpenAiReasoningEffort;
+  labelKey: TranslationKey;
+}[] = [
+  { value: "off", labelKey: "Settings.openAi.effortOff" },
+  { value: "low", labelKey: "Settings.openAi.effortLow" },
+  { value: "medium", labelKey: "Settings.openAi.effortMedium" },
+  { value: "high", labelKey: "Settings.openAi.effortHigh" },
 ];
 
 export function OpenAiCard({
@@ -50,6 +59,9 @@ export function OpenAiCard({
   reasoning: loadedReasoning,
   hasSavedKey,
 }: OpenAiCardProps) {
+  const t = useTranslations("Settings");
+  // The namespace-less half: `EFFORTS` carries full dotted paths.
+  const tKey = useTranslations();
   // The loaded values arrive as props once the settings read lands; a local
   // edit takes over from then on (null = "not edited yet").
   const [baseUrlEdit, setBaseUrlEdit] = useState<string | null>(null);
@@ -77,12 +89,12 @@ export function OpenAiCard({
     const trimmedBaseUrl = baseUrl.trim();
     const trimmedModel = model.trim();
     if (!trimmedBaseUrl) {
-      setError("Base URL is required.");
+      setError(t("openAi.baseUrlRequired"));
       setSaving(false);
       return;
     }
     if (!trimmedModel) {
-      setError("Model is required.");
+      setError(t("openAi.modelRequired"));
       setSaving(false);
       return;
     }
@@ -103,19 +115,17 @@ export function OpenAiCard({
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError(payload?.error ?? "Failed to save the OpenAI-compatible settings.");
+        setError(payload?.error ?? t("openAi.saveFailed"));
       } else {
         if (apiKey.trim().length > 0) {
           setKeySaved(true);
           setKeyCleared(false);
         }
         setApiKey("");
-        setMessage("OpenAI-compatible settings saved.");
+        setMessage(t("openAi.saved"));
       }
     } catch {
-      setError(
-        "Failed to save the OpenAI-compatible settings. Check your connection and retry.",
-      );
+      setError(t("openAi.saveOffline"));
     }
     // Trailing, not in a `finally` clause: the React Compiler stops at the
     // clause, and stopping left this component unread by every compiler rule.
@@ -134,15 +144,15 @@ export function OpenAiCard({
       });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok) {
-        setError(payload?.error ?? "Failed to clear the saved API key.");
+        setError(payload?.error ?? t("openAi.clearFailed"));
       } else {
         setKeyCleared(true);
         setKeySaved(false);
         setApiKey("");
-        setMessage("Saved API key cleared.");
+        setMessage(t("openAi.cleared"));
       }
     } catch {
-      setError("Failed to clear the saved API key. Check your connection and retry.");
+      setError(t("openAi.clearOffline"));
     }
     setClearing(false);
   }
@@ -155,43 +165,37 @@ export function OpenAiCard({
       const response = await fetch("/api/settings/openai/test", { method: "POST" });
       const payload = await response.json().catch(() => ({}));
       if (!response.ok || !payload?.data?.valid) {
-        setError(
-          payload?.error ??
-            "Connection test failed. Check the Base URL, Model, and API key.",
-        );
+        setError(payload?.error ?? t("openAi.testFailed"));
       } else {
         const testedModel = payload?.data?.model;
         setMessage(
           testedModel
-            ? `Connection successful — model: ${testedModel}.`
-            : "Connection successful.",
+            ? t("openAi.testSucceededWithModel", { model: testedModel })
+            : t("openAi.testSucceeded"),
         );
       }
     } catch {
-      setError(
-        "Could not reach the OpenAI-compatible endpoint. Check your network and try again.",
-      );
+      setError(t("openAi.testOffline"));
     }
     setTesting(false);
   }
 
   return (
-    <SettingsSection testId="openai-settings" heading="OpenAI-compatible API">
+    <SettingsSection testId="openai-settings" heading={t("openAi.heading")}>
       <StrataBand stratum="card">
         <BandHeader
           stratum="card"
-          label="API OpenAI-compatible"
+          label={t("openAi.label")}
           meta={
             <span className="font-sans text-[11.5px] leading-normal">
-              répondre au chat depuis un endpoint local ou hébergé, en streaming
-              token par token
+              {t("openAi.meta")}
             </span>
           }
         />
 
         <div className="flex flex-wrap items-end gap-[12px]">
           <SettingField
-            kicker="BASE URL"
+            kicker={t("openAi.baseUrl")}
             stratum="card"
             htmlFor="openai-base-url"
             flex={1.4}
@@ -202,13 +206,13 @@ export function OpenAiCard({
               data-testid="openai-base-url"
               chrome="paper"
               type="url"
-              placeholder="http://localhost:11434/v1"
+              placeholder={t("openAi.baseUrlPlaceholder")}
               value={baseUrl}
               onChange={(event) => setBaseUrlEdit(event.target.value)}
             />
           </SettingField>
           <SettingField
-            kicker="API KEY"
+            kicker={t("openAi.apiKey")}
             stratum="card"
             htmlFor="openai-api-key"
             flex={1}
@@ -219,13 +223,13 @@ export function OpenAiCard({
               data-testid="openai-api-key"
               chrome="paper"
               type="password"
-              placeholder="Optional for local servers"
+              placeholder={t("openAi.apiKeyPlaceholder")}
               value={apiKey}
               onChange={(event) => setApiKey(event.target.value)}
             />
           </SettingField>
           <SettingField
-            kicker="MODEL"
+            kicker={t("openAi.model")}
             stratum="card"
             htmlFor="openai-model"
             flex={1}
@@ -235,7 +239,7 @@ export function OpenAiCard({
               id="openai-model"
               data-testid="openai-model"
               chrome="paper"
-              placeholder="gpt-4o-mini"
+              placeholder={t("openAi.modelPlaceholder")}
               value={model}
               onChange={(event) => setModelEdit(event.target.value)}
             />
@@ -244,7 +248,7 @@ export function OpenAiCard({
 
         <div className="flex flex-wrap items-end gap-[12px]">
           <SettingField
-            kicker="REASONING"
+            kicker={t("openAi.reasoning")}
             stratum="card"
             width={280}
             testId="openai-reasoning-effort"
@@ -252,7 +256,10 @@ export function OpenAiCard({
             <SegmentedControl<OpenAiReasoningEffort>
               chrome="bordered"
               size="md"
-              options={EFFORTS.map((effort) => ({ ...effort }))}
+              options={EFFORTS.map(({ value, labelKey }) => ({
+                value,
+                label: tKey(labelKey),
+              }))}
               value={reasoning}
               onChange={(next) => setReasoningEdit(next)}
             />
@@ -264,9 +271,9 @@ export function OpenAiCard({
               size="lg"
               onClick={() => void test()}
               pending={testing}
-              pendingLabel="Testing..."
+              pendingLabel={t("openAi.testing")}
             >
-              Test connection
+              {t("openAi.test")}
             </PillButton>
             <PillButton
               variant="filled"
@@ -274,9 +281,9 @@ export function OpenAiCard({
               onClick={() => void save()}
               disabled={clearing}
               pending={saving}
-              pendingLabel="Saving..."
+              pendingLabel={t("openAi.saving")}
             >
-              Save
+              {t("openAi.save")}
             </PillButton>
           </div>
         </div>
@@ -284,7 +291,7 @@ export function OpenAiCard({
         {showKeyIndicator ? (
           <div className="flex items-center gap-[8px]">
             <Mono size={10.5} tone="muted">
-              An API key is already saved for this workspace.
+              {t("openAi.keyAlreadySaved")}
             </Mono>
             <button
               type="button"
@@ -293,7 +300,7 @@ export function OpenAiCard({
               onClick={() => void clearKey()}
               className="cursor-pointer border-0 bg-transparent p-0 font-mono text-[10.5px] text-destructive outline-none hover:underline focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
             >
-              {clearing ? "Clearing..." : "Clear key"}
+              {clearing ? t("openAi.clearingKey") : t("openAi.clearKey")}
             </button>
           </div>
         ) : null}

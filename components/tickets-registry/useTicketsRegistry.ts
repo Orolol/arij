@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import type { KanbanStatus } from "@/lib/types/kanban";
 import type { RegistrySort, RegistrySortDirection } from "@/lib/tickets-registry/sort";
@@ -57,6 +58,7 @@ export function useTicketsRegistry(
   direction: RegistrySortDirection = "desc",
   status: KanbanStatus | "all" = "all",
 ): UseTicketsRegistry {
+  const t = useTranslations("Registry");
   const [data, setData] = useState<TicketsRegistryPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +97,7 @@ export function useTicketsRegistry(
         if (!res.ok) {
           if (stale()) return;
           appliedSeqRef.current = requestSeq;
-          setError(`Failed to load the registry (${res.status})`);
+          setError(t("errors.loadFailedStatus", { status: res.status }));
           return;
         }
         const body = await res.json();
@@ -110,13 +112,13 @@ export function useTicketsRegistry(
       } catch {
         if (stale()) return;
         appliedSeqRef.current = requestSeq;
-        setError("Failed to load the registry");
+        setError(t("errors.loadFailed"));
       }
     };
     // A `.finally` call, not a `finally` clause: the React Compiler stops at
     // the clause, and stopping left this hook unread by every compiler rule.
     await fetchRegistry().finally(() => setLoading(false));
-  }, [href]);
+  }, [href, t]);
 
   const refresh = useCallback(async () => {
     await load();

@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import {
   Bug,
@@ -67,6 +68,7 @@ export default function ProjectLayout({
 }: {
   children: React.ReactNode;
 }) {
+  const t = useTranslations("ProjectShell");
   const params = useParams();
   const pathname = usePathname() ?? "";
   const router = useRouter();
@@ -142,9 +144,15 @@ export default function ProjectLayout({
       />
 
       {isBoard && (
+        // A row that folds, with 38px as its floor rather than its height
+        // (B-arij-jcJeNQZnT1X9). Its three pills fit a 320px screen today
+        // (~243px in 292px of content); the fold is there so that a fourth
+        // control cannot repeat the capture bar's defect one row up — a fixed
+        // single line clips whatever it cannot hold. One line on a desktop,
+        // at exactly the height it has always had.
         <div
           data-testid="project-action-row"
-          className="flex h-[38px] shrink-0 items-center gap-[8px] px-[14px]"
+          className="flex min-h-[38px] shrink-0 flex-wrap items-center gap-[8px] px-[14px] py-[4px]"
         >
           <DropdownMenu>
             {/*
@@ -157,7 +165,7 @@ export default function ProjectLayout({
               className={pillButtonVariants({ variant: "filled", size: "md" })}
             >
               <Plus size={13} aria-hidden="true" />
-              New
+              {t("actions.new")}
               <ChevronDown size={12} aria-hidden="true" />
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" className="min-w-[228px]">
@@ -172,7 +180,7 @@ export default function ProjectLayout({
                 className="text-[13px]"
               >
                 <PencilLine className="w-[13px] h-[13px]" />
-                New Epic (manual)
+                {t("actions.newEpicManual")}
               </DropdownMenuItem>
               <DropdownMenuItem
                 data-testid="header-new-epic-chat"
@@ -180,7 +188,7 @@ export default function ProjectLayout({
                 className="text-[13px]"
               >
                 <MessageSquare className="w-[13px] h-[13px]" />
-                New Epic (via chat)
+                {t("actions.newEpicChat")}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem
@@ -189,7 +197,7 @@ export default function ProjectLayout({
                 className="text-[13px]"
               >
                 <Bug className="w-[13px] h-[13px]" />
-                New Bug
+                {t("actions.newBug")}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
@@ -202,7 +210,7 @@ export default function ProjectLayout({
             data-testid="night-run-button"
             onClick={() => openBoardPanel("night=start")}
           >
-            Night run
+            {t("actions.nightRun")}
           </PillButton>
 
           {projectSummary.gitRepoPath && (
@@ -214,13 +222,13 @@ export default function ProjectLayout({
               icon={RefreshCw}
               onClick={syncFromJson}
               disabled={syncing}
-              title="Import from arji.json (overrides DB)"
+              title={t("actions.syncTitle")}
               className={cn(
                 syncing &&
                   "[&_svg]:animate-spin motion-reduce:[&_svg]:animate-none",
               )}
             >
-              Sync from arji.json
+              {t("actions.sync")}
             </PillButton>
           )}
         </div>

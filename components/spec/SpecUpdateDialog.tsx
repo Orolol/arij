@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Sparkles } from "lucide-react";
 import { AgentDispatchDialog } from "@/components/shared/AgentDispatchDialog";
 import { FieldKicker } from "@/components/piscine";
@@ -29,6 +30,7 @@ export function SpecUpdateDialog({
   onBeforeStart,
   onError,
 }: SpecUpdateDialogProps) {
+  const t = useTranslations("Spec");
   const [namedAgentId, setNamedAgentId] = useState<string | null>(null);
   const [instruction, setInstruction] = useState("");
   const [starting, setStarting] = useState(false);
@@ -61,8 +63,7 @@ export function SpecUpdateDialog({
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.data?.sessionId) {
-        const message =
-          json.error || "Failed to start the spec update session.";
+        const message = json.error || t("updateDialog.error");
         setError(message);
         onError?.(message);
       } else {
@@ -71,7 +72,7 @@ export function SpecUpdateDialog({
         onStarted({ sessionId: json.data.sessionId });
       }
     } catch {
-      const message = "Failed to start the spec update session.";
+      const message = t("updateDialog.error");
       setError(message);
       onError?.(message);
     }
@@ -84,8 +85,8 @@ export function SpecUpdateDialog({
     <AgentDispatchDialog
       open={open}
       onOpenChange={handleOpenChange}
-      title="Update the specification with an agent"
-      description="The agent runs in the project workspace and updates the project specification from its current state. The saved spec is only replaced if the session succeeds."
+      title={t("updateDialog.title")}
+      description={t("updateDialog.description")}
       projectId={projectId}
       agentProps={{
         value: namedAgentId,
@@ -95,11 +96,13 @@ export function SpecUpdateDialog({
       }}
       extraContent={
         <div className="mb-2 flex flex-col gap-[7px]">
-          <FieldKicker stratum="card">Instruction</FieldKicker>
+          <FieldKicker stratum="card">
+            {t("updateDialog.instructionLabel")}
+          </FieldKicker>
           <Textarea
             value={instruction}
             onChange={(event) => setInstruction(event.target.value)}
-            placeholder="Optional — e.g. “update the architecture section after the Full Auto mode”. Leave empty to let the agent refresh the spec from the current project state."
+            placeholder={t("updateDialog.instructionPlaceholder")}
             rows={4}
             className="rounded-[10px] border-[1.5px] text-[13px] leading-[1.6] shadow-none"
             data-testid="spec-update-instruction"
@@ -117,7 +120,7 @@ export function SpecUpdateDialog({
           )}
         </div>
       }
-      confirmLabel="Update spec"
+      confirmLabel={t("updateDialog.confirm")}
       confirmIcon={<Sparkles className="h-4 w-4 mr-1" />}
       busy={starting}
       confirmDisabled={starting}

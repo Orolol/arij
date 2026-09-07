@@ -1,9 +1,11 @@
 "use client";
 
 import { useId, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -20,7 +22,7 @@ import {
 } from "@/components/ui/select";
 import { ImageAttachmentStrip } from "@/components/shared/ImageAttachmentStrip";
 import { useImageAttachments } from "@/hooks/useImageAttachments";
-import { PRIORITY_LABELS } from "@/lib/types/kanban";
+import { PRIORITY_LABEL_KEYS } from "@/lib/types/kanban";
 import { apiErrorMessage } from "@/lib/validation/error-message";
 import { cn } from "@/lib/utils";
 import { ImagePlus, Loader2 } from "lucide-react";
@@ -29,7 +31,13 @@ interface BugCreateDialogProps {
   projectId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated?: () => void;
+  /**
+   * Fired once the bug row exists, with its id — on the clean path and on
+   * the "created, but the fix agent did not start" paths alike: the ticket
+   * is durable either way, and the host has to show it. `""` when the route
+   * answered without an id, the same convention as EpicCreateDialog.
+   */
+  onCreated?: (bugId: string) => void;
   namedAgentId?: string | null;
 }
 
@@ -40,6 +48,8 @@ export function BugCreateDialog({
   onCreated,
   namedAgentId = null,
 }: BugCreateDialogProps) {
+  const tKey = useTranslations();
+  const t = useTranslations("Kanban");
   const fieldId = useId();
   const titleId = `${fieldId}-title`;
   const descriptionId = `${fieldId}-description`;
@@ -131,16 +141,16 @@ export function BugCreateDialog({
         if (!createRes.ok || createData.error) {
           // Through apiErrorMessage so a rejected field says which one and why,
           // instead of the schema layer's bare "Validation failed".
-          setError(apiErrorMessage(createData, "Failed to create bug"));
+          setError(apiErrorMessage(createData, t("bugCreate.errors.create")));
           return;
         }
 
         const createdBugId = createData?.data?.id as string | undefined;
         if (mode === "create_and_fix") {
           if (!createdBugId) {
-            setError("Bug created, but failed to start fix agent: missing bug ID");
+            setError(t("bugCreate.errors.fixAgentMissingId"));
             resetForm();
-            onCreated?.();
+            onCreated?.("");
             return;
           }
 
@@ -154,22 +164,27 @@ export function BugCreateDialog({
           );
           const buildData = await buildRes.json().catch(() => ({}));
           if (!buildRes.ok || buildData.error) {
-            const reason = buildData.error ? `: ${buildData.error}` : "";
-            setError(`Bug created, but failed to start fix agent${reason}`);
+            // The build route's own words when it named a reason; otherwise the
+            // bare sentence.
+            setError(
+              buildData.error
+                ? t("bugCreate.errors.fixAgentReason", { reason: buildData.error })
+                : t("bugCreate.errors.fixAgent"),
+            );
             resetForm();
-            onCreated?.();
+            onCreated?.(createdBugId);
             return;
           }
         }
 
         resetForm();
         onOpenChange(false);
-        onCreated?.();
+        onCreated?.(createdBugId ?? "");
       } catch {
         setError(
           mode === "create_and_fix"
-            ? "Failed to create bug and start fix agent"
-            : "Failed to create bug"
+            ? t("bugCreate.errors.createAndFix")
+            : t("bugCreate.errors.create")
         );
       }
     };
@@ -200,7 +215,15 @@ export function BugCreateDialog({
         data-testid="bug-create-drop-zone"
       >
         <DialogHeader>
-          <DialogTitle className="text-[16px] font-semibold">New Bug</DialogTitle>
+          <DialogTitle className="text-[16px] font-semibold">
+            {t("bugCreate.title")}
+          </DialogTitle>
+          {/* `sr-only`: this dialog paints no subtitle and gains none here.
+              A screen reader still needs to hear what the form is for — and
+              without any description Radix warns on every open. */}
+          <DialogDescription className="sr-only">
+            {t("bugCreate.dialogDescription")}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">
@@ -209,13 +232,13 @@ export function BugCreateDialog({
               htmlFor={titleId}
               className="mb-1 block text-[12.5px] text-muted-foreground"
             >
-              Title *
+              {t("bugCreate.titleLabel")}
             </label>
             <Input
               id={titleId}
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Bug title..."
+              placeholder={t("bugCreate.titlePlaceholder")}
               onKeyDown={(e) => e.key === "Enter" && handleSubmit("create")}
               autoFocus
             />
@@ -226,13 +249,13 @@ export function BugCreateDialog({
               htmlFor={descriptionId}
               className="mb-1 block text-[12.5px] text-muted-foreground"
             >
-              Description
+              {t("bugCreate.descriptionLabel")}
             </label>
             <Textarea
               id={descriptionId}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Steps to reproduce, expected vs actual behavior..."
+              placeholder={t("bugCreate.descriptionPlaceholder")}
               rows={4}
             />
           </div>
@@ -247,7 +270,7 @@ export function BugCreateDialog({
                 id={screenshotsLabelId}
                 className="text-[12.5px] text-muted-foreground"
               >
-                Screenshots
+                {t("bugCreate.screenshotsLabel")}
               </span>
               <Button
                 type="button"
@@ -257,7 +280,7 @@ export function BugCreateDialog({
                 className="h-[26px] rounded-[7px] px-2 text-[12px]"
               >
                 <ImagePlus className="mr-1 h-3 w-3" />
-                Attach image
+                {t("bugCreate.attachImage")}
               </Button>
             </div>
 
@@ -272,7 +295,7 @@ export function BugCreateDialog({
               id={screenshotsHintId}
               className="text-[11.5px] text-muted-foreground"
             >
-              Paste a screenshot with Ctrl/Cmd+V, drop an image here, or attach one.
+              {t("bugCreate.screenshotsHint")}
             </p>
 
             {attachmentError && (
@@ -289,7 +312,7 @@ export function BugCreateDialog({
               htmlFor={priorityId}
               className="mb-1 block text-[12.5px] text-muted-foreground"
             >
-              Priority
+              {t("bugCreate.priorityLabel")}
             </label>
             <Select value={priority} onValueChange={setPriority}>
               <SelectTrigger
@@ -299,9 +322,9 @@ export function BugCreateDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {Object.entries(PRIORITY_LABELS).map(([k, v]) => (
+                {Object.entries(PRIORITY_LABEL_KEYS).map(([k, v]) => (
                   <SelectItem key={k} value={k}>
-                    {v}
+                    {tKey(v)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -319,7 +342,7 @@ export function BugCreateDialog({
             onClick={() => handleOpenChange(false)}
             disabled={submitting}
           >
-            Cancel
+            {t("cancel")}
           </Button>
           <Button
             onClick={() => handleSubmit("create")}
@@ -329,7 +352,7 @@ export function BugCreateDialog({
             {submitMode === "create" && (
               <Loader2 className="h-3 w-3 animate-spin mr-1" />
             )}
-            Create Bug
+            {t("bugCreate.submit")}
           </Button>
           <Button
             onClick={() => handleSubmit("create_and_fix")}
@@ -339,7 +362,7 @@ export function BugCreateDialog({
             {submitMode === "create_and_fix" && (
               <Loader2 className="h-3 w-3 animate-spin mr-1" />
             )}
-            Create And Fix
+            {t("bugCreate.submitAndFix")}
           </Button>
         </DialogFooter>
       </DialogContent>

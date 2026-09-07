@@ -1,10 +1,15 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 
 import { ScopeSwitcher } from "@/components/agents-workshop/ScopeSwitcher";
-import { sourceLabel } from "@/components/agents-workshop/agent-initials";
+import {
+  assignmentAgentSubLabel,
+  sourceLabelKey,
+  type AssignmentAgentCopy,
+} from "@/components/agents-workshop/agent-initials";
 import {
   BandHeader,
   Mono,
@@ -16,7 +21,6 @@ import { useAgentAssignments, useNamedAgents } from "@/hooks/useAgentConfig";
 import {
   AGENT_TYPES,
   AGENT_TYPE_LABELS,
-  PROVIDER_LABELS,
   type AgentType,
 } from "@/lib/agent-config/constants";
 
@@ -39,6 +43,20 @@ function PageLoading() {
 }
 
 export function AssignmentsView({ projectId }: { projectId?: string }) {
+  const t = useTranslations("AgentsWorkshop");
+  // Namespace-less, for the KEY REFERENCES `agent-initials.ts` holds.
+  const tKey = useTranslations();
+  /**
+   * The second line of an agent row: the phrases resolved here, composed by
+   * `assignmentAgentSubLabel` (pattern 3 of lib/i18n/catalogue.ts).
+   */
+  const agentCopy: AssignmentAgentCopy = {
+    compositeLadder: (ladder) => t("composite.ladder", { ladder }),
+    compositeEmpty: t("composite.ladderEmpty"),
+    simple: (provider, model) =>
+      t("assignments.agentMeta", { provider, model }),
+    cliDefaultModel: t("common.cliDefaultModel"),
+  };
   const [scope, setScope] = useState<"global" | "project">(
     projectId ? "project" : "global",
   );
@@ -67,13 +85,13 @@ export function AssignmentsView({ projectId }: { projectId?: string }) {
       if (!result.ok) {
         setErrors((current) => ({
           ...current,
-          [agentType]: result.error || "Could not update this assignment.",
+          [agentType]: result.error || t("assignments.updateFailed"),
         }));
       }
     } catch {
       setErrors((current) => ({
         ...current,
-        [agentType]: "Could not update this assignment. Try again.",
+        [agentType]: t("assignments.updateFailedRetry"),
       }));
     }
     // Trailing, not in a `finally` clause: the React Compiler stops at the
@@ -85,8 +103,8 @@ export function AssignmentsView({ projectId }: { projectId?: string }) {
 
   const clearLabel =
     scope === "project"
-      ? "Use the all-projects assignment"
-      : "Use the Arij default";
+      ? t("assignments.clearToGlobal")
+      : t("assignments.clearToDefault");
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-[14px] pb-[14px]">
@@ -94,11 +112,10 @@ export function AssignmentsView({ projectId }: { projectId?: string }) {
         stratum="neutral"
         labelSize={12}
         standalone
-        label="Task assignments"
+        label={t("assignments.label")}
       />
       <p className="font-sans text-[12.5px] text-muted-foreground">
-        Choose which named agent Arij should use automatically for each task.
-        Leave a role on its default unless it needs a specialist.
+        {t("assignments.intro")}
       </p>
 
       <ScopeSwitcher
@@ -109,14 +126,15 @@ export function AssignmentsView({ projectId }: { projectId?: string }) {
 
       {namedAgents.length === 0 ? (
         <p className="font-sans text-[12.5px] text-muted-foreground">
-          Create an agent first — then you can assign it to a task.
+          {t("assignments.createFirst")}
         </p>
       ) : null}
 
       <div className="flex flex-col gap-2">
         {AGENT_TYPES.map((agentType) => {
           const assignment = byRole.get(agentType);
-          const label = assignment?.namedAgent?.name ?? sourceLabel("builtin");
+          const label =
+            assignment?.namedAgent?.name ?? tKey(sourceLabelKey("builtin"));
           const error = errors[agentType];
 
           return (
@@ -134,7 +152,7 @@ export function AssignmentsView({ projectId }: { projectId?: string }) {
                     saying it twice on one line says nothing. */}
                 {assignment?.namedAgent ? (
                   <Mono size={10} tone="muted">
-                    {sourceLabel(assignment.source)}
+                    {tKey(sourceLabelKey(assignment.source))}
                   </Mono>
                 ) : null}
                 <SelectPill
@@ -157,11 +175,11 @@ export function AssignmentsView({ projectId }: { projectId?: string }) {
                     >
                       <span className="flex flex-col items-start">
                         <span>{agent.name}</span>
-                        <span className="text-xs text-muted-foreground">
-                          {PROVIDER_LABELS[agent.provider]}
-                          {agent.model
-                            ? ` · ${agent.model}`
-                            : " · CLI default model"}
+                        <span
+                          data-testid={`assignment-agent-sub-${agent.id}`}
+                          className="text-xs text-muted-foreground"
+                        >
+                          {assignmentAgentSubLabel(agent, agentCopy)}
                         </span>
                       </span>
                     </DropdownMenuItem>

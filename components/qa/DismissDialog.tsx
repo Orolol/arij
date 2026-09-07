@@ -1,11 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { GhostInputPill, PillButton } from "@/components/piscine";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -56,6 +58,7 @@ export function DismissDialog({
   onConfirm,
   pending = false,
 }: DismissDialogProps) {
+  const t = useTranslations("Qa");
   const [reason, setReason] = useState("");
 
   /*
@@ -80,17 +83,32 @@ export function DismissDialog({
     void onConfirm(finding, trimmed);
   };
 
+  /*
+    Radix aims the content's `aria-describedby` at the `DialogDescription` it
+    expects to find below. With no finding there is nothing to describe, so
+    take its sanctioned opt-out rather than leaving that pointer aimed at an id
+    nothing renders — the dangling pointer is what made every open log
+    `Missing \`Description\` or \`aria-describedby={undefined}\``.
+
+    QaScreen drives `open` off `dismissTarget !== null` and so never reaches
+    this branch, but the props admit the pair and the warning was loud.
+  */
+  const describedBy: { "aria-describedby"?: undefined } = finding
+    ? {}
+    : { "aria-describedby": undefined };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
         data-testid="qa-dismiss-dialog"
+        {...describedBy}
         // No shadow: the ticket overlay is the only shadow in the system.
         className="gap-3 rounded-[16px] border-[1.5px] border-border bg-card p-[18px] shadow-none sm:max-w-[440px]"
       >
         <DialogHeader>
           <DialogTitle className="font-display text-[15px] font-bold text-foreground">
-            Dismiss ce finding
+            {t("dismissDialog.title")}
           </DialogTitle>
         </DialogHeader>
 
@@ -101,9 +119,13 @@ export function DismissDialog({
               label={finding.severityLabel}
               className="mt-[2px]"
             />
-            <span className="min-w-0 flex-1 font-sans text-[13px] text-foreground">
+            {/* The finding's own text IS the dialog's description: the thing
+                a screen reader has to hear before confirming. Same pixels as
+                the span it replaces — `cn` puts this className last, so the
+                primitive's `text-muted-foreground text-sm` loses to it. */}
+            <DialogDescription className="min-w-0 flex-1 font-sans text-[13px] text-foreground">
               {finding.text}
-            </span>
+            </DialogDescription>
           </div>
         ) : null}
 
@@ -111,11 +133,11 @@ export function DismissDialog({
           value={reason}
           onChange={setReason}
           onSubmit={submit}
-          placeholder="Pourquoi ? une ligne suffit…"
+          placeholder={t("dismissDialog.reasonPlaceholder")}
           fill="field"
           width="flex"
           disabled={pending}
-          aria-label="Pourquoi ? une ligne suffit…"
+          aria-label={t("dismissDialog.reasonPlaceholder")}
           data-testid="qa-dismiss-reason"
         />
 
@@ -127,7 +149,7 @@ export function DismissDialog({
             onClick={() => onOpenChange(false)}
             data-testid="qa-dismiss-cancel"
           >
-            Annuler
+            {t("dismissDialog.cancel")}
           </PillButton>
           <PillButton
             variant="filled"
@@ -135,10 +157,10 @@ export function DismissDialog({
             onClick={submit}
             disabled={reason.trim().length === 0}
             pending={pending}
-            pendingLabel="Dismiss…"
+            pendingLabel={t("dismissDialog.pending")}
             data-testid="qa-dismiss-confirm"
           >
-            Dismiss
+            {t("dismissDialog.confirm")}
           </PillButton>
         </DialogFooter>
       </DialogContent>

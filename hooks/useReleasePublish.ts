@@ -1,5 +1,7 @@
 import { useState, useCallback } from "react";
 
+import { useTranslations } from "next-intl";
+
 interface UseReleasePublishReturn {
   publish: (releaseId: string) => Promise<boolean>;
   isPublishing: boolean;
@@ -10,6 +12,7 @@ interface UseReleasePublishReturn {
  * Manages the publish action for a draft GitHub release.
  */
 export function useReleasePublish(projectId: string): UseReleasePublishReturn {
+  const tErrors = useTranslations("ClientErrors");
   const [isPublishing, setIsPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -28,13 +31,13 @@ export function useReleasePublish(projectId: string): UseReleasePublishReturn {
           const data = await res.json();
 
           if (!res.ok) {
-            setError(data.error || "Failed to publish release");
+            setError(data.error || tErrors("failedToPublishRelease"));
             return false;
           }
 
           return true;
         } catch (e) {
-          const msg = e instanceof Error ? e.message : "Network error";
+          const msg = e instanceof Error ? e.message : tErrors("networkError");
           setError(msg);
           return false;
         }
@@ -43,7 +46,7 @@ export function useReleasePublish(projectId: string): UseReleasePublishReturn {
       // the clause, and stopping left this hook unread by every compiler rule.
       return request().finally(() => setIsPublishing(false));
     },
-    [projectId]
+    [projectId, tErrors]
   );
 
   return { publish, isPublishing, error };
