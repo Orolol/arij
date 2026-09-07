@@ -348,6 +348,80 @@ function stampLegacyBaseline(
 }
 
 /**
+ * Apply the migration chain with foreign keys suspended on the CONNECTION,
+ * then prove the result is referentially sound.
+ *
+ * A rebuild-and-rename migration (SQLite's only way to drop a NOT NULL, widen
+ * a CHECK or reorder columns) drops the table it is rebuilding. With foreign
+ * keys enforced, that DROP fires every cascade hanging off the parent: the
+ * children are deleted, SET NULL links are cleared, and a NO ACTION link
+ * aborts the migration outright.
+ *
+ * The `PRAGMA foreign_keys=OFF` those migrations write into their own SQL does
+ * NOT prevent this. Drizzle's sqlite migrator runs `BEGIN` before the whole
+ * batch and `COMMIT` after it (`SQLiteSyncDialect.migrate`), and SQLite
+ * ignores `PRAGMA foreign_keys` while a transaction is open — so the pragma is
+ * a silent no-op wherever it appears inside a migration file. It only takes
+ * effect out here, before the migrator opens its transaction.
+ *
+ * The pragma is restored to whatever the caller had set — including when
+ * `migrate()` throws — so a failed startup never leaves the connection
+ * unenforced. `foreign_key_check` must come back empty on every startup: a
+ * migration that leaves a dangling reference behind refuses startup rather
+ * than serving a corrupt database. This integrity check runs on every startup
+ * so that a validation refusal cannot fail open across server restarts (drizzle
+ * commits the migration before validation throws).
+ *
+ * The suspension is read back rather than assumed: the very reason the in-file
+ * pragma fails is that it runs inside a transaction, and an `initDb()` called
+ * from inside one would fail the same silent way. That case throws here
+ * instead of quietly migrating with cascades armed.
+ */
+function migrateWithForeignKeysSuspended(
+  connection: Database.Database,
+  migrationsFolder: string,
+): void {
+  const foreignKeysWereOn =
+    connection.pragma("foreign_keys", { simple: true }) === 1;
+
+  connection.pragma("foreign_keys = OFF");
+  if (connection.pragma("foreign_keys", { simple: true }) === 1) {
+    throw new Error(
+      "Refusing to migrate: foreign keys could not be suspended on the connection " +
+        "(SQLite ignores PRAGMA foreign_keys inside a transaction). " +
+        "A rebuild-and-rename migration would cascade-delete child rows. " +
+        "Call initDb() outside any open transaction.",
+    );
+  }
+
+  try {
+    migrate(drizzle(connection), { migrationsFolder });
+  } finally {
+    if (foreignKeysWereOn) connection.pragma("foreign_keys = ON");
+  }
+
+  const violations = connection.pragma("foreign_key_check") as Array<{
+    table: string;
+    rowid: number | null;
+    parent: string;
+    fkid: number;
+  }>;
+  if (violations.length === 0) return;
+
+  const sample = violations
+    .slice(0, 5)
+    .map(
+      (violation) =>
+        `${violation.table}.rowid=${violation.rowid} -> ${violation.parent}`,
+    )
+    .join(", ");
+  throw new Error(
+    `Migrations left ${violations.length} foreign key violation(s) behind; refusing to start. ` +
+      `First offenders: ${sample}`,
+  );
+}
+
+/**
  * Seed the global default named agent. Idempotent: keyed on the unique agent
  * name. Uses raw sqlite to avoid a circular dependency with
  * lib/agent-config/agent-resolution.ts.
@@ -389,6 +463,10 @@ function seedDefaultNamedAgent(connection: Database.Database): void {
  * - legacy (push-created) -> baseline stamped, only post-baseline no-op
  *                            migrations run
  * - up to date            -> nothing happens
+ *
+ * This is also the only place foreign keys may legitimately be suspended for a
+ * table rebuild — see `migrateWithForeignKeysSuspended`. A `PRAGMA
+ * foreign_keys=OFF` written inside a migration file does nothing.
  */
 export function initDb(
   connection: Database.Database,
@@ -399,6 +477,6 @@ export function initDb(
 
   repairReviewVerdictMigrationCollision(connection, migrationsFolder);
   stampLegacyBaseline(connection, migrationsFolder);
-  migrate(drizzle(connection), { migrationsFolder });
+  migrateWithForeignKeysSuspended(connection, migrationsFolder);
   seedDefaultNamedAgent(connection);
 }

@@ -30,6 +30,12 @@ CREATE TABLE `custom_review_agents` (
 );
 --> statement-breakpoint
 CREATE UNIQUE INDEX `custom_review_agents_name_scope_unique` ON `custom_review_agents` (`name`,`scope`);--> statement-breakpoint
+-- NOTE: this `PRAGMA foreign_keys=OFF` does NOT disable foreign keys. Drizzle's
+-- migrator wraps the whole batch in BEGIN/COMMIT and SQLite ignores the pragma
+-- while a transaction is open, so it is a silent no-op wherever it appears in a
+-- migration file. The rebuild below is safe only because `initDb()` suspends
+-- foreign keys on the *connection* before calling migrate() (B-arij-251). Keep
+-- the pragma for fidelity with drizzle's own output; do not rely on it.
 PRAGMA foreign_keys=OFF;--> statement-breakpoint
 CREATE TABLE `__new_ticket_comments` (
 	`id` text PRIMARY KEY NOT NULL,
