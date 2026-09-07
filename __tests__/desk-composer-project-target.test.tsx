@@ -136,6 +136,39 @@ describe("DeskComposer project target", () => {
       expect.objectContaining({ projectId: MINE.id }),
     );
   });
+
+  it("retains the targeted project when an earlier project is removed from the list", async () => {
+    const onTargetProjectChange = vi.fn();
+    const onSubmit = vi.fn().mockResolvedValue(true);
+    const { rerender } = render(
+      <DeskComposer
+        projects={[NEIGHBOUR, MINE]}
+        targetProjectId={MINE.id}
+        onTargetProjectChange={onTargetProjectChange}
+        namedAgentId={null}
+        onNamedAgentChange={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    // NEIGHBOUR is removed (simulating another worker tearing down its project)
+    rerender(
+      <DeskComposer
+        projects={[MINE]}
+        targetProjectId={MINE.id}
+        onTargetProjectChange={onTargetProjectChange}
+        namedAgentId={null}
+        onNamedAgentChange={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    await type("Une feature");
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: MINE.id }),
+    );
+  });
 });
 
 describe("e2e/desk-toasts.spec.ts", () => {
@@ -168,5 +201,11 @@ describe("e2e/desk-toasts.spec.ts", () => {
       beforeTyping.indexOf('if (scope === "global")'),
     );
     expect(guarded).toContain(PROJECT_SELECT_TESTID);
+  });
+
+  it("proves identity selection with an unrelated earlier project and concurrent deletion", () => {
+    expect(source).toMatch(/createScratchProject/);
+    expect(source).toMatch(/removeScratchProject/);
+    expect(source).toContain("updated_at");
   });
 });
