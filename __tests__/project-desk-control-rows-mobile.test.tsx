@@ -14,9 +14,11 @@
  * Both were a FIXED-HEIGHT SINGLE FLEX LINE: `h-[46px]` / `h-[38px]` with no
  * `flex-wrap`, and every button `shrink-0`. On the capture bar the only
  * flexible child is the hint, so at 390px it was squeezed to an ellipsis
- * ("⌘-…") and Agent Refinement was painted against the bar's right edge; with
- * Full Auto armed (its badge adds "2 building · 1 reviewing") the second
- * button left the bar altogether, cut off by the `overflow-hidden` hosts.
+ * ("⌘-…", 31px of its 231px, measured in Chrome on 2026-09-07); at 320px
+ * Agent Refinement already crossed the bar's edge, and with Full Auto armed
+ * (its badge adds "2 building · 1 reviewing") it left the bar altogether at
+ * 390px — ending at x=477, two thirds of it cut off by the `overflow-hidden`
+ * hosts.
  *
  * WHAT THIS FILE PROVES, AND WHAT IT DOES NOT.
  *
@@ -197,8 +199,8 @@ describe("the capture bar folds instead of running off a phone", () => {
   /**
    * The reported defect, at its root: one flex line that cannot become two.
    * With both buttons `shrink-0`, the line's min-content width is the two
-   * buttons plus the gap (~280px at rest, ~400px with Full Auto's badge) and
-   * the bar has ~301px of content width beside the collapsed chat strip at
+   * buttons plus the gap (259px at rest, 455px with both badges up) and the
+   * bar has ~301px of content width beside the collapsed chat strip at
    * 390px. Whatever does not fit is painted past the bar and clipped.
    */
   it("lets its children wrap onto a second line", async () => {

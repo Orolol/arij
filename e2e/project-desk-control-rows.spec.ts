@@ -23,13 +23,22 @@ import { expect, test } from "./fixtures/arij-project";
  *     ~301px of content at 390, ~231px at 320.
  *
  * WHAT WAS MEASURED HERE BEFORE THE FIX (2026-09-07, Chrome via
- * `channel: "chrome"`, the numbers are in the spec's own failure messages and
- * in the ticket's closing comment): at 390×844 the hint measured 22px wide for
- * a 232px label ("⌘-…") and Agent Refinement ended flush with the bar's
- * content edge; with Full Auto armed (badge "2 building · 1 reviewing") Agent
- * Refinement lay entirely past the bar, unreachable by any tap. The action row
- * fitted at every width, and is folded only so a fourth control cannot
- * reproduce the same defect one row up.
+ * `channel: "chrome"`, the French hint of the day — 231px of label):
+ *
+ *   390×844   at rest: Full Auto 22→125.6, Agent Refinement 137.6→280.7, both
+ *             tappable; the hint 31px wide for its 231px ("⌘-…"). Full Auto
+ *             armed + a pass running: Full Auto 22→262.8, Agent Refinement
+ *             274.8→477.2 — past a 390px screen, 67% of it hit-testing to the
+ *             chat strip or to nothing; the hint 0px.
+ *   320×568   at rest Agent Refinement ended at 280.7 with the bar's edge at
+ *             276 (7% under the chat strip), the hint 0px; busy, 93% of Agent
+ *             Refinement was unreachable.
+ *   768×1024  everything fitted; busy, the hint was cut to 213px of 231.
+ *   1280/1440 clean, one 46px line.
+ *
+ * The action row fitted at every width (New 14→107, Night run 115→219), and
+ * is folded only so a fourth control cannot reproduce the same defect one row
+ * up.
  *
  * THE STATUS READS ARE STUBBED, NOTHING ELSE IS. Full Auto's badge and the
  * refinement pass's "running" badge are the widest the two buttons ever draw,
