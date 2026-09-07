@@ -117,6 +117,7 @@
     "none": "None",
     "customPromptLabel": "Custom Prompt (optional)",
     "customPromptPlaceholder": "Add custom QA instructions...",
+    "promptNameLabel": "Prompt name for reuse",
     "promptNamePlaceholder": "Prompt name for reuse",
     "savePrompt": "Save Prompt",
     "cancel": "Cancel",

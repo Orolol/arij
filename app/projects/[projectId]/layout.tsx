@@ -144,9 +144,15 @@ export default function ProjectLayout({
       />
 
       {isBoard && (
+        // A row that folds, with 38px as its floor rather than its height
+        // (B-arij-jcJeNQZnT1X9). Its three pills fit a 320px screen today
+        // (~243px in 292px of content); the fold is there so that a fourth
+        // control cannot repeat the capture bar's defect one row up — a fixed
+        // single line clips whatever it cannot hold. One line on a desktop,
+        // at exactly the height it has always had.
         <div
           data-testid="project-action-row"
-          className="flex h-[38px] shrink-0 items-center gap-[8px] px-[14px]"
+          className="flex min-h-[38px] shrink-0 flex-wrap items-center gap-[8px] px-[14px] py-[4px]"
         >
           <DropdownMenu>
             {/*

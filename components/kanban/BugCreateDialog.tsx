@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -30,7 +31,13 @@ interface BugCreateDialogProps {
   projectId: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated?: () => void;
+  /**
+   * Fired once the bug row exists, with its id — on the clean path and on
+   * the "created, but the fix agent did not start" paths alike: the ticket
+   * is durable either way, and the host has to show it. `""` when the route
+   * answered without an id, the same convention as EpicCreateDialog.
+   */
+  onCreated?: (bugId: string) => void;
   namedAgentId?: string | null;
 }
 
@@ -142,7 +149,7 @@ export function BugCreateDialog({
         if (!createdBugId) {
           setError(t("bugCreate.errors.fixAgentMissingId"));
           resetForm();
-          onCreated?.();
+          onCreated?.("");
           return;
         }
 
@@ -164,14 +171,14 @@ export function BugCreateDialog({
               : t("bugCreate.errors.fixAgent"),
           );
           resetForm();
-          onCreated?.();
+          onCreated?.(createdBugId);
           return;
         }
       }
 
       resetForm();
       onOpenChange(false);
-      onCreated?.();
+      onCreated?.(createdBugId ?? "");
     } catch {
       setError(
         mode === "create_and_fix"
@@ -205,6 +212,12 @@ export function BugCreateDialog({
           <DialogTitle className="text-[16px] font-semibold">
             {t("bugCreate.title")}
           </DialogTitle>
+          {/* `sr-only`: this dialog paints no subtitle and gains none here.
+              A screen reader still needs to hear what the form is for — and
+              without any description Radix warns on every open. */}
+          <DialogDescription className="sr-only">
+            {t("bugCreate.dialogDescription")}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4 py-2">

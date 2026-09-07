@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Download, Github, Loader2, RefreshCw } from "lucide-react";
+import { ToastStack } from "@/components/notifications/ToastStack";
+import { useToastStack } from "@/components/notifications/useToastStack";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import type { GitHubConfigErrorCode } from "@/lib/github/client";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
@@ -21,12 +23,6 @@ interface GitHubIssueRow {
   githubUrl: string;
   createdAtGitHub: string | null;
   importedEpicId: string | null;
-}
-
-interface Toast {
-  id: string;
-  type: "success" | "error";
-  message: string;
 }
 
 const GRID = "grid-cols-[64px_1fr_180px_110px_120px]";
@@ -81,7 +77,6 @@ export default function GitHubIssuesPage() {
   const [featureLabels, setFeatureLabels] = useState("");
   const [bugLabels, setBugLabels] = useState("");
   const [savingMapping, setSavingMapping] = useState(false);
-  const [toasts, setToasts] = useState<Toast[]>([]);
   const [serverConfigCode, setServerConfigCode] =
     useState<GitHubConfigErrorCode | null>(null);
   const { ownerRepo, tokenSet, loading: configLoading } =
@@ -101,13 +96,12 @@ export default function GitHubIssuesPage() {
   // the configuration changes mid-session.
   const configCode = clientConfigCode ?? serverConfigCode;
 
-  const showToast = useCallback((type: "success" | "error", message: string) => {
-    const id = crypto.randomUUID();
-    setToasts((prev) => [...prev, { id, type, message }]);
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
-  }, []);
+  // The page used to own its own stack: an id scheme, a flat 4 s expiry that
+  // ran even on a failure the user had not read yet, and a bottom-right box
+  // with no dismiss button and no role. `useToastStack` keeps the list, and
+  // `ToastStack` owns the expiry, the pause on hover and focus, the ceiling and
+  // the portal.
+  const { toasts, raise: showToast, dismiss: dismissToast } = useToastStack();
 
   const loadIssues = useCallback(async () => {
     setLoading(true);
@@ -483,23 +477,11 @@ export default function GitHubIssuesPage() {
         </aside>
       </div>
 
-      {toasts.length > 0 && (
-        <div className="fixed bottom-4 right-4 z-50 flex flex-col gap-2">
-          {toasts.map((toast) => (
-            <div
-              key={toast.id}
-              className={cn(
-                "animate-in fade-in slide-in-from-bottom-2 rounded-[10px] px-4 py-2 text-[13px] font-medium shadow-[0_8px_20px_rgba(58,48,44,.16)] transition-all",
-                toast.type === "success"
-                  ? "bg-agent text-background"
-                  : "bg-destructive text-background"
-              )}
-            >
-              {toast.message}
-            </div>
-          ))}
-        </div>
-      )}
+      <ToastStack
+        items={toasts}
+        onDismiss={dismissToast}
+        testId="github-issues-toast"
+      />
     </div>
   );
 }
