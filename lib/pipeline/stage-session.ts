@@ -125,6 +125,7 @@ export function launchStageSession(input: {
     worktreePath,
     cliSessionId,
     namedAgentId: resolved.namedAgentId ?? null,
+    compositeAgentId: resolved.compositeAgentId ?? null,
     agentType,
     namedAgentName: resolved.name || null,
     model: resolved.model || null,

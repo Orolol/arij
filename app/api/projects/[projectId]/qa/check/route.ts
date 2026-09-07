@@ -1,3 +1,4 @@
+import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
 import { NextRequest, NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
@@ -96,7 +97,7 @@ function extractSummary(content: string, checkType: CheckType): string {
   return normalized.slice(0, QA_REPORT_SUMMARY_MAX_CHARS);
 }
 
-export async function POST(request: NextRequest, { params }: Params) {
+export const POST = withAgentResolutionErrors(async function POST(request: NextRequest, { params }: Params) {
   const { projectId } = await params;
   const body = await request.json().catch(() => ({}));
   const namedAgentId = toNullableTrimmedString(body.namedAgentId);
@@ -251,4 +252,4 @@ export async function POST(request: NextRequest, { params }: Params) {
       windowDays: collection?.windowDays ?? TELESCOPE_WINDOW_DAYS,
     },
   });
-}
+});

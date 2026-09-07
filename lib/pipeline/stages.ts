@@ -12,6 +12,7 @@ import {
   REVIEW_TYPE_TO_AGENT_TYPE,
   type AgentType,
 } from "@/lib/agent-config/constants";
+import type { ResolvedAgent } from "@/lib/agent-config/agent-resolution";
 import type { PromptComment } from "@/lib/claude/prompt-builder";
 import { createPromptSectionCapture } from "@/lib/tokens/dispatch-prompt";
 import { PIPELINE_REVIEW_TYPE } from "./constants";
@@ -21,9 +22,14 @@ import type {
   PipelineGradingAssessment,
   PipelineReviewAssessment,
   PipelineStageHandle,
+  PipelineStageKind,
   PipelineStageRequest,
 } from "./runner";
-import { resolveStageAgent } from "./stage-agent";
+import {
+  resolveConfiguredStageAgent,
+  resolveStageAgent,
+  resolveStageAttemptBudget,
+} from "./stage-agent";
 import { buildCodeStagePrompt } from "./stage-code";
 import type { PipelineStageDriverInit } from "./stage-driver-init";
 import {
@@ -51,8 +57,8 @@ export { PIPELINE_REVIEW_LABEL } from "./stage-review";
  * modules and sequences one dispatch. The stages themselves live next door,
  * one module each:
  *   stage-driver-init.ts  — the per-run identity every module receives
- *   stage-agent.ts        — retry ladder: who runs attempt N (resume /
- *                           effort escalation / provider escalation)
+ *   stage-agent.ts        — retry ladder: the as-configured resolution, its
+ *                           attempt budget, and who runs attempt N
  *   stage-resume.ts       — retry ladder: whether attempt N resumes a session
  *   stage-prompt.ts       — open-findings blocks, mentions, token estimate
  *   stage-code.ts         — build/fix prompt + post-completion effects
@@ -65,6 +71,14 @@ export { PIPELINE_REVIEW_LABEL } from "./stage-review";
 
 export interface PipelineStageDriver {
   launchStage(request: PipelineStageRequest): Promise<PipelineStageHandle>;
+  /**
+   * Attempts `stage` may spend: the configured cap for a simple agent, the
+   * member count for a composite. The runner asks once per stage entry.
+   */
+  attemptBudget(
+    stage: PipelineStageKind,
+    configuredMaxAttempts: number
+  ): Promise<number>;
   runDeterministicVerification(
     lastCodeSessionId: string | null
   ): Promise<PipelineDeterministicVerificationOutcome>;
@@ -90,13 +104,63 @@ export function createPipelineStageDriver(
   /** sessionId → review output, captured by the review closure. */
   const reviewOutputs = new Map<string, string>();
 
+  const codeAgentType: AgentType =
+    init.scope === "epic" ? "build" : "ticket_build";
+  const reviewAgentType: AgentType =
+    REVIEW_TYPE_TO_AGENT_TYPE[PIPELINE_REVIEW_TYPE];
+
+  /**
+   * The as-configured resolution for the stage entry currently in flight.
+   *
+   * Populated when the runner sizes the ladder (`attemptBudget`, attempt 1)
+   * and read by every attempt of that stage entry, so the budget and the
+   * agents it spends come from ONE resolution rather than from independent
+   * repeats of an expensive, live-query-backed path.
+   */
+  const configuredByStage = new Map<PipelineStageKind, ResolvedAgent>();
+
+  const configuredAgent = async (
+    stage: PipelineStageKind,
+    refresh = false
+  ): Promise<ResolvedAgent> => {
+    const cached = configuredByStage.get(stage);
+    if (cached && !refresh) return cached;
+    const resolved = await resolveConfiguredStageAgent(
+      init,
+      stage,
+      codeAgentType,
+      reviewAgentType
+    );
+    configuredByStage.set(stage, resolved);
+    return resolved;
+  };
+
   return {
+    attemptBudget: async (stage, configuredMaxAttempts) => {
+      // A new stage entry: re-resolve rather than reuse the previous entry's
+      // answer, since a run can revisit review after a fix cycle.
+      let configured: ResolvedAgent | null = null;
+      try {
+        configured = await configuredAgent(stage, true);
+      } catch {
+        // An emptied composite. Leave the cache untouched so the dispatch
+        // raises the real error rather than this sizing call.
+        configuredByStage.delete(stage);
+      }
+      return resolveStageAttemptBudget(configured, configuredMaxAttempts);
+    },
+
     launchStage: async (request) => {
       try {
         if (request.stage === "grading") {
-          return await dispatchPipelineGradingStage(init);
+          return await dispatchPipelineGradingStage(init, request, configuredAgent);
         }
-        return await dispatchPipelineStage(init, request, reviewOutputs);
+        return await dispatchPipelineStage(
+          init,
+          request,
+          reviewOutputs,
+          configuredAgent
+        );
       } catch (error) {
         const message =
           error instanceof Error ? error.message : "Stage dispatch failed";
@@ -112,7 +176,7 @@ export function createPipelineStageDriver(
             outcome: null,
             error: message,
           }),
-          escalatedToProvider: null,
+          compositeDescent: null,
         };
       }
     },
@@ -147,7 +211,9 @@ export function createPipelineStageDriver(
 async function dispatchPipelineStage(
   init: PipelineStageDriverInit,
   request: PipelineStageRequest,
-  reviewOutputs: Map<string, string>
+  reviewOutputs: Map<string, string>,
+  /** The driver's per-stage-entry resolution — see `resolveConfiguredStageAgent`. */
+  configuredAgent: (stage: PipelineStageKind) => Promise<ResolvedAgent>
 ): Promise<PipelineStageHandle> {
   const { projectId, epicId, userStoryId, scope } = init;
 
@@ -180,13 +246,16 @@ async function dispatchPipelineStage(
   const isReview = request.stage === "review";
   const agentType = isReview ? reviewAgentType : codeAgentType;
 
-  const { resolved, escalatedToNamedAgent, escalatedToProvider } =
-    await resolveStageAgent(init, request, codeAgentType, reviewAgentType);
+  const { resolved, compositeDescent } = resolveStageAgent(
+    request,
+    await configuredAgent(request.stage)
+  );
 
   const { cliSessionId, resumeSession } = resolveStageResume(
     init,
     request,
-    resolved.provider
+    resolved.provider,
+    resolved.compositeAgentId
   );
 
   // ---------------------------------------------------------------------
@@ -261,7 +330,6 @@ async function dispatchPipelineStage(
   return {
     sessionId,
     settled,
-    escalatedToNamedAgent,
-    escalatedToProvider,
+    compositeDescent,
   };
 }

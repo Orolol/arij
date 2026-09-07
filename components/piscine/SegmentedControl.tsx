@@ -48,6 +48,8 @@ export interface SegmentedControlOption<T extends string> {
   disabled?: boolean;
   /** Native tooltip explaining a disabled segment. */
   hint?: string;
+  /** `data-testid` for this segment option's button. */
+  testId?: string;
 }
 
 export interface SegmentedControlProps<T extends string> {
@@ -72,6 +74,8 @@ export interface SegmentedControlProps<T extends string> {
    * unnamed group of three toggle buttons to a screen reader.
    */
   "aria-label"?: string;
+  /** `data-testid` for the rail container itself. */
+  testId?: string;
   className?: string;
 }
 
@@ -83,11 +87,13 @@ export function SegmentedControl<T extends string>({
   size = "md",
   wrap = false,
   "aria-label": ariaLabel,
+  testId,
   className,
 }: SegmentedControlProps<T>) {
   return (
     <div
       data-slot="segmented-control"
+      data-testid={testId}
       role="group"
       aria-label={ariaLabel}
       className={cn(
@@ -109,6 +115,7 @@ export function SegmentedControl<T extends string>({
             key={option.value}
             type="button"
             data-slot="segmented-control-segment"
+            data-testid={option.testId}
             data-active={active || undefined}
             aria-pressed={active}
             disabled={option.disabled}

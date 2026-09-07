@@ -99,8 +99,7 @@ function makeHarness(
       return {
         sessionId,
         settled: Promise.resolve(settledResult(sessionId)),
-        escalatedToNamedAgent: null,
-        escalatedToProvider: null,
+        compositeDescent: null,
       };
     },
     assessReview: async () => ({
@@ -156,7 +155,7 @@ function settleCodeStage(
   ctx.state.handle = {
     sessionId: "s-build",
     settled: Promise.resolve(settledResult("s-build")),
-    escalatedToProvider: null,
+    compositeDescent: null,
   };
 }
 
@@ -345,26 +344,69 @@ describe("runner-dispatch — dispatchStage guards", () => {
     expect(h.ctx.state.sessionIds).toEqual(["s-build"]);
   });
 
-  it("traces provider and effort escalations reported by the launcher", async () => {
+  it("traces the composite rank-down reported by the launcher", async () => {
     const h = makeHarness({
       launchStage: async () => ({
         sessionId: "s-fix-3",
         settled: Promise.resolve(settledResult("s-fix-3")),
-        escalatedToNamedAgent: "Stronger",
-        escalatedToProvider: "codex",
+        compositeDescent: { from: "Sonnet fixer", to: "Codex fixer" },
       }),
     });
+    h.ctx.state.stageMaxAttempts = 3;
     await dispatchStage(h.ctx, {
       stage: "fix",
       attempt: 3,
       fixCycle: 1,
       previousAttemptSessionId: "s-fix-2",
       lastCodeSessionId: "s-build",
+      descentReason: "the agent delivered nothing",
     });
     expect(h.reasons()).toEqual([
-      PIPELINE_REASONS.escalation("fix", "codex"),
-      PIPELINE_REASONS.effortEscalation("fix", "Stronger"),
+      PIPELINE_REASONS.compositeRankDown(
+        "fix",
+        "Sonnet fixer",
+        "Codex fixer",
+        "the agent delivered nothing",
+        3,
+        3
+      ),
     ]);
+  });
+
+  it("sizes the ladder from `attemptBudget` at stage entry, and only there", async () => {
+    const asked: string[] = [];
+    const h = makeHarness({
+      maxAttempts: 2,
+      attemptBudget: (stage) => {
+        asked.push(stage);
+        return 4;
+      },
+    });
+
+    await dispatchStage(h.ctx, reviewRequest);
+    expect(asked).toEqual(["review"]);
+    expect(h.ctx.state.stageMaxAttempts).toBe(4);
+
+    // Attempt 2 of the same entry must not re-ask: a composite edited
+    // mid-run cannot resize the ladder under a run already climbing it.
+    await dispatchStage(h.ctx, { ...reviewRequest, attempt: 2 });
+    expect(asked).toEqual(["review"]);
+    expect(h.ctx.state.stageMaxAttempts).toBe(4);
+  });
+
+  it("keeps the configured cap when the budget is unreadable or nonsensical", async () => {
+    const thrown = makeHarness({
+      maxAttempts: 2,
+      attemptBudget: () => {
+        throw new Error("composite vanished");
+      },
+    });
+    await dispatchStage(thrown.ctx, reviewRequest);
+    expect(thrown.ctx.state.stageMaxAttempts).toBe(2);
+
+    const zero = makeHarness({ maxAttempts: 2, attemptBudget: () => 0 });
+    await dispatchStage(zero.ctx, reviewRequest);
+    expect(zero.ctx.state.stageMaxAttempts).toBe(2);
   });
 });
 
@@ -425,6 +467,43 @@ describe("runner-retry — handleStageFailure", () => {
     ]);
     expect(h.reasons()).toEqual([PIPELINE_REASONS.failedStage("review", 2)]);
     expect(h.requests).toHaveLength(0);
+  });
+
+  it("stops climbing when the session ceiling leaves no room, and says so", async () => {
+    // Budget 3 with only 2 of 2 sessions spent: the ladder has a rung left,
+    // the run does not.
+    const h = makeHarness({ maxAttempts: 3, maxSessions: 2 });
+    h.ctx.state.sessionIds = ["s-build", "s-fix-1"];
+    h.ctx.state.stage = "fix";
+    h.ctx.state.stageAttempt = 1;
+    h.ctx.state.handle = {
+      sessionId: "s-fix-1",
+      settled: Promise.resolve(settledResult("s-fix-1", { success: false })),
+    };
+
+    const summary = await handleStageFailure(h.ctx, "the session failed");
+    expect(summary).toMatchObject({
+      state: "failed",
+      reason: "stage fix failed after 1 attempts (session ceiling reached)",
+    });
+    expect(h.requests).toHaveLength(0);
+  });
+
+  it("forwards the descent reason to the next attempt", async () => {
+    const h = makeHarness({ maxAttempts: 3 });
+    h.ctx.state.stage = "review";
+    h.ctx.state.stageAttempt = 1;
+    h.ctx.state.handle = {
+      sessionId: "s-review-1",
+      settled: Promise.resolve(settledResult("s-review-1", { success: false })),
+    };
+
+    expect(
+      await handleStageFailure(h.ctx, "its workflow transition was refused")
+    ).toBeNull();
+    expect(h.requests[0].descentReason).toBe(
+      "its workflow transition was refused"
+    );
   });
 
   it("skips the forensic when the session cap leaves no room, still failing the run", async () => {

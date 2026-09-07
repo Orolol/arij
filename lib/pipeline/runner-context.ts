@@ -29,6 +29,13 @@ export interface PipelineRunState {
   stage: PipelineStageKind;
   /** 1-based attempt of the current stage on the retry ladder. */
   stageAttempt: number;
+  /**
+   * Attempts the CURRENT stage may spend. `options.maxAttempts` for a simple
+   * agent; the member count for a composite. Re-asked at every stage entry,
+   * because a run can hold a composite for its code stages and a simple agent
+   * for its review (or the reverse). See {@link sizeStageBudget}.
+   */
+  stageMaxAttempts: number;
   fixCycles: number;
   /** Most recent successful code-writing session (initial build or fix). */
   lastCodeSessionId: string | null;
@@ -83,13 +90,16 @@ export function createPipelineRunContext(
     sessionIds: [options.initialBuild.sessionId],
     stage: "build",
     stageAttempt: 1,
+    // Seeded with the configured cap; `runPipeline` sizes it for the build
+    // stage before the loop runs, since the ROUTE dispatched attempt 1.
+    stageMaxAttempts: options.maxAttempts,
     fixCycles: 0,
     lastCodeSessionId: null,
     reviewStageStartedAt: "",
     handle: {
       sessionId: options.initialBuild.sessionId,
       settled: options.initialBuild.settled,
-      escalatedToProvider: null,
+      compositeDescent: null,
     },
     currentRequest: null,
     lastVerificationReport: undefined,
@@ -118,4 +128,33 @@ export function createPipelineRunContext(
       return summary;
     },
   };
+}
+
+/**
+ * Sizes the retry ladder for one stage entry.
+ *
+ * Asked ONCE per stage entry (attempt 1), never per attempt: a composite
+ * whose members were edited mid-run must not change the ladder under a run
+ * already climbing it. A budget that cannot be read leaves the configured cap
+ * in place rather than failing the run — the ladder is a retry policy, not a
+ * correctness gate.
+ */
+export async function sizeStageBudget(
+  ctx: PipelineRunContext,
+  stage: PipelineStageKind
+): Promise<void> {
+  const { options, state } = ctx;
+  state.stageMaxAttempts = options.maxAttempts;
+  if (!options.attemptBudget) return;
+  try {
+    const budget = await options.attemptBudget(stage);
+    if (Number.isFinite(budget) && budget >= 1) {
+      state.stageMaxAttempts = Math.floor(budget);
+    }
+  } catch (error) {
+    console.warn(
+      "[pipeline] Failed to size the attempt ladder; using the configured cap:",
+      error instanceof Error ? error.message : error
+    );
+  }
 }

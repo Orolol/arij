@@ -13,7 +13,7 @@ import type {
   GradingFailureContext,
 } from "@/lib/grading/report";
 import { awaitStageSettled } from "./runner-cancel-watch";
-import { createPipelineRunContext } from "./runner-context";
+import { createPipelineRunContext, sizeStageBudget } from "./runner-context";
 import { handleStageFailure } from "./runner-retry";
 import { handleCodeStageSuccess } from "./runner-stage-code";
 import { handleGradingStageSuccess } from "./runner-stage-grading";
@@ -84,14 +84,13 @@ export interface PipelineStageHandle {
   sessionId: string | null;
   /** Resolves (never rejects) when the stage session reaches a terminal state. */
   settled: Promise<PipelineStageResult>;
-  /** Named agent selected by the opt-in same-provider effort rung, else null. */
-  escalatedToNamedAgent?: string | null;
   /**
-   * Provider the stage was escalated to (attempt >= 3 without a configured
-   * same-provider model escalation, or attempt >= 4 with one), else
-   * null/undefined. Drives the escalation trace.
+   * Set when this attempt moved DOWN one rank of a composite agent. Both ends
+   * travel, because an activity entry that names only the agent now running
+   * cannot tell the reader which agent was abandoned — and that is the half
+   * that explains the run.
    */
-  escalatedToProvider?: string | null;
+  compositeDescent?: { from: string; to: string } | null;
 }
 
 /** What the runner asks the stage launcher to dispatch. */
@@ -102,12 +101,18 @@ export interface PipelineStageRequest {
   /** 1-based fix cycle this dispatch belongs to (fix stages; else current count). */
   fixCycle: number;
   /**
-   * Failed previous attempt of THIS stage — attempt 2 resumes it when the
-   * machinery allows; attempt 3 uses its configured same-provider model
-   * escalation when present, then later attempts change provider. Null on
-   * attempt 1.
+   * Failed previous attempt of THIS stage. A simple agent resumes it on
+   * attempt 2 when the machinery allows; a composite never resumes, because
+   * attempt 2 is a different agent. Null on attempt 1.
    */
   previousAttemptSessionId: string | null;
+  /**
+   * Why the ladder advanced to this attempt — the previous attempt's verdict
+   * (`failed`, `silent`, `transition_refused`). Absent on attempt 1. Used in
+   * the composite rank-down activity entry, which has to say what the descent
+   * was FOR.
+   */
+  descentReason?: string;
   /**
    * Most recent successful code-writing session of the run (initial build or
    * previous fix). Fix stages resume it on attempt 1.
@@ -230,8 +235,21 @@ export interface PipelineRunnerCallbacks {
 }
 
 export interface RunPipelineOptions {
-  /** Per-stage attempt cap (clamped 1..5 by the caller). */
+  /**
+   * Per-stage attempt cap for a SIMPLE agent (clamped 1..5 by the caller).
+   * A composite ignores it — see `attemptBudget`.
+   */
   maxAttempts: number;
+  /**
+   * Attempts `stage` may spend, asked once per stage entry.
+   *
+   * A simple agent answers `maxAttempts`: it is retried as itself, so the
+   * configured cap is the only bound. A COMPOSITE answers its member count,
+   * because each attempt descends a rank and there is nothing below the last
+   * member. Absent — every pre-existing caller — means `maxAttempts` for
+   * every stage, which is byte-for-byte the historical behaviour.
+   */
+  attemptBudget?(stage: PipelineStageKind): number | Promise<number>;
   /** Review → fix → review cycle cap (0 = report-only). */
   maxFixCycles: number;
   /** Hard ceiling on sessions the run may own (PIPELINE_MAX_SESSIONS_PER_RUN). */
@@ -313,6 +331,23 @@ export interface RunPipelineOptions {
 }
 
 /**
+ * Why the ladder is about to advance, in the words the activity entry uses.
+ *
+ * The three verdicts a composite exists to absorb are named individually
+ * because "attempt 2 replaced Sonnet with Codex" is only half an explanation
+ * — a run abandoned for delivering NOTHING reads very differently from one
+ * abandoned for crashing, and the reader has to be able to tell them apart
+ * without opening the dead session.
+ */
+function descentReasonFor(result: PipelineStageResult): string {
+  if (result.outcome === "silent") return "the agent delivered nothing";
+  if (result.outcome === "transition_refused") {
+    return "its workflow transition was refused";
+  }
+  return "the session failed";
+}
+
+/**
  * Executes one pipeline run to its terminal state. Resolves with the
  * terminal summary; per-stage launch/session failures never reject (they
  * feed the retry ladder). A rejection here is an engine bug.
@@ -322,6 +357,13 @@ export async function runPipeline(
 ): Promise<PipelineTerminalSummary> {
   const ctx = createPipelineRunContext(options);
   const { callbacks, state } = ctx;
+
+  // The initial build is attempt 1 of the build stage and bypassed
+  // `dispatch()`, so this is the only place its ladder can be sized. Without
+  // it a build composite's members past `pipeline_max_attempts` are
+  // unreachable, and a composite SHORTER than that cap sends `launchStage`
+  // asking for a rank that does not exist.
+  await sizeStageBudget(ctx, "build");
 
   // -------------------------------------------------------------------
   // Main loop — one settled stage per iteration.
@@ -353,7 +395,7 @@ export async function runPipeline(
 
     let summary: PipelineTerminalSummary | null;
     if (!result.success) {
-      summary = await handleStageFailure(ctx);
+      summary = await handleStageFailure(ctx, descentReasonFor(result));
     } else if (state.stage === "build" || state.stage === "fix") {
       summary = await handleCodeStageSuccess(ctx);
     } else if (state.stage === "grading") {

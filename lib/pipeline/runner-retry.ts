@@ -9,18 +9,30 @@ import { dispatchStage } from "./runner-dispatch";
  *
  * Failure path for the current stage: climb the retry ladder (the next
  * attempt of the same stage, carrying the failed attempt's session so the
- * launcher can resume or escalate), or exhaust into the forensic diagnostic
- * and the terminal failure.
+ * launcher can resume it or descend one rank of a composite), or exhaust into
+ * the forensic diagnostic and the terminal failure.
+ *
+ * The ladder's length is `state.stageMaxAttempts`, sized at stage entry — the
+ * configured cap for a simple agent, the member count for a composite — not
+ * `options.maxAttempts`, which only bounds the former.
+ *
+ * `descentReason` is the previous attempt's verdict, forwarded so a composite
+ * rank-down entry can say what the descent was FOR.
  */
 export async function handleStageFailure(
-  ctx: PipelineRunContext
+  ctx: PipelineRunContext,
+  descentReason?: string
 ): Promise<PipelineTerminalSummary | null> {
   const { options, callbacks, state } = ctx;
 
-  if (state.stageAttempt < options.maxAttempts) {
+  // The hard session ceiling cuts the ladder as well as the forensic
+  // dispatch. Without this a composite longer than the sessions a run has
+  // left would keep asking for members it can never spend.
+  const sessionsLeft = state.sessionIds.length < options.maxSessions;
+  if (state.stageAttempt < state.stageMaxAttempts && sessionsLeft) {
     const nextAttempt = state.stageAttempt + 1;
     callbacks.onTrace?.(
-      PIPELINE_REASONS.retry(state.stage, nextAttempt, options.maxAttempts),
+      PIPELINE_REASONS.retry(state.stage, nextAttempt, state.stageMaxAttempts),
       state.handle.sessionId
     );
     const currentRequest = state.currentRequest;
@@ -30,6 +42,7 @@ export async function handleStageFailure(
       fixCycle: state.fixCycles,
       previousAttemptSessionId: state.handle.sessionId,
       lastCodeSessionId: state.lastCodeSessionId,
+      ...(descentReason ? { descentReason } : {}),
       ...(currentRequest?.verifyFailure
         ? { verifyFailure: currentRequest.verifyFailure }
         : {}),
@@ -51,7 +64,10 @@ export async function handleStageFailure(
   // cap blocking its dispatch).
   const failedStage = state.stage;
   const attempts = state.stageAttempt;
-  const reason = `stage ${failedStage} failed after ${attempts} attempts`;
+  const reason =
+    state.stageAttempt < state.stageMaxAttempts
+      ? `stage ${failedStage} failed after ${attempts} attempts (session ceiling reached)`
+      : `stage ${failedStage} failed after ${attempts} attempts`;
   callbacks.onTrace?.(
     PIPELINE_REASONS.failedStage(failedStage, attempts),
     state.handle.sessionId

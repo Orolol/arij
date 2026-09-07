@@ -6,7 +6,7 @@ import type {
   PipelineStageRequest,
   PipelineTerminalSummary,
 } from "./runner";
-import type { PipelineRunContext } from "./runner-context";
+import { sizeStageBudget, type PipelineRunContext } from "./runner-context";
 
 /**
  * Pre-dispatch guards and the stage dispatch itself.
@@ -14,8 +14,9 @@ import type { PipelineRunContext } from "./runner-context";
  * Three guards run before every stage: (a) the hard session cap
  * (PIPELINE_MAX_SESSIONS_PER_RUN), (b) the target-conflict probe — another
  * agent took the ticket between stages — and (c) the review-status guard for
- * the observational stages. Then the stage launcher is called and the first
- * attempt / escalation traces are written.
+ * the observational stages. Then the stage's attempt budget is sized (entry
+ * only), the launcher is called, and the first-attempt / composite rank-down
+ * traces are written.
  */
 
 const RUNNING_STATE_BY_STAGE: Record<PipelineStageKind, PipelineState> = {
@@ -70,6 +71,13 @@ export async function dispatchStage(
   state.stage = request.stage;
   state.stageAttempt = request.attempt;
   state.currentRequest = request;
+
+  // Stage ENTRY, not every attempt: the ladder a run is already climbing
+  // must not resize under it.
+  if (request.attempt === 1) {
+    await sizeStageBudget(ctx, request.stage);
+  }
+
   callbacks.onStageChange?.(
     RUNNING_STATE_BY_STAGE[request.stage],
     request.stage,
@@ -95,8 +103,7 @@ export async function dispatchStage(
         error:
           error instanceof Error ? error.message : "Stage dispatch failed",
       }),
-      escalatedToNamedAgent: null,
-      escalatedToProvider: null,
+      compositeDescent: null,
     };
   }
   const handle = state.handle;
@@ -127,17 +134,15 @@ export async function dispatchStage(
     }
   }
 
-  if (handle.escalatedToProvider) {
+  if (handle.compositeDescent) {
     callbacks.onTrace?.(
-      PIPELINE_REASONS.escalation(request.stage, handle.escalatedToProvider),
-      handle.sessionId
-    );
-  }
-  if (handle.escalatedToNamedAgent) {
-    callbacks.onTrace?.(
-      PIPELINE_REASONS.effortEscalation(
+      PIPELINE_REASONS.compositeRankDown(
         request.stage,
-        handle.escalatedToNamedAgent
+        handle.compositeDescent.from,
+        handle.compositeDescent.to,
+        request.descentReason ?? "failed",
+        request.attempt,
+        state.stageMaxAttempts
       ),
       handle.sessionId
     );

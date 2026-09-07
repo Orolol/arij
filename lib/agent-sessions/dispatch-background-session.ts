@@ -170,8 +170,9 @@ export interface DispatchBackgroundSessionInput {
    * `batchRunId`, `orchestrationMode`, `estimatedPromptTokens`,
    * `refinementActions`, … Anything the helper owns (`id`, `projectId`,
    * `epicId`, `userStoryId`, `mode`, `provider`, `prompt`, `logsPath`,
-   * `cliSessionId`, `namedAgentId`, `namedAgentName`, `model`, `agentType`,
-   * `createdAt`) is set from the fields above and cannot be overridden here.
+   * `cliSessionId`, `namedAgentId`, `compositeAgentId`, `namedAgentName`,
+   * `model`, `agentType`, `createdAt`) is set from the fields above and
+   * cannot be overridden here.
    */
   session?: Omit<
     Partial<CreateQueuedSessionInput>,
@@ -185,6 +186,7 @@ export interface DispatchBackgroundSessionInput {
     | "logsPath"
     | "cliSessionId"
     | "namedAgentId"
+    | "compositeAgentId"
     | "namedAgentName"
     | "model"
     | "agentType"
@@ -294,6 +296,10 @@ export function dispatchBackgroundSession(
     logsPath,
     cliSessionId,
     namedAgentId: resolvedAgent.namedAgentId ?? null,
+    // The COMPOSITE that unfolded to `namedAgentId`, when one did. Persisted
+    // alongside the member so reliability statistics stay measured per real
+    // agent while the list that chose it is still recoverable.
+    compositeAgentId: resolvedAgent.compositeAgentId ?? null,
     namedAgentName: resolvedAgent.name || null,
     model: model ?? null,
     agentType: input.agentType,

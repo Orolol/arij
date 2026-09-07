@@ -3,9 +3,10 @@
  * against the real migrated schema (createTestDb) with the CLI spawn mocked
  * and the REAL scheduler + lifecycle underneath:
  *
- *   - the provider, model and named agent are read from the resolved agent
- *     and reach the row AND the spawn unchanged: a non-default provider
- *     survives dispatch end to end, nothing re-defaults it,
+ *   - the provider, model, named agent and the composite it was unfolded
+ *     from are read from the resolved agent and reach the row AND the spawn
+ *     unchanged: a non-default provider survives dispatch end to end,
+ *     nothing re-defaults it,
  *   - the CLI session id is minted only for providers that take an assigned
  *     id (`mintAssignedCliSessionId` is the single place that decides),
  *   - epicId/userStoryId are forwarded only when passed — an omitted epicId
@@ -88,6 +89,9 @@ const { dispatchBackgroundSession, mintAssignedCliSessionId } = await import(
   "@/lib/agent-sessions/dispatch-background-session"
 );
 const { agentScheduler } = await import("@/lib/agents/scheduler");
+const { COMPOSITE_AGENT_PROVIDER } = await import(
+  "@/lib/agent-config/constants"
+);
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -112,6 +116,24 @@ function claudeEnvelope(text: string, costUsd?: number): string {
 function seedNamedAgent(id: string, provider: string, model: string) {
   db.insert(namedAgents)
     .values({ id, name: "Codex Reviewer", provider, model })
+    .onConflictDoNothing()
+    .run();
+}
+
+/**
+ * A composite is a `named_agents` ROW carrying kind = 'composite' — not a
+ * table of its own — so `agent_sessions.composite_agent_id` is a FK into the
+ * same table as `named_agent_id`.
+ */
+function seedCompositeAgent(id: string) {
+  db.insert(namedAgents)
+    .values({
+      id,
+      name: "Reviewers",
+      kind: "composite",
+      provider: COMPOSITE_AGENT_PROVIDER,
+      model: "",
+    })
     .onConflictDoNothing()
     .run();
 }
@@ -254,6 +276,51 @@ describe("dispatchBackgroundSession — the provider is carried, never re-defaul
     });
   });
 
+  it("records the composite the resolved member was unfolded from, next to the member", async () => {
+    const projectId = seedProject();
+    seedNamedAgent("na-codex", "codex", "gpt-5.4-codex");
+    seedCompositeAgent("ca-reviewers");
+
+    const dispatched = dispatchBackgroundSession({
+      agentType: "probe",
+      projectId,
+      prompt: "Look at the board.",
+      resolvedAgent: {
+        provider: "codex",
+        model: "gpt-5.4-codex",
+        name: "Codex Reviewer",
+        namedAgentId: "na-codex",
+        compositeAgentId: "ca-reviewers",
+      },
+      mode: "plan",
+      logPrefix: "[probe]",
+    });
+    await dispatched.settled;
+
+    // Both, and in the right columns: reliability statistics group by
+    // `named_agent_id`, so the MEMBER is what ran; the composite is only the
+    // list that chose it.
+    expect(getRow(dispatched.sessionId)).toMatchObject({
+      namedAgentId: "na-codex",
+      compositeAgentId: "ca-reviewers",
+    });
+  });
+
+  it("a resolved agent with no composite leaves the column NULL", async () => {
+    const projectId = seedProject();
+    const dispatched = dispatchBackgroundSession({
+      agentType: "probe",
+      projectId,
+      prompt: "Look at the board.",
+      resolvedAgent: { provider: "codex", model: "gpt-5.4-codex" },
+      mode: "plan",
+      logPrefix: "[probe]",
+    });
+    await dispatched.settled;
+
+    expect(getRow(dispatched.sessionId)?.compositeAgentId).toBeNull();
+  });
+
   it("a provider that reports its own session id gets no minted id, and still keeps its provider", async () => {
     const projectId = seedProject();
 
@@ -381,6 +448,7 @@ describe("dispatchBackgroundSession — ticket anchoring is the caller's word", 
           prompt: "a different prompt",
           agentType: "impostor",
           epicId: "not-an-epic",
+          compositeAgentId: "ca-impostor",
         } as Record<string, unknown>),
       },
     });
@@ -395,6 +463,7 @@ describe("dispatchBackgroundSession — ticket anchoring is the caller's word", 
       prompt: "the real prompt",
       agentType: "probe",
       epicId: null,
+      compositeAgentId: null,
     });
     expect(pm.starts[0].provider).toBe("codex");
     expect(pm.starts[0].options.prompt).toBe("the real prompt");

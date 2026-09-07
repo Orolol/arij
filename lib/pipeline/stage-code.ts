@@ -21,6 +21,7 @@ import {
 } from "@/lib/events/emit";
 import {
   finalizeBuildTerminalOutcome,
+  SILENT_BUILD_ERROR,
   type BuildTerminalOutcome,
 } from "@/lib/workflow/automatic-transitions";
 import type { PipelineStageRequest } from "./runner";
@@ -174,14 +175,22 @@ export function finalizeCodeSession(input: {
         : "Story build completed successfully",
   });
   if (scope === "epic") {
-    if (terminal.kind === "failed" || terminal.kind === "refused") {
+    // `silent` sits with the failures: the run delivered nothing, so the desk
+    // must not light up as if a build had landed.
+    if (
+      terminal.kind === "failed" ||
+      terminal.kind === "refused" ||
+      terminal.kind === "silent"
+    ) {
       emitSessionFailed(
         projectId,
         epicId,
         sessionId,
         terminal.kind === "refused"
           ? terminal.error
-          : result?.error || "Build failed"
+          : terminal.kind === "silent"
+            ? SILENT_BUILD_ERROR
+            : result?.error || "Build failed"
       );
     } else {
       emitSessionCompleted(projectId, epicId, sessionId);

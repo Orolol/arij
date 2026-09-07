@@ -3,7 +3,14 @@ import { db } from "@/lib/db";
 import { gradingReports } from "@/lib/db/schema";
 import { dispatchGradingSession } from "@/lib/grading/dispatch";
 import { parseGradingEntries } from "@/lib/grading/report";
-import type { PipelineGradingAssessment, PipelineStageHandle } from "./runner";
+import type { ResolvedAgent } from "@/lib/agent-config/agent-resolution";
+import type {
+  PipelineGradingAssessment,
+  PipelineStageHandle,
+  PipelineStageKind,
+  PipelineStageRequest,
+} from "./runner";
+import { resolveStageAgent, type ResolvedStageAgent } from "./stage-agent";
 import type { PipelineStageDriverInit } from "./stage-driver-init";
 
 /**
@@ -15,12 +22,26 @@ import type { PipelineStageDriverInit } from "./stage-driver-init";
 /** Adapts the reusable grader dispatcher to the pipeline stage contract. */
 export async function dispatchPipelineGradingStage(
   init: PipelineStageDriverInit,
+  request: PipelineStageRequest,
+  /** The driver's per-stage-entry resolution — see `resolveConfiguredStageAgent`. */
+  configuredAgent: (stage: PipelineStageKind) => Promise<ResolvedAgent>,
 ): Promise<PipelineStageHandle> {
+  let compositeDescent: ResolvedStageAgent["compositeDescent"] = null;
   const result = await dispatchGradingSession({
     projectId: init.projectId,
     epicId: init.epicId,
     userStoryId: init.scope === "story" ? init.userStoryId : null,
     batchRunId: init.batchRunId ?? null,
+    // Deferred on purpose: a rubric-free epic skips before this ever runs,
+    // so it never pays for a resolution it will not spend.
+    resolveAgent: async () => {
+      const selected = resolveStageAgent(
+        request,
+        await configuredAgent("grading"),
+      );
+      compositeDescent = selected.compositeDescent;
+      return selected.resolved;
+    },
   });
 
   if (result.skipped) {
@@ -34,7 +55,7 @@ export async function dispatchPipelineGradingStage(
         gradingReportId: null,
         gradingSkipped: true,
       }),
-      escalatedToProvider: null,
+      compositeDescent: null,
     };
   }
 
@@ -48,7 +69,7 @@ export async function dispatchPipelineGradingStage(
       gradingReportId: terminal.reportId,
       gradingSkipped: false,
     })),
-    escalatedToProvider: null,
+    compositeDescent,
   };
 }
 
