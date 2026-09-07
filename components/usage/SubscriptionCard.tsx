@@ -10,6 +10,7 @@ import {
 } from "@/components/piscine";
 import { cn } from "@/lib/utils";
 import { formatCostUsd, formatTokens } from "@/lib/utils/format-usage";
+import { withStableKeys } from "@/lib/utils/stable-list-keys";
 import {
   formatCountdown,
   formatDayLabel,
@@ -160,6 +161,20 @@ function ClaudeLiveBody({
   const stale = ageMs !== null && ageMs > 24 * 3600_000;
   const extra = live.extraUsage;
 
+  // A model already shown as a named window (7D OPUS / 7D SONNET) would
+  // render as a confusing duplicate gauge — skip it here.
+  const modelRows = live.modelScoped.filter((model) => {
+    const name = model.displayName.toLowerCase();
+    if (live.sevenDayOpus !== null && name.includes("opus")) return false;
+    if (live.sevenDaySonnet !== null && name.includes("sonnet")) return false;
+    return true;
+  });
+  // The rows follow the provider's payload order, which shifts as windows
+  // appear and disappear between polls: the display name is the identity,
+  // not the position. The test id stays positional on purpose — it names
+  // the row's slot, which is what the usage tests address.
+  const keyedModels = withStableKeys(modelRows, (model) => model.displayName);
+
   return (
     <>
       <ClaudeWindow
@@ -187,24 +202,15 @@ function ClaudeLiveBody({
         testId="usage-sub-claude-live-7d-sonnet"
       />
 
-      {live.modelScoped
-        // A model already shown as a named window (7D OPUS / 7D SONNET)
-        // would render as a confusing duplicate gauge — skip it here.
-        .filter((model) => {
-          const name = model.displayName.toLowerCase();
-          if (live.sevenDayOpus !== null && name.includes("opus")) return false;
-          if (live.sevenDaySonnet !== null && name.includes("sonnet")) return false;
-          return true;
-        })
-        .map((model, i) => (
-          <ClaudeWindow
-            key={`${model.displayName}-${i}`}
-            label={model.displayName.toUpperCase()}
-            window={model}
-            nowMs={nowMs}
-            testId={`usage-sub-claude-live-model-${i}`}
-          />
-        ))}
+      {keyedModels.map(({ key, item: model }, i) => (
+        <ClaudeWindow
+          key={key}
+          label={model.displayName.toUpperCase()}
+          window={model}
+          nowMs={nowMs}
+          testId={`usage-sub-claude-live-model-${i}`}
+        />
+      ))}
 
       {extra?.isEnabled && (
         // `Mono` takes no arbitrary DOM props, so the testid lives on a

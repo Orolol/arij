@@ -15,6 +15,22 @@ export async function GET(
 
   const encoder = new TextEncoder();
   let unsubscribe: (() => void) | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+  // One teardown for every way the stream can end — the client aborting the
+  // request, the consumer cancelling the stream, a heartbeat that can no
+  // longer be written. Each path used to release its own subset: `cancel()`
+  // dropped the bus subscription but left the interval ticking until its next
+  // enqueue threw, up to 30 s later. Idempotent, because abort and cancel can
+  // both fire for one connection.
+  const teardown = () => {
+    if (heartbeat !== null) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
+    unsubscribe?.();
+    unsubscribe = null;
+  };
 
   const stream = new ReadableStream({
     start(controller) {
@@ -37,18 +53,17 @@ export async function GET(
       });
 
       // Heartbeat every 30s to keep the connection alive
-      const heartbeat = setInterval(() => {
+      heartbeat = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(": heartbeat\n\n"));
         } catch {
-          clearInterval(heartbeat);
+          teardown();
         }
       }, 30_000);
 
       // Cleanup on abort
       request.signal.addEventListener("abort", () => {
-        clearInterval(heartbeat);
-        unsubscribe?.();
+        teardown();
         try {
           controller.close();
         } catch {
@@ -57,7 +72,7 @@ export async function GET(
       });
     },
     cancel() {
-      unsubscribe?.();
+      teardown();
     },
   });
 
