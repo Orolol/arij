@@ -830,6 +830,14 @@ const INDEXES: Record<string, IndexSpec[]> = {
       unique: false,
       columns: ["epic_id"],
     },
+    {
+      // 0056. Redundant with the index above on its leading column, and kept
+      // that way on purpose: the trailing total_cost_usd is what makes the
+      // registry's per-epic cost aggregate index-only.
+      name: "agent_sessions_epic_cost_idx",
+      unique: false,
+      columns: ["epic_id", "total_cost_usd"],
+    },
   ],
   ticketComments: [
     {

@@ -1,0 +1,33 @@
+-- Covering index for the ticket registry's cost sort.
+--
+-- /api/tickets orders each terminal window (done, released) by a correlated
+-- `SUM(total_cost_usd)` evaluated per candidate BEFORE the LIMIT — the
+-- selection has to be global, or changing a sort header could never surface a
+-- ticket from outside the default 40-row window. So the aggregate runs once
+-- per done/released epic on every registry request, not 40 times.
+--
+-- `agent_sessions_epic_idx` (0046) covers the WHERE but not the SUM: the
+-- planner SEARCHes `(epic_id)` and then reads the table row for each matching
+-- session to fetch one REAL column. `agent_sessions` rows are unusually wide
+-- — `prompt` averages ~78 KB on a real board and reaches ~5 MB — so each of
+-- those lookups walks overflow pages. That is why the cost is dominated by
+-- row width rather than by session count, and why a synthetic fixture with
+-- narrow rows understates it by roughly an order of magnitude.
+--
+-- Adding `total_cost_usd` as a trailing column makes the aggregate index-only:
+--
+--   SEARCH agent_sessions USING INDEX agent_sessions_epic_idx (epic_id=?)
+--   -> SEARCH agent_sessions USING COVERING INDEX agent_sessions_epic_cost_idx (epic_id=?)
+--
+-- Measured on a copy of a real 1.17 GB development database (245 terminal
+-- epics, 1457 sessions), done+released windows, 60 interleaved runs per arm:
+-- the cost sort goes from a 10.3 ms median to 0.78 ms, reaching parity with
+-- the date sort (0.61 ms). Two independent runs agreed, with no overlap
+-- between the arms' ranges.
+--
+-- `agent_sessions_epic_idx` is deliberately KEPT. This index subsumes it
+-- (`epic_id` is a strict prefix), but dropping it measured no write saving —
+-- insert medians 0.185 ms with both indexes against 0.184 ms with this one
+-- alone, well inside run-to-run noise — while costing the 0046 migration its
+-- guard. The redundancy is 53 KB on a 1.17 GB database.
+CREATE INDEX IF NOT EXISTS `agent_sessions_epic_cost_idx` ON `agent_sessions` (`epic_id`, `total_cost_usd`);
