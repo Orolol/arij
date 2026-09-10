@@ -6,12 +6,13 @@ import { and, eq, sql } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { convertToMarkdown } from "@/lib/converters";
 import { DOCUMENT_SCAN_EXTENSIONS } from "./scan-constants";
+import {
+  MAX_DOCUMENT_UPLOAD_BYTES,
+  MAX_DOCUMENT_UPLOAD_LABEL,
+} from "./upload-constants";
 
 /** Per-request cap: the batch runs conversions synchronously inside one request. */
 export const DOCUMENT_IMPORT_MAX_FILES = 100;
-
-/** Same cap as the manual upload route — scanned docs feed the same prompts. */
-const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 /**
  * Extension → mime mapping for the converter. `.doc` is deliberately absent:
@@ -108,9 +109,9 @@ export async function importScannedDocuments(
       skip("Not a file.");
       continue;
     }
-    if (stat.size > MAX_FILE_SIZE_BYTES) {
+    if (stat.size > MAX_DOCUMENT_UPLOAD_BYTES) {
       skip(
-        `File too large (${(stat.size / 1024 / 1024).toFixed(1)} MB, max 20 MB).`
+        `File too large (${(stat.size / 1024 / 1024).toFixed(1)} MB, max ${MAX_DOCUMENT_UPLOAD_LABEL.replace("MB", " MB")}).`
       );
       continue;
     }

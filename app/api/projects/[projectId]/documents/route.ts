@@ -10,6 +10,11 @@ import {
   documentImageRelativePath,
   projectDocumentsDirectory,
 } from "@/lib/documents/document-paths";
+import {
+  MAX_DOCUMENT_UPLOAD_BYTES,
+  MAX_DOCUMENT_UPLOAD_LABEL,
+  oversizedDocumentUploadReason,
+} from "@/lib/documents/upload-constants";
 import fs from "fs";
 
 const IMAGE_MIME_TYPES = new Set([
@@ -22,8 +27,6 @@ const IMAGE_MIME_TYPES = new Set([
   "image/bmp",
   "image/tiff",
 ]);
-
-const MAX_FILE_SIZE_BYTES = 20 * 1024 * 1024;
 
 type DocumentKind = "text" | "image";
 
@@ -76,19 +79,67 @@ export async function POST(
 ) {
   const { projectId } = await params;
 
-  const formData = await request.formData();
+  let bytesRead = 0;
+  let formData: FormData;
+  try {
+    if (request.body) {
+      const countingStream = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          bytesRead += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      });
+      formData = await new Response(request.body.pipeThrough(countingStream), {
+        headers: request.headers,
+      }).formData();
+    } else {
+      formData = await request.formData();
+    }
+  } catch {
+    // A body over the platform's request cap arrives truncated, so parsing it
+    // throws here — before the size guard below ever sees the file. Left
+    // unhandled this is the one rejection that answers with a bare 500 and an
+    // empty body, which is exactly the case the guard exists to explain, so
+    // the limit is named here as well.
+    const declared = Number(request.headers.get("content-length"));
+    const declaredBytes = Number.isFinite(declared) && declared > 0 ? declared : null;
+
+    // Distinguish confirmed overflow from a generic parse failure:
+    // 1. Declared content-length exceeding the document limit
+    // 2. Or observed bytes read from the stream exceeding the document limit
+    const isOversized =
+      (declaredBytes !== null && declaredBytes > MAX_DOCUMENT_UPLOAD_BYTES) ||
+      bytesRead > MAX_DOCUMENT_UPLOAD_BYTES;
+
+    if (isOversized) {
+      const bodyBytes = declaredBytes ?? (bytesRead > 0 ? bytesRead : null);
+      return NextResponse.json(
+        { error: oversizedDocumentUploadReason(bodyBytes) },
+        { status: 413 }
+      );
+    }
+
+    // Small or unverified body that failed to parse as valid multipart:
+    // return 400 without blaming the size limit.
+    return NextResponse.json(
+      { error: "Could not read the upload. Expected a multipart form body." },
+      { status: 400 }
+    );
+  }
+
   const file = formData.get("file") as File | null;
 
   if (!file) {
     return NextResponse.json({ error: "No file provided" }, { status: 400 });
   }
 
-  if (file.size > MAX_FILE_SIZE_BYTES) {
+  if (file.size > MAX_DOCUMENT_UPLOAD_BYTES) {
+    const megabytes = (file.size / 1024 / 1024).toFixed(1);
     return NextResponse.json(
       {
-        error: `File too large (${(file.size / 1024 / 1024).toFixed(1)}MB). Max: 20MB`,
+        error: `File too large (${megabytes}MB). Max: ${MAX_DOCUMENT_UPLOAD_LABEL}`,
       },
-      { status: 400 }
+      { status: 413 }
     );
   }
 
