@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Check, Trash2, User, Bot } from "lucide-react";
 import type { ReviewComment } from "@/hooks/useReviewComments";
 import { formatDateTime } from "@/lib/i18n/format";
+import { MarkdownContent } from "@/components/chat/MarkdownContent";
 
 interface InlineCommentThreadProps {
   comments: ReviewComment[];
@@ -70,7 +71,9 @@ export function InlineCommentThread({
               <Trash2 className="h-3 w-3" />
             </Button>
           </div>
-          <p className="whitespace-pre-wrap">{comment.body}</p>
+          <div className="text-xs">
+            <MarkdownContent content={comment.body} />
+          </div>
         </div>
       ))}
     </div>

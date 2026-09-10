@@ -159,10 +159,12 @@ function changeList(
     // as the absorption comment, and re-rendering it here would publish it
     // twice in the same feed (see the merge route's record).
     //
-    // Indentation rather than a `<details>` fold-out: ticket comments are
-    // rendered as plain text under `whitespace-pre-wrap`
-    // (components/ticket/CommentBubble.tsx), never as markdown or HTML, so a
-    // fold-out would show the user its own tags.
+    // Indentation rather than a `<details>` fold-out: the recap is a ticket
+    // comment, it renders as markdown (components/ticket/CommentBubble.tsx),
+    // and the renderer does not parse raw HTML — without `rehype-raw` the tags
+    // are escaped and the reader is shown them. The indented block is a plain
+    // continuation of the bullet, so it reads the same in the feed and in the
+    // prompt the comment is later injected into.
     if (change.snapshot && change.kind === "discarded") {
       lines.push(
         "",
