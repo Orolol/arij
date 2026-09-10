@@ -238,7 +238,7 @@ cd arij
 npm run dev
 ```
 
-Open **http://localhost:3000** in your browser. The database is created automatically on first run.
+Open **http://localhost:3000** in your browser. The database is created automatically on first run, and the server listens on loopback only — see [Network exposure](#network-exposure) before exposing it to a network.
 
 `install.sh` runs three phases, each skippable with `--skip-app`, `--skip-cli`
 or `--skip-mcp`, and `--yes` takes the defaults for an unattended run:
@@ -304,6 +304,68 @@ Notes:
 Cloned repositories go to `<arij>/projects/` — the directory next to `data/`, gitignored, created on first use. Each clone is `<projects root>/<owner>-<repo>`, and their worktrees sit alongside in `<projects root>/.arij-worktrees`.
 
 To keep your code elsewhere, set the projects directory in **Settings → Workspace** (`/settings`), stored as the `projects_root` setting. Only an absolute path is accepted — a relative one would move with the directory Arij runs from, so it is refused and the default is used instead. Clearing the field restores the default.
+
+#### Network exposure
+
+Arij binds **127.0.0.1** — this machine only. `npm run dev`, `npm run start`
+and the `arij` launcher all pass `-H 127.0.0.1`, and that is the boundary that
+matters: every `/api/*` route is unauthenticated, and an agent it dispatches
+runs with your permissions, in your repositories, with your CLIs' credentials.
+
+`proxy.ts` also refuses non-local `Host` and `Origin` headers, but treat that
+as a second line only. It is handed a request, not a socket, so it can never
+see who is actually calling — `curl -H 'Host: localhost'` satisfies any
+header-based check from anywhere on the network. Loopback binding is the part
+that does not depend on trusting the caller.
+
+##### Serving Arij to another machine
+
+If you really want it reachable — a laptop driving Arij on a workstation — say
+so explicitly, and Arij will require a credential:
+
+```bash
+arij start --host 0.0.0.0
+```
+
+That prints a one-time bootstrap URL:
+
+```
+Arij is listening on 0.0.0.0:3000 — NOT just this machine.
+A per-boot access credential was generated. /api/* now requires it.
+
+  Open this once, in the browser you want to use:
+  http://<this-machine>:3000/api/auth/remote#token=<per-boot credential>
+```
+
+Open it once in the browser you want to use. The route checks the token,
+trades it for an `HttpOnly`, `SameSite=Lax` cookie and redirects to `/`, so the
+secret leaves the address bar immediately and every later request — page
+fetches, the SSE event stream, document uploads — carries it without any of
+them knowing it exists. A scripted client can send the same value as
+`X-Arij-Remote-Token: <credential>` or `Authorization: Bearer <credential>`
+instead. Anything else gets a `401` that says nothing about what was expected.
+
+Details worth knowing:
+
+- **The credential is per boot.** Restart Arij and the old one is dead; open
+  the new URL. To pin a stable one instead, set `ARIJ_REMOTE_TOKEN` yourself
+  and Arij will adopt it rather than mint one.
+- **Remote binding requires authentication.** Starting the app on a non-loopback
+  host (via `arij start --host 0.0.0.0`, `npm run dev -- -H 0.0.0.0`, or
+  `npm run start -- -H 0.0.0.0`) automatically generates a per-boot credential
+  and arms remote mode. Direct invocations of Next that attempt to bind a remote
+  interface without `ARIJ_REMOTE_TOKEN` are refused at startup.
+- **Serving from a different origin** (a reverse proxy, a tunnel hostname)
+  needs that origin in `ALLOWED_ORIGINS`, comma-separated:
+  `ALLOWED_ORIGINS=https://arij.example.internal`. Same-origin browsing needs
+  nothing.
+- **The agent MCP channel is untouched.** `/api/mcp/*` authenticates every
+  request with its own short-lived, session-scoped bearer, which the proxy has
+  no database to resolve and therefore does not second-guess.
+- **This is one credential, not user accounts.** Arij is still a single-user
+  local application with no authorization model behind that door. Prefer an SSH
+  tunnel (`ssh -L 3000:localhost:3000 workstation`) — it needs none of this,
+  because Arij stays on loopback.
 
 #### Credentials
 

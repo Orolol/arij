@@ -20,6 +20,7 @@ import { and, eq, or, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { epics } from "@/lib/db/schema";
 import type { OpenAiToolCall, OpenAiToolDefinition } from "@/lib/openai/client";
+import { internalApiCredentialHeaders } from "@/lib/security/remote-access";
 
 export interface ChatBoardToolContext {
   projectId: string;
@@ -269,7 +270,14 @@ async function apiFetch(
   body?: unknown,
   useMcpAuth = false,
 ): Promise<ApiResult> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    // Board tools deliberately re-enter Arij through its own HTTP routes, so
+    // they cross `proxy.ts` like any other client. In remote mode that means
+    // carrying the per-boot credential; in the default loopback mode this
+    // spreads nothing at all.
+    ...internalApiCredentialHeaders(),
+  };
   if (useMcpAuth) headers.Authorization = `Bearer ${ctx.mcpToken}`;
   const response = await fetch(`${ctx.baseUrl}${path}`, {
     method,

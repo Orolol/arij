@@ -11,6 +11,7 @@ import { and, eq, like, notInArray, or, sql } from "drizzle-orm";
 import { db, type ArijDatabase } from "@/lib/db";
 import { epics, ticketActivityLog } from "@/lib/db/schema";
 import type { McpTokenRecord } from "@/lib/mcp/token-store";
+import { internalApiCredentialHeaders } from "@/lib/security/remote-access";
 import {
   MAX_MCP_BUGS_PER_SESSION,
   MCP_CREATE_BUG_ACTION_HEADER,
@@ -237,6 +238,10 @@ export async function createBugFromMcp({
         method: "POST",
         headers: {
           "content-type": "application/json",
+          // Same re-entry as the chat board tools: this leaves the process and
+          // comes back through `proxy.ts`, so remote mode needs its credential
+          // here too. Empty in the default loopback mode.
+          ...internalApiCredentialHeaders(),
           authorization: `Bearer ${auth.token}`,
           [MCP_CREATE_BUG_ACTION_HEADER]: "create_bug",
           ...(sourceTicket

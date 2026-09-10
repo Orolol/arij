@@ -34,9 +34,9 @@
     "eslint.config.mjs"
   ],
   "scripts": {
-    "dev": "next dev",
+    "dev": "node ./bin/arij.mjs dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node ./bin/arij.mjs start",
     "lint": "eslint",
     "lint:prune": "eslint --prune-suppressions",
     "test": "vitest run",

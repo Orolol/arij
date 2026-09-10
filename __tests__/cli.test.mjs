@@ -3,6 +3,7 @@ import { readFileSync, accessSync, constants } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
+import { resolveLaunchPlan } from "../bin/launch-plan.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(__dirname, "..");
@@ -66,26 +67,34 @@ describe("CLI entry script", () => {
 });
 
 describe("start command launches Next.js server", () => {
+  /*
+   * These used to grep `bin/arij.mjs` for `command === "dev"` and friends.
+   * The dispatch now lives in `bin/launch-plan.mjs` — extracted so the host it
+   * binds could be asserted on without spawning a server (B-arij-247) — so ask
+   * the plan directly. Stronger than the grep it replaces: it pins the argv
+   * that actually reaches `next`, not the shape of the code that builds it.
+   *
+   * The loopback default itself, and the credentialled remote opt-in, are
+   * pinned in `__tests__/loopback-binding.test.ts`.
+   */
   it("should invoke next start when run with no arguments", () => {
-    const content = readFileSync(cliBin, "utf-8");
-    expect(content).toContain('"start"');
-    expect(content).toContain("next");
+    expect(resolveLaunchPlan([], {}).nextArgs[0]).toBe("start");
   });
 
   it("should invoke next start when run with 'start' argument", () => {
-    const content = readFileSync(cliBin, "utf-8");
-    expect(content).toMatch(/command === "start"/);
+    expect(resolveLaunchPlan(["start"], {}).nextArgs[0]).toBe("start");
   });
 
   it("should invoke next dev when run with 'dev' argument", () => {
-    const content = readFileSync(cliBin, "utf-8");
-    expect(content).toMatch(/command === "dev"/);
-    expect(content).toContain('"dev"');
+    expect(resolveLaunchPlan(["dev"], {}).nextArgs[0]).toBe("dev");
   });
 
   it("should invoke next build when run with 'build' argument", () => {
+    expect(resolveLaunchPlan(["build"], {}).nextArgs).toEqual(["build"]);
+  });
+
+  it("should hand that argv to the next binary", () => {
     const content = readFileSync(cliBin, "utf-8");
-    expect(content).toMatch(/command === "build"/);
-    expect(content).toContain('"build"');
+    expect(content).toContain("execFileSync(getNextBin(), plan.nextArgs");
   });
 });

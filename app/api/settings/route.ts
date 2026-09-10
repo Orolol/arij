@@ -16,6 +16,7 @@ import {
 } from "@/lib/i18n/locales";
 import { OPENAI_API_KEY_SETTING_KEY } from "@/lib/openai/constants";
 import { PROJECTS_ROOT_SETTING_KEY } from "@/lib/projects/workspace-constants";
+import { isWritableSettingKey } from "@/lib/settings/writable-keys";
 import { defaultProjectsRoot } from "@/lib/projects/workspace";
 
 function parseValue(raw: string): unknown {
@@ -96,6 +97,24 @@ export async function PATCH(request: NextRequest) {
   // Validate everything before writing anything, so a rejected key never
   // leaves a partially-applied payload behind.
   for (const [key, value] of entries) {
+    // THE ALLOWLIST, FIRST. Everything below type-checks a key Arij knows;
+    // this refuses one it does not. Before it existed the route stored any key
+    // verbatim, which made a settings write a code-execution primitive:
+    // `verify_commands` is run with `shell: true` by the verification stage
+    // and `global_prompt` is prepended to every agent prompt (B-arij-247).
+    //
+    // The key is truncated in the message: it is attacker-controlled and
+    // unbounded, and an error body is not a place to echo one back at length.
+    if (!isWritableSettingKey(key)) {
+      return NextResponse.json(
+        {
+          error: `Unknown settings key: "${key.slice(0, 64)}". Arij only writes the settings it defines.`,
+          code: "UNKNOWN_SETTING_KEY",
+        },
+        { status: 400 }
+      );
+    }
+
     if (key === GITHUB_PAT_SETTING_KEY && typeof value !== "string") {
       return NextResponse.json(
         { error: "GitHub token must be saved as a string value." },
