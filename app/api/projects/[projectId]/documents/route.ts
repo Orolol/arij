@@ -79,9 +79,22 @@ export async function POST(
 ) {
   const { projectId } = await params;
 
+  let bytesRead = 0;
   let formData: FormData;
   try {
-    formData = await request.formData();
+    if (request.body) {
+      const countingStream = new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          bytesRead += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      });
+      formData = await new Response(request.body.pipeThrough(countingStream), {
+        headers: request.headers,
+      }).formData();
+    } else {
+      formData = await request.formData();
+    }
   } catch {
     // A body over the platform's request cap arrives truncated, so parsing it
     // throws here — before the size guard below ever sees the file. Left
@@ -89,21 +102,28 @@ export async function POST(
     // empty body, which is exactly the case the guard exists to explain, so
     // the limit is named here as well.
     const declared = Number(request.headers.get("content-length"));
-    const bodyBytes = Number.isFinite(declared) && declared > 0 ? declared : null;
+    const declaredBytes = Number.isFinite(declared) && declared > 0 ? declared : null;
 
-    if (bodyBytes !== null && bodyBytes <= MAX_DOCUMENT_UPLOAD_BYTES) {
-      // Small enough to have been delivered whole: unparseable for some other
-      // reason, and blaming the size limit would send the caller after the
-      // wrong thing.
+    // Distinguish confirmed overflow from a generic parse failure:
+    // 1. Declared content-length exceeding the document limit
+    // 2. Or observed bytes read from the stream exceeding the document limit
+    const isOversized =
+      (declaredBytes !== null && declaredBytes > MAX_DOCUMENT_UPLOAD_BYTES) ||
+      bytesRead > MAX_DOCUMENT_UPLOAD_BYTES;
+
+    if (isOversized) {
+      const bodyBytes = declaredBytes ?? (bytesRead > 0 ? bytesRead : null);
       return NextResponse.json(
-        { error: "Could not read the upload. Expected a multipart form body." },
-        { status: 400 }
+        { error: oversizedDocumentUploadReason(bodyBytes) },
+        { status: 413 }
       );
     }
 
+    // Small or unverified body that failed to parse as valid multipart:
+    // return 400 without blaming the size limit.
     return NextResponse.json(
-      { error: oversizedDocumentUploadReason(bodyBytes) },
-      { status: 413 }
+      { error: "Could not read the upload. Expected a multipart form body." },
+      { status: 400 }
     );
   }
 
