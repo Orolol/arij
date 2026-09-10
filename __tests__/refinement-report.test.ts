@@ -271,12 +271,13 @@ describe("merges, discards and creations in the report", () => {
   });
 
   /**
-   * Ticket comments are rendered as plain text under `whitespace-pre-wrap`
-   * (components/ticket/CommentBubble.tsx) — never as markdown, never as HTML.
-   * A `<details>` fold-out therefore shows the user its own tags, which is
-   * what this recap used to do.
+   * The recap lands as a ticket comment, and ticket comments render as
+   * markdown (components/ticket/CommentBubble.tsx). Raw HTML is NOT parsed:
+   * react-markdown without `rehype-raw` escapes it, so a `<details>` fold-out
+   * shows the reader its own tags as text — which is what this recap used to
+   * do.
    */
-  it("puts no raw HTML in a body the feed renders verbatim", () => {
+  it("puts no raw HTML in a body the feed renders as markdown", () => {
     const body = formatRefinementComment("proj-1", report, undefined, {
       includeFullList: true,
     });

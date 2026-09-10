@@ -1,0 +1,6 @@
+{
+  "mapping": {
+    "savedToast": "Correspondance des labels enregistrée",
+    "saveFailed": "Échec de l'enregistrement de la correspondance des labels"
+  }
+}

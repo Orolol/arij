@@ -15,6 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Hammer, GitMerge, Loader2, MessageSquare, CheckCheck } from "lucide-react";
 import type { ReviewComment } from "@/hooks/useReviewComments";
+import { MarkdownContent } from "@/components/chat/MarkdownContent";
 
 interface ReviewActionsProps {
   projectId: string;
@@ -198,7 +199,9 @@ export function ReviewActions({
                   <span className="text-muted-foreground font-mono shrink-0">
                     {c.filePath}:{c.lineNumber}
                   </span>
-                  <span>{c.body}</span>
+                  <div className="min-w-0">
+                    <MarkdownContent content={c.body} />
+                  </div>
                 </div>
               ))}
           </div>

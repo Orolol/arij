@@ -156,7 +156,7 @@ export default function GitHubIssuesPage() {
   async function saveMappingConfig() {
     setSavingMapping(true);
     try {
-      await fetch(`/api/projects/${projectId}/github/label-mapping`, {
+      const res = await fetch(`/api/projects/${projectId}/github/label-mapping`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -170,6 +170,14 @@ export default function GitHubIssuesPage() {
             .filter(Boolean),
         }),
       });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        showToast("error", json.error || t("mapping.saveFailed"));
+        return;
+      }
+      showToast("success", t("mapping.savedToast"));
+    } catch {
+      showToast("error", t("mapping.saveFailed"));
     } finally {
       setSavingMapping(false);
     }

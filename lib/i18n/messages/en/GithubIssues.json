@@ -45,6 +45,8 @@
     "bug": "Bug labels (comma-separated)",
     "bugPlaceholder": "bug, defect, error",
     "hint": "Configure which GitHub labels map to Feature (Epic) or Bug ticket types.",
-    "save": "Save Mapping"
+    "save": "Save Mapping",
+    "savedToast": "Label mapping saved",
+    "saveFailed": "Failed to save label mapping"
   }
 }
