@@ -234,9 +234,15 @@ function CommandRow({ command }: { command: VerifyCommandResult }) {
         // A tail carries compiler and test-runner output: long unbroken tokens
         // and wide stack frames both live here, so it wraps AND scrolls rather
         // than widening the whole modal on a narrow viewport.
+        //
+        // `--muted` is the system's sunken surface and the ground every other
+        // output block in the app sits on (the spec progress log, the markdown
+        // fence, the comment tail). It reads as recessed against `--card` in
+        // BOTH themes, where a translucent `--background` was invisible on the
+        // near-white day card.
         <pre
           data-testid="ticket-verify-output"
-          className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-[8px] bg-background/60 p-2 font-mono text-[10.5px] leading-[1.5] text-foreground"
+          className="m-0 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-[8px] bg-muted p-2 font-mono text-[10.5px] leading-[1.5] text-foreground"
         >
           {tail || t("verify.noOutput")}
         </pre>
