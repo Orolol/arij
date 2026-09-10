@@ -11,17 +11,28 @@ import { useLocale, useTranslations } from "next-intl";
  * bubbles stay full-width: this is a work log, not a chat app, so the user's
  * messages are not right-aligned.
  *
- * Long build logs and review dumps collapse behind a word-boundary preview
- * (`lib/kanban/activity-feed.ts`), expandable in place.
+ * LONG BUILD LOGS AND REVIEW DUMPS are what actually lands here, and agents
+ * write them in markdown — headings, lists, `**bold**`, fenced blocks. The
+ * body therefore goes through the shared renderer rather than being printed
+ * under `whitespace-pre-wrap`, which showed the reader the syntax instead of
+ * what it meant; that also gives a pipeline red→green report its structured
+ * block here, which the ticket feed already did.
+ *
+ * Long comments collapse behind a word-boundary preview
+ * (`lib/markdown/preview.ts` — the preview of structured text has to be
+ * flattened and fence-free, or the renderer reads structure the truncation cut
+ * in half), expandable in place.
  */
 
 import { useState } from "react";
 
 import { Mono, QuietLink } from "@/components/piscine";
 import { cn } from "@/lib/utils";
-import { commentPreview, isLongComment } from "@/lib/kanban/activity-feed";
+import { isLongComment } from "@/lib/kanban/activity-feed";
+import { markdownPreview } from "@/lib/markdown/preview";
 import type { TicketComment } from "@/hooks/useTicketComments";
 import { formatRelative } from "@/lib/i18n/format";
+import { TicketCommentContent } from "@/components/verify/TicketCommentContent";
 
 export interface CommentBubbleProps {
   comment: TicketComment;
@@ -33,7 +44,8 @@ export function CommentBubble({ comment }: CommentBubbleProps) {
   const [expanded, setExpanded] = useState(false);
   const isUser = comment.author === "user";
   const long = isLongComment(comment.content);
-  const body = long && !expanded ? commentPreview(comment.content) : comment.content;
+  const body =
+    long && !expanded ? markdownPreview(comment.content) : comment.content;
 
   return (
     <div
@@ -47,9 +59,9 @@ export function CommentBubble({ comment }: CommentBubbleProps) {
       <Mono as="span" size={10} tone="muted" className="mb-1 block">
         {`${isUser ? t("comment.you") : t("comment.agent")} · ${formatRelative(comment.createdAt, { locale })}`}
       </Mono>
-      <p className="m-0 text-[13px] leading-[1.5] whitespace-pre-wrap text-foreground">
-        {body}
-      </p>
+      <div className="text-[13px] leading-[1.5] text-foreground">
+        <TicketCommentContent content={body} />
+      </div>
       {long ? (
         // The system's chromeless action, not a hand-rolled copy of it. The
         // tone is `muted`, not the coral it used to hard-code: the bubble is a
