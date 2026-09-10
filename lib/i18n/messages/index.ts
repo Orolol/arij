@@ -53,6 +53,7 @@ import fr_Desk from "./fr/Desk.json";
 import fr_Documents from "./fr/Documents.json";
 import fr_Format from "./fr/Format.json";
 import fr_Github from "./fr/Github.json";
+import fr_GithubIssues from "./fr/GithubIssues.json";
 import fr_Nav from "./fr/Nav.json";
 import fr_Notifications from "./fr/Notifications.json";
 import fr_Qa from "./fr/Qa.json";
@@ -121,6 +122,7 @@ export const fr = {
   Documents: fr_Documents,
   Format: fr_Format,
   Github: fr_Github,
+  GithubIssues: fr_GithubIssues,
   Nav: fr_Nav,
   Notifications: fr_Notifications,
   Qa: fr_Qa,
