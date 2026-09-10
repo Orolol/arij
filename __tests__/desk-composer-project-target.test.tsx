@@ -169,6 +169,50 @@ describe("DeskComposer project target", () => {
       expect.objectContaining({ projectId: MINE.id }),
     );
   });
+
+  it("switches from adversarial default to targeted project and survives earlier project removal", async () => {
+    const onTargetProjectChange = vi.fn();
+    const onSubmit = vi.fn().mockResolvedValue(true);
+
+    // Initially untargeted (null) with NEIGHBOUR first:
+    const { rerender } = render(
+      <DeskComposer
+        projects={[NEIGHBOUR, MINE]}
+        targetProjectId={null}
+        onTargetProjectChange={onTargetProjectChange}
+        namedAgentId={null}
+        onNamedAgentChange={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    const pill = screen.getByTestId(PROJECT_SELECT_TESTID);
+    expect(pill).toHaveTextContent(NEIGHBOUR.shortName);
+
+    // User explicitly selects MINE from the dropdown:
+    fireEvent.click(screen.getByRole("menuitem", { name: MINE.name }));
+    expect(onTargetProjectChange).toHaveBeenCalledWith(MINE.id);
+
+    // Parent component updates targetProjectId to MINE.id and NEIGHBOUR is torn down:
+    rerender(
+      <DeskComposer
+        projects={[MINE]}
+        targetProjectId={MINE.id}
+        onTargetProjectChange={onTargetProjectChange}
+        namedAgentId={null}
+        onNamedAgentChange={vi.fn()}
+        onSubmit={onSubmit}
+      />,
+    );
+
+    expect(screen.getByTestId(PROJECT_SELECT_TESTID)).toHaveTextContent(MINE.shortName);
+
+    await type("Une feature");
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      expect.objectContaining({ projectId: MINE.id }),
+    );
+  });
 });
 
 describe("e2e/desk-toasts.spec.ts", () => {
@@ -184,6 +228,15 @@ describe("e2e/desk-toasts.spec.ts", () => {
    */
   const beforeTyping = source.slice(
     source.indexOf("await page.goto("),
+    source.indexOf("await input.fill("),
+  );
+
+  /**
+   * The executed test body for the global run up to typing the title.
+   * Sliced strictly within the test function (after helper definitions).
+   */
+  const testBodyBeforeTyping = source.slice(
+    source.indexOf('for (const scope of ["global", "project"]'),
     source.indexOf("await input.fill("),
   );
 
@@ -203,9 +256,43 @@ describe("e2e/desk-toasts.spec.ts", () => {
     expect(guarded).toContain(PROJECT_SELECT_TESTID);
   });
 
-  it("proves identity selection with an unrelated earlier project and concurrent deletion", () => {
-    expect(source).toMatch(/createScratchProject/);
-    expect(source).toMatch(/removeScratchProject/);
-    expect(source).toContain("updated_at");
+  it("proves identity selection with an unrelated earlier project and concurrent deletion in executed test body", () => {
+    // Assert that the executed test body (not mere helper definitions) performs
+    // the adversarial setup, asserts initial default, explicitly selects the fixture,
+    // and concurrently tears down the earlier project before typing.
+    const idxCreate = testBodyBeforeTyping.indexOf("await createScratchProject(");
+    const idxBackdate = testBodyBeforeTyping.indexOf("SET created_at", idxCreate);
+    const idxGoto = testBodyBeforeTyping.indexOf("await page.goto(");
+    const idxAssertInitial = testBodyBeforeTyping.indexOf("shortProjectName(unrelated");
+    const idxSelectPillClick = testBodyBeforeTyping.indexOf("selectPill.click()", idxAssertInitial);
+    const idxChooseMine = testBodyBeforeTyping.indexOf("project.name", idxSelectPillClick);
+    const idxRemove = testBodyBeforeTyping.indexOf("await removeScratchProject(");
+
+    expect(idxCreate).toBeGreaterThan(-1);
+    expect(idxBackdate).toBeGreaterThan(idxCreate);
+    expect(testBodyBeforeTyping).not.toContain("updated_at");
+    expect(idxGoto).toBeGreaterThan(idxBackdate);
+    expect(idxAssertInitial).toBeGreaterThan(idxGoto);
+    expect(idxSelectPillClick).toBeGreaterThan(idxAssertInitial);
+    expect(idxChooseMine).toBeGreaterThan(idxSelectPillClick);
+    expect(idxRemove).toBeGreaterThan(idxChooseMine);
+  });
+
+  it("guarantees scratch resource acquisition and teardown inside try/finally", () => {
+    const testFunctionSource = source.slice(
+      source.indexOf('for (const scope of ["global", "project"]'),
+    );
+    const tryIdx = testFunctionSource.indexOf("try {");
+    const createIdx = testFunctionSource.indexOf("await createScratchProject(");
+    const finallyIdx = testFunctionSource.lastIndexOf("finally {");
+    const cleanupCallIdx = testFunctionSource.indexOf(
+      "await removeScratchProject(",
+      finallyIdx,
+    );
+
+    expect(tryIdx).toBeGreaterThan(-1);
+    expect(createIdx).toBeGreaterThan(tryIdx);
+    expect(finallyIdx).toBeGreaterThan(createIdx);
+    expect(cleanupCallIdx).toBeGreaterThan(finallyIdx);
   });
 });
