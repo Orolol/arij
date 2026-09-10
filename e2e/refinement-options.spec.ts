@@ -61,13 +61,35 @@ for (const exit of ["Cancel", "Close", "Escape", "overlay"]) {
         } } });
       }
     });
-    await openRegistry(page, project.id);
     await page.clock.install();
+    const initialPoll = page.waitForResponse(
+      (res) =>
+        res.url().includes(`/api/projects/${project.id}/refinement`) &&
+        res.request().method() === "GET"
+    );
+    await openRegistry(page, project.id);
+    const initial = await initialPoll;
+    expect(initial.status()).toBe(200);
+    expect((await initial.json()).data.running).toBe(false);
+
     await page.getByTestId("refinement-button").click();
     const dialog = page.getByRole("dialog", { name: "Configure board refinement" });
+    const conflictResponse = page.waitForResponse(
+      (r) => r.url().includes(`/projects/${project.id}/refinement`) && r.request().method() === "POST"
+    );
     await dialog.getByRole("button", { name: "Start refinement" }).click();
+    const conflict = await conflictResponse;
+    expect(conflict.status()).toBe(409);
     await expect(page.getByText("A board refinement pass is already running for this project.")).toBeVisible();
+
+    const runningPoll = page.waitForResponse(
+      (r) => r.url().includes(`/projects/${project.id}/refinement`) && r.request().method() === "GET"
+    );
     await page.clock.fastForward(31000);
+    const runningResponse = await runningPoll;
+    expect(runningResponse.status()).toBe(200);
+    expect((await runningResponse.json()).data.running).toBe(true);
+
     await expect(page.getByTestId("refinement-button-badge")).toHaveText("running");
     await expect(dialog.getByRole("button", { name: "Start refinement" })).toBeDisabled();
     await expect(dialog.getByRole("button", { name: "Cancel" })).toBeEnabled();
