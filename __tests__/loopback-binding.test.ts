@@ -14,7 +14,9 @@
  * below by reading its source.
  */
 
+import { spawn } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error next/dist/compiled/commander lacks type declarations
@@ -274,4 +276,161 @@ describe("bin/arij.mjs is the launcher these rules describe", () => {
       fs.existsSync(path.join(projectRoot, "bin", "launch-plan.mjs")),
     ).toBe(true);
   });
+});
+
+async function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.listen(0, "127.0.0.1", () => {
+      const port = (srv.address() as net.AddressInfo).port;
+      srv.close(() => resolve(port));
+    });
+    srv.on("error", reject);
+  });
+}
+
+function runDirectNext(
+  args: string[],
+  env: Record<string, string> = {},
+  options: { timeoutMs?: number; waitForReady?: boolean } = {}
+): Promise<{ code: number | null; output: string }> {
+  const { timeoutMs = 6000, waitForReady = false } = options;
+  return new Promise((resolve) => {
+    const nextBin = path.join(
+      projectRoot,
+      "node_modules",
+      "next",
+      "dist",
+      "bin",
+      "next"
+    );
+    const childEnv = { ...process.env, ...env };
+    if (!("ARIJ_REMOTE_TOKEN" in env)) {
+      delete childEnv.ARIJ_REMOTE_TOKEN;
+    }
+
+    const cp = spawn(process.execPath, [nextBin, ...args], {
+      cwd: projectRoot,
+      env: childEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let output = "";
+    let settled = false;
+
+    const timer = setTimeout(() => {
+      cp.kill("SIGTERM");
+      setTimeout(() => {
+        if (!cp.killed) cp.kill("SIGKILL");
+      }, 500);
+      finish(null);
+    }, timeoutMs);
+
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve({ code, output });
+    };
+
+    cp.stdout.on("data", (d) => {
+      output += d.toString();
+      if (waitForReady && output.includes("Ready in")) {
+        cp.kill("SIGTERM");
+        setTimeout(() => {
+          if (!cp.killed) cp.kill("SIGKILL");
+        }, 500);
+        finish(0);
+      }
+    });
+    cp.stderr.on("data", (d) => {
+      output += d.toString();
+    });
+
+    cp.on("close", (code) => finish(code));
+    cp.on("error", () => finish(1));
+  });
+}
+
+describe("direct Next startup without launcher enforces loopback binding", () => {
+  it("refuses next dev -H 0.0.0.0 without credentials across worker boundary", async () => {
+    const port = await getFreePort();
+    const res = await runDirectNext(["dev", "-H", "0.0.0.0", "--port", String(port)]);
+    expect(res.code).toBe(1);
+    expect(res.output).toMatch(/Arij refuses to bind remote interface.*0\.0\.0\.0/);
+  }, 10000);
+
+  it("refuses direct next start when Next defaults to wildcard interface despite ARIJ_HOST", async () => {
+    const port = await getFreePort();
+    const res = await runDirectNext(["start", "--port", String(port)], {
+      ARIJ_HOST: "127.0.0.1",
+    });
+    expect(res.code).toBe(1);
+    expect(res.output).toMatch(/Arij refuses to bind remote interface/);
+  }, 10000);
+
+  it("refuses direct next dev without host flags (Next default 0.0.0.0)", async () => {
+    const port = await getFreePort();
+    const res = await runDirectNext(["dev", "--port", String(port)]);
+    expect(res.code).toBe(1);
+    expect(res.output).toMatch(/Arij refuses to bind remote interface/);
+  }, 10000);
+
+  it("allows direct next dev with explicit loopback binding (-H 127.0.0.1)", async () => {
+    const port = await getFreePort();
+    const res = await runDirectNext(
+      ["dev", "-H", "127.0.0.1", "--port", String(port)],
+      {},
+      { waitForReady: true }
+    );
+    expect(res.output).toMatch(/Ready in/);
+    expect(res.output).toMatch(/127\.0\.0\.1/);
+  }, 10000);
+
+  it("allows direct next dev -H 0.0.0.0 when ARIJ_REMOTE_TOKEN is provided", async () => {
+    const port = await getFreePort();
+    const res = await runDirectNext(
+      ["dev", "-H", "0.0.0.0", "--port", String(port)],
+      { ARIJ_REMOTE_TOKEN: "valid-operator-secret-token" },
+      { waitForReady: true }
+    );
+    expect(res.output).toMatch(/Ready in/);
+    expect(res.output).toMatch(/0\.0\.0\.0/);
+  }, 10000);
+
+  it("refuses direct next start -H 0.0.0.0 without credentials", async () => {
+    const port = await getFreePort();
+    const res = await runDirectNext(["start", "-H", "0.0.0.0", "--port", String(port)]);
+    expect(res.code).toBe(1);
+    expect(res.output).toMatch(/Arij refuses to bind remote interface.*0\.0\.0\.0/);
+  }, 10000);
+
+  it("refuses direct next start without host flags (Next default 0.0.0.0)", async () => {
+    const port = await getFreePort();
+    const res = await runDirectNext(["start", "--port", String(port)]);
+    expect(res.code).toBe(1);
+    expect(res.output).toMatch(/Arij refuses to bind remote interface/);
+  }, 10000);
+
+  it("allows direct next start with explicit loopback binding (-H 127.0.0.1)", async () => {
+    const port = await getFreePort();
+    const res = await runDirectNext(
+      ["start", "-H", "127.0.0.1", "--port", String(port)],
+      {},
+      { waitForReady: true }
+    );
+    expect(res.output).toMatch(/Ready in/);
+    expect(res.output).toMatch(/127\.0\.0\.1/);
+  }, 10000);
+
+  it("allows direct next start -H 0.0.0.0 when ARIJ_REMOTE_TOKEN is provided", async () => {
+    const port = await getFreePort();
+    const res = await runDirectNext(
+      ["start", "-H", "0.0.0.0", "--port", String(port)],
+      { ARIJ_REMOTE_TOKEN: "valid-operator-secret-token" },
+      { waitForReady: true }
+    );
+    expect(res.output).toMatch(/Ready in/);
+    expect(res.output).toMatch(/0\.0\.0\.0/);
+  }, 10000);
 });

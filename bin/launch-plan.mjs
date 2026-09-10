@@ -40,6 +40,7 @@ const LOOPBACK_HOSTNAMES = new Set([
   "::1",
   "[::1]",
   "0:0:0:0:0:0:0:1",
+  "::ffff:127.0.0.1",
 ]);
 
 /** Commands that start a listener, and therefore take a host. */
@@ -51,7 +52,36 @@ const PORT_FLAGS = new Set(["-p", "--port"]);
 const DEFAULT_PORT = "3000";
 
 export function isLoopbackHost(host) {
-  return LOOPBACK_HOSTNAMES.has(String(host).toLowerCase());
+  if (!host) return false;
+  let s = String(host).toLowerCase().trim();
+  if (s.startsWith("[") && s.endsWith("]")) {
+    s = s.slice(1, -1);
+  }
+  if (LOOPBACK_HOSTNAMES.has(s)) return true;
+  if (s.startsWith("127.") && !s.includes(":")) {
+    const parts = s.split(".");
+    if (
+      parts.length === 4 &&
+      parts.every(
+        (p) => /^\d+$/.test(p) && Number(p) >= 0 && Number(p) <= 255
+      )
+    ) {
+      return true;
+    }
+  }
+  if (s.startsWith("::ffff:127.")) {
+    const v4 = s.slice("::ffff:".length);
+    const parts = v4.split(".");
+    if (
+      parts.length === 4 &&
+      parts.every(
+        (p) => /^\d+$/.test(p) && Number(p) >= 0 && Number(p) <= 255
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**

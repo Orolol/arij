@@ -2,26 +2,72 @@ import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
 import { extractHost, isLoopbackHost } from "./bin/launch-plan.mjs";
 
+function getListeningServerAddresses(): string[] {
+  const handles = (process as any)._getActiveHandles?.() ?? [];
+  const addresses: string[] = [];
+  for (const handle of handles) {
+    if (
+      handle &&
+      typeof handle.address === "function" &&
+      handle.listening === true
+    ) {
+      const addr = handle.address();
+      if (addr) {
+        if (typeof addr === "string") {
+          addresses.push(addr);
+        } else if (typeof addr === "object" && typeof addr.address === "string") {
+          addresses.push(addr.address);
+        }
+      }
+    }
+  }
+  return addresses;
+}
+
 // Prevent unauthenticated remote binding when Next is invoked directly without the launcher
-if (
-  process.argv[1]?.includes("next") &&
-  (process.argv[2] === "dev" || process.argv[2] === "start")
-) {
+function enforceListenerSecurity(): void {
+  if (process.env.ARIJ_REMOTE_TOKEN?.trim()) {
+    return;
+  }
+
+  // 1. Inspect direct Next CLI invocation arguments when present
   try {
-    const hostInfo = extractHost(process.argv.slice(3));
-    const host = hostInfo.value ?? process.env.ARIJ_HOST?.trim();
-    const effectiveHost = host ?? "0.0.0.0";
-    if (!isLoopbackHost(effectiveHost) && !process.env.ARIJ_REMOTE_TOKEN?.trim()) {
-      throw new Error(
-        `Arij refuses to bind remote interface (${effectiveHost}) without an access credential. Start with 'arij' or set ARIJ_REMOTE_TOKEN.`
-      );
+    const argv = process.argv.slice(1);
+    const isDirectNext = argv.some(
+      (arg) =>
+        typeof arg === "string" &&
+        (arg.endsWith("/next") || arg.endsWith("\\next") || arg === "next")
+    );
+    const isServingCommand = argv.includes("dev") || argv.includes("start");
+    if (isDirectNext && isServingCommand) {
+      const hostInfo = extractHost(argv);
+      // Next does NOT read ARIJ_HOST. If not passed on CLI, Next defaults to 0.0.0.0
+      const host = hostInfo.value ?? "0.0.0.0";
+      if (!isLoopbackHost(host)) {
+        throw new Error(
+          `Arij refuses to bind remote interface (${host}) without an access credential. Start with 'arij' or set ARIJ_REMOTE_TOKEN.`
+        );
+      }
     }
   } catch (err: any) {
     if (err.message?.includes("Arij refuses to bind remote")) {
       throw err;
     }
   }
+
+  // 2. Inspect authoritative server listener addresses from Node's handle table
+  // (survives Next's worker boundary in `next dev` and checks the actual bound socket)
+  const listeningAddresses = getListeningServerAddresses();
+  for (const addr of listeningAddresses) {
+    if (!isLoopbackHost(addr)) {
+      throw new Error(
+        `Arij refuses to bind remote interface (${addr}) without an access credential. Start with 'arij' or set ARIJ_REMOTE_TOKEN.`
+      );
+    }
+  }
 }
+
+enforceListenerSecurity();
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["better-sqlite3", "pdf-parse", "pdfjs-dist"],
