@@ -109,7 +109,7 @@ function findExistingWorktree(
   return null;
 }
 
-/** Latest persisted deterministic verification report for EpicDetail. */
+/** Latest persisted deterministic verification report for the ticket overlay. */
 export async function GET(_request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
 
@@ -206,7 +206,7 @@ export async function POST(_request: NextRequest, { params }: Params) {
       actor: "system",
       reason: !report.persisted
         ? // The commands ran, but no durable reader will ever see the verdict
-          // — the panel refetches from the table and the merge gate reads it.
+          // — the band refetches from the table and the merge gate reads it.
           "Manual verification ran but its report could not be saved"
         : report.status === "pass"
           ? `Manual verification passed (${report.commands.length} command${report.commands.length === 1 ? "" : "s"})`

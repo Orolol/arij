@@ -45,5 +45,7 @@
   "qaHttp": "Failed to load QA ({status})",
   "specHttp": "Spec generation failed (HTTP {status})",
   "uploadNamed": "{name}: upload failed",
-  "agentRequestFailed": "Agent request failed"
+  "agentRequestFailed": "Agent request failed",
+  "failedToRunVerification": "Failed to run verification",
+  "verificationDidNotProduceAReport": "Verification did not produce a report."
 }

@@ -91,6 +91,10 @@ const DELIBERATE: Record<string, { sites: number; why: string }> = {
     sites: 1,
     why: "path plus index, documented in place: two identical paths stay distinct",
   },
+  "components/ticket/VerifyBand.tsx": {
+    sites: 1,
+    why: "name plus index over one verify report's command results: the order is the configured run order, the array is replaced wholesale on every refetch, and nothing in the overlay reorders, inserts or deletes a row — the index is what keeps two identically-named commands distinct",
+  },
 };
 
 interface IndexKeySite {
