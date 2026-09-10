@@ -8,6 +8,7 @@ import {
   isTerminalSessionStatus,
 } from "@/lib/agent-sessions/lifecycle";
 import { appendSessionChunk } from "@/lib/agent-sessions/chunks";
+import { notifySessionTerminal } from "@/lib/agent-sessions/terminal-hooks";
 import { parseClaudeOutput, isNoTextualOutputFallback } from "./json-parser";
 import {
   isMcpToolsEnabled,
@@ -60,6 +61,10 @@ export interface TrackedSession {
   closePromise?: Promise<void>;
   /** Whether the underlying process has emitted close / exited. */
   processClosed?: boolean;
+  projectId?: string;
+  epicId?: string | null;
+  userStoryId?: string | null;
+  cwd?: string;
 }
 
 export interface SessionInfo {
@@ -489,6 +494,10 @@ class ClaudeProcessManager {
       mcpConfigPath,
       closePromise,
       processClosed: false,
+      projectId: sessionRow?.projectId,
+      epicId: sessionRow?.epicId,
+      userStoryId: sessionRow?.userStoryId,
+      cwd: options.cwd,
     };
 
     this.sessions.set(sessionId, session);
@@ -550,6 +559,16 @@ class ClaudeProcessManager {
           tracked.processClosed = true;
         }
         markProcessClosed();
+        if (tracked?.status === "cancelled") {
+          try {
+            notifySessionTerminal({
+              sessionId,
+              status: "cancelled",
+            });
+          } catch {
+            // best-effort
+          }
+        }
       });
 
     return this.toSessionInfo(session);
@@ -635,6 +654,95 @@ class ClaudeProcessManager {
     } finally {
       if (timer) clearTimeout(timer);
     }
+  }
+
+  private lookupSessionField(
+    sessionId: string,
+    field: "projectId" | "epicId" | "userStoryId"
+  ): string | null {
+    try {
+      const row = db
+        .select({
+          projectId: agentSessions.projectId,
+          epicId: agentSessions.epicId,
+          userStoryId: agentSessions.userStoryId,
+        })
+        .from(agentSessions)
+        .where(eq(agentSessions.id, sessionId))
+        .get();
+      return row ? (row[field] ?? null) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Returns any tracked session currently occupying the target, meaning its underlying
+   * child process or process group has not completed teardown (`processClosed !== true`).
+   * Covers cancelled sessions that are still in their termination grace period.
+   */
+  getOccupyingSessionForTarget(target: {
+    scope: "epic" | "story";
+    projectId: string;
+    epicId?: string | null;
+    storyId?: string;
+  }): TrackedSession | null {
+    for (const session of this.sessions.values()) {
+      if (session.processClosed) continue;
+      const projId =
+        session.projectId ??
+        this.lookupSessionField(session.sessionId, "projectId");
+      if (projId && projId !== target.projectId) continue;
+
+      const epicId =
+        session.epicId ??
+        this.lookupSessionField(session.sessionId, "epicId");
+      const storyId =
+        session.userStoryId ??
+        this.lookupSessionField(session.sessionId, "userStoryId");
+
+      if (target.scope === "epic") {
+        if (epicId === target.epicId) {
+          return session;
+        }
+      } else {
+        if (storyId === target.storyId) {
+          return session;
+        }
+        if (target.epicId && epicId === target.epicId) {
+          return session;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns all tracked sessions in a project that are still occupying their target/worktree.
+   */
+  listOccupyingSessions(projectId?: string): TrackedSession[] {
+    const results: TrackedSession[] = [];
+    for (const session of this.sessions.values()) {
+      if (session.processClosed) continue;
+      const projId =
+        session.projectId ??
+        this.lookupSessionField(session.sessionId, "projectId");
+      if (projectId && projId && projId !== projectId) continue;
+      results.push(session);
+    }
+    return results;
+  }
+
+  /**
+   * Whether the target currently has a session whose process has not closed yet.
+   */
+  isTargetOccupied(target: {
+    scope: "epic" | "story";
+    projectId: string;
+    epicId?: string | null;
+    storyId?: string;
+  }): boolean {
+    return this.getOccupyingSessionForTarget(target) !== null;
   }
 
   /**

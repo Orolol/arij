@@ -334,8 +334,12 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
       }
     });
 
-    child.on("close", (code) => {
-      killer.clear();
+    child.on("close", async (code) => {
+      if (killer.isKilled()) {
+        await killer.waitForTeardown();
+      } else {
+        killer.clear();
+      }
       const duration = Date.now() - startTime;
       const killed = killer.isKilled();
       // Session end (normal exit, failure, or kill) — drop the token file.
@@ -624,8 +628,12 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
         controller.close();
       });
 
-      child.on("close", (code) => {
-        killer.clear();
+      child.on("close", async (code) => {
+        if (killer.isKilled()) {
+          await killer.waitForTeardown();
+        } else {
+          killer.clear();
+        }
         cleanupMcpConfigFile(mcpConfigPath);
 
         // Process any remaining buffer

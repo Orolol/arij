@@ -143,4 +143,194 @@ describe("claude-code cancellation real process integration", () => {
     // Wait past the 300ms grace period; no exception or spurious kill should happen
     await new Promise((r) => setTimeout(r, 350));
   });
+
+  it("escalates to SIGKILL against surviving descendant when leader exits on SIGTERM (redirected stdio)", async () => {
+    const worktree = fs.mkdtempSync(
+      path.join(os.tmpdir(), "arij-desc-redir-test-")
+    );
+    tempDirs.push(worktree);
+
+    const outputFile = path.join(worktree, "activity.log");
+    const descendantScript = path.join(worktree, "descendant.js");
+    const leaderScript = path.join(worktree, "leader.js");
+
+    // Descendant process ignores SIGTERM and writes periodically
+    fs.writeFileSync(
+      descendantScript,
+      `
+      process.on('SIGTERM', () => {});
+      const fs = require('fs');
+      setInterval(() => {
+        fs.appendFileSync(${JSON.stringify(outputFile)}, "descendant-write\\n");
+      }, 25);
+      `
+    );
+
+    // Leader process does NOT ignore SIGTERM (default behavior: exits on SIGTERM)
+    // Descendant is spawned with redirected/ignored stdio
+    fs.writeFileSync(
+      leaderScript,
+      `
+      const { spawn } = require('child_process');
+      spawn(process.execPath, [${JSON.stringify(descendantScript)}], {
+        stdio: 'ignore'
+      });
+      setInterval(() => {}, 1000);
+      `
+    );
+
+    const child = spawn(process.execPath, [leaderScript], {
+      detached: true,
+      cwd: worktree,
+      stdio: "ignore",
+    });
+
+    expect(child.pid).toBeDefined();
+    expect(isChildAlive(child)).toBe(true);
+
+    // Wait until descendant is actively writing
+    let writes = 0;
+    for (let i = 0; i < 50; i++) {
+      await new Promise((r) => setTimeout(r, 40));
+      if (fs.existsSync(outputFile)) {
+        const lines = fs.readFileSync(outputFile, "utf-8").trim().split("\n");
+        if (lines.length >= 2) {
+          writes = lines.length;
+          break;
+        }
+      }
+    }
+    expect(writes).toBeGreaterThanOrEqual(2);
+
+    const killer = createChildKiller(() => child, 200);
+
+    const closePromise = new Promise<{ code: number | null; signal: string | null }>(
+      (resolve) => {
+        child.on("close", async (code, signal) => {
+          if (killer.isKilled()) {
+            await killer.waitForTeardown();
+          } else {
+            killer.clear();
+          }
+          resolve({ code, signal });
+        });
+      }
+    );
+
+    // Initiate cancellation
+    killer.kill();
+
+    // Leader exits on SIGTERM, close handler awaits group teardown, and descendant is killed by SIGKILL
+    await closePromise;
+    expect(isChildAlive(child)).toBe(false);
+
+    // Wait 150ms to ensure descendant has settled
+    await new Promise((r) => setTimeout(r, 150));
+    const linesAfterKill = fs.readFileSync(outputFile, "utf-8").trim().split("\n").length;
+
+    // Verify writes have completely stopped
+    await new Promise((r) => setTimeout(r, 150));
+    const linesLater = fs.readFileSync(outputFile, "utf-8").trim().split("\n").length;
+    expect(linesLater).toBe(linesAfterKill);
+
+    // Verify safe worktree reuse
+    fs.writeFileSync(outputFile, "reused: build complete\\n");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(fs.readFileSync(outputFile, "utf-8")).toBe("reused: build complete\\n");
+  });
+
+  it("escalates to SIGKILL against surviving descendant when leader exits on SIGTERM (inherited stdio)", async () => {
+    const worktree = fs.mkdtempSync(
+      path.join(os.tmpdir(), "arij-desc-inherit-test-")
+    );
+    tempDirs.push(worktree);
+
+    const outputFile = path.join(worktree, "activity.log");
+    const descendantScript = path.join(worktree, "descendant.js");
+    const leaderScript = path.join(worktree, "leader.js");
+
+    // Descendant process ignores SIGTERM and writes periodically
+    fs.writeFileSync(
+      descendantScript,
+      `
+      process.on('SIGTERM', () => {});
+      const fs = require('fs');
+      setInterval(() => {
+        fs.appendFileSync(${JSON.stringify(outputFile)}, "descendant-write\\n");
+      }, 25);
+      `
+    );
+
+    // Leader process does NOT ignore SIGTERM.
+    // Descendant inherits stdio from leader, keeping pipes open until descendant terminates.
+    fs.writeFileSync(
+      leaderScript,
+      `
+      const { spawn } = require('child_process');
+      spawn(process.execPath, [${JSON.stringify(descendantScript)}], {
+        stdio: 'inherit'
+      });
+      setInterval(() => {}, 1000);
+      `
+    );
+
+    const child = spawn(process.execPath, [leaderScript], {
+      detached: true,
+      cwd: worktree,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    expect(child.pid).toBeDefined();
+    expect(isChildAlive(child)).toBe(true);
+
+    // Wait until descendant is actively writing
+    let writes = 0;
+    for (let i = 0; i < 50; i++) {
+      await new Promise((r) => setTimeout(r, 40));
+      if (fs.existsSync(outputFile)) {
+        const lines = fs.readFileSync(outputFile, "utf-8").trim().split("\n");
+        if (lines.length >= 2) {
+          writes = lines.length;
+          break;
+        }
+      }
+    }
+    expect(writes).toBeGreaterThanOrEqual(2);
+
+    const killer = createChildKiller(() => child, 200);
+
+    const closePromise = new Promise<{ code: number | null; signal: string | null }>(
+      (resolve) => {
+        child.on("close", async (code, signal) => {
+          if (killer.isKilled()) {
+            await killer.waitForTeardown();
+          } else {
+            killer.clear();
+          }
+          resolve({ code, signal });
+        });
+      }
+    );
+
+    // Initiate cancellation
+    killer.kill();
+
+    // Descendant keeps pipes open until SIGKILL escalation terminates it
+    await closePromise;
+    expect(isChildAlive(child)).toBe(false);
+
+    // Wait 150ms to ensure descendant has settled
+    await new Promise((r) => setTimeout(r, 150));
+    const linesAfterKill = fs.readFileSync(outputFile, "utf-8").trim().split("\n").length;
+
+    // Verify writes have completely stopped
+    await new Promise((r) => setTimeout(r, 150));
+    const linesLater = fs.readFileSync(outputFile, "utf-8").trim().split("\n").length;
+    expect(linesLater).toBe(linesAfterKill);
+
+    // Verify safe worktree reuse
+    fs.writeFileSync(outputFile, "reused: build complete\\n");
+    await new Promise((r) => setTimeout(r, 150));
+    expect(fs.readFileSync(outputFile, "utf-8")).toBe("reused: build complete\\n");
+  });
 });

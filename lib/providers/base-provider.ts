@@ -557,12 +557,16 @@ export abstract class BaseCliProvider implements AgentProvider {
         });
       });
 
-      child.on("close", (code) => {
+      child.on("close", async (code) => {
         const duration = Date.now() - startTime;
         const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
         const stderr = Buffer.concat(stderrChunks).toString("utf-8");
 
-        killer.clear();
+        if (killer.isKilled()) {
+          await killer.waitForTeardown();
+        } else {
+          killer.clear();
+        }
         try {
           const providerResult = this.handleExit(
             { code, stdout, stderr, duration, killed: killer.isKilled(), options, spawnContext },
