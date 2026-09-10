@@ -114,16 +114,18 @@ export async function runPipelineVerification(
 
   // Persistence is tolerant by design (a lost row must not fail a run that
   // actually executed), but every durable reader — the merge gate, the
-  // EpicDetail panel, the next sweep — reads the table. Announcing a verdict
-  // no reader can see would leave "verification passed" in the feed next to
-  // a gate that says it never ran, so an unpersisted report is a skip.
+  // ticket overlay's VERIFICATION band, the next sweep — reads the table.
+  // Announcing a verdict no reader can see would leave "verification passed"
+  // in the feed next to a gate that says it never ran, so an unpersisted
+  // report is a skip.
   if (!result.persisted) {
     return skip("the verification report could not be persisted");
   }
 
   // The manual route emits this too. Without it the board and the open
-  // EpicDetail panel never learn that an autonomous run's checks have
-  // finished (or failed) until the panel is closed and reopened.
+  // ticket overlay never learn that an autonomous run's checks have finished
+  // (or failed) until the overlay is closed and reopened —
+  // `useEpicDetail.fetchVerification` hangs off exactly this event.
   emitTicketUpdated(init.projectId, init.epicId, {
     verifyReportId: result.id,
     verifyStatus: result.status,

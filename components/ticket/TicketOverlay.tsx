@@ -42,6 +42,7 @@ import { PipelineCard } from "@/components/ticket/PipelineCard";
 import { TicketDescriptionCard } from "@/components/ticket/TicketDescriptionCard";
 import { TicketOverlayHeader } from "@/components/ticket/TicketOverlayHeader";
 import { UserStoriesBand } from "@/components/ticket/UserStoriesBand";
+import { VerifyBand } from "@/components/ticket/VerifyBand";
 import { descriptionMeta } from "@/components/ticket/derive";
 
 export interface TicketOverlayProps {
@@ -143,6 +144,10 @@ export function TicketOverlay({
     namedAgents,
     gradingStatus,
     gradingSummary,
+    verificationReport,
+    runVerification,
+    verifyRunning,
+    verifyError,
     diffstat,
     timeline,
     sessionMeta,
@@ -469,6 +474,15 @@ export function TicketOverlay({
                 projectId={projectId}
                 gradingStatus={gradingStatus}
                 gradingSummary={gradingSummary}
+              />
+              {/* The mechanical evidence, under the criteria it was run
+                  against and above the prose the agent wrote about them. */}
+              <VerifyBand
+                report={verificationReport}
+                onRun={() => void runVerification()}
+                running={verifyRunning}
+                error={verifyError}
+                locked={isRunning || dispatching}
               />
               <AgentActivityBand
                 lines={timeline}

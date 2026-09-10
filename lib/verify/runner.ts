@@ -38,9 +38,10 @@ export interface VerificationResult extends VerificationReport {
    *
    * The run itself is still valid — the verdict is computed from the exit
    * codes in hand — but every DURABLE consumer reads the table: the merge
-   * gate in lib/auto-mode/merge.ts, the EpicDetail panel, the next sweep. A
-   * caller that announced "checks passed" from this in-memory value while
-   * the table stayed empty would have the two halves disagreeing forever.
+   * gate in lib/auto-mode/merge.ts, the ticket overlay's VERIFICATION band,
+   * the next sweep. A caller that announced "checks passed" from this
+   * in-memory value while the table stayed empty would have the two halves
+   * disagreeing forever.
    */
   persisted: boolean;
 }

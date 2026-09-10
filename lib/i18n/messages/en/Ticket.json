@@ -40,6 +40,24 @@
     "gradedPartial": "GRADED · PARTIAL",
     "gradedMissed": "GRADED · MISSED"
   },
+  "verify": {
+    "label": "Verification",
+    "meta": "{passed}/{total} passed · {when}",
+    "passed": "VERIFIED",
+    "failed": "FAILED",
+    "run": "Run verification",
+    "running": "Running…",
+    "commandPassed": "PASS",
+    "commandFailed": "FAIL",
+    "exit": "exit {code}",
+    "exitUnknown": "exit —",
+    "durationMs": "{ms} ms",
+    "durationSeconds": "{seconds} s",
+    "durationMinutes": "{minutes} min",
+    "showOutput": "output",
+    "hideOutput": "hide",
+    "noOutput": "no output"
+  },
   "screenshots": {
     "kicker": "{count, plural, one {Screenshot} other {Screenshots}}",
     "open": "Open {fileName}"

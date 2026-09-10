@@ -4,8 +4,8 @@
  * Everything the frame-6a ticket overlay reads, in one view model.
  *
  * This hook composes the ticket's existing hooks — none of which it owns or
- * edits — and adds the four cross-cutting behaviours the overlay is
- * responsible for:
+ * edits — and adds the cross-cutting behaviours the overlay is responsible
+ * for:
  *
  *  1. MARK-AS-READ ON OPEN. Owned here on purpose, so that *any* path that
  *     opens a ticket clears the unread dot: the desk, the board, the inbox, a
@@ -25,10 +25,17 @@
  *     log — and they are interleaved here, by timestamp, into one chronology.
  *     The transition log follows the same gate as (2): fetched on open and on
  *     every SSE bump, polled only while a session is live.
+ *  6. THE VERIFICATION REPORT. `useEpicDetail` fetches it; this hook is where
+ *     it finally reaches a component, together with the manual re-run the
+ *     verify route already served. It is deliberately NOT on the 5s poll —
+ *     the payload carries a bounded output tail per command — and it does not
+ *     need to be: the pipeline and the manual run both announce a finished
+ *     report through `ticket:updated`.
  */
 
 import { useTicketDerivedCopy } from "@/components/ticket/copy";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useTranslations } from "next-intl";
 
 import { useAgentDispatch } from "@/hooks/useAgentDispatch";
 import { useEpicActivity } from "@/hooks/useEpicActivity";
@@ -44,6 +51,7 @@ import { useTicketComments } from "@/hooks/useTicketComments";
 import type { ArijActionItem } from "@/components/shared/ArijActionsList";
 import { findUnifiedSession } from "@/lib/agent-sessions/session-list";
 import { aggregateGradingStatus, type GradingStatus } from "@/lib/grading/report";
+import { isVerificationReport } from "@/lib/verify/verify-constants";
 import { buildActivityFeed } from "@/lib/kanban/activity-feed";
 import { projectTone, type ProjectTone } from "@/lib/piscine/tokens";
 import {
@@ -108,6 +116,7 @@ export function useTicketOverlayData(
    * these hooks already treats a null epic id as "no target".
    */
   const derivedCopy = useTicketDerivedCopy();
+  const tErrors = useTranslations("ClientErrors");
   const activeEpicId = open && projectId ? epicId : null;
 
   const {
@@ -118,6 +127,8 @@ export function useTicketOverlayData(
     refresh,
     setPolling,
     gradingReport,
+    verificationReport,
+    setVerificationReport,
   } = useEpicDetail(projectId, activeEpicId);
 
   const { comments, addComment } = useTicketComments(projectId, {
@@ -254,12 +265,18 @@ export function useTicketOverlayData(
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [projectName, setProjectName] = useState<string | null>(null);
   const [projectColorIndex, setProjectColorIndex] = useState<number | null>(null);
+  const [verifyRunning, setVerifyRunning] = useState(false);
+  const [verifyError, setVerifyError] = useState<string | null>(null);
 
   if (activeEpicId !== lastEpicId) {
     setLastEpicId(activeEpicId);
     setDiffstat(UNKNOWN_DIFF_TOTALS);
     setSessionActions([]);
     setSessionId(null);
+    // A refusal belongs to the ticket that earned it: the next ticket must
+    // not open under the previous one's "no worktree" message.
+    setVerifyError(null);
+    setVerifyRunning(false);
   }
 
   /* ---------------- project identity -------------------------------- */
@@ -492,6 +509,73 @@ export function useTicketOverlayData(
   );
   const gradingSummary = gradingReport?.summary?.trim() || null;
 
+  /* ---------------- deterministic verification ------------------------ */
+
+  /**
+   * The newest `verify_reports` row, and the manual re-run.
+   *
+   * `useEpicDetail` has fetched this route since the verification stage
+   * landed — on open, on every `ticket:updated` (the pipeline and the manual
+   * run both announce a finished report through it) and never on the 5s poll,
+   * because the payload carries a bounded output tail per command. What was
+   * missing was the last hop: the report was fetched and then dropped here,
+   * so no component ever received it.
+   *
+   * The RUN lives in the view model rather than in the band for the same
+   * reason every other action does: the band draws, the model talks to the
+   * server, and the installed report goes through `useEpicDetail`'s own
+   * request-sequence guard so a slow GET cannot clobber a fresh manual run.
+   */
+  const verifyTargetRef = useRef<string | null>(activeEpicId);
+  useEffect(() => {
+    verifyTargetRef.current = activeEpicId;
+  }, [activeEpicId]);
+
+  /**
+   * NO `try` / `throw` / `finally` in here, deliberately. The React Compiler
+   * raises a `Todo` on a `throw` inside a `try` and on a `finalizer` clause,
+   * and a bail is silent: it would take this whole view model — every
+   * memoised derivation above — out of the optimiser to buy one control-flow
+   * convenience. A rejected `fetch` becomes `null` instead.
+   */
+  const runVerification = useCallback(async () => {
+    const target = activeEpicId;
+    if (!target) return;
+    setVerifyRunning(true);
+    setVerifyError(null);
+
+    const response = await fetch(
+      `/api/projects/${projectId}/epics/${target}/verify`,
+      { method: "POST" },
+    ).catch(() => null);
+    const payload = (response
+      ? await response.json().catch(() => ({}))
+      : {}) as Record<string, unknown>;
+
+    // The ticket changed under a run that had already been dispatched: its
+    // verdict belongs to the ticket it was started from, and the reset above
+    // has already cleared this ticket's pending flag and error line.
+    if (verifyTargetRef.current !== target) return;
+    setVerifyRunning(false);
+
+    if (!response) {
+      setVerifyError(tErrors("failedToRunVerification"));
+      return;
+    }
+    // The route's refusals are the useful ones — no worktree, no configured
+    // commands, an agent already on the epic — so they are surfaced verbatim
+    // and only fall back to generic copy when the response carried no message.
+    if (typeof payload.error === "string" && payload.error) {
+      setVerifyError(payload.error);
+      return;
+    }
+    if (!response.ok || !isVerificationReport(payload.data)) {
+      setVerifyError(tErrors("verificationDidNotProduceAReport"));
+      return;
+    }
+    setVerificationReport(payload.data);
+  }, [projectId, activeEpicId, setVerificationReport, tErrors]);
+
   /* ---------------- stop the running session -------------------------- */
 
   const activeSessionId = activeSession?.id ?? null;
@@ -556,6 +640,11 @@ export function useTicketOverlayData(
 
     gradingStatus,
     gradingSummary,
+
+    verificationReport,
+    runVerification,
+    verifyRunning,
+    verifyError,
 
     diffstat,
     timeline,
