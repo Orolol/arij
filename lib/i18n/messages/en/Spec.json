@@ -80,7 +80,7 @@
     "reloadHint": "Reload the page to try again.",
     "editorPlaceholder": "No project memory yet. Write durable conventions here, or distill them from a completed session.",
     "emptyPreview": "No project memory yet.",
-    "conflictNotice": "The memory was updated in the background while you were editing. Your unsaved changes are preserved. You can review and save them, or click Discard to reload the latest version.",
+    "conflictNotice": "The memory was updated in the background while you were editing. Your unsaved changes are kept here, but saving is blocked so they cannot overwrite the new version. Copy what you need, then click Discard to load the latest version.",
     "pendingWriter": {
       "dreaming": "A Dreaming rewrite is currently in progress.",
       "distill": "A distillation rewrite is currently in progress.",
@@ -102,7 +102,10 @@
       "restore": "Restore snapshot",
       "restorePending": "Restoring...",
       "restoreTitle": "Restore the memory to the pre-dream snapshot",
-      "restoreBlockedTitle": "Save or discard your edits first — restoring replaces the memory with the snapshot"
+      "restoreBlockedTitle": "Save or discard your edits first — restoring replaces the memory with the snapshot",
+      "previewLoading": "Loading the snapshot…",
+      "previewError": "Could not load the snapshot preview.",
+      "previewEmpty": "The snapshot is empty."
     },
     "sources": {
       "manual": "Manual edit",
@@ -122,11 +125,24 @@
     "savePending": "Saving...",
     "saved": "Project memory saved.",
     "restored": "Restored the memory to the pre-dream snapshot.",
+    "discarded": {
+      "dreaming": "The last dream was discarded — {reason}.",
+      "distill": "The last distillation was discarded — {reason}.",
+      "reasons": {
+        "noOutput": "it returned no memory document",
+        "invalidStructure": "it did not keep the four required sections",
+        "memoryChanged": "the memory was edited while it ran, and the edit was kept",
+        "saveFailed": "the memory could not be saved"
+      },
+      "dismiss": "Dismiss"
+    },
     "skeletonInserted": "Inserted the 4-sections Dreaming skeleton.",
     "sectionsAppended": "Appended missing Dreaming section(s): {sections}.",
     "allSectionsPresent": "All 4 required Dreaming sections are already present.",
     "nothingToDream": "Nothing to dream about yet.",
-    "nothingToDreamReason": "Nothing to dream about: {reason}.",
+    "dreamSkipped": {
+      "noNewSessions": "Nothing to dream about: no new sessions since the last dream."
+    },
     "approachingCap": "Approaching the {max}-token cap ({tokens}/{max}).",
     "overCap": "Over the {max}-token cap ({tokens}/{max}). Trim the content to save.",
     "errors": {

@@ -106,6 +106,15 @@ describe("Publish release endpoint", () => {
     // Verify the detail includes "publish" action
     const logCall = mockLogSyncOperation.mock.calls[0][0];
     expect(logCall.detail.action).toBe("publish");
+
+    // #105: publication is its own stamp; `pushedAt` (when the draft reached
+    // GitHub) is not rewritten.
+    expect(dbMockState.updateCalls).toEqual([
+      {
+        githubReleaseUrl: "https://github.com/owner/repo/releases/tag/v1.0.0",
+        publishedAt: expect.any(String),
+      },
+    ]);
   });
 
   it("returns 404 when release not found", async () => {
@@ -208,5 +217,7 @@ describe("Publish release endpoint", () => {
     expect(res.status).toBe(409);
     const json = await res.json();
     expect(json.error).toContain("already published");
+    // Recorded locally, so the page stops offering Publish for it.
+    expect(dbMockState.updateCalls).toEqual([{ publishedAt: expect.any(String) }]);
   });
 });

@@ -210,6 +210,18 @@ describe("0056_agent_sessions_epic_cost_idx", () => {
       // this DDL and a legacy database would silently never get the index.
       conn.exec('DROP TABLE "__drizzle_migrations"');
       conn.exec(`DROP INDEX ${INDEX_NAME}`);
+      // …as of before the ledger: a bookkeeping-less database cannot carry a
+      // column that only ever arrived through a ledgered migration, and
+      // 0057's columns would raise the stamp ceiling over this index.
+      for (const column of [
+        "published_at",
+        "changelog_session_id",
+        "push_to_github",
+        "finalized_at",
+        "finalize_errors",
+      ]) {
+        conn.exec(`ALTER TABLE releases DROP COLUMN ${column}`);
+      }
 
       initDb(conn);
 

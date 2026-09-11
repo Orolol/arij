@@ -8,7 +8,7 @@
  *   - non-answered outcomes (asked_question) and failures leave the stored
  *     spec untouched — the spec must never change when a session fails,
  *   - the optional user instruction is embedded in the prompt only when set,
- *   - hasPendingSpecUpdate guards re-entrant dispatches.
+ *   - the shared pending-guard (spec-writers) sees the dispatched session.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
@@ -61,13 +61,14 @@ const { db } = await import("@/lib/db");
 const { projects, agentSessions, epics, userStories, releases } = await import(
   "@/lib/db/schema"
 );
+const { dispatchSpecUpdateSession, SpecUpdateAgentNotFoundError } = await import(
+  "@/lib/workflow/spec-update"
+);
+// The pending-guard is shared with the auto rewrite (lib/workflow/spec-writers.ts).
 const {
-  dispatchSpecUpdateSession,
-  getPendingSpecUpdateSession,
-  hasPendingSpecUpdate,
-  sanitizeUpdatedSpec,
-  SpecUpdateAgentNotFoundError,
-} = await import("@/lib/workflow/spec-update");
+  getPendingSpecGenerationSession: getPendingSpecUpdateSession,
+  hasPendingSpecGeneration: hasPendingSpecUpdate,
+} = await import("@/lib/workflow/spec-writers");
 const { buildSpecUpdatePrompt, buildProjectStateSection } = await import(
   "@/lib/claude/prompt-builder"
 );
@@ -434,18 +435,6 @@ describe("dispatchSpecUpdateSession", () => {
     expect(pending).not.toBeNull();
     expect(pending?.id).toBe(`spec-queued-pending-${counter}`);
     expect(pending?.status).toBe("running");
-  });
-});
-
-describe("sanitizeUpdatedSpec", () => {
-  it("strips a full-document fence but keeps inner content intact", () => {
-    expect(sanitizeUpdatedSpec("```markdown\n# A\n\n- b\n```")).toBe(
-      "# A\n\n- b"
-    );
-    expect(sanitizeUpdatedSpec("```md5\r\n# A\r\n\n- b\r\n```  ")).toBe(
-      "# A\r\n\n- b"
-    );
-    expect(sanitizeUpdatedSpec("# A\n\n- b")).toBe("# A\n\n- b");
   });
 });
 

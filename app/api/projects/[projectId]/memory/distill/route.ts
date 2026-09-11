@@ -17,12 +17,17 @@ import { isMemoryWriterBusyError } from "@/lib/workflow/memory-writer-lock";
 
 type Params = { params: Promise<{ projectId: string }> };
 
-const distillSchema = z.object({
-  /** Session whose learnings should be distilled (context source). */
-  sourceSessionId: z.string().min(1).optional(),
-  /** Optional explicit named agent, like other dispatch routes accept. */
-  namedAgentId: z.string().min(1).optional(),
-});
+/**
+ * Strict: a `namedAgentId` override used to be accepted and was sent by no
+ * client — the distill agent is chosen in Agent Config. A stray field is a
+ * 400 rather than silently ignored.
+ */
+const distillSchema = z
+  .object({
+    /** Session whose learnings should be distilled (context source). */
+    sourceSessionId: z.string().min(1).optional(),
+  })
+  .strict();
 
 /**
  * POST /api/projects/[projectId]/memory/distill
@@ -48,7 +53,7 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const validated = await validateBody(distillSchema, request);
   if (isValidationError(validated)) return validated;
-  const { sourceSessionId, namedAgentId } = validated.data;
+  const { sourceSessionId } = validated.data;
 
   // Source eligibility, not merely existence: a direct POST could otherwise
   // name a dream (whose output IS the memory) or a run that never finished.
@@ -88,7 +93,6 @@ export async function POST(request: NextRequest, { params }: Params) {
     const { sessionId } = await dispatchMemoryDistillSession({
       projectId,
       sourceSessionId: sourceSessionId ?? null,
-      namedAgentId: namedAgentId ?? null,
     });
     return NextResponse.json({ data: { sessionId } });
   } catch (error) {

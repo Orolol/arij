@@ -8,10 +8,12 @@ import {
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import {
   dispatchSpecUpdateSession,
-  getPendingSpecUpdateSession,
-  hasPendingSpecUpdate,
   SpecUpdateAgentNotFoundError,
 } from "@/lib/workflow/spec-update";
+import {
+  getPendingSpecGenerationSession,
+  hasPendingSpecGeneration,
+} from "@/lib/workflow/spec-writers";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -35,7 +37,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   const found = getProjectOr404(projectId);
   if (isErrorResponse(found)) return found;
 
-  const pending = getPendingSpecUpdateSession(projectId);
+  const pending = getPendingSpecGenerationSession(projectId);
   return NextResponse.json({
     data: {
       pending: Boolean(pending),
@@ -66,7 +68,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   if (isValidationError(validated)) return validated;
   const { instruction, namedAgentId } = validated.data;
 
-  if (hasPendingSpecUpdate(projectId)) {
+  if (hasPendingSpecGeneration(projectId)) {
     return NextResponse.json(
       {
         error: "A spec update is already in progress for this project.",

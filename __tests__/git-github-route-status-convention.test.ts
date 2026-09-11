@@ -622,6 +622,11 @@ const EXCLUDED: Array<{ routePath: string; reason: string }> = [
       "Publishing an existing release is a deliberate user action on a configured repo, not a page load; its unconfigured path is its own ticket.",
   },
   {
+    routePath: "/api/projects/[projectId]/releases/[releaseId]",
+    reason:
+      "Editing a release only calls GitHub when the release already carries a GitHub draft AND the project has an owner/repo; without either it is a local row update, so the unconfigured state is unreachable through it. Covered by the release route tests.",
+  },
+  {
     routePath: "/api/projects/clone",
     reason:
       "Import-time route: it receives the repository URL in the request instead of reading stored project configuration, so it has no 'not configured' state.",

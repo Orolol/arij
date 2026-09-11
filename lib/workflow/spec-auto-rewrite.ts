@@ -15,43 +15,29 @@
  * scheduler closure.
  *
  * Coexistence with the manual "ask an agent to update the spec" flow: BOTH
- * writers dispatch sessions of agent type 'spec_generation', so the single
- * pending-guard below (hasPendingSpecGeneration) blocks an auto rewrite
- * while a manual update is queued/running — and the manual flow's identical
- * guard blocks a manual dispatch while the auto rewrite runs.
+ * writers dispatch sessions of agent type 'spec_generation' and share one
+ * pending-guard, one sanitiser, one board loader and one commit
+ * (lib/workflow/spec-writers.ts), so an auto rewrite never starts while a
+ * manual update runs and neither overwrites a spec the user saved after the
+ * prompt captured it.
  */
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
-import {
-  agentSessions,
-  epics,
-  projects,
-  releases,
-  settings,
-  userStories,
-} from "@/lib/db/schema";
-import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
-import {
-  buildSpecAutoRewritePrompt,
-  type SpecRewriteBoardState,
-} from "@/lib/claude/prompt-builder";
+import { projects, releases, settings } from "@/lib/db/schema";
+import { buildSpecAutoRewritePrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { tryExportArjiJson } from "@/lib/sync/export";
 import {
   SPEC_AUTO_REWRITE_SETTING_KEY,
   parseSpecAutoRewriteSetting,
 } from "./spec-rewrite-constants";
-
-const POLL_INTERVAL_MS = 2000;
-
-/**
- * Shared with the manual spec-update dispatch: one agent type means one
- * pending-guard covers both writers (see module docblock).
- */
-export const SPEC_REWRITE_AGENT_TYPE = "spec_generation";
+import {
+  SPEC_GENERATION_AGENT_TYPE,
+  dispatchSpecGenerationRun,
+  hasPendingSpecGeneration,
+  loadSpecBoardState,
+} from "./spec-writers";
 
 /** Reads the 'spec_auto_rewrite' setting (DEFAULT OFF when absent). */
 export function isSpecAutoRewriteEnabled(): boolean {
@@ -65,25 +51,6 @@ export function isSpecAutoRewriteEnabled(): boolean {
   } catch {
     return false;
   }
-}
-
-/**
- * True when ANY spec_generation session (auto rewrite OR manual update) is
- * queued/running for the project — the mutual-exclusion guard.
- */
-export function hasPendingSpecGeneration(projectId: string): boolean {
-  const row = db
-    .select({ id: agentSessions.id })
-    .from(agentSessions)
-    .where(
-      and(
-        eq(agentSessions.projectId, projectId),
-        eq(agentSessions.agentType, SPEC_REWRITE_AGENT_TYPE),
-        inArray(agentSessions.status, ["queued", "running"])
-      )
-    )
-    .get();
-  return !!row;
 }
 
 // ---------------------------------------------------------------------------
@@ -179,58 +146,6 @@ export interface DispatchSpecAutoRewriteResult {
 }
 
 /**
- * Strips an accidental full-document code fence from the agent's output
- * (the prompt forbids fences, but a cheap unwrap beats a corrupted spec).
- */
-export function sanitizeRewrittenSpec(output: string): string {
-  const trimmed = output.trim();
-  const fenceMatch = trimmed.match(/^```[a-zA-Z]*\n([\s\S]*)\n```$/);
-  if (fenceMatch) {
-    return fenceMatch[1].trim();
-  }
-  return trimmed;
-}
-
-function loadBoardState(projectId: string): SpecRewriteBoardState {
-  return {
-    epics: db
-      .select({
-        id: epics.id,
-        title: epics.title,
-        status: epics.status,
-      })
-      .from(epics)
-      .where(eq(epics.projectId, projectId))
-      .all()
-      .map((e) => ({ id: e.id, title: e.title, status: e.status ?? "backlog" })),
-    userStories: db
-      .select({
-        epicId: userStories.epicId,
-        title: userStories.title,
-        status: userStories.status,
-      })
-      .from(userStories)
-      .innerJoin(epics, eq(userStories.epicId, epics.id))
-      .where(eq(epics.projectId, projectId))
-      .all()
-      .map((s) => ({
-        epicId: s.epicId,
-        title: s.title,
-        status: s.status ?? "backlog",
-      })),
-    releases: db
-      .select({
-        version: releases.version,
-        title: releases.title,
-        changelog: releases.changelog,
-      })
-      .from(releases)
-      .where(eq(releases.projectId, projectId))
-      .all(),
-  };
-}
-
-/**
  * Creates a queued 'spec_generation' session and submits its launch closure
  * to the per-project scheduler. Resolves with the session id immediately;
  * the spec lands in the database when the closure finishes.
@@ -266,13 +181,13 @@ export async function dispatchSpecAutoRewriteSession(
   }
 
   const systemPrompt = await resolveAgentPrompt(
-    SPEC_REWRITE_AGENT_TYPE,
+    SPEC_GENERATION_AGENT_TYPE,
     input.projectId
   );
   // Auto trigger: no named-agent override — the default spec_generation
   // agent (or its project override) does the work.
   const resolvedAgent = resolveAgentByNamedId(
-    SPEC_REWRITE_AGENT_TYPE,
+    SPEC_GENERATION_AGENT_TYPE,
     input.projectId,
     null
   );
@@ -280,49 +195,19 @@ export async function dispatchSpecAutoRewriteSession(
   const prompt = buildSpecAutoRewritePrompt(
     project,
     project.spec,
-    loadBoardState(input.projectId),
+    loadSpecBoardState(input.projectId),
     release,
     systemPrompt
   );
 
-  // Deliberately no epicId: like the memory distill, a spec rewrite is a
-  // project-level background run and must not occupy an epic's concurrency
-  // slot or anchor to a ticket.
-  const { sessionId } = dispatchBackgroundSession({
-    agentType: SPEC_REWRITE_AGENT_TYPE,
-    projectId: input.projectId,
+  // Same run as the manual update. The commit-time spec check matters most
+  // here: a release may leave the session queued for a while, and a Spec
+  // view opened before the release does not know it is running.
+  const { sessionId } = dispatchSpecGenerationRun({
+    project,
     prompt,
     resolvedAgent,
-    mode: "plan",
-    cwd: project.gitRepoPath || process.cwd(),
-    pollIntervalMs: POLL_INTERVAL_MS,
     logPrefix: "[spec-auto-rewrite]",
-    onTerminal: ({ sessionId, result, outcome, completedAt }) => {
-      // Only a delivered answer replaces the spec — silent runs, asked
-      // questions, and failures leave it untouched.
-      if (!result?.success || outcome !== "answered") {
-        return;
-      }
-
-      const output = sanitizeRewrittenSpec(
-        resolveSessionOutput(result, sessionId, "")
-      );
-      if (!output) {
-        return;
-      }
-
-      try {
-        db.update(projects)
-          .set({ spec: output, updatedAt: completedAt })
-          .where(eq(projects.id, input.projectId))
-          .run();
-      } catch (error) {
-        console.error("[spec-auto-rewrite] Failed to save rewritten spec", error);
-        return;
-      }
-
-      tryExportArjiJson(input.projectId);
-    },
   });
 
   return { sessionId };

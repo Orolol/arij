@@ -75,12 +75,18 @@ const {
   dispatchDreamingSession,
   evaluateDreamGuards,
   evaluateNightRunDreamGuards,
+  maybeDreamAfterNightRun,
+} = await import("@/lib/workflow/dreaming");
+// The settings rows live in their own module: the facade no longer re-exports
+// them, so the tests read them where production code does.
+const {
   findLastDreamCutoff,
   isDreamingAfterNightRunEnabled,
   recordDreamCutoff,
-  maybeDreamAfterNightRun,
-  sanitizeDreamedMemory,
-} = await import("@/lib/workflow/dreaming");
+} = await import("@/lib/workflow/dreaming-settings");
+const { isWritableSettingKey } = await import("@/lib/settings/writable-keys");
+const { eventBus } = await import("@/lib/events/bus");
+type BusEvent = import("@/lib/events/bus").TicketEvent;
 const { processManager } = await import("@/lib/claude/process-manager");
 const { hasPendingMemoryWriter } = await import(
   "@/lib/workflow/memory-writer-lock"
@@ -91,6 +97,7 @@ const { dispatchMemoryDistillSession } = await import(
 const {
   getProjectMemoryArchiveDoc,
   getProjectMemoryContent,
+  sanitizeMemoryDocument,
   saveProjectMemory,
 } = await import("@/lib/documents/memory");
 const {
@@ -101,13 +108,27 @@ const {
   DREAMING_AFTER_NIGHT_RUN_SETTING_KEY,
   DREAMING_AGENT_TYPE,
   DREAMING_MEMORY_SECTIONS,
-  dreamingAfterNightRunSettingKey,
 } = await import("@/lib/workflow/dreaming-constants");
 const { sumNightRunCost } = await import("@/lib/night/summary");
 
 let counter = 0;
 let projectId = "";
 let epicId = "";
+/** Every bus event of the current test's project, in emission order. */
+let busEvents: BusEvent[] = [];
+let unsubscribeBus: (() => void) | null = null;
+
+function eventsOfType(type: string): BusEvent[] {
+  return busEvents.filter((event) => event.type === type);
+}
+
+function sessionRow(sessionId: string) {
+  return db
+    .select()
+    .from(agentSessions)
+    .where(eq(agentSessions.id, sessionId))
+    .get()!;
+}
 
 async function flushBackground() {
   await new Promise((r) => setTimeout(r, 25));
@@ -189,6 +210,11 @@ beforeEach(() => {
     .where(eq(settings.key, DREAMING_AFTER_NIGHT_RUN_SETTING_KEY))
     .run();
   seedProject();
+  unsubscribeBus?.();
+  busEvents = [];
+  unsubscribeBus = eventBus.subscribe(projectId, (event) => {
+    busEvents.push(event);
+  });
   processManagerState.result = {
     success: true,
     result: claudeEnvelope(
@@ -208,6 +234,9 @@ describe("evaluateDreamGuards", () => {
     });
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toContain("already pending");
+    // A code next to the sentence: the panel translates the code, never the
+    // server's English phrase.
+    expect(decision.code).toBe("writer_pending");
   });
 
   it("refuses when the window turned up nothing", () => {
@@ -217,12 +246,13 @@ describe("evaluateDreamGuards", () => {
     });
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toContain("no new sessions");
+    expect(decision.code).toBe("no_new_sessions");
   });
 
   it("allows a project with fresh evidence and no rewrite in flight", () => {
     expect(
       evaluateDreamGuards({ hasPendingMemoryWriter: false, sessionCount: 1 })
-    ).toEqual({ allowed: true, reason: "eligible" });
+    ).toEqual({ allowed: true, reason: "eligible", code: "eligible" });
   });
 });
 
@@ -331,6 +361,12 @@ describe("dispatchDreamingSession", () => {
     for (const title of DREAMING_MEMORY_SECTIONS) {
       expect(memory).toContain(`## ${title}`);
     }
+
+    // A dream that landed says so on its row and on the bus — and only that.
+    expect(session).toMatchObject({ error: null });
+    expect(eventsOfType("memory:changed")).toHaveLength(1);
+    expect(eventsOfType("memory:discarded")).toHaveLength(0);
+    expect(eventsOfType("session:completed")).toHaveLength(1);
   });
 
   it("snapshots the memory it overwrites", async () => {
@@ -413,15 +449,25 @@ describe("dispatchDreamingSession", () => {
     const result = await dispatchDreamingSession({ projectId });
     await flushBackground();
 
-    // The session itself answered...
-    expect(
-      db
-        .select()
-        .from(agentSessions)
-        .where(eq(agentSessions.id, result.sessionId!))
-        .get()!.outcome
-    ).toBe("answered");
-    // ...but nothing was stored, nothing archived, nothing claimed.
+    // The agent answered, but the row must not claim success over a memory
+    // that did not change: failed, with the reason in its error column.
+    const row = sessionRow(result.sessionId!);
+    expect(row.outcome).toBe("answered");
+    expect(row.status).toBe("failed");
+    expect(row.error).toMatch(/structure/i);
+    // The discard is announced as such — a code, not a sentence, for the panel.
+    expect(eventsOfType("memory:discarded")).toEqual([
+      expect.objectContaining({
+        data: {
+          source: "dreaming",
+          reason: "invalid_structure",
+          sessionId: result.sessionId,
+        },
+      }),
+    ]);
+    expect(eventsOfType("memory:changed")).toHaveLength(0);
+    expect(eventsOfType("session:failed")).toHaveLength(1);
+    // ...and nothing was stored, nothing archived, nothing claimed.
     expect(getProjectMemoryContent(projectId)).toBe("- EXISTING MEMORY");
     expect(getProjectMemoryArchiveDoc(projectId)).toBeNull();
     expect(findLastDreamCutoff(projectId)).toBeNull();
@@ -656,14 +702,17 @@ describe("dispatchDreamingSession — the window only advances on a real write",
     const result = await dispatchDreamingSession({ projectId });
     await flushBackground();
 
-    // The session itself completed and answered...
-    const session = db
-      .select()
-      .from(agentSessions)
-      .where(eq(agentSessions.id, result.sessionId!))
-      .get();
-    expect(session!.outcome).toBe("answered");
-    // ...but nothing was stored, so the window stayed shut and no notification
+    // The session answered, but its row records that the write never landed...
+    const session = sessionRow(result.sessionId!);
+    expect(session.outcome).toBe("answered");
+    expect(session.status).toBe("failed");
+    expect(session.error).toBeTruthy();
+    expect(eventsOfType("memory:discarded")).toEqual([
+      expect.objectContaining({
+        data: expect.objectContaining({ reason: "save_failed" }),
+      }),
+    ]);
+    // ...nothing was stored, so the window stayed shut and no notification
     // claimed otherwise.
     expect(getProjectMemoryContent(projectId)).toBeNull();
     expect(findLastDreamCutoff(projectId)).toBeNull();
@@ -777,13 +826,22 @@ describe("dispatchDreamingSession — a human edit mid-dream wins", () => {
     const result = await dispatchDreamingSession({ projectId });
     await flushBackground();
 
-    // The session still answered — its output is readable on the session page.
-    const session = db
-      .select()
-      .from(agentSessions)
-      .where(eq(agentSessions.id, result.sessionId!))
-      .get();
-    expect(session!.outcome).toBe("answered");
+    // The session still answered — its output is readable on the session page
+    // — but the row says the memory was NOT replaced, and why.
+    const session = sessionRow(result.sessionId!);
+    expect(session.outcome).toBe("answered");
+    expect(session.status).toBe("failed");
+    expect(session.error).toMatch(/edited/i);
+    expect(eventsOfType("memory:discarded")).toEqual([
+      expect.objectContaining({
+        data: {
+          source: "dreaming",
+          reason: "memory_changed",
+          sessionId: result.sessionId,
+        },
+      }),
+    ]);
+    expect(eventsOfType("memory:changed")).toHaveLength(0);
 
     // ...but the human edit stands, untouched.
     expect(getProjectMemoryContent(projectId)).toBe("- A HUMAN EDITED THIS");
@@ -886,13 +944,17 @@ describe("dispatchDreamingSession — guard rails", () => {
   });
 });
 
-describe("sanitizeDreamedMemory", () => {
+/**
+ * One sanitiser for both memory writers: the distill and the dream used to
+ * carry byte-identical copies, free to drift on what counts as the body.
+ */
+describe("sanitizeMemoryDocument", () => {
   it("trims plain output and unwraps a full-document fence", () => {
-    expect(sanitizeDreamedMemory("  body  ")).toBe("body");
-    expect(sanitizeDreamedMemory("```\nbody\n```")).toBe("body");
-    expect(sanitizeDreamedMemory("```md\nbody\n```")).toBe("body");
+    expect(sanitizeMemoryDocument("  body  ")).toBe("body");
+    expect(sanitizeMemoryDocument("```\nbody\n```")).toBe("body");
+    expect(sanitizeMemoryDocument("```md\nbody\n```")).toBe("body");
     // Inner (partial) fences survive — they are content, not wrapping.
-    expect(sanitizeDreamedMemory("intro\n```\ncode\n```")).toBe(
+    expect(sanitizeMemoryDocument("intro\n```\ncode\n```")).toBe(
       "intro\n```\ncode\n```"
     );
   });
@@ -911,7 +973,7 @@ describe("maybeDreamAfterNightRun", () => {
 
   it("is off when the setting is absent (the default)", async () => {
     seedSourceSession();
-    expect(isDreamingAfterNightRunEnabled(projectId)).toBe(false);
+    expect(isDreamingAfterNightRunEnabled()).toBe(false);
 
     const decision = await maybeDreamAfterNightRun(projectId, "night_x");
     await flushBackground();
@@ -935,31 +997,42 @@ describe("maybeDreamAfterNightRun", () => {
     expect(spawned[0].status).toBe("completed");
   });
 
-  it("lets an explicit per-project false override a global true", async () => {
-    setSetting(DREAMING_AFTER_NIGHT_RUN_SETTING_KEY, true);
-    setSetting(dreamingAfterNightRunSettingKey(projectId), false);
+  /**
+   * The per-project `dreaming_after_night_run:<id>` override was resolved,
+   * allowed and swept, but written by nothing — no field, no dialog, no route.
+   * It is retired: a row left behind by a hand-made request must not decide
+   * anything, and PATCH /api/settings must stop accepting it.
+   */
+  it("ignores a legacy per-project row — the switch is global only", async () => {
+    setSetting(DREAMING_AFTER_NIGHT_RUN_SETTING_KEY, false);
+    setSetting(`${DREAMING_AFTER_NIGHT_RUN_SETTING_KEY}:${projectId}`, true);
     seedSourceSession();
 
-    expect(isDreamingAfterNightRunEnabled(projectId)).toBe(false);
-    const decision = await maybeDreamAfterNightRun(projectId, "night_off");
+    expect(isDreamingAfterNightRunEnabled()).toBe(false);
+    const decision = await maybeDreamAfterNightRun(projectId, "night_legacy");
     await flushBackground();
 
     expect(decision.allowed).toBe(false);
     expect(dreamSessions()).toHaveLength(0);
   });
 
-  it("lets a per-project true opt in while the global stays off", async () => {
-    // Explicit rather than implied by test order: the point of the assertion is
-    // the per-project override winning over an OFF global.
-    setSetting(DREAMING_AFTER_NIGHT_RUN_SETTING_KEY, false);
-    setSetting(dreamingAfterNightRunSettingKey(projectId), true);
+  it("a legacy per-project false no longer vetoes the global switch", async () => {
+    setSetting(DREAMING_AFTER_NIGHT_RUN_SETTING_KEY, true);
+    setSetting(`${DREAMING_AFTER_NIGHT_RUN_SETTING_KEY}:${projectId}`, false);
     seedSourceSession();
 
-    expect(isDreamingAfterNightRunEnabled(projectId)).toBe(true);
-    await maybeDreamAfterNightRun(projectId, "night_opt_in");
+    expect(isDreamingAfterNightRunEnabled()).toBe(true);
+    await maybeDreamAfterNightRun(projectId, "night_global");
     await flushBackground();
 
     expect(dreamSessions()).toHaveLength(1);
+  });
+
+  it("refuses the scoped key at the settings allowlist", () => {
+    expect(isWritableSettingKey(DREAMING_AFTER_NIGHT_RUN_SETTING_KEY)).toBe(true);
+    expect(
+      isWritableSettingKey(`${DREAMING_AFTER_NIGHT_RUN_SETTING_KEY}:proj1`)
+    ).toBe(false);
   });
 
   it("never throws into the night run's finish path", async () => {

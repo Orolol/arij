@@ -298,7 +298,6 @@ describe("perProjectSettingKeys", () => {
       "verify_timeout_ms:proj-1",
       "night_circuit_breaker:proj-1",
       "night_cost_cap_usd:proj-1",
-      "dreaming_after_night_run:proj-1",
       "dreaming_last_cutoff:proj-1",
       "ci_autofix_enabled:proj-1",
     ]);

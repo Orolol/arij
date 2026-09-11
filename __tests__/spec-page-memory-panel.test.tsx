@@ -324,6 +324,20 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
       expect(screen.getByTestId("memory-archive-bar")).toBeDefined();
     });
 
+    // The snapshot text is NOT in the envelope (it would ride every refetch):
+    // the confirmation fetches it on demand, so the user sees what they are
+    // about to put back before they confirm.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        data: {
+          content: "Pre-dream snapshot text",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+      }),
+    });
+
     // Click "Restore snapshot" -> enters confirmation mode
     const restoreBtn = screen.getByRole("button", { name: /restore snapshot/i });
     fireEvent.click(restoreBtn);
@@ -331,6 +345,12 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
     expect(screen.getByText("Replace with snapshot?")).toBeDefined();
     expect(screen.getByRole("button", { name: "Confirm" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDefined();
+    await waitFor(() => {
+      expect(screen.getByTestId("memory-archive-preview")).toHaveTextContent(
+        "Pre-dream snapshot text"
+      );
+    });
+    expect(mockFetch).toHaveBeenCalledWith("/api/projects/proj-1/memory/restore");
 
     // Mock restore POST endpoint
     mockFetch.mockResolvedValueOnce({
@@ -931,5 +951,180 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
       "title",
       expect.stringMatching(/save or discard your edits first/i)
     );
+  });
+});
+
+/**
+ * Lot 11 — the memory writers' outcomes reach the panel, and the manual save
+ * cannot silently overwrite what a dream just wrote.
+ */
+describe("MemoryPanel — conflicts, discards and coded answers", () => {
+  const baseEnvelope = {
+    content: "Loaded memory",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    provenance: null,
+    archive: null,
+    pendingWriter: null,
+  };
+
+  function jsonResponse(data: unknown, status = 200) {
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => data,
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    activeMockEventSources = [];
+  });
+
+  it("sends what it loaded as expectedPrevious", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ data: baseEnvelope }));
+    render(<MemoryPanel projectId="proj-1" mode="edit" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("memory-editor")).toHaveValue("Loaded memory");
+    });
+
+    fireEvent.change(screen.getByTestId("memory-editor"), {
+      target: { value: "My edit" },
+    });
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ data: { ...baseEnvelope, content: "My edit" } })
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save memory" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Project memory saved.")).toBeDefined();
+    });
+    const [, init] = mockFetch.mock.calls.find(
+      ([url, options]) =>
+        url === "/api/projects/proj-1/memory" && options?.method === "PUT"
+    )!;
+    expect(JSON.parse(init.body)).toEqual({
+      content: "My edit",
+      expectedPrevious: "Loaded memory",
+    });
+  });
+
+  it("blocks Save while a background write conflicts with the draft", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ data: baseEnvelope }));
+    render(<MemoryPanel projectId="proj-1" mode="edit" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("memory-editor")).toHaveValue("Loaded memory");
+    });
+
+    fireEvent.change(screen.getByTestId("memory-editor"), {
+      target: { value: "My draft" },
+    });
+    expect(screen.getByRole("button", { name: "Save memory" })).toBeEnabled();
+
+    // A dream lands while the user types.
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        data: {
+          ...baseEnvelope,
+          content: "## Dreamed memory",
+          provenance: { source: "dreaming", sessionId: "d-1", at: "2026-01-01T01:00:00.000Z" },
+        },
+      })
+    );
+    act(() => {
+      activeMockEventSources.forEach((es) => es.emit("memory:changed"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("memory-conflict-notice")).toBeDefined();
+    });
+    // Saving now would replace the dreamed text with a draft of the older one.
+    expect(screen.getByRole("button", { name: "Save memory" })).toBeDisabled();
+    expect(screen.getByTestId("memory-editor")).toHaveValue("My draft");
+  });
+
+  it("turns a 409 from the server into the conflict state", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ data: baseEnvelope }));
+    render(<MemoryPanel projectId="proj-1" mode="edit" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("memory-editor")).toHaveValue("Loaded memory");
+    });
+    fireEvent.change(screen.getByTestId("memory-editor"), {
+      target: { value: "My draft" },
+    });
+
+    // The race the SSE event did not win: the PUT itself is refused...
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse(
+        { error: "The project memory changed.", code: "MEMORY_CHANGED" },
+        409
+      )
+    );
+    // ...and the panel reloads the envelope to show what is stored now.
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({ data: { ...baseEnvelope, content: "## Dreamed memory" } })
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save memory" }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("memory-conflict-notice")).toBeDefined();
+    });
+    expect(screen.getByRole("button", { name: "Save memory" })).toBeDisabled();
+    expect(screen.getByTestId("memory-editor")).toHaveValue("My draft");
+    expect(screen.queryByText("Project memory saved.")).toBeNull();
+  });
+
+  it("says in words when a writer's output was discarded, and why", async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ data: baseEnvelope }));
+    render(<MemoryPanel projectId="proj-1" mode="edit" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("memory-editor")).toHaveValue("Loaded memory");
+    });
+
+    act(() => {
+      activeMockEventSources.forEach((es) =>
+        es.emit("memory:discarded", {
+          source: "dreaming",
+          reason: "invalid_structure",
+          sessionId: "sess-dream-bad",
+        })
+      );
+    });
+
+    const notice = await screen.findByTestId("memory-discard-notice");
+    expect(notice).toHaveTextContent(/dream was discarded/i);
+    expect(notice).toHaveTextContent(/four required sections/i);
+    // The rejected text is still readable on the session page.
+    expect(notice.querySelector("a")?.getAttribute("href")).toBe(
+      "/projects/proj-1/sessions/sess-dream-bad"
+    );
+  });
+
+  it("translates a no-op dream by its code, never the server's English", async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse({ data: baseEnvelope }));
+    render(<MemoryPanel projectId="proj-1" mode="edit" />);
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Dream" })).toBeEnabled();
+    });
+
+    mockFetch.mockResolvedValueOnce(
+      jsonResponse({
+        data: {
+          sessionId: null,
+          dispatched: false,
+          reason: "SERVER ENGLISH REASON",
+          code: "no_new_sessions",
+          sessionsAnalyzed: 0,
+        },
+      })
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Dream" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/no new sessions since the last dream/i)
+      ).toBeDefined();
+    });
+    expect(screen.queryByText(/SERVER ENGLISH REASON/)).toBeNull();
+    expect(mockRouterPush).not.toHaveBeenCalled();
   });
 });

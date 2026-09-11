@@ -12,7 +12,7 @@ const LIVE_STATUSES = ["queued", "running"] as const;
 export interface CancelProjectSessionsResult {
   /** DB-tracked sessions moved to `cancelled`. */
   sessions: string[];
-  /** Ephemeral chat/spec/release activities killed. */
+  /** Ephemeral chat/spec-generation activities killed. */
   activities: string[];
 }
 

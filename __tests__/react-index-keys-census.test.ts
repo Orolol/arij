@@ -71,6 +71,10 @@ const DELIBERATE: Record<string, { sites: number; why: string }> = {
     sites: 2,
     why: "lines of one markdown string",
   },
+  "components/releases/NextReleaseBand.tsx": {
+    sites: 1,
+    why: "finalisation errors of one release, read from one JSON column and replaced wholesale; the same message can repeat, so the position is the only identity",
+  },
   "components/review/FileDiffView.tsx": {
     sites: 2,
     why: "hunks and lines of one static diff",

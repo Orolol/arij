@@ -12,7 +12,6 @@ import {
   displayVersion,
   parseEpicIds,
   releaseState,
-  RELEASE_STATE_KEYS,
   type ReleaseEpic,
   type ReleaseRow,
 } from "./derive";
@@ -41,7 +40,6 @@ export function ReleaseHistory({
 }: ReleaseHistoryProps) {
   const locale = useLocale();
   const t = useTranslations("Releases");
-  const all = useTranslations();
   // One at a time: a history card with four open rows is a list, not a history.
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -109,6 +107,21 @@ export function ReleaseHistory({
                       age: formatRelative(release.createdAt, { locale }),
                     })}
                   </Mono>
+                  {/* The run is in the background (#109): the word says the
+                      changelog shown is the fallback and no tag exists yet. */}
+                  {release.changelogPending ? (
+                    <Mono size={10.5} tone="ink" clamp={1}>
+                      {t("state.changelogPending")}
+                    </Mono>
+                  ) : null}
+                  {/* The background tag / GitHub step failed: said on every
+                      load, not only by a toast raised while the page was open.
+                      Inspect mode lists the failures. */}
+                  {release.finalizeErrors?.length ? (
+                    <Mono size={10.5} tone="ink" clamp={1}>
+                      {t("state.syncFailed")}
+                    </Mono>
+                  ) : null}
                   {hasStamps ? (
                     <span className="ml-auto flex shrink-0 items-center gap-[10px]">
                       {release.gitTag !== null ? (

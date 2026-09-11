@@ -11,10 +11,12 @@ import { hasPendingMemoryWriter } from "@/lib/workflow/memory-writer-lock";
 
 type Params = { params: Promise<{ projectId: string }> };
 
-const dreamSchema = z.object({
-  /** Optional explicit named agent, like other dispatch routes accept. */
-  namedAgentId: z.string().min(1).optional(),
-});
+/**
+ * No fields. A `namedAgentId` override used to be accepted here and was sent
+ * by no client — the dreaming agent is chosen in Agent Config. Strict, so a
+ * stray field is a 400 rather than silently ignored.
+ */
+const dreamSchema = z.object({}).strict();
 
 /**
  * POST /api/projects/[projectId]/memory/dream
@@ -30,7 +32,8 @@ const dreamSchema = z.object({
  *
  * 200 with `sessionId: null` when the window turned up nothing new — the
  * journalled no-op. Deliberately NOT an error: "nothing changed since the last
- * dream" is a correct, successful answer, and the `reason` says so.
+ * dream" is a correct, successful answer. `reason` says so in English for
+ * logs and API consumers; `code` is what a UI translates.
  */
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId } = await params;
@@ -40,7 +43,6 @@ export async function POST(request: NextRequest, { params }: Params) {
 
   const validated = await validateBody(dreamSchema, request);
   if (isValidationError(validated)) return validated;
-  const { namedAgentId } = validated.data;
 
   if (hasPendingMemoryWriter(projectId)) {
     return NextResponse.json(
@@ -55,13 +57,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   try {
     const result = await dispatchDreamingSession({
       projectId,
-      namedAgentId: namedAgentId ?? null,
       trigger: "manual",
     });
     // Losing the last-moment race for the document is a conflict, not a
     // successful no-op: answer it exactly like the pre-check above, so the
     // route has ONE contract for "a writer holds the memory" instead of two.
-    if (!result.dispatched && result.reason.includes("already pending")) {
+    // Keyed on the code, not on the wording of the journal sentence.
+    if (!result.dispatched && result.code === "writer_pending") {
       return NextResponse.json(
         {
           error: "A memory rewrite is already in progress for this project.",
@@ -75,6 +77,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         sessionId: result.sessionId,
         dispatched: result.dispatched,
         reason: result.reason,
+        code: result.code,
         sessionsAnalyzed: result.sessionsAnalyzed,
       },
     });

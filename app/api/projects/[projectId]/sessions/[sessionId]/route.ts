@@ -454,7 +454,7 @@ export async function DELETE(
     .get();
 
   if (!session) {
-    // Ephemeral activities (chat, spec generation, releases) have no
+    // Ephemeral activities (chat, spec generation) have no
     // agent_sessions row — the registry is their only record, and it carries
     // the same project scope.
     if (activityRegistry.cancelInProject(sessionId, projectId)) {

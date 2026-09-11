@@ -234,6 +234,18 @@ describe("0031_notification_message — applied schema", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      // 0057_release_published_at adds five columns to `releases`; a rewind
+      // that lands before it has to take them back out, or the replay
+      // fails on a column that is already there.
+      for (const column of [
+        "published_at",
+        "changelog_session_id",
+        "push_to_github",
+        "finalized_at",
+        "finalize_errors",
+      ]) {
+        conn.exec(`ALTER TABLE releases DROP COLUMN ${column}`);
+      }
       const entry = journal.entries.find((e) => e.tag === MIGRATION_TAG);
       conn
         .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at >= ?')

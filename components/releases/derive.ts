@@ -22,8 +22,36 @@ export interface ReleaseRow {
   gitTag: string | null;
   githubReleaseId: number | null;
   githubReleaseUrl: string | null;
+  /** When the tag and the GitHub draft reached GitHub — not publication. */
   pushedAt: string | null;
+  /** When the GitHub release left draft; stamped only by the publish route. */
+  publishedAt: string | null;
+  /**
+   * Derived by GET /releases, not a column: the background changelog run (or
+   * the tag / GitHub draft that follows it) is still in progress, so the
+   * changelog shown is the fallback and there is no tag yet.
+   */
+  changelogPending?: boolean;
+  /**
+   * Parsed by GET /releases from the row: what failed while writing the
+   * branch, the tag push or the GitHub draft. Kept on the row because that
+   * step runs in the background, where no request is left to report it.
+   */
+  finalizeErrors?: string[] | null;
   createdAt: string;
+}
+
+/**
+ * A PATCH of an unpublished release (#117). Only the fields the user changed
+ * travel, each with the value the editor was seeded with: the server refuses
+ * (409) an edit whose seed no longer matches the row, instead of silently
+ * overwriting the changelog agent's delivery or another tab's save.
+ */
+export interface ReleaseEdit {
+  title?: string | null;
+  expectedTitle?: string | null;
+  changelog?: string;
+  expectedChangelog?: string | null;
 }
 
 /** The subset of the epics payload this screen reads. */
@@ -41,22 +69,24 @@ export interface ReleaseEpic {
 
 export type ReleaseState = "published" | "draft" | "local";
 
-/**
- * Ported verbatim from the page this screen replaces.
- *
- * The ordering is load-bearing: `published` requires BOTH `githubReleaseId`
- * and `pushedAt`, because `pushedAt` is stamped at creation as well as at
- * publish — the two-field test is the only thing separating a pushed draft
- * from a published release.
- */
 export const RELEASE_STATE_KEYS = {
   draft: "Releases.state.draft",
   published: "Releases.state.published",
   local: "Releases.state.local",
 } as const satisfies Record<ReleaseState, TranslationKey>;
 
-export function releaseState(release: ReleaseRow): ReleaseState {
-  if (release.githubReleaseId !== null && release.pushedAt !== null) {
+/**
+ * `published` reads `publishedAt`, which only the publish route writes.
+ *
+ * It used to read `pushedAt`, which POST /releases stamps the moment it
+ * creates the GitHub DRAFT: every draft the app produced was classed
+ * published and the Publish button was unreachable (#105). `pushedAt` alone
+ * says nothing about publication.
+ */
+export function releaseState(
+  release: Pick<ReleaseRow, "githubReleaseId" | "publishedAt">
+): ReleaseState {
+  if (release.githubReleaseId !== null && release.publishedAt !== null) {
     return "published";
   }
   if (release.githubReleaseId !== null) return "draft";

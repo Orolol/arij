@@ -19,6 +19,7 @@ import {
   EyeOff,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { QuietLink } from "@/components/piscine";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { ChatTabBar } from "@/components/chat/ChatTabBar";
 import {
@@ -137,7 +138,8 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       generateSpec,
       generating: generatingSpec,
       error: specError,
-    } = useSpecGeneration(projectId, activeProvider);
+      result: specResult,
+    } = useSpecGeneration(projectId, { conversationId: activeId });
 
     const hasMessages = messages.length > 0;
     const isBrainstorm = isBrainstormConversationAgentType(activeConversation?.type);
@@ -328,6 +330,28 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
         {(epicError || specError || chatError) && (
           <div className="mx-[18px] mt-2 rounded-[8px] border border-destructive/50 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
             {epicError || specError || chatError}
+          </div>
+        )}
+
+        {/* The generation used to end in a bare router.refresh(): say what
+            landed, and point at the spec only when one was written (an
+            epics-only answer leaves it untouched). */}
+        {specResult && (
+          <div
+            role="status"
+            data-testid="chat-spec-generated"
+            className="mx-[18px] mt-2 flex flex-wrap items-baseline gap-x-2 text-[12px] text-muted-foreground"
+          >
+            <span>
+              {specResult.spec === null
+                ? t("proposal.generateSpecEpicsOnly", { count: specResult.epicsCreated })
+                : t("proposal.generateSpecDone", { count: specResult.epicsCreated })}
+            </span>
+            {specResult.spec !== null && (
+              <QuietLink href={`/projects/${projectId}/spec`} tone="muted" size={12}>
+                {t("proposal.viewSpec")}
+              </QuietLink>
+            )}
           </div>
         )}
 

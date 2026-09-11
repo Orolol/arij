@@ -96,7 +96,6 @@ export const WRITABLE_SCOPED_SETTING_KEYS: readonly string[] = [
   "auto_mode_review_concurrency",
   "auto_mode_smart_dispatch",
   "ci_autofix_enabled",
-  "dreaming_after_night_run",
   "full_auto_second_opinion",
   "night_circuit_breaker",
   "night_cost_cap_usd",
@@ -120,7 +119,9 @@ export const SERVER_MANAGED_SETTING_KEYS: readonly string[] = [
   // Bookkeeping written by the dreaming pass itself. A client that can move
   // the cutoff can make Dreaming re-read or skip an entire window.
   "dreaming_last_cutoff",
-  // Written by the memory writer to detect a manual edit made mid-dream.
+  // Who wrote the memory document last — a display record for the memory
+  // panel, stamped by every write path. (A manual edit made mid-dream is
+  // caught by the writers' `expectedPrevious` guard, not by this row.)
   "memory_provenance",
   // Capability credentials with their own guarded route
   // (`PUT /api/settings/webhooks`); `GET /api/settings` masks them.

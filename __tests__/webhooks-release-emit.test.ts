@@ -46,15 +46,19 @@ const sendMock = vi.mocked(sendProjectWebhook);
  * Drives the shortest successful path: no changelog generation, no git repo,
  * so the route goes straight from validation to insert + emit.
  */
-function seedRelease() {
+function seedRelease(title: string | null = null) {
   // getProjectOr404 -> project without gitRepoPath (skips git/GitHub work)
   dbMockState.getQueue.push({ id: "p1", name: "Arij", gitRepoPath: null });
   // selected epics (must all be "done" to pass pre-validation)
   dbMockState.allQueue.push([
     { id: "e1", title: "Login", status: "done", type: "feature" },
   ]);
-  // final re-read of the inserted release row
-  dbMockState.getQueue.push({ id: "rel-1", version: "1.2.0" });
+  // no release of this version yet
+  dbMockState.getQueue.push(null);
+  // finalizeRelease reads the claimed row (the webhook names it from there),
+  // then the response re-reads it
+  dbMockState.getQueue.push({ id: "rel-1", version: "1.2.0", title });
+  dbMockState.getQueue.push({ id: "rel-1", version: "1.2.0", title });
 }
 
 describe("POST /releases webhook emit point", () => {
@@ -85,7 +89,7 @@ describe("POST /releases webhook emit point", () => {
   });
 
   it("includes the release title in the label when provided", async () => {
-    seedRelease();
+    seedRelease("Summer drop");
 
     await POST(
       mockJsonRequest({

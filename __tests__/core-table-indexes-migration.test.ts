@@ -195,6 +195,18 @@ describe("0046_core_table_indexes", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      // 0057_release_published_at adds five columns to `releases`; a rewind
+      // that lands before it has to take them back out, or the replay
+      // fails on a column that is already there.
+      for (const column of [
+        "published_at",
+        "changelog_session_id",
+        "push_to_github",
+        "finalized_at",
+        "finalize_errors",
+      ]) {
+        conn.exec(`ALTER TABLE releases DROP COLUMN ${column}`);
+      }
       // 0054 DROPS a column, so rewinding past it means putting that column
       // BACK — the inverse of the drops above. The rewind lands after
       // 0039 (which adds it), so nothing else re-creates it and the replayed

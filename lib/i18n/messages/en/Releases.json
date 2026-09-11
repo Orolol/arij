@@ -14,12 +14,16 @@
     "githubDraft": "GitHub draft",
     "creating": "Creating…",
     "create": "Create release",
-    "storiesLeft": "{count, plural, one {# story left} other {# stories left}}"
+    "storiesLeft": "{count, plural, one {# story left} other {# stories left}}",
+    "titleLabel": "Release title",
+    "titlePlaceholder": "Title (optional)"
   },
   "state": {
     "published": "published",
     "draft": "draft",
-    "local": "local"
+    "local": "local",
+    "changelogPending": "changelog in progress",
+    "syncFailed": "sync failed"
   },
   "summary": {
     "compose": "{count, plural, one {# ticket} other {# tickets}} · tag v{version} on release/v{version}",
@@ -67,5 +71,21 @@
     "patch": "patch · {version}",
     "minor": "minor · {version}",
     "major": "major · {version}"
+  },
+  "edit": {
+    "open": "edit",
+    "changelogLabel": "Changelog",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "cancel",
+    "failed": "Failed to save the release",
+    "stale": "This release changed while you were editing it. Cancel and edit it again to start from the latest version.",
+    "finalizing": "The release is being tagged and synced — try again in a moment."
+  },
+  "toast": {
+    "created": "Release v{version} created",
+    "createdGithubFailed": "Release v{version} created, but GitHub sync failed: {error}",
+    "createFailed": "Failed to create release",
+    "backgroundGithubFailed": "Release v{version}: GitHub sync failed: {error}"
   }
 }

@@ -13,6 +13,8 @@
  * lib/workflow/spec-rewrite-constants.ts and lib/pipeline/constants.ts.
  */
 
+import { parseBooleanSetting } from "@/lib/documents/memory-constants";
+
 /* ------------------------------------------------------------------ */
 /* Agent identity                                                      */
 /* ------------------------------------------------------------------ */
@@ -72,71 +74,59 @@ export function isMcpExemptAgentType(
 /**
  * Global settings key: run a dream when a night run finishes. DEFAULT OFF —
  * an absent key means the night run ends exactly as it does today.
+ *
+ * Global ONLY, on purpose. A `dreaming_after_night_run:<projectId>` override
+ * was once resolved ahead of it, allowed through PATCH /api/settings and swept
+ * on project deletion — and written by nothing: no field, no dialog, no route.
+ * A key only a hand-made request can set is not a setting, so the scoped form
+ * was retired rather than given a screen.
  */
 export const DREAMING_AFTER_NIGHT_RUN_SETTING_KEY = "dreaming_after_night_run";
 
 /**
- * Per-project override (`dreaming_after_night_run:<projectId>`), following the
- * `pipeline_enabled:<projectId>` convention. Takes precedence over the global
- * key.
+ * Parses the raw settings value into a tri-state (null = "not configured", so
+ * the caller applies the OFF default). The same parser as the auto-distill
+ * switch: both memory-writer toggles must agree on what "on" looks like.
  */
-export function dreamingAfterNightRunSettingKey(projectId: string): string {
-  return `${DREAMING_AFTER_NIGHT_RUN_SETTING_KEY}:${projectId}`;
-}
+export const parseDreamingAfterNightRunSetting = parseBooleanSetting;
 
 /**
- * Parses a raw settings value into a tri-state: null means "not configured",
- * so callers fall through to the next level of the project → global → OFF
- * chain.
+ * Why a delivered dream or distill did NOT replace the memory document.
  *
- * Accepts every shape the value can reach us in: a real boolean (client, after
- * GET parsed the row), the JSON-encoded `"true"` the PATCH route writes, and
- * the double-encoded `'"true"'` a string-valued PATCH produces. That last one
- * matters: without the JSON pass, GET would report the setting enabled while
- * the server resolved it OFF — a toggle that lies. Mirrors how
- * parseMemoryAutoDistillSetting reads its row.
+ * Carried on the `memory:discarded` event and mapped to copy by the memory
+ * panel (a code, never a sentence: the server does not know the UI locale).
+ * The session row carries the English sentence in its `error` column.
  */
-export function parseDreamingAfterNightRunSetting(
+export const MEMORY_DISCARD_REASONS = [
+  // The session answered with nothing usable once sanitised.
+  "no_output",
+  // The document would not have carried the four imposed sections once capped.
+  "invalid_structure",
+  // A human edit landed while the writer ran; the edit wins.
+  "memory_changed",
+  // The guarded write itself threw (constraint, disk).
+  "save_failed",
+] as const;
+
+export type MemoryDiscardReason = (typeof MEMORY_DISCARD_REASONS)[number];
+
+export function isMemoryDiscardReason(
   value: unknown
-): boolean | null {
-  let parsed: unknown = value;
-  if (typeof parsed === "string") {
-    try {
-      parsed = JSON.parse(parsed);
-    } catch {
-      // raw (non-JSON) string — compare as-is below
-    }
-  }
-  if (parsed === true) return true;
-  if (parsed === false) return false;
-  if (typeof parsed === "string") {
-    const normalized = parsed.trim().toLowerCase();
-    if (normalized === "true") return true;
-    if (normalized === "false") return false;
-  }
-  return null;
+): value is MemoryDiscardReason {
+  return (
+    typeof value === "string" &&
+    (MEMORY_DISCARD_REASONS as readonly string[]).includes(value)
+  );
 }
 
 /**
- * Resolves the effective "dream after a night run" answer for a project from
- * a settings map (as returned by GET /api/settings, already JSON-parsed):
- * per-project key wins, then the global key, then OFF.
+ * Why a dream dispatch was refused without spending a session.
+ *
+ * Returned next to the human-readable `reason` (journal, API consumers) so the
+ * memory panel can pick a translated sentence by code instead of splicing an
+ * English phrase into a localised one.
  */
-export function resolveDreamingAfterNightRunDefault(
-  settings: Record<string, unknown> | null | undefined,
-  projectId: string
-): boolean {
-  if (!settings) return false;
-  const perProject = parseDreamingAfterNightRunSetting(
-    settings[dreamingAfterNightRunSettingKey(projectId)]
-  );
-  if (perProject !== null) return perProject;
-  return (
-    parseDreamingAfterNightRunSetting(
-      settings[DREAMING_AFTER_NIGHT_RUN_SETTING_KEY]
-    ) ?? false
-  );
-}
+export type DreamGuardCode = "eligible" | "writer_pending" | "no_new_sessions";
 
 /**
  * Per-project settings key holding the moment the last SUCCESSFUL dream
@@ -149,7 +139,10 @@ export function resolveDreamingAfterNightRunDefault(
  *     worst a few sessions, which is the harmless direction;
  *   - it is written only after the memory document was actually replaced, so a
  *     dream that delivered text but failed to persist it does not advance the
- *     window past evidence nothing ever learned from.
+ *     window past evidence nothing ever learned from;
+ *   - it is CLEARED when the pre-dream snapshot is restored: the memory then
+ *     no longer holds what the undone dream learned, so its sessions must be
+ *     readable again (see `clearDreamCutoff`).
  */
 export const DREAMING_LAST_CUTOFF_SETTING_KEY = "dreaming_last_cutoff";
 

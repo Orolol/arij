@@ -9,10 +9,7 @@ import {
   pipelineMaxAttemptsSettingKey,
   pipelineMaxFixCyclesSettingKey,
 } from "@/lib/pipeline/constants";
-import {
-  dreamingAfterNightRunSettingKey,
-  dreamingLastCutoffSettingKey,
-} from "@/lib/workflow/dreaming-constants";
+import { dreamingLastCutoffSettingKey } from "@/lib/workflow/dreaming-constants";
 import {
   verifyCommandsSettingKey,
   verifyTimeoutMsSettingKey,
@@ -44,7 +41,6 @@ export function perProjectSettingKeys(projectId: string): string[] {
     verifyTimeoutMsSettingKey(projectId),
     nightCircuitBreakerSettingKey(projectId),
     nightCostCapSettingKey(projectId),
-    dreamingAfterNightRunSettingKey(projectId),
     dreamingLastCutoffSettingKey(projectId),
     ciAutofixEnabledSettingKey(projectId),
   ];

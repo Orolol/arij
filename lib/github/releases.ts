@@ -69,6 +69,35 @@ export async function publishRelease(params: {
 }
 
 /**
+ * Rewrites the name and/or body of a GitHub release — how an edit made on the
+ * Releases page reaches the draft it describes. Omitted fields are left as
+ * they are on GitHub.
+ */
+export async function updateDraftRelease(params: {
+  owner: string;
+  repo: string;
+  releaseId: number;
+  title?: string;
+  body?: string;
+}): Promise<GitHubReleaseResult> {
+  const octokit = getOctokit();
+  const { data } = await octokit.rest.repos.updateRelease({
+    owner: params.owner,
+    repo: params.repo,
+    release_id: params.releaseId,
+    ...(params.title !== undefined ? { name: params.title } : {}),
+    ...(params.body !== undefined ? { body: params.body } : {}),
+  });
+  return {
+    id: data.id,
+    htmlUrl: data.html_url,
+    url: data.html_url,
+    draft: data.draft,
+    tagName: data.tag_name,
+  };
+}
+
+/**
  * Gets a release from GitHub by its ID.
  */
 export async function getRelease(params: {

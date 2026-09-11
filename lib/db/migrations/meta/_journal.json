@@ -393,6 +393,13 @@
       "when": 1786715300000,
       "tag": "0056_agent_sessions_epic_cost_idx",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "6",
+      "when": 1786715800000,
+      "tag": "0057_release_published_at",
+      "breakpoints": true
     }
   ]
 }

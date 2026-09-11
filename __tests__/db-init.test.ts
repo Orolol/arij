@@ -281,6 +281,12 @@ describe("initDb", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      // 0057 (release published_at / changelog session / finalisation).
+      conn.exec("ALTER TABLE releases DROP COLUMN published_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN changelog_session_id");
+      conn.exec("ALTER TABLE releases DROP COLUMN push_to_github");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalized_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalize_errors");
     });
 
     withDb(file, (conn) => {
@@ -387,6 +393,12 @@ describe("initDb", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      // 0057 (release published_at / changelog session / finalisation).
+      conn.exec("ALTER TABLE releases DROP COLUMN published_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN changelog_session_id");
+      conn.exec("ALTER TABLE releases DROP COLUMN push_to_github");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalized_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalize_errors");
       conn.exec("DROP TABLE ticket_read_cursors");
     });
 
@@ -522,6 +534,12 @@ describe("migration journal", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      // 0057 (release published_at / changelog session / finalisation).
+      conn.exec("ALTER TABLE releases DROP COLUMN published_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN changelog_session_id");
+      conn.exec("ALTER TABLE releases DROP COLUMN push_to_github");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalized_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalize_errors");
 
       expect(() => initDb(conn)).not.toThrow();
 

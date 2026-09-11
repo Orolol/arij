@@ -4,6 +4,10 @@
  *   - GET/PUT /api/projects/[projectId]/memory: doc edit round-trip, empty
  *     state, manual-editor cap REJECTION (400, never silent truncation),
  *     envelope shapes, project 404,
+ *   - PUT's optimistic guard: a save carrying a stale `expectedPrevious` is a
+ *     409, never a silent overwrite of what a dream just wrote,
+ *   - POST /memory/restore: puts the snapshot back AND reopens the dream
+ *     window; GET /memory/restore serves the snapshot text on demand,
  *   - POST /api/projects/[projectId]/memory/distill: manual dispatch wiring
  *     (validated body -> dispatchMemoryDistillSession), source-session
  *     scoping 404, and the 409 pending-distill conflict.
@@ -39,14 +43,18 @@ const {
   PROJECT_MEMORY_MAX_CHARS,
   PROJECT_MEMORY_MAX_TOKENS,
 } = await import("@/lib/documents/memory-constants");
+const { saveProjectMemory } = await import("@/lib/documents/memory");
 const { GET, PUT } = await import(
   "@/app/api/projects/[projectId]/memory/route"
 );
 const { POST: DISTILL } = await import(
   "@/app/api/projects/[projectId]/memory/distill/route"
 );
-const { POST: RESTORE } = await import(
+const { POST: RESTORE, GET: GET_SNAPSHOT } = await import(
   "@/app/api/projects/[projectId]/memory/restore/route"
+);
+const { findLastDreamCutoff, recordDreamCutoff } = await import(
+  "@/lib/workflow/dreaming-settings"
 );
 const { eq } = await import("drizzle-orm");
 const { notifications } = await import("@/lib/db/schema");
@@ -81,11 +89,10 @@ describe("GET /api/projects/[projectId]/memory", () => {
     const json = await res.json();
 
     expect(res.status).toBe(200);
+    // Only what the panel reads: `exists` and `maxChars` had no reader.
     expect(json.data).toEqual({
       content: "",
-      exists: false,
       updatedAt: null,
-      maxChars: PROJECT_MEMORY_MAX_CHARS,
       provenance: null,
       archive: null,
       pendingWriter: null,
@@ -108,8 +115,10 @@ describe("GET /api/projects/[projectId]/memory", () => {
 
     // Story 3: who wrote the document last.
     expect(json.data.provenance).toMatchObject({ source: "manual", sessionId: null });
-    // Story 5: the one pre-dream snapshot the panel can restore from.
-    expect(json.data.archive?.content).toBe("manual memory");
+    // Story 5: the one pre-dream snapshot the panel can restore from — its
+    // date only. The text (up to 40 KB) is served on demand by
+    // GET /memory/restore, not on every refetch of the envelope.
+    expect(json.data.archive).toEqual({ updatedAt: expect.any(String) });
     // Story 4: an in-flight rewrite the manual save may supersede.
     expect(json.data.pendingWriter).toEqual({
       sessionId: "dream-1",
@@ -128,7 +137,6 @@ describe("PUT /api/projects/[projectId]/memory (edit round-trip)", () => {
     );
     const putJson = await putRes.json();
     expect(putRes.status).toBe(200);
-    expect(putJson.data.exists).toBe(true);
     expect(putJson.data.content).toBe("## Rules\n\n- envelope responses");
 
     const getRes = await GET(
@@ -137,7 +145,6 @@ describe("PUT /api/projects/[projectId]/memory (edit round-trip)", () => {
     );
     const getJson = await getRes.json();
     expect(getJson.data.content).toBe("## Rules\n\n- envelope responses");
-    expect(getJson.data.exists).toBe(true);
     expect(getJson.data.updatedAt).toBeTruthy();
   });
 
@@ -149,7 +156,7 @@ describe("PUT /api/projects/[projectId]/memory (edit round-trip)", () => {
     const res = await GET(mockNextRequest(), mockRouteContext({ projectId }));
     const json = await res.json();
     expect(json.data.content).toBe("");
-    expect(json.data.exists).toBe(true);
+    expect(json.data.updatedAt).toBeTruthy();
   });
 
   it("REJECTS content over the cap with 400 (no silent truncation)", async () => {
@@ -170,7 +177,7 @@ describe("PUT /api/projects/[projectId]/memory (edit round-trip)", () => {
       mockNextRequest(),
       mockRouteContext({ projectId })
     );
-    expect((await getRes.json()).data.exists).toBe(false);
+    expect((await getRes.json()).data.updatedAt).toBeNull();
   });
 
   it("accepts content at exactly the cap", async () => {
@@ -196,6 +203,61 @@ describe("PUT /api/projects/[projectId]/memory (edit round-trip)", () => {
       mockRouteContext({ projectId: "missing" })
     );
     expect(res.status).toBe(404);
+  });
+});
+
+/**
+ * The panel edits a draft of the memory it LOADED. A dream can land between
+ * that load and the click on Save; replacing blindly throws the dreamed text
+ * away (manual writes do not archive). The editor sends what it loaded, and a
+ * mismatch is a conflict the user resolves by reloading.
+ */
+describe("PUT /api/projects/[projectId]/memory — optimistic guard", () => {
+  it("409s when the memory moved since the editor loaded it", async () => {
+    const projectId = seedProject();
+    saveProjectMemory(projectId, "as loaded");
+    // A dream lands while the user is typing.
+    saveProjectMemory(projectId, "## Dreamed\n\n- fresh rule");
+
+    const res = await PUT(
+      mockJsonRequest({ content: "my draft", expectedPrevious: "as loaded" }),
+      mockRouteContext({ projectId })
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(409);
+    expect(json.code).toBe("MEMORY_CHANGED");
+    // The dreamed text stands.
+    const getJson = await (
+      await GET(mockNextRequest(), mockRouteContext({ projectId }))
+    ).json();
+    expect(getJson.data.content).toBe("## Dreamed\n\n- fresh rule");
+  });
+
+  it("saves when the memory is still the one the editor loaded", async () => {
+    const projectId = seedProject();
+    saveProjectMemory(projectId, "as loaded\n");
+
+    const res = await PUT(
+      // The editor holds the stored text verbatim, trailing newline included;
+      // the guard compares like the lib does, on the trimmed document.
+      mockJsonRequest({ content: "edited", expectedPrevious: "as loaded\n" }),
+      mockRouteContext({ projectId })
+    );
+
+    expect(res.status).toBe(200);
+    expect((await res.json()).data.content).toBe("edited");
+  });
+
+  it("treats an empty loaded memory as 'no memory yet'", async () => {
+    const projectId = seedProject();
+
+    const res = await PUT(
+      mockJsonRequest({ content: "first write", expectedPrevious: "" }),
+      mockRouteContext({ projectId })
+    );
+
+    expect(res.status).toBe(200);
   });
 });
 
@@ -242,7 +304,12 @@ describe("POST /api/projects/[projectId]/memory/restore", () => {
     expect(json.data.content).toBe("v1");
     expect(json.data.provenance).toMatchObject({ source: "manual", sessionId: null });
     // The snapshot is not consumed by a restore: restore is repeatable.
-    expect(json.data.archive?.content).toBe("v1");
+    expect(json.data.archive).toEqual({ updatedAt: expect.any(String) });
+    const snapshot = await GET_SNAPSHOT(
+      mockNextRequest(),
+      mockRouteContext({ projectId })
+    );
+    expect((await snapshot.json()).data.content).toBe("v1");
 
     const rows = db
       .select()
@@ -254,6 +321,80 @@ describe("POST /api/projects/[projectId]/memory/restore", () => {
     );
     expect(restored).toBeDefined();
     expect(restored!.targetUrl).toBe(`/projects/${projectId}/spec#memory-panel`);
+  });
+});
+
+describe("POST /api/projects/[projectId]/memory/restore — the dream window", () => {
+  /**
+   * The cutoff says "the evidence up to here is inside the stored memory".
+   * Restoring the text from BEFORE the dream makes that false for every
+   * session the dream digested; left in place, they would never be read again.
+   */
+  it("forgets the dream cutoff so the undone dream's sessions are read again", async () => {
+    const projectId = seedProject();
+    saveProjectMemory(projectId, "pre-dream");
+    archiveProjectMemory(projectId, "pre-dream");
+    saveProjectMemory(projectId, "dreamed");
+    recordDreamCutoff(projectId, new Date().toISOString());
+    expect(findLastDreamCutoff(projectId)).not.toBeNull();
+
+    const res = await RESTORE(
+      mockNextRequest(),
+      mockRouteContext({ projectId })
+    );
+
+    expect(res.status).toBe(200);
+    expect(findLastDreamCutoff(projectId)).toBeNull();
+  });
+
+  it("leaves the cutoff alone when there was nothing to restore", async () => {
+    const projectId = seedProject();
+    const cutoff = new Date().toISOString();
+    recordDreamCutoff(projectId, cutoff);
+
+    const res = await RESTORE(
+      mockNextRequest(),
+      mockRouteContext({ projectId })
+    );
+
+    expect(res.status).toBe(404);
+    expect(findLastDreamCutoff(projectId)).toBe(cutoff);
+  });
+});
+
+describe("GET /api/projects/[projectId]/memory/restore (snapshot preview)", () => {
+  it("serves the snapshot text the restore would put back", async () => {
+    const projectId = seedProject();
+    archiveProjectMemory(projectId, "the pre-dream text");
+
+    const res = await GET_SNAPSHOT(
+      mockNextRequest(),
+      mockRouteContext({ projectId })
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data).toEqual({
+      content: "the pre-dream text",
+      updatedAt: expect.any(String),
+    });
+  });
+
+  it("404s when there is no snapshot", async () => {
+    const projectId = seedProject();
+    const res = await GET_SNAPSHOT(
+      mockNextRequest(),
+      mockRouteContext({ projectId })
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("404s for an unknown project", async () => {
+    const res = await GET_SNAPSHOT(
+      mockNextRequest(),
+      mockRouteContext({ projectId: "missing" })
+    );
+    expect(res.status).toBe(404);
   });
 });
 
@@ -275,7 +416,6 @@ describe("POST /api/projects/[projectId]/memory/distill", () => {
     expect(dispatchMock).toHaveBeenCalledWith({
       projectId,
       sourceSessionId: "src-1",
-      namedAgentId: null,
     });
   });
 
@@ -289,23 +429,22 @@ describe("POST /api/projects/[projectId]/memory/distill", () => {
     expect(dispatchMock).toHaveBeenCalledWith({
       projectId,
       sourceSessionId: null,
-      namedAgentId: null,
     });
   });
 
-  it("passes an explicit UI agent choice through to distill dispatch", async () => {
+  /**
+   * No client ever sent `namedAgentId` here — the distill agent is chosen in
+   * Agent Config. A field nobody can set is refused, not silently honoured.
+   */
+  it("refuses a named-agent override — the agent comes from Agent Config", async () => {
     const projectId = seedProject();
     const res = await DISTILL(
       mockJsonRequest({ namedAgentId: "explicit-light-agent" }),
       mockRouteContext({ projectId })
     );
 
-    expect(res.status).toBe(200);
-    expect(dispatchMock).toHaveBeenCalledWith({
-      projectId,
-      sourceSessionId: null,
-      namedAgentId: "explicit-light-agent",
-    });
+    expect(res.status).toBe(400);
+    expect(dispatchMock).not.toHaveBeenCalled();
   });
 
   /**

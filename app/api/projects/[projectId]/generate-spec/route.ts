@@ -1,14 +1,28 @@
 import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { db } from "@/lib/db";
-import { projects, chatMessages, epics, userStories } from "@/lib/db/schema";
-import { eq, desc } from "drizzle-orm";
+import { chatConversations, chatMessages } from "@/lib/db/schema";
+import { and, desc, eq, sql } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { buildSpecGenerationPrompt } from "@/lib/claude/prompt-builder";
-import { extractJsonFromOutput, parseClaudeOutput } from "@/lib/claude/json-parser";
+import {
+  extractJsonFromOutput,
+  isNoTextualOutputFallback,
+  parseClaudeOutput,
+} from "@/lib/claude/json-parser";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { getProvider } from "@/lib/providers";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
+import { validateOptionalBody, isValidationError } from "@/lib/validation/validate";
+import {
+  commitGeneratedSpec,
+  ProjectSpecChangedError,
+  saveConflictingSpecProposal,
+  type GeneratedSpec,
+} from "@/lib/projects/spec-write";
+import { specConflictMessage } from "@/lib/workflow/spec-writers";
 
 import { activityRegistry } from "@/lib/activity-registry";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
@@ -18,33 +32,78 @@ import {
 } from "@/lib/documents/mentions";
 import { createUnresolvedMentionsNotification } from "@/lib/notifications/create";
 
+/** How much chat history grounds the prompt. */
+const CHAT_HISTORY_LIMIT = 30;
+
+const generateSpecSchema = z.object({
+  /**
+   * The conversation the user clicked "Generate Spec & Plan" in. Without it
+   * the prompt falls back to the project's recent chat across every
+   * conversation — the legacy shape, kept for callers with nothing to scope.
+   */
+  conversationId: z.string().min(1).optional(),
+  /** Explicit named agent, like the other dispatch routes accept. */
+  namedAgentId: z.string().min(1).optional(),
+});
+
+/**
+ * POST /api/projects/[projectId]/generate-spec
+ *
+ * Synchronous spec + plan generation from a chat. Answers
+ * `{ data: { spec, epicsCreated } }` so the surface can say what happened.
+ *
+ * The write goes through commitGeneratedSpec, against the spec the prompt
+ * was built from: a user who saved the Spec view while the agent ran keeps
+ * their edit, and the agent's proposal is kept as a `spec_proposal` document
+ * (reachable by @mention, never injected by default) named in the 409.
+ */
 export const POST = withAgentResolutionErrors(async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
 
-  let namedAgentId: string | null = null;
-  try {
-    const body = await request.json();
-    if (body.namedAgentId) {
-      namedAgentId = body.namedAgentId;
-    }
-  } catch {
-    // No body or invalid JSON — use default
-  }
+  const validated = await validateOptionalBody(generateSpecSchema, request);
+  if (isValidationError(validated)) return validated;
+  const { conversationId, namedAgentId } = validated.data;
 
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
+
+  if (conversationId) {
+    const conversation = db
+      .select({ id: chatConversations.id })
+      .from(chatConversations)
+      .where(
+        and(
+          eq(chatConversations.id, conversationId),
+          eq(chatConversations.projectId, projectId)
+        )
+      )
+      .get();
+    // Another project's conversation is a 404, not an empty prompt: an
+    // empty history would still spend a run and rewrite the spec.
+    if (!conversation) {
+      return NextResponse.json({ error: "Conversation not found" }, { status: 404 });
+    }
   }
 
   const chatHistory = db
     .select()
     .from(chatMessages)
-    .where(eq(chatMessages.projectId, projectId))
-    .orderBy(desc(chatMessages.createdAt))
-    .limit(30)
+    .where(
+      conversationId
+        ? and(
+            eq(chatMessages.projectId, projectId),
+            eq(chatMessages.conversationId, conversationId)
+          )
+        : eq(chatMessages.projectId, projectId)
+    )
+    // rowid breaks createdAt ties (two messages persisted in the same
+    // millisecond), so the reversed window keeps insertion order.
+    .orderBy(desc(chatMessages.createdAt), desc(sql`rowid`))
+    .limit(CHAT_HISTORY_LIMIT)
     .all()
     .reverse();
 
@@ -77,7 +136,7 @@ export const POST = withAgentResolutionErrors(async function POST(
   const resolvedAgent = resolveAgentByNamedId(
     "spec_generation",
     projectId,
-    namedAgentId
+    namedAgentId ?? null
   );
 
   const specActivityId = `spec-${createId()}`;
@@ -91,6 +150,10 @@ export const POST = withAgentResolutionErrors(async function POST(
     startedAt: new Date().toISOString(),
   });
 
+  // The spec the prompt reasons from — the commit refuses to land on
+  // anything else.
+  const specAtPrompt = project.spec;
+  let rawOutput: string | null = null;
   try {
     // Every provider goes through the provider abstraction, claude-code
     // included: the resolved provider is the one that runs, and the activity
@@ -109,94 +172,52 @@ export const POST = withAgentResolutionErrors(async function POST(
       return NextResponse.json({ error: result.error || "Claude Code failed" }, { status: 500 });
     }
 
-    const rawOutput = result.result || "";
+    rawOutput = result.result || "";
 
-    // Try to extract structured JSON
-    const specData = extractJsonFromOutput<{
-      spec?: string;
-      epics?: Array<{
-        title: string;
-        description?: string;
-        priority?: number;
-        status?: string;
-        user_stories?: Array<{
-          title: string;
-          description?: string;
-          acceptance_criteria?: string;
-          status?: string;
-        }>;
-      }>;
-    }>(rawOutput);
-
-    if (!specData || !specData.epics) {
-      // If not JSON, treat as spec text
-      const parsed = parseClaudeOutput(rawOutput);
-      console.log("[generate-spec] No JSON found, treating as spec text. Preview:", parsed.content.slice(0, 300));
-
-      db.update(projects)
-        .set({ spec: parsed.content, status: "specifying", updatedAt: new Date().toISOString() })
-        .where(eq(projects.id, projectId))
-        .run();
-
-      tryExportArjiJson(projectId);
-      return NextResponse.json({ data: { spec: parsed.content, epicsCreated: 0 } });
+    // Structured JSON (spec + epics) when the agent followed the prompt;
+    // otherwise the whole answer is the spec text.
+    const specData = extractJsonFromOutput<GeneratedSpec>(rawOutput);
+    const parsed: GeneratedSpec =
+      specData && (specData.epics || typeof specData.spec === "string")
+        ? specData
+        : { spec: parseClaudeOutput(rawOutput).content };
+    // commitGeneratedSpec writes any spec that is not `undefined`, so an
+    // empty, null or placeholder spec is dropped HERE: `{ spec: "", epics }`
+    // adds the epics and leaves the stored spec (and the project status)
+    // alone, instead of blanking the document the user wrote.
+    const specText =
+      typeof parsed.spec === "string" &&
+      parsed.spec.trim() &&
+      !isNoTextualOutputFallback(parsed.spec)
+        ? parsed.spec
+        : undefined;
+    const generated: GeneratedSpec = { ...parsed, spec: specText };
+    // Nothing at all to commit: answer an error rather than a no-op success.
+    if (!generated.epics?.length && specText === undefined) {
+      return NextResponse.json(
+        { error: "The agent returned no specification — the saved spec was left unchanged." },
+        { status: 500 }
+      );
     }
 
-    // Update project spec
-    if (specData.spec) {
-      db.update(projects)
-        .set({ spec: specData.spec, status: "specifying", updatedAt: new Date().toISOString() })
-        .where(eq(projects.id, projectId))
-        .run();
-    }
-
-    // Insert epics and user stories
-    let epicsCreated = 0;
-    if (specData.epics) {
-      for (let i = 0; i < specData.epics.length; i++) {
-        const epicData = specData.epics[i];
-        const epicId = createId();
-        const now = new Date().toISOString();
-
-        db.insert(epics)
-          .values({
-            id: epicId,
-            projectId,
-            title: epicData.title,
-            description: epicData.description || null,
-            priority: epicData.priority ?? 0,
-            status: epicData.status || "backlog",
-            position: i,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .run();
-
-        if (epicData.user_stories) {
-          for (let j = 0; j < epicData.user_stories.length; j++) {
-            const usData = epicData.user_stories[j];
-            db.insert(userStories)
-              .values({
-                id: createId(),
-                epicId,
-                title: usData.title,
-                description: usData.description || null,
-                acceptanceCriteria: usData.acceptance_criteria || null,
-                status: usData.status || "todo",
-                position: j,
-                createdAt: now,
-              })
-              .run();
-          }
-        }
-
-        epicsCreated++;
-      }
-    }
-
+    const epicsCreated = commitGeneratedSpec(projectId, specAtPrompt, generated, {
+      status: "specifying",
+    });
     tryExportArjiJson(projectId);
-    return NextResponse.json({ data: { spec: specData.spec, epicsCreated } });
+    return NextResponse.json({ data: { spec: generated.spec ?? null, epicsCreated } });
   } catch (e) {
+    if (e instanceof ProjectSpecChangedError && rawOutput !== null) {
+      // No session row to fail here: keep the proposal recoverable instead.
+      const proposal = saveConflictingSpecProposal(projectId, rawOutput);
+      return NextResponse.json(
+        {
+          error: specConflictMessage(e, proposal.filename),
+          code: "SPEC_CHANGED",
+          proposalDocumentId: proposal.id,
+        },
+        { status: 409 }
+      );
+    }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Unknown error" },
       { status: 500 }

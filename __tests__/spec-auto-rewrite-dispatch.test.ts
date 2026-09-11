@@ -67,12 +67,10 @@ vi.mock("fs", () => ({
 const { db } = await import("@/lib/db");
 const { projects, epics, userStories, releases, agentSessions, settings } =
   await import("@/lib/db/schema");
-const {
-  dispatchSpecAutoRewriteSession,
-  maybeAutoRewriteSpecAfterRelease,
-  sanitizeRewrittenSpec,
-  hasPendingSpecGeneration,
-} = await import("@/lib/workflow/spec-auto-rewrite");
+const { dispatchSpecAutoRewriteSession, maybeAutoRewriteSpecAfterRelease } =
+  await import("@/lib/workflow/spec-auto-rewrite");
+// Shared with the manual update flow (lib/workflow/spec-writers.ts).
+const { hasPendingSpecGeneration } = await import("@/lib/workflow/spec-writers");
 const { tryExportArjiJson } = await import("@/lib/sync/export");
 
 let counter = 0;
@@ -341,18 +339,5 @@ describe("maybeAutoRewriteSpecAfterRelease", () => {
     expect(decision.reason).toContain("already queued/running");
     // Only the pre-existing session — no second dispatch.
     expect(specSessions(projectId)).toHaveLength(1);
-  });
-});
-
-describe("sanitizeRewrittenSpec", () => {
-  it("trims plain output and unwraps fences", () => {
-    expect(sanitizeRewrittenSpec("  body  ")).toBe("body");
-    expect(sanitizeRewrittenSpec("```\nbody\n```")).toBe("body");
-    expect(sanitizeRewrittenSpec("```md\nbody\n```")).toBe("body");
-    expect(sanitizeRewrittenSpec("```markdown\nbody\n```")).toBe("body");
-    // An inner fence pair stays untouched.
-    expect(sanitizeRewrittenSpec("a\n```ts\nx\n```\nb")).toBe(
-      "a\n```ts\nx\n```\nb"
-    );
   });
 });

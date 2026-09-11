@@ -62,7 +62,7 @@ import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completi
  *
  * The sole reference to {@link providerAcceptsAssignedSessionId} outside its
  * own module: the dispatch paths that cannot yet take the whole helper (the
- * build, review, merge, pull and release routes, which carry worktrees,
+ * build, review, merge and pull routes, which carry worktrees,
  * workflow transitions and an explicit resume preference) still mint their
  * id through this function, so the answer to "does this provider take an
  * assigned id?" is written once.
@@ -137,6 +137,14 @@ export interface BackgroundSessionSettled extends BackgroundSessionTerminal {
 }
 
 export interface DispatchBackgroundSessionInput {
+  /**
+   * The CLI session id to record and spawn with. `undefined` mints one when
+   * the provider accepts an assigned id; `null` explicitly starts without
+   * one. A caller resuming a previous conversation passes that session's id
+   * here and `spawn: { resumeSession: true }` — the resume decision (same
+   * project, same provider, resumable provider) stays with the caller.
+   */
+  cliSessionId?: string | null;
   /** `agent_sessions.agent_type` — the row's identity, and the persona key. */
   agentType: string;
   projectId: string;
@@ -266,7 +274,10 @@ export function dispatchBackgroundSession(
   const sessionId = createId();
   const createdAt = new Date().toISOString();
   const logsPath = createSessionLogsPath(sessionId);
-  const cliSessionId = mintAssignedCliSessionId(provider);
+  const cliSessionId =
+    input.cliSessionId === null
+      ? undefined
+      : (input.cliSessionId ?? mintAssignedCliSessionId(provider));
 
   // The type already forbids the owned keys on `session`; the two anchors are
   // stripped at runtime as well, because every other owned key is overwritten

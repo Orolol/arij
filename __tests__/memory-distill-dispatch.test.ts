@@ -75,13 +75,18 @@ const {
 const {
   dispatchMemoryDistillSession,
   maybeAutoDistillAfterSessionTerminal,
-  sanitizeDistilledMemory,
+  MEMORY_DISTILL_SUMMARY_MAX_CHARS,
   MEMORY_UPDATED_REASON,
 } = await import("@/lib/workflow/memory-distill");
+const { appendSessionChunk } = await import("@/lib/agent-sessions/chunks");
+const { eventBus } = await import("@/lib/events/bus");
+type BusEvent = import("@/lib/events/bus").TicketEvent;
 const { processManager } = await import("@/lib/claude/process-manager");
-const { getProjectMemoryContent, saveProjectMemory } = await import(
-  "@/lib/documents/memory"
-);
+const {
+  getProjectMemoryContent,
+  sanitizeMemoryDocument,
+  saveProjectMemory,
+} = await import("@/lib/documents/memory");
 const { PROJECT_MEMORY_MAX_CHARS } = await import(
   "@/lib/documents/memory-constants"
 );
@@ -275,6 +280,68 @@ describe("dispatchMemoryDistillSession", () => {
     });
   });
 
+  /**
+   * `last_non_empty_text` holds the last non-empty LINE of the newest chunk.
+   * Reading it first handed the distill one line of a whole report — the
+   * dreaming collector documented that order as wrong long ago. The persisted
+   * response stream is the real record.
+   */
+  it("embeds the source's whole final response, not its last line", async () => {
+    const { projectId, epicId } = seedProject();
+    const sourceId = seedSourceSession(projectId, epicId, {
+      lastNonEmptyText: "Report filed.",
+    });
+    appendSessionChunk({
+      sessionId: sourceId,
+      streamType: "response",
+      content:
+        "## Findings\n\n- the token is logged in plain text\n\n" +
+        "**Overall Verdict: Changes Requested**\n\nReport filed.",
+    });
+
+    const { sessionId } = await dispatchMemoryDistillSession({
+      projectId,
+      sourceSessionId: sourceId,
+    });
+    await flushBackground();
+
+    const prompt = db
+      .select({ prompt: agentSessions.prompt })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, sessionId))
+      .get()!.prompt!;
+    expect(prompt).toContain("- the token is logged in plain text");
+    expect(prompt).toContain("**Overall Verdict: Changes Requested**");
+    expect(prompt).toContain("Report filed.");
+  });
+
+  it("keeps the END of an over-long response — the conclusion lives there", async () => {
+    const { projectId, epicId } = seedProject();
+    const sourceId = seedSourceSession(projectId, epicId);
+    appendSessionChunk({
+      sessionId: sourceId,
+      streamType: "output",
+      content:
+        "OPENING PREAMBLE\n" +
+        "filler line\n".repeat(MEMORY_DISTILL_SUMMARY_MAX_CHARS) +
+        "CLOSING CONCLUSION",
+    });
+
+    const { sessionId } = await dispatchMemoryDistillSession({
+      projectId,
+      sourceSessionId: sourceId,
+    });
+    await flushBackground();
+
+    const prompt = db
+      .select({ prompt: agentSessions.prompt })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, sessionId))
+      .get()!.prompt!;
+    expect(prompt).toContain("CLOSING CONCLUSION");
+    expect(prompt).not.toContain("OPENING PREAMBLE");
+  });
+
   it("enforces the cap on the distilled output", async () => {
     const { projectId, epicId } = seedProject();
     const sourceId = seedSourceSession(projectId, epicId);
@@ -324,20 +391,33 @@ describe("dispatchMemoryDistillSession", () => {
       };
     });
 
+    const events: BusEvent[] = [];
+    const unsubscribe = eventBus.subscribe(projectId, (event) => {
+      events.push(event);
+    });
     const { sessionId } = await dispatchMemoryDistillSession({
       projectId,
       sourceSessionId: sourceId,
     });
     await flushBackground();
+    unsubscribe();
 
-    // The run itself is a success — its output stays readable on the session
-    // row, so nothing is lost, it is simply not applied.
+    // The agent answered — its output stays readable on the session page — but
+    // the row must not claim success over a memory it did not change.
     const session = db
       .select()
       .from(agentSessions)
       .where(eq(agentSessions.id, sessionId))
       .get();
-    expect(session).toMatchObject({ status: "completed", outcome: "answered" });
+    expect(session).toMatchObject({ status: "failed", outcome: "answered" });
+    expect(session!.error).toMatch(/edited/i);
+    // Announced as a discard, never as a memory change.
+    expect(events.filter((e) => e.type === "memory:discarded")).toEqual([
+      expect.objectContaining({
+        data: { source: "distill", reason: "memory_changed", sessionId },
+      }),
+    ]);
+    expect(events.filter((e) => e.type === "memory:changed")).toHaveLength(0);
 
     // The newer human intent survives untouched...
     expect(getProjectMemoryContent(projectId)).toBe("- HUMAN EDIT");
@@ -448,13 +528,13 @@ describe("dispatchMemoryDistillSession", () => {
   });
 });
 
-describe("sanitizeDistilledMemory", () => {
+describe("sanitizeMemoryDocument (shared with the dream)", () => {
   it("trims plain output and unwraps fences", () => {
-    expect(sanitizeDistilledMemory("  body  ")).toBe("body");
-    expect(sanitizeDistilledMemory("```\nbody\n```")).toBe("body");
-    expect(sanitizeDistilledMemory("```md\nbody\n```")).toBe("body");
+    expect(sanitizeMemoryDocument("  body  ")).toBe("body");
+    expect(sanitizeMemoryDocument("```\nbody\n```")).toBe("body");
+    expect(sanitizeMemoryDocument("```md\nbody\n```")).toBe("body");
     // Inner fences (partial) are preserved.
-    expect(sanitizeDistilledMemory("intro\n```\ncode\n```")).toBe(
+    expect(sanitizeMemoryDocument("intro\n```\ncode\n```")).toBe(
       "intro\n```\ncode\n```"
     );
   });

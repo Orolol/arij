@@ -28,6 +28,8 @@ function release(overrides: Partial<ReleaseRow> = {}): ReleaseRow {
     githubReleaseId: null,
     githubReleaseUrl: null,
     pushedAt: null,
+    publishedAt: null,
+    changelogPending: false,
     createdAt: "2026-08-20T10:00:00.000Z",
     ...overrides,
   };
@@ -212,16 +214,27 @@ describe("displayVersion", () => {
 });
 
 describe("releaseState", () => {
-  it("requires both a GitHub id and a push to be published", () => {
+  it("is published once the publish route stamped publishedAt", () => {
     expect(
       releaseState(
-        release({ githubReleaseId: 7, pushedAt: "2026-08-20T10:00:00.000Z" })
+        release({
+          githubReleaseId: 7,
+          pushedAt: "2026-08-20T10:00:00.000Z",
+          publishedAt: "2026-08-21T10:00:00.000Z",
+        })
       )
     ).toBe("published");
   });
 
-  it("is a draft with an id but no push", () => {
-    expect(releaseState(release({ githubReleaseId: 7 }))).toBe("draft");
+  // #105: POST /releases stamps pushedAt when it creates the GitHub draft.
+  // That row — the only shape the server produces for a fresh draft — must
+  // read as a draft, or the Publish button can never appear.
+  it("is a draft with a GitHub id, pushed but not published", () => {
+    expect(
+      releaseState(
+        release({ githubReleaseId: 7, pushedAt: "2026-08-20T10:00:00.000Z" })
+      )
+    ).toBe("draft");
   });
 
   it("is local without a GitHub id, even when pushed", () => {

@@ -21,11 +21,10 @@ const TOP_HEADING = /^#\s/;
  * the frame draws the raw `#` / `##` / `- ` source and that is the intent — a
  * changelog is a text artefact here, not a document.
  *
- * READ-ONLY, deliberately. `createReleaseSchema` has no `changelog` field and
- * `app/api/projects/[projectId]/releases/[releaseId]/` holds only
- * `publish/route.ts` — there is no PATCH, so a textarea would silently discard
- * whatever the user typed. The frame's caption ("CHANGELOG — généré, éditable")
- * returns verbatim the day a PATCH route lands.
+ * Read-only itself. Editing an existing, unpublished release swaps this card
+ * for `ReleaseEditForm` (PATCH /releases/:id); the compose preview stays
+ * read-only because the changelog does not exist until the release does —
+ * the agent writes it after creation, and an edit made meanwhile wins.
  */
 export function ChangelogCard({ caption, right, markdown }: ChangelogCardProps) {
   const t = useTranslations("Releases");

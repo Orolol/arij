@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 
 import { projectTone } from "@/components/piscine";
 import { ToastStack } from "@/components/notifications/ToastStack";
@@ -18,12 +19,17 @@ import {
   projectToneIndex,
   releaseState,
   versionBumps,
+  type ReleaseEdit,
   type ReleaseEpic,
   type ReleaseRow,
 } from "@/components/releases/derive";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import { useNamedAgentsList } from "@/hooks/useNamedAgentsList";
+import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { useReleasePublish } from "@/hooks/useReleasePublish";
+
+/** Reload cadence while a release is still being written; see the effect. */
+const PENDING_RELEASE_REFRESH_MS = 15_000;
 
 /** The fields of the project row this screen reads. */
 interface ProjectRecord {
@@ -36,6 +42,7 @@ interface ProjectRecord {
 export default function ReleasesPage() {
   const params = useParams();
   const projectId = params.projectId as string;
+  const t = useTranslations("Releases");
 
   const [releases, setReleases] = useState<ReleaseRow[]>([]);
   const [allEpics, setAllEpics] = useState<ReleaseEpic[]>([]);
@@ -65,11 +72,10 @@ export default function ReleasesPage() {
   const [namedAgentId, setNamedAgentId] = useState<string | null>(null);
   const { agents: namedAgents } = useNamedAgentsList();
 
-  // The redesign draws no title field, so the release title stays empty and the
-  // changelog header degrades to `# {version}` — exactly what the server does.
-  // The POST body keeps its shape, so the day a title control returns only the
-  // source of this value changes.
-  const title = "";
+  // The optional release title (#117). It names the GitHub draft
+  // (`v1.2.0 — Title`) and heads the fallback changelog, so the preview
+  // below follows it as it is typed.
+  const [title, setTitle] = useState("");
 
   // Resolve selected agent's provider for SessionPicker filtering
   // When no named agent is selected, let the server resolve the default via agentType
@@ -117,6 +123,67 @@ export default function ReleasesPage() {
       cancelled = true;
     };
   }, [fetchData, applyData]);
+
+  // The changelog agent runs in the background (#109): the release is
+  // created at once, and its tag, CHANGELOG commit and GitHub draft land
+  // when the run ends. The server announces that with `release:updated`,
+  // whose `githubErrors` raise a toast right away — nobody is waiting on the
+  // POST any more. The failures also stay on the row (`finalizeErrors`) for
+  // whoever was not looking at that moment.
+  const { pollTick } = useProjectEvents(projectId, {
+    "release:created": () => void loadData(),
+    "release:updated": (event) => {
+      const githubErrors = Array.isArray(event.data.githubErrors)
+        ? (event.data.githubErrors as string[])
+        : [];
+      if (githubErrors.length > 0) {
+        const release = releases.find((r) => r.id === event.data.releaseId);
+        showToast(
+          "error",
+          t("toast.backgroundGithubFailed", {
+            version: release?.version ?? "?",
+            error: githubErrors[0],
+          })
+        );
+      }
+      void loadData();
+    },
+  });
+
+  // Without the event stream the hook falls back to a poll tick. Only worth
+  // a reload while some changelog is still being written.
+  const anyPending = releases.some((release) => release.changelogPending);
+  useEffect(() => {
+    if (pollTick === 0 || !anyPending) return;
+    let cancelled = false;
+    void fetchData().then(([releasesData, epicsData, projectData]) => {
+      if (!cancelled) applyData(releasesData, epicsData, projectData);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // `anyPending` flipping to true re-runs this once more at the current
+    // tick — one redundant reload, only while the stream is down, and no
+    // lint suppression (which would also switch the React Compiler off here).
+  }, [pollTick, anyPending, fetchData, applyData]);
+
+  // A pending release also finishes WITHOUT an event: when its run is
+  // cancelled while still queued, or reaped by a restart, it is finalised by
+  // the server's reconciliation on the next GET — which nothing on this page
+  // would otherwise issue. A slow reload while anything is pending is that GET.
+  useEffect(() => {
+    if (!anyPending) return;
+    let cancelled = false;
+    const timer = setInterval(() => {
+      void fetchData().then(([releasesData, epicsData, projectData]) => {
+        if (!cancelled) applyData(releasesData, epicsData, projectData);
+      });
+    }, PENDING_RELEASE_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [anyPending, fetchData, applyData]);
 
   // Both halves matter: the second is what stops an already-released ticket
   // from being offered again.
@@ -200,6 +267,7 @@ export default function ReleasesPage() {
       setVersionOverride(null);
       setCheckOverrides(new Map());
       setPushToGitHub(false);
+      setTitle("");
       // A stale resume id otherwise survives into the next release.
       setResumeSessionId(undefined);
       setNamedAgentId(null);
@@ -213,14 +281,17 @@ export default function ReleasesPage() {
       if (githubErrors.length > 0) {
         showToast(
           "error",
-          "Release v" + version.trim() + " created, but GitHub sync failed: " + githubErrors[0]
+          t("toast.createdGithubFailed", {
+            version: version.trim(),
+            error: githubErrors[0],
+          })
         );
       } else {
-        showToast("success", "Release v" + version.trim() + " created");
+        showToast("success", t("toast.created", { version: version.trim() }));
       }
       loadData();
     } else {
-      showToast("error", json.error || "Failed to create release");
+      showToast("error", json.error || t("toast.createFailed"));
     }
 
     setCreating(false);
@@ -229,6 +300,32 @@ export default function ReleasesPage() {
   async function handlePublish(release: ReleaseRow) {
     const success = await publish(release.id);
     if (success) loadData();
+  }
+
+  /** PATCH of an unpublished release's title and changelog (#117). */
+  async function handleSaveRelease(
+    releaseId: string,
+    edit: ReleaseEdit
+  ): Promise<string | null> {
+    const res = await fetch(`/api/projects/${projectId}/releases/${releaseId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(edit),
+    }).catch(() => null);
+    if (!res) return t("edit.failed");
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // The two refusals the user can act on get words of their own; the
+      // row they refer to arrives with the next reload.
+      if (json.code === "release_changed") {
+        void loadData();
+        return t("edit.stale");
+      }
+      if (json.code === "release_finalizing") return t("edit.finalizing");
+      return json.error || t("edit.failed");
+    }
+    void loadData();
+    return null;
   }
 
   function toggleEpic(epicId: string) {
@@ -275,6 +372,8 @@ export default function ReleasesPage() {
           inspectEpics={inspectEpics}
           onLeaveInspect={() => setInspectReleaseId(null)}
           version={version}
+          title={title}
+          onTitleChange={setTitle}
           bumps={bumps}
           onVersionSelect={setVersionOverride}
           candidates={doneEpics}
@@ -292,6 +391,10 @@ export default function ReleasesPage() {
           onTogglePushToGitHub={() => setPushToGitHub((prev) => !prev)}
           creating={creating}
           onCreate={handleCreateRelease}
+          canEdit={
+            inspectRelease !== null && releaseState(inspectRelease) !== "published"
+          }
+          onSaveEdit={handleSaveRelease}
           canPublish={
             inspectRelease !== null &&
             releaseState(inspectRelease) === "draft" &&

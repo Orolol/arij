@@ -6,7 +6,7 @@
  * pins is the ENVELOPE, because the route has three success-ish answers that
  * are easy to conflate:
  *   - a dream was dispatched      -> 200 { sessionId, dispatched: true },
- *   - nothing new to dream about  -> 200 { sessionId: null, reason },
+ *   - nothing new to dream about  -> 200 { sessionId: null, reason, code },
  *   - a memory writer holds the doc -> 409 DREAMING_PENDING,
  * plus the ordinary 404 / 400 shapes.
  */
@@ -65,6 +65,7 @@ beforeEach(() => {
     sessionId: "dream-session-1",
     dispatched: true,
     reason: "eligible",
+    code: "eligible",
     sessionsAnalyzed: 7,
   });
 });
@@ -81,28 +82,30 @@ describe("POST /api/projects/[projectId]/memory/dream", () => {
       sessionId: "dream-session-1",
       dispatched: true,
       reason: "eligible",
+      code: "eligible",
       sessionsAnalyzed: 7,
     });
     expect(dispatchMock).toHaveBeenCalledWith({
       projectId,
-      namedAgentId: null,
       trigger: "manual",
     });
   });
 
-  it("passes an explicit named agent through", async () => {
+  /**
+   * The route used to accept a `namedAgentId` that no client ever sent — the
+   * dreaming agent is chosen in Agent Config, like every background writer.
+   * A field nobody can set is refused rather than silently honoured.
+   */
+  it("refuses a named-agent override — the agent comes from Agent Config", async () => {
     const projectId = seedProject();
 
-    await POST(
+    const res = await POST(
       mockJsonRequest({ namedAgentId: "agent-7" }),
       mockRouteContext({ projectId })
     );
 
-    expect(dispatchMock).toHaveBeenCalledWith({
-      projectId,
-      namedAgentId: "agent-7",
-      trigger: "manual",
-    });
+    expect(res.status).toBe(400);
+    expect(dispatchMock).not.toHaveBeenCalled();
   });
 
   /**
@@ -115,6 +118,7 @@ describe("POST /api/projects/[projectId]/memory/dream", () => {
       sessionId: null,
       dispatched: false,
       reason: "no new sessions since the last dream",
+      code: "no_new_sessions",
       sessionsAnalyzed: 0,
     });
 
@@ -125,6 +129,8 @@ describe("POST /api/projects/[projectId]/memory/dream", () => {
     expect(body.data.sessionId).toBeNull();
     expect(body.data.dispatched).toBe(false);
     expect(body.data.reason).toContain("no new sessions");
+    // The panel picks its sentence by code — the English reason is for logs.
+    expect(body.data.code).toBe("no_new_sessions");
   });
 
   it("answers 409 when a dream already holds the document", async () => {
@@ -158,8 +164,9 @@ describe("POST /api/projects/[projectId]/memory/dream", () => {
     dispatchMock.mockResolvedValue({
       sessionId: null,
       dispatched: false,
-      reason:
-        "a memory rewrite (distill or dream) is already pending for this project",
+      // The 409 is keyed on the code, not on the English wording.
+      reason: "held by another writer",
+      code: "writer_pending",
       sessionsAnalyzed: 0,
     });
 
@@ -184,7 +191,7 @@ describe("POST /api/projects/[projectId]/memory/dream", () => {
     const projectId = seedProject();
 
     const res = await POST(
-      mockJsonRequest({ namedAgentId: "" }),
+      mockJsonRequest({ trigger: "night_run" }),
       mockRouteContext({ projectId })
     );
 

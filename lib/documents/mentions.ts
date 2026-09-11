@@ -107,7 +107,7 @@ export function buildMentionContextBlock(documents: ProjectDocumentRecord[]): st
   const parts = documents.map((doc) => {
     const mentionToken = formatDocumentMention(doc.originalFilename);
 
-    if (doc.kind === "text") {
+    if (doc.kind === "text" || doc.kind === "spec_proposal") {
       return [
         `### ${mentionToken}`,
         doc.markdownContent?.trim() || "",

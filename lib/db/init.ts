@@ -195,6 +195,17 @@ const POST_BASELINE_COLUMN_MIGRATIONS: Array<{
     table: "agent_sessions",
     column: "composite_agent_id",
   },
+  // 0057_release_published_at (single transactional migration: its five
+  // columns are always present or absent together on real databases).
+  { folderMillis: 1786715800000, table: "releases", column: "published_at" },
+  {
+    folderMillis: 1786715800000,
+    table: "releases",
+    column: "changelog_session_id",
+  },
+  { folderMillis: 1786715800000, table: "releases", column: "push_to_github" },
+  { folderMillis: 1786715800000, table: "releases", column: "finalized_at" },
+  { folderMillis: 1786715800000, table: "releases", column: "finalize_errors" },
 ];
 
 /** Default on-disk location of the drizzle migration files. */

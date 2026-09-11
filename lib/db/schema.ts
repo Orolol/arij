@@ -450,7 +450,39 @@ export const releases = sqliteTable("releases", {
   gitTag: text("git_tag"),
   githubReleaseId: integer("github_release_id"),
   githubReleaseUrl: text("github_release_url"),
+  /** When the tag and the GitHub draft were pushed — NOT when it went public. */
   pushedAt: text("pushed_at"),
+  /**
+   * When the GitHub release left draft. Written only by the publish route, so
+   * a draft created by POST /releases stays a draft (see migration 0057).
+   */
+  publishedAt: text("published_at"),
+  /**
+   * The background `release_notes` session writing this release's changelog.
+   * The release is claimed before the agent runs; while this session is live
+   * the changelog on the row is the fallback and the tag does not exist yet.
+   */
+  // Annotated: epics → releases → agent_sessions → epics is a reference
+  // cycle, and TypeScript cannot infer the three tables' types through it.
+  changelogSessionId: text("changelog_session_id").references(
+    (): AnySQLiteColumn => agentSessions.id,
+    { onDelete: "set null" }
+  ),
+  /**
+   * The POST's push-to-GitHub choice, kept for finalisation: the run's
+   * closure dies with a queued cancellation or a restart, the row does not.
+   */
+  pushToGitHub: integer("push_to_github", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  /**
+   * When the tag, the CHANGELOG commit and the GitHub draft were written (or
+   * attempted). NULL = claimed but not finalised yet: GET /releases finishes
+   * such a release once its changelog run is over.
+   */
+  finalizedAt: text("finalized_at"),
+  /** JSON array of the finalisation failures (branch, tag push, GitHub). */
+  finalizeErrors: text("finalize_errors"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 

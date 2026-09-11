@@ -348,6 +348,47 @@ describe("dispatchBackgroundSession — the provider is carried, never re-defaul
     expect(pm.starts[0].options.model).toBeUndefined();
   });
 
+  it("a caller-given CLI session id (a resume) is recorded and spawned instead of a minted one", async () => {
+    const projectId = seedProject();
+
+    const dispatched = dispatchBackgroundSession({
+      agentType: "probe",
+      projectId,
+      prompt: "p",
+      resolvedAgent: { provider: "claude-code" },
+      mode: "plan",
+      cliSessionId: "cli-previous",
+      spawn: { resumeSession: true },
+      logPrefix: "[probe]",
+    });
+    await dispatched.settled;
+
+    expect(dispatched.cliSessionId).toBe("cli-previous");
+    expect(getRow(dispatched.sessionId)?.cliSessionId).toBe("cli-previous");
+    expect(pm.starts[0].options).toMatchObject({
+      cliSessionId: "cli-previous",
+      resumeSession: true,
+    });
+  });
+
+  it("an explicit null CLI session id mints nothing, even for a provider that accepts one", async () => {
+    const projectId = seedProject();
+
+    const dispatched = dispatchBackgroundSession({
+      agentType: "probe",
+      projectId,
+      prompt: "p",
+      resolvedAgent: { provider: "claude-code" },
+      mode: "plan",
+      cliSessionId: null,
+      logPrefix: "[probe]",
+    });
+    await dispatched.settled;
+
+    expect(dispatched.cliSessionId).toBeUndefined();
+    expect(pm.starts[0].options.cliSessionId).toBeUndefined();
+  });
+
   it("spawns in the mode the row was persisted with", async () => {
     const projectId = seedProject();
     const dispatched = dispatchBackgroundSession({

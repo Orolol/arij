@@ -65,13 +65,6 @@ vi.mock("@/lib/github/sync-log", () => ({
   logSyncOperation: mockLogSyncOperation,
 }));
 
-vi.mock("@/lib/activity-registry", () => ({
-  activityRegistry: {
-    register: vi.fn(),
-    unregister: vi.fn(),
-  },
-}));
-
 // Mock new modules added for release flow
 vi.mock("@/lib/agent-sessions/lifecycle", () => ({
   createQueuedSession: vi.fn(),
@@ -142,6 +135,10 @@ describe("Release creation with pushToGitHub", () => {
     // Setup: project without GitHub, selected epics, release result
     dbMockState.getQueue = [
       { id: "proj_1", name: "Test Project", gitRepoPath: "/tmp/repo", githubOwnerRepo: null },
+      // no release of this version yet
+      null,
+      // finalizeRelease reads the claimed row, the response re-reads it
+      { id: "test-release-id", version: "1.0.0" },
       { id: "test-release-id", version: "1.0.0" },
     ];
     dbMockState.allQueue = [
@@ -175,7 +172,11 @@ describe("Release creation with pushToGitHub", () => {
     // Setup: project with GitHub configured
     dbMockState.getQueue = [
       { id: "proj_1", name: "Test Project", gitRepoPath: "/tmp/repo", githubOwnerRepo: "owner/repo" },
-      { id: "test-release-id", version: "1.0.0", githubReleaseId: 99, githubReleaseUrl: "https://github.com/owner/repo/releases/99" },
+      // no release of this version yet
+      null,
+      // finalizeRelease reads the claimed row, the response re-reads it
+      { id: "test-release-id", version: "1.0.0", title: "First Release" },
+      { id: "test-release-id", version: "1.0.0", title: "First Release", githubReleaseId: 99, githubReleaseUrl: "https://github.com/owner/repo/releases/99" },
     ];
     dbMockState.allQueue = [
       [{ id: "ep_1", title: "Epic 1", description: "desc", status: "done" }],
@@ -224,6 +225,14 @@ describe("Release creation with pushToGitHub", () => {
       })
     );
 
+    // #105: the draft is stamped as pushed to GitHub, never as published —
+    // only the publish route writes `publishedAt`.
+    const stamp = dbMockState.updateCalls.find(
+      (payload) => (payload as Record<string, unknown>).githubReleaseId === 99
+    ) as Record<string, unknown> | undefined;
+    expect(stamp?.pushedAt).toEqual(expect.any(String));
+    expect(stamp).not.toHaveProperty("publishedAt");
+
     // Sync log should have entries for tag push and release create
     expect(mockLogSyncOperation).toHaveBeenCalledTimes(2);
     expect(mockLogSyncOperation).toHaveBeenCalledWith(
@@ -254,6 +263,8 @@ describe("Release creation with pushToGitHub", () => {
         githubOwnerRepo: "owner/repo",
         defaultBranch: "develop",
       },
+      null,
+      { id: "test-release-id", version: "1.0.0" },
       { id: "test-release-id", version: "1.0.0" },
     ];
     dbMockState.allQueue = [
@@ -287,6 +298,10 @@ describe("Release creation with pushToGitHub", () => {
   it("creates local release even when GitHub push fails", async () => {
     dbMockState.getQueue = [
       { id: "proj_1", name: "Test Project", gitRepoPath: "/tmp/repo", githubOwnerRepo: "owner/repo" },
+      // no release of this version yet
+      null,
+      // finalizeRelease reads the claimed row, the response re-reads it
+      { id: "test-release-id", version: "2.0.0" },
       { id: "test-release-id", version: "2.0.0" },
     ];
     dbMockState.allQueue = [
@@ -338,6 +353,10 @@ describe("Release creation with pushToGitHub", () => {
   it("skips GitHub operations when project has no githubOwnerRepo", async () => {
     dbMockState.getQueue = [
       { id: "proj_1", name: "Test Project", gitRepoPath: "/tmp/repo", githubOwnerRepo: null },
+      // no release of this version yet
+      null,
+      // finalizeRelease reads the claimed row, the response re-reads it
+      { id: "test-release-id", version: "1.0.0" },
       { id: "test-release-id", version: "1.0.0" },
     ];
     dbMockState.allQueue = [

@@ -4,36 +4,19 @@ import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import {
   getProjectMemoryDoc,
-  getProjectMemoryArchiveDoc,
-  saveProjectMemory,
+  isProjectMemoryChangedError,
+  saveProjectMemoryGuarded,
 } from "@/lib/documents/memory";
+import { buildMemoryEnvelope } from "@/lib/documents/memory-envelope";
 import {
   PROJECT_MEMORY_MAX_CHARS,
   PROJECT_MEMORY_MAX_TOKENS,
 } from "@/lib/documents/memory-constants";
-import {
-  getMemoryWriteProvenance,
-  recordMemoryWriteProvenance,
-} from "@/lib/documents/memory-provenance";
+import { recordMemoryWriteProvenance } from "@/lib/documents/memory-provenance";
 import { eventBus } from "@/lib/events/bus";
-import { getPendingMemoryWriter } from "@/lib/workflow/memory-writer-lock";
 import { createMemoryManualWriteNotification } from "@/lib/notifications/create";
 
 type Params = { params: Promise<{ projectId: string }> };
-
-/**
- * The restore-from-snapshot payload the memory panel shows: the one pre-dream
- * archive row, or null when there is nothing to restore.
- */
-function memoryArchivePayload(projectId: string) {
-  const archive = getProjectMemoryArchiveDoc(projectId);
-  return archive
-    ? {
-        content: archive.markdownContent ?? "",
-        updatedAt: archive.updatedAt ?? null,
-      }
-    : null;
-}
 
 /**
  * GET /api/projects/[projectId]/memory
@@ -43,9 +26,10 @@ function memoryArchivePayload(projectId: string) {
  * memory panel treats "absent" and "empty" identically.
  *
  * `provenance` tells WHO wrote the document last (Story 3 of the "gérer la
- * section mémoire" epic), `archive` carries the one pre-dream snapshot the
- * panel can restore from, and `pendingWriter` names an in-flight agent
- * rewrite so the panel can warn that it may be superseded.
+ * section mémoire" epic), `archive` dates the one pre-dream snapshot the
+ * panel can restore from (its text: GET /memory/restore), and `pendingWriter`
+ * names an in-flight agent rewrite so the panel can warn that it may be
+ * superseded. See lib/documents/memory-envelope.ts.
  */
 export async function GET(_request: NextRequest, { params }: Params) {
   const { projectId } = await params;
@@ -53,20 +37,8 @@ export async function GET(_request: NextRequest, { params }: Params) {
   const found = getProjectOr404(projectId);
   if (isErrorResponse(found)) return found;
 
-  const doc = getProjectMemoryDoc(projectId);
-  const provenance = getMemoryWriteProvenance(projectId);
-  const archive = memoryArchivePayload(projectId);
-
   return NextResponse.json({
-    data: {
-      content: doc?.markdownContent ?? "",
-      exists: !!doc,
-      updatedAt: doc?.updatedAt ?? null,
-      maxChars: PROJECT_MEMORY_MAX_CHARS,
-      provenance,
-      archive,
-      pendingWriter: getPendingMemoryWriter(projectId),
-    },
+    data: buildMemoryEnvelope(projectId, getProjectMemoryDoc(projectId)),
   });
 }
 
@@ -79,6 +51,14 @@ const putMemorySchema = z.object({
       PROJECT_MEMORY_MAX_CHARS,
       `Project memory must stay under ${PROJECT_MEMORY_MAX_TOKENS} tokens (about ${PROJECT_MEMORY_MAX_CHARS} characters)`
     ),
+  /**
+   * The memory the editor LOADED, for optimistic concurrency. A dream or a
+   * distill can land between that load and the click on Save; a manual write
+   * does not archive, so replacing blindly would lose the agent's text for
+   * good. Compared on the trimmed document, like the agent writers compare.
+   * Omitted = unconditional (API consumers that do not edit a loaded copy).
+   */
+  expectedPrevious: z.string().nullable().optional(),
 });
 
 /**
@@ -87,6 +67,10 @@ const putMemorySchema = z.object({
  * Creates or replaces the memory document with the given markdown body.
  * An empty string is valid: it clears the memory (the prompt section is
  * omitted for empty content, so agents simply stop seeing it).
+ *
+ * 409 `MEMORY_CHANGED` when `expectedPrevious` no longer matches the stored
+ * memory: the write goes through the same guarded primitive as the two agent
+ * writers, so no path overwrites a document it did not read.
  */
 export async function PUT(request: NextRequest, { params }: Params) {
   const { projectId } = await params;
@@ -96,7 +80,34 @@ export async function PUT(request: NextRequest, { params }: Params) {
 
   const validated = await validateBody(putMemorySchema, request);
   if (isValidationError(validated)) return validated;
-  const { doc } = saveProjectMemory(projectId, validated.data.content);
+  const { content, expectedPrevious } = validated.data;
+
+  let saved;
+  try {
+    saved = saveProjectMemoryGuarded(
+      projectId,
+      content,
+      expectedPrevious === undefined
+        ? {}
+        : {
+            // The lib compares against the trimmed stored content, null when
+            // empty — normalise the editor's verbatim copy the same way.
+            expectedPrevious: expectedPrevious?.trim() || null,
+          }
+    );
+  } catch (error) {
+    if (isProjectMemoryChangedError(error)) {
+      return NextResponse.json(
+        {
+          error:
+            "The project memory changed since it was loaded. Reload it before saving.",
+          code: "MEMORY_CHANGED",
+        },
+        { status: 409 }
+      );
+    }
+    throw error;
+  }
 
   // Record who wrote the document, then tell every open Spec & Memory view to
   // re-fetch (story 2: no more polling), and leave an activity entry: manual
@@ -110,15 +121,5 @@ export async function PUT(request: NextRequest, { params }: Params) {
   });
   createMemoryManualWriteNotification({ projectId, restored: false });
 
-  return NextResponse.json({
-    data: {
-      content: doc.markdownContent ?? "",
-      exists: true,
-      updatedAt: doc.updatedAt ?? null,
-      maxChars: PROJECT_MEMORY_MAX_CHARS,
-      provenance: getMemoryWriteProvenance(projectId),
-      archive: memoryArchivePayload(projectId),
-      pendingWriter: getPendingMemoryWriter(projectId),
-    },
-  });
+  return NextResponse.json({ data: buildMemoryEnvelope(projectId, saved.doc) });
 }
