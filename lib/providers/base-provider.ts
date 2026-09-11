@@ -15,8 +15,7 @@
  * Subclasses implement ~3 abstract methods and get everything else for free.
  */
 
-import { spawn as nodeSpawn, type ChildProcess } from "child_process";
-import { execSync } from "child_process";
+import { spawn as nodeSpawn, execFile, type ChildProcess } from "child_process";
 import {
   createStreamLog,
   appendStreamEvent,
@@ -40,11 +39,45 @@ import type {
   ProviderSpawnOptions,
   ProviderType,
 } from "./types";
-import {
-  isChildAlive,
-  signalChild,
-  createChildKiller,
-} from "./process-signals";
+import { createChildKiller } from "./process-signals";
+
+/** Upper bound on any availability probe; a hung CLI must not hang a request. */
+export const PROVIDER_PROBE_TIMEOUT_MS = 5000;
+
+/**
+ * Runs a short diagnostic command WITHOUT blocking the event loop and returns
+ * its combined stdout+stderr, or `null` when it could not run or exited
+ * non-zero. Availability probes are called from request handlers (the
+ * providers/available route, the default chat mode, reviewer segregation);
+ * their synchronous predecessors (`execSync("which …")`, `codex login
+ * status`) stalled every concurrent request and SSE stream for the probe's
+ * duration, up to the five-second timeout when a CLI hung.
+ */
+export function runProbe(
+  file: string,
+  args: string[],
+  timeoutMs: number = PROVIDER_PROBE_TIMEOUT_MS,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        file,
+        args,
+        { encoding: "utf-8", timeout: timeoutMs },
+        (error, stdout, stderr) => {
+          if (error) {
+            resolve(null);
+            return;
+          }
+          resolve(`${stdout ?? ""}${stderr ?? ""}`);
+        },
+      );
+    } catch {
+      // A synchronous throw (invalid arguments, spawn refused) is a "no".
+      resolve(null);
+    }
+  });
+}
 
 export interface BaseProviderChunkCallbacks {
   onRawChunk?: (chunk: {
@@ -280,16 +313,12 @@ export abstract class BaseCliProvider implements AgentProvider {
   }
 
   /**
-   * Check if the CLI is available. Default: `which <binaryName>`.
-   * Override for providers that need additional checks (e.g. login status).
+   * Check if the CLI is available. Default: `which <binaryName>`, run
+   * asynchronously (see runProbe). Override for providers that need
+   * additional checks (e.g. login status).
    */
   async isAvailable(): Promise<boolean> {
-    try {
-      execSync(`which ${this.binaryName}`, { stdio: "ignore" });
-      return true;
-    } catch {
-      return false;
-    }
+    return (await runProbe("which", [this.binaryName])) !== null;
   }
 
   /**

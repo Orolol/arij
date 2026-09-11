@@ -4,7 +4,6 @@ import { db } from "@/lib/db";
 import { chatMessages, chatAttachments } from "@/lib/db/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
-import { spawnClaude } from "@/lib/claude/spawn";
 import { buildChatPrompt } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
@@ -160,35 +159,22 @@ export const POST = withAgentResolutionErrors(async function POST(
   }).prompt;
 
   try {
-    let result;
-    // Same rule as generate-spec: anything that is not Claude Code is spawned
-    // through its own provider, not silently through spawnClaude().
-    if (resolvedAgent.provider !== "claude-code") {
-      const dynamicProvider = getProvider(resolvedAgent.provider);
-      const session = dynamicProvider.spawn({
-        sessionId: `chat-${createId()}`,
-        prompt: enrichedPrompt,
-        cwd: project.gitRepoPath || process.cwd(),
-        mode: "plan",
-        model: resolvedAgent.model,
-        // A chat turn has no agent_sessions row, so it never reaches
-        // processManager.start() — the agent's CLI options have to be carried
-        // explicitly here. See lib/chat/cli-tool-channel.ts for the same
-        // reasoning applied to the MCP channel.
-        cliOptions: resolvedAgent.cliOptions,
-      });
-      result = await session.promise;
-    } else {
-      console.log("[chat] Spawning Claude CLI, cwd:", project.gitRepoPath || "(none)");
-      const { promise } = spawnClaude({
-        mode: "plan",
-        prompt: enrichedPrompt,
-        model: resolvedAgent.model,
-        cwd: project.gitRepoPath || undefined,
-        cliOptions: resolvedAgent.cliOptions,
-      });
-      result = await promise;
-    }
+    // One spawn path for every provider, claude-code included: the resolved
+    // agent's CLI is what runs, through its own provider.
+    console.log("[chat] Spawning", resolvedAgent.provider, "cwd:", project.gitRepoPath || "(none)");
+    const session = getProvider(resolvedAgent.provider).spawn({
+      sessionId: `chat-${createId()}`,
+      prompt: enrichedPrompt,
+      cwd: project.gitRepoPath || process.cwd(),
+      mode: "plan",
+      model: resolvedAgent.model,
+      // A chat turn has no agent_sessions row, so it never reaches
+      // processManager.start() — the agent's CLI options have to be carried
+      // explicitly here. See lib/chat/cli-tool-channel.ts for the same
+      // reasoning applied to the MCP channel.
+      cliOptions: resolvedAgent.cliOptions,
+    });
+    const result = await session.promise;
 
     console.log("[chat] Claude CLI result:", {
       success: result.success,

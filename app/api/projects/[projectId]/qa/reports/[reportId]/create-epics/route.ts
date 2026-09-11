@@ -7,7 +7,6 @@ import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { spawnClaude } from "@/lib/claude/spawn";
 import { extractJsonFromOutput } from "@/lib/claude/json-parser";
 import { getProvider } from "@/lib/providers";
 import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
@@ -254,30 +253,17 @@ ${epicTypeRule}
   async function spawnEpicGeneration(
     useResume: boolean,
   ): Promise<{ success: boolean; result?: string; error?: string }> {
-    const cwd = project.gitRepoPath || process.cwd();
-    if (provider !== "claude-code") {
-      const dynamicProvider = getProvider(provider);
-      const session = dynamicProvider.spawn({
-        sessionId: `qa-epics-${createId()}`,
-        prompt,
-        cwd,
-        mode: "plan",
-        model,
-        cliSessionId: useResume ? previousCliSessionId! : undefined,
-        resumeSession: useResume,
-      });
-      return session.promise;
-    } else {
-      const run = spawnClaude({
-        mode: "plan",
-        prompt,
-        cwd,
-        model,
-        cliSessionId: useResume ? previousCliSessionId! : undefined,
-        resumeSession: useResume,
-      });
-      return run.promise;
-    }
+    // One spawn path for every provider, claude-code included.
+    const session = getProvider(provider).spawn({
+      sessionId: `qa-epics-${createId()}`,
+      prompt,
+      cwd: project.gitRepoPath || process.cwd(),
+      mode: "plan",
+      model,
+      cliSessionId: useResume ? previousCliSessionId! : undefined,
+      resumeSession: useResume,
+    });
+    return session.promise;
   }
 
   // Try resume-first, fall back to fresh prompt on failure

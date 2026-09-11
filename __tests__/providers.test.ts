@@ -269,9 +269,18 @@ describe("CodexProvider", () => {
     }
   });
 
-  it("does not escalate once the agent has actually exited", () => {
+  it("does not escalate once the agent and its whole group have exited", () => {
     vi.useFakeTimers({ toFake: ["setTimeout"] });
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    // Once the leader has exited, the group probe (`kill(-pgid, 0)`) answers
+    // ESRCH: nothing survived SIGTERM, so there is nothing to escalate to.
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      if (fakeChild.exitCode !== null) {
+        const error = new Error("ESRCH") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
+      }
+      return true;
+    });
     try {
       const session = provider.spawn(baseOptions);
       provider.cancel(session);
@@ -280,7 +289,9 @@ describe("CodexProvider", () => {
       fakeChild.exitCode = 143;
       vi.advanceTimersByTime(5000);
 
-      expect(killSpy).not.toHaveBeenCalled();
+      // The liveness probe may run; no SIGKILL is delivered to anyone.
+      expect(killSpy).not.toHaveBeenCalledWith(expect.anything(), "SIGKILL");
+      expect(fakeChild.kill).not.toHaveBeenCalledWith("SIGKILL");
     } finally {
       vi.useRealTimers();
     }

@@ -1,11 +1,19 @@
 /**
- * Claude Code provider — wraps the existing CLI spawn logic
- * behind the AgentProvider interface.
+ * Claude Code provider — the `claude` CLI behind the AgentProvider interface.
  *
- * Claude Code's spawn logic is kept in lib/claude/spawn.ts because it
- * has unique features (streaming, --allowedTools, --permission-mode)
- * that don't fit neatly into the base class spawn. The provider delegates
- * to spawnClaude() rather than using BaseCliProvider.spawn().
+ * The argv construction and the process lifecycle stay in lib/claude/spawn.ts
+ * (--permission-mode, --allowedTools, the 0600 `--mcp-config` file, the
+ * stream-json variant used by the chat SSE route). This class is the ONLY
+ * caller of spawnClaude outside that module: every one-shot session — the
+ * process manager, the routes that spawn directly (chat, spec generation, QA
+ * epic extraction, import, titling) — goes through `getProvider(provider)
+ * .spawn(...)` regardless of provider, so there is no `provider !==
+ * "claude-code"` branch left to copy from one call site to the next.
+ *
+ * What the class cannot do yet: stream. spawnClaude runs `--output-format
+ * json`, which yields one document on exit, so `onChunk` is accepted and
+ * ignored — the LIVE LOG band stays empty for claude-code sessions until the
+ * spawn moves to stream-json (session storage lot).
  */
 
 import { spawnClaude } from "@/lib/claude/spawn";
@@ -34,8 +42,10 @@ export class ClaudeCodeProvider extends BaseCliProvider {
   }
 
   /**
-   * Override spawn to delegate to the existing spawnClaude() function,
-   * which handles Claude Code's unique CLI arguments and streaming.
+   * Delegates to spawnClaude(), which owns Claude Code's argv and streaming.
+   * Everything the process manager needs back — the kill, the display
+   * command, the temp `--mcp-config` path it tears down on its own exit
+   * path — rides on the returned session.
    */
   spawn(options: ProviderSpawnOptions): ProviderSession {
     const {
@@ -49,9 +59,10 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       logIdentifier,
       mcp,
       cliOptions,
+      killGraceMs,
     } = options;
 
-    const { promise: rawPromise, kill, command } = spawnClaude({
+    const { promise: rawPromise, kill, command, mcpConfigPath } = spawnClaude({
       mode,
       prompt,
       cwd,
@@ -62,6 +73,7 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       logIdentifier,
       mcp,
       cliOptions,
+      killGraceMs,
     });
 
     // Map ClaudeResult → ProviderResult
@@ -79,6 +91,7 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       kill,
       promise,
       command,
+      mcpConfigPath,
     };
   }
 }

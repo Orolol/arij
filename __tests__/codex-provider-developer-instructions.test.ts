@@ -267,6 +267,16 @@ describe("CodexProvider exit handling", () => {
   it("reports cancellation when killed before close", async () => {
     // Fake setTimeout so the 5s SIGKILL escalation timer never lingers
     vi.useFakeTimers({ toFake: ["setTimeout"] });
+    // Never signal a real process group from a test: the fake child's pid is
+    // made up. The liveness probe answers "alive", the group signal answers
+    // ESRCH, so the cancel falls back to the child handle.
+    vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+      const alive = fakeChild.exitCode === null && fakeChild.signalCode === null;
+      if (signal === 0 && alive) return true;
+      const error = new Error("ESRCH") as NodeJS.ErrnoException;
+      error.code = "ESRCH";
+      throw error;
+    });
     try {
       const provider = new CodexProvider();
       const session = provider.spawn(baseOptions());
@@ -274,6 +284,9 @@ describe("CodexProvider exit handling", () => {
       session.kill();
       expect(fakeChild.kill).toHaveBeenCalledWith("SIGTERM");
 
+      // The child dies on SIGTERM: the close handler's teardown wait sees a
+      // signalled handle and a gone group, and resolves at once.
+      fakeChild.signalCode = "SIGTERM";
       fakeChild.emitClose(null);
       const result = await session.promise;
       expect(result.success).toBe(false);

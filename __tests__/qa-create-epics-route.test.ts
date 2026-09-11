@@ -50,8 +50,11 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
   beforeEach(() => {
     vi.clearAllMocks();
     resetDbMockState();
+    // First id: the provider session (`qa-epics-<id>`), minted for every
+    // provider now that claude-code spawns through the registry too.
     mockCreateId
       .mockReset()
+      .mockReturnValueOnce("qa-epics-session")
       .mockReturnValueOnce("epic-1")
       .mockReturnValueOnce("story-1");
     mockResolveAgent.mockReturnValue({ provider: "claude-code", model: "claude-opus" });
@@ -73,12 +76,12 @@ describe("POST /api/projects/[projectId]/qa/reports/[reportId]/create-epics", ()
       },
     ]);
     mockIsResumableProvider.mockReturnValue(false);
-    mockGetProvider.mockReturnValue({
-      spawn: vi.fn(() => ({
-        promise: Promise.resolve({ success: true, result: "[]" }),
-        kill: vi.fn(),
-      })),
-    });
+    // Every provider is spawned through getProvider(); the registry's
+    // claude-code entry is a thin spawnClaude wrapper, so the spawnClaude spy
+    // keeps observing the claude path. Codex tests override this.
+    mockGetProvider.mockImplementation(() => ({
+      spawn: (options: Record<string, unknown>) => mockSpawnClaude(options),
+    }));
   });
 
   it("returns 404 when report is missing or empty", async () => {

@@ -116,7 +116,11 @@ export function signalChild(
     process.kill(-pgid, signal);
   } catch (err: unknown) {
     const error = err as NodeJS.ErrnoException;
-    if (error?.code === "ESRCH") return;
+    // ESRCH on the GROUP while the child handle is still alive means the pid
+    // is not a group leader (a spawn without `detached`, or a group already
+    // torn down around a still-running leader): signal the child itself.
+    // ESRCH with a dead handle means everything is already gone.
+    if (error?.code === "ESRCH" && !childAlive) return;
     try {
       if (child) {
         child.kill(signal);

@@ -17,18 +17,19 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { execSync } from "child_process";
 import { CODEX_SUBAGENT_DEVELOPER_INSTRUCTIONS } from "@/lib/codex/constants";
 import type { StreamLogContext } from "@/lib/claude/logger";
 import {
   BaseCliProvider,
   STDIN_PAYLOAD_KEY,
+  runProbe,
   type BaseProviderChunkCallbacks,
   type ProviderExitInfo,
   type ProviderSpawnContext,
 } from "./base-provider";
 import { promptExceedsArgv } from "./prompt-transport";
 import { buildProviderOptionArgs } from "./options-registry";
+import { unsandboxedSpawnBlockReason } from "./spawn-containment";
 import type {
   McpSpawnConfig,
   ProviderResult,
@@ -97,8 +98,13 @@ interface CodexSpawnContext extends ProviderSpawnContext {
  *
  * What actually contains these agents is the same thing that contains the
  * claude-code ones, which have run `--permission-mode bypassPermissions` all
- * along: a disposable per-ticket git worktree. Narrow this the moment codex
- * grows a real non-interactive approval setting.
+ * along: a disposable per-ticket git worktree. That containment is ENFORCED,
+ * not assumed: `preflight` refuses a plan/chat/analyze spawn whose cwd is not
+ * an Arij worktree (see lib/providers/spawn-containment.ts) — before this
+ * gate, chat turns, spec generation, QA epic extraction, titling and the
+ * memory writers all ran codex with full write access to the main checkout,
+ * or to Arij's own repository. Narrow the flag itself the moment codex grows
+ * a real non-interactive approval setting.
  */
 function codexApprovalArgs(): string[] {
   return ["--dangerously-bypass-approvals-and-sandbox"];
@@ -198,6 +204,16 @@ export class CodexProvider extends BaseCliProvider {
    */
   protected get developerInstructions(): string | undefined {
     return CODEX_SUBAGENT_DEVELOPER_INSTRUCTIONS;
+  }
+
+  /**
+   * A restricted mode with no sandbox behind it is only acceptable inside a
+   * disposable worktree. Refusing here is the loud half of the trade: the
+   * session fails with the reason instead of quietly running an agent with
+   * write access on the user's repository.
+   */
+  protected preflight(options: ProviderSpawnOptions): string | undefined {
+    return unsandboxedSpawnBlockReason("Codex", options) ?? undefined;
   }
 
   protected prepareSpawn(options: ProviderSpawnOptions): CodexSpawnContext {
@@ -448,21 +464,18 @@ export class CodexProvider extends BaseCliProvider {
     }
   }
 
+  /**
+   * Installed AND logged in. Both probes are asynchronous: this runs inside
+   * request handlers (GET /api/providers/available, the default chat mode,
+   * reviewer segregation), and a synchronous `codex login status` used to
+   * hold the whole event loop — every SSE stream included — for its duration.
+   */
   async isAvailable(): Promise<boolean> {
-    try {
-      execSync("which codex", { stdio: "ignore" });
-    } catch {
-      return false;
-    }
-    // Also check login status (codex writes to stderr)
-    try {
-      const output = execSync("codex login status 2>&1", {
-        encoding: "utf-8",
-        timeout: 5000,
-      });
-      return /logged in/i.test(output);
-    } catch {
-      return false;
-    }
+    if (!(await super.isAvailable())) return false;
+    // codex writes the login status to stderr; the probe merges both streams.
+    // "Not logged in" contains "logged in" — test the negative form first.
+    const login = await runProbe("codex", ["login", "status"]);
+    if (login === null || /not logged in/i.test(login)) return false;
+    return /logged in/i.test(login);
   }
 }

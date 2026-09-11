@@ -138,7 +138,7 @@ describe("generate-spec provider dispatch", () => {
     expect(mocks.spawnClaude).not.toHaveBeenCalled();
   });
 
-  it("keeps using spawnClaude for claude-code", async () => {
+  it("routes claude-code through the same provider registry, not a private branch", async () => {
     mocks.resolveAgentByNamedId.mockReturnValue({
       provider: "claude-code",
       model: undefined,
@@ -148,7 +148,13 @@ describe("generate-spec provider dispatch", () => {
 
     await postGenerateSpec();
 
-    expect(mocks.spawnClaude).toHaveBeenCalledTimes(1);
-    expect(mocks.getProvider).not.toHaveBeenCalled();
+    // The registry's claude-code entry (ClaudeCodeProvider) is what wraps
+    // spawnClaude; the route itself never picks a spawner by provider name.
+    expect(mocks.getProvider).toHaveBeenCalledWith("claude-code");
+    expect(mocks.providerSpawn).toHaveBeenCalledTimes(1);
+    expect(mocks.providerSpawn).toHaveBeenCalledWith(
+      expect.objectContaining({ mode: "plan", logIdentifier: expect.stringMatching(/^spec-/) }),
+    );
+    expect(mocks.spawnClaude).not.toHaveBeenCalled();
   });
 });

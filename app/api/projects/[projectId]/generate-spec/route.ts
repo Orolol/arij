@@ -4,7 +4,6 @@ import { db } from "@/lib/db";
 import { projects, chatMessages, epics, userStories } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
-import { spawnClaude } from "@/lib/claude/spawn";
 import { buildSpecGenerationPrompt } from "@/lib/claude/prompt-builder";
 import { extractJsonFromOutput, parseClaudeOutput } from "@/lib/claude/json-parser";
 import { tryExportArjiJson } from "@/lib/sync/export";
@@ -93,30 +92,18 @@ export const POST = withAgentResolutionErrors(async function POST(
   });
 
   try {
-    let result;
-    // Every non-Claude provider goes through the provider abstraction. An
-    // allowlist here would silently run some other CLI's work on Claude while
-    // the activity record claims the resolved provider.
-    if (resolvedAgent.provider !== "claude-code") {
-      const dynamicProvider = getProvider(resolvedAgent.provider);
-      const session = dynamicProvider.spawn({
-        sessionId: `spec-${createId()}`,
-        prompt: enrichedPrompt,
-        cwd: project.gitRepoPath || process.cwd(),
-        mode: "plan",
-        model: resolvedAgent.model,
-        logIdentifier: `spec-${projectId}`,
-      });
-      result = await session.promise;
-    } else {
-      const { promise } = spawnClaude({
-        mode: "plan",
-        prompt: enrichedPrompt,
-        model: resolvedAgent.model,
-        cwd: project.gitRepoPath || undefined,
-      });
-      result = await promise;
-    }
+    // Every provider goes through the provider abstraction, claude-code
+    // included: the resolved provider is the one that runs, and the activity
+    // record says which.
+    const session = getProvider(resolvedAgent.provider).spawn({
+      sessionId: `spec-${createId()}`,
+      prompt: enrichedPrompt,
+      cwd: project.gitRepoPath || process.cwd(),
+      mode: "plan",
+      model: resolvedAgent.model,
+      logIdentifier: `spec-${projectId}`,
+    });
+    const result = await session.promise;
 
     if (!result.success) {
       return NextResponse.json({ error: result.error || "Claude Code failed" }, { status: 500 });

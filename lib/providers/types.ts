@@ -139,7 +139,11 @@ export interface ProviderSpawnOptions {
   sessionId: string;
   /** The prompt/instructions for the agent. */
   prompt: string;
-  /** Working directory for the agent. */
+  /**
+   * Working directory for the agent. For a provider that cannot be made
+   * read-only (codex), a restricted mode is only allowed when this is a
+   * disposable Arij worktree — see lib/providers/spawn-containment.ts.
+   */
   cwd: string;
   /**
    * Agent mode: "plan" = read-only, "code" = full write access, "analyze" =
@@ -195,6 +199,13 @@ export interface ProviderSession {
   promise: Promise<ProviderResult>;
   /** The CLI command that was spawned (prompt replaced with <prompt>). */
   command?: string;
+  /**
+   * Temp `--mcp-config` file of a claude-code spawn, when MCP injection was
+   * active. The spawn deletes it on its own exit path; exposed so the process
+   * manager can also clear it on teardown (cancel, late completion handler).
+   * Absent for providers whose MCP wiring has no file form.
+   */
+  mcpConfigPath?: string;
 }
 
 export interface AgentProvider {

@@ -63,6 +63,7 @@ import {
 import { OhMyPiProvider } from "@/lib/providers/oh-my-pi";
 import {
   OMP_MIN_ALLOWLIST_VERSION,
+  OMP_REFUSAL_MEMO_MS,
   ompAllowlistIsEnforced,
   ompRestrictedToolsBlockReason,
   parseOmpVersion,
@@ -201,19 +202,33 @@ describe("omp version probe", () => {
     expect(ompRestrictedToolsBlockReason()).toContain("omp update");
   });
 
-  it("memoises a trusted version but re-probes a refusal", () => {
-    installedOmp(SAFE_VERSION);
-    expect(ompRestrictedToolsBlockReason()).toBeNull();
-    expect(ompRestrictedToolsBlockReason()).toBeNull();
-    expect(mocks.execFileSync).toHaveBeenCalledTimes(1);
+  it("memoises a trusted version for good, a refusal only briefly", () => {
+    vi.useFakeTimers();
+    try {
+      installedOmp(SAFE_VERSION);
+      expect(ompRestrictedToolsBlockReason()).toBeNull();
+      expect(ompRestrictedToolsBlockReason()).toBeNull();
+      expect(mocks.execFileSync).toHaveBeenCalledTimes(1);
 
-    // A refusal must NOT stick: a user who reacts to the error by running
-    // `omp update` gets unblocked without restarting the Arij server.
-    resetOmpVersionProbeForTests();
-    installedOmp(LEAKY_VERSION);
-    expect(ompRestrictedToolsBlockReason()).not.toBeNull();
-    installedOmp(SAFE_VERSION);
-    expect(ompRestrictedToolsBlockReason()).toBeNull();
+      // A refusal is remembered for a few seconds so a burst of restricted
+      // spawns on a too-old install does not re-run the synchronous probe
+      // for each of them…
+      resetOmpVersionProbeForTests();
+      mocks.execFileSync.mockClear();
+      installedOmp(LEAKY_VERSION);
+      expect(ompRestrictedToolsBlockReason()).not.toBeNull();
+      expect(ompRestrictedToolsBlockReason()).not.toBeNull();
+      expect(mocks.execFileSync).toHaveBeenCalledTimes(1);
+
+      // …but it must NOT stick: a user who reacts to the error by running
+      // `omp update` gets unblocked without restarting the Arij server.
+      installedOmp(SAFE_VERSION);
+      vi.advanceTimersByTime(OMP_REFUSAL_MEMO_MS + 1);
+      expect(ompRestrictedToolsBlockReason()).toBeNull();
+      expect(mocks.execFileSync).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

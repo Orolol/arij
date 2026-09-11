@@ -101,15 +101,34 @@ export function ompAllowlistIsEnforced(
 }
 
 /**
- * Only a trusted verdict is memoised. A refusal is re-probed on the next spawn
- * so that a user who reacts to the error by running `omp update` is unblocked
- * without restarting the Arij server.
+ * A trusted verdict is memoised for the life of the process. A refusal is
+ * memoised only briefly (REFUSAL_MEMO_MS): long enough that a burst of
+ * restricted spawns on a too-old install does not re-run the synchronous
+ * `omp --version` (≈300 ms, up to the 5 s timeout when the binary hangs) on
+ * every one of them, short enough that a user who reacts to the error by
+ * running `omp update` is unblocked without restarting the Arij server.
  */
 let trustedVersion: string | null = null;
+let refusal: { probe: OmpVersionProbe; until: number } | null = null;
+
+/** How long a refusal (absent, unreadable or too-old omp) is remembered. */
+export const OMP_REFUSAL_MEMO_MS = 5000;
 
 /** Reads `omp --version`. Never throws. */
 export function probeOmpVersion(): OmpVersionProbe {
   if (trustedVersion) return { status: "ok", version: trustedVersion };
+  if (refusal && refusal.until > Date.now()) return refusal.probe;
+  refusal = null;
+  const probe = readOmpVersion();
+  if (probe.status === "ok" && ompAllowlistIsEnforced(probe.version)) {
+    trustedVersion = probe.version;
+  } else {
+    refusal = { probe, until: Date.now() + OMP_REFUSAL_MEMO_MS };
+  }
+  return probe;
+}
+
+function readOmpVersion(): OmpVersionProbe {
   let output: string;
   try {
     output = execFileSync("omp", ["--version"], {
@@ -132,7 +151,6 @@ export function probeOmpVersion(): OmpVersionProbe {
       detail: shown ? `unrecognised output ${JSON.stringify(shown)}` : "no output",
     };
   }
-  if (ompAllowlistIsEnforced(version)) trustedVersion = version;
   return { status: "ok", version };
 }
 
@@ -174,7 +192,8 @@ export function ompRestrictedToolsBlockReason(): string | null {
   return null;
 }
 
-/** Test-only: drop the memoised trusted version. */
+/** Test-only: drop the memoised trusted version and any remembered refusal. */
 export function resetOmpVersionProbeForTests(): void {
   trustedVersion = null;
+  refusal = null;
 }

@@ -298,6 +298,16 @@ off without the suite ever running. Containment comes from the disposable
 per-ticket worktree, the same thing that has always contained the claude-code
 agents running `--permission-mode bypassPermissions`.
 
+That containment is enforced, not assumed. `CodexProvider.preflight` refuses a
+`plan`, `chat` or `analyze` spawn whose cwd is not inside `.arij-worktrees`
+(`lib/providers/spawn-containment.ts`): the session fails with an actionable
+message naming the providers that do have a read-only posture. Measured on
+2026-09-10 before the gate, chat turns, spec generation, QA epic extraction,
+conversation titling (cwd = Arij's own repository), dreaming, memory
+distillation and forensic diagnostics all ran codex with full write access to
+the main checkout. Build, review, merge and grading sessions are unaffected:
+they run in a worktree, in `code` mode.
+
 Unlike claude's `--mcp-config`, codex's `-c` mechanism has no file form, so the
 token rides in argv. Accepted, local-only, and masked everywhere downstream —
 see the comment on `buildCodexMcpOverrideArgs`.
