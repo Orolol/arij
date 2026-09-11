@@ -21,12 +21,15 @@
  *     agent reads identical before and after a prune. That is the invariant
  *     this module is built around, and the one its tests pin.
  *
- * What a prune DOES cost, stated rather than discovered later: the Arij
- * action list a session detail reconstructs by scanning the `raw` stream
- * (`lib/agent-sessions/arij-actions.ts`) is reduced to the retained tail for a
- * pruned session. The database-recorded half of that list — comments,
- * findings, artifacts, status moves — is unaffected, and it is the half that
- * carries the durable record.
+ * What a prune DOES cost, stated rather than discovered later: for a session
+ * whose Arij tool calls are NOT indexed (no `agent_session_tool_call_index`
+ * row — see `lib/agent-sessions/arij-action-scan.ts`), the Arij action list a
+ * session detail reconstructs by scanning the `raw` stream is reduced to the
+ * retained tail. An indexed session loses nothing: its calls live in
+ * `agent_session_tool_calls`, which a prune does not touch — and a finished
+ * session becomes indexed the first time its stream is scanned to the end.
+ * The database-recorded half of that list — comments, findings, artifacts,
+ * status moves — is unaffected either way.
  *
  * Nothing here decides which sessions are eligible beyond the caller's
  * cutoff: the terminal-status and age filters are applied in SQL below, so a

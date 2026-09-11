@@ -40,6 +40,7 @@ const { db } = await import("@/lib/db");
 const { projects, epics, agentSessions, ticketComments } = await import(
   "@/lib/db/schema"
 );
+const { eq } = await import("drizzle-orm");
 const chunks = await import("@/lib/agent-sessions/chunks");
 const { appendSessionChunk } = chunks;
 const { GET } = await import(
@@ -101,6 +102,16 @@ function instrumentChunkReads() {
       return page;
     }
   );
+  // The raw preview is read from the END of the stream; it is one more
+  // bounded page, under the same preview budget.
+  vi.spyOn(chunks, "listSessionChunkTail").mockImplementation(
+    (sessionId, streamType, options) => {
+      stats.pageCalls += 1;
+      const tail = actualListChunkTail(sessionId, streamType, options);
+      for (const chunk of tail.chunks) stats.charactersRead += chunk.content.length;
+      return tail;
+    }
+  );
   vi.spyOn(chunks, "listSessionChunks").mockImplementation(
     (sessionId, streamType) => {
       stats.wholeStreamCalls += 1;
@@ -113,6 +124,7 @@ function instrumentChunkReads() {
 
 const actualListChunkPage = chunks.listSessionChunkPage;
 const actualListChunks = chunks.listSessionChunks;
+const actualListChunkTail = chunks.listSessionChunkTail;
 
 beforeEach(() => {
   vi.restoreAllMocks();
@@ -239,6 +251,12 @@ describe("?view=arij-actions", () => {
   });
 
   it("re-polls cheaply and picks up what the session appended since", async () => {
+    // Only a session that is still going appends; a finished one is
+    // persisted to the index by its first complete scan (#236).
+    db.update(agentSessions)
+      .set({ status: "running" })
+      .where(eq(agentSessions.id, SESSION))
+      .run();
     seedRaw([toolUseLine("tu_1", "get_ticket")]);
 
     const first = await (await get({ view: "arij-actions" })).json();

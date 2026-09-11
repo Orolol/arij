@@ -42,9 +42,12 @@ import {
 } from "@/components/ui/select";
 import { parseStoredTimestamp } from "@/lib/agent-sessions/last-activity";
 import {
+  fetchUnifiedSessionPage,
   fetchUnifiedSessions,
   UnifiedSessionListIncompleteError,
+  type SessionListSummary,
 } from "@/lib/agent-sessions/session-list";
+import { PillButton } from "@/components/piscine";
 
 // --- Discriminated union types ---
 
@@ -170,26 +173,20 @@ const TABLE_GRID =
 /** A column the phone layout drops. `hidden` removes it from the grid flow. */
 const DESKTOP_CELL = "hidden sm:block";
 
+/** A band cell whose count did not arrive: a dash, not a zero. Not copy. */
+const BAND_UNKNOWN = "—";
+
 /** Row padding and gutter, tightened on a phone. */
 const TABLE_ROW_PADDING = "gap-[10px] px-[14px] sm:gap-[14px] sm:px-[22px]";
 
-function isToday(iso: string | null | undefined): boolean {
-  if (!iso) return false;
-  const timestamp = parseStoredTimestamp(iso);
-  if (timestamp === null) return false;
-  const date = new Date(timestamp);
-  const now = new Date();
-  return (
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate()
-  );
-}
-
-function isTerminal(status: string): boolean {
-  return (
-    status === "completed" || status === "failed" || status === "cancelled"
-  );
+/**
+ * The browser's local midnight. The band's "today" is the viewer's day, which
+ * only the client knows, so it is sent to the server's aggregate as a bound.
+ */
+function startOfLocalDay(): Date {
+  const midnight = new Date();
+  midnight.setHours(0, 0, 0, 0);
+  return midnight;
 }
 
 export default function SessionsPage() {
@@ -200,7 +197,17 @@ export default function SessionsPage() {
   const incompleteMessage = t("incomplete");
   const params = useParams();
   const projectId = params.projectId as string;
-  const [items, setItems] = useState<UnifiedSession[]>([]);
+  /** The newest page — all the default view ever loads. */
+  const [headItems, setHeadItems] = useState<UnifiedSession[]>([]);
+  /** Every later page, once something asked for the whole list. */
+  const [tailItems, setTailItems] = useState<UnifiedSession[]>([]);
+  /** Where the tail starts; null once the head is the whole list. */
+  const [headCursor, setHeadCursor] = useState<string | null>(null);
+  /** Latched: the tail was asked for (a filter, a sort, "Load all sessions"). */
+  const [tailWanted, setTailWanted] = useState(false);
+  const [tailDone, setTailDone] = useState(false);
+  /** The synthesis band, counted by the server over every session. */
+  const [summary, setSummary] = useState<SessionListSummary | null>(null);
   const [loading, setLoading] = useState(true);
   /** Set when the page loop could not reach the end of the list. */
   const [incomplete, setIncomplete] = useState<string | null>(null);
@@ -228,9 +235,31 @@ export default function SessionsPage() {
   const [loadedProjectId, setLoadedProjectId] = useState(projectId);
   if (loadedProjectId !== projectId) {
     setLoadedProjectId(projectId);
-    setItems([]);
+    setHeadItems([]);
+    setTailItems([]);
+    setHeadCursor(null);
+    setTailWanted(false);
+    setTailDone(false);
+    setSummary(null);
     setIncomplete(null);
     setLoading(true);
+  }
+
+  /**
+   * The default view — newest first, no filter, no search — only ever shows
+   * the newest page, so that is all it loads (#114). Filters, search and the
+   * "last activity" sort work over every session, so engaging one fetches the
+   * rest; so does "Load all sessions". Latched during render, like the
+   * project reset above, so turning a filter back off does not restart a
+   * walk that already delivered the rows.
+   */
+  const needsWholeList =
+    stateFilter !== "all" ||
+    providerFilter !== null ||
+    ticketQuery.trim() !== "" ||
+    sortBy !== "created";
+  if (needsWholeList && !tailWanted) {
+    setTailWanted(true);
   }
 
   /**
@@ -250,58 +279,72 @@ export default function SessionsPage() {
   } = useNightRuns(projectId, nightFilterActive);
 
   useEffect(() => {
-    // Following the cursor to the end means a load is not one round trip but
-    // one window per page, held open for as long as the project has sessions.
-    // Switching projects has to close it, on two counts.
+    // Switching projects has to close the request, on two counts: its rows
+    // belong to a project that is no longer on screen, and under a plain
+    // re-render (rather than today's App Router remount) the last writer
+    // would win. `signal` both cancels and disowns the run — it is checked
+    // before every state write, because aborting cannot unwind a request
+    // that already succeeded and is only having its body read.
     //
-    // Measured, in Chrome against a 733-session project: the abandoned loop
-    // kept paging for four more requests after the switch, fetching a list
-    // nobody would ever see. That is the cost this abort removes.
-    //
-    // The state guard below is the second count, and it is defensive: today's
-    // App Router remounts this page when the [projectId] segment changes, so
-    // the abandoned loop's setItems lands on an unmounted component. That is
-    // a routing detail, not a guarantee — under a plain re-render the last
-    // writer wins, and the longer, older list does not pollute the new
-    // project's list so much as replace it.
+    // Owned by the effect on purpose. The React Compiler reads this component
+    // again (`react-compiler-coverage.test.ts` pins it by name), and its
+    // `set-state-in-effect` rule objects to any component-level function an
+    // effect calls that sets state, while a loader the effect defines is the
+    // shape it accepts.
     const controller = new AbortController();
     const { signal } = controller;
 
     /**
-     * The route serves keyset pages; this follows them to the end so the
-     * list, the synthesis band and both sort orders still cover every
-     * session. Each page is painted as it lands, so the newest sessions show
-     * immediately instead of waiting on the tail.
-     *
-     * `signal` both stops the paging and disowns the run: it is checked
-     * before every state write, because aborting cannot unwind a request
-     * that already succeeded and is only having its body read.
-     *
-     * Owned by the effect on purpose. The React Compiler reads this component
-     * again (`react-compiler-coverage.test.ts` pins it by name), and its
-     * `set-state-in-effect` rule objects to any component-level function an
-     * effect calls that sets state — hoisted, memoized, even after an
-     * `await` — while a loader the effect defines is the shape it accepts.
+     * One round trip: the newest page, and the band counted in SQL over the
+     * whole project. The band used to be derived from every row, which made
+     * every mount walk the full keyset for four cells.
      */
-    const loadSessions = async () => {
+    const loadHead = async () => {
+      // `.catch` rather than try/catch: the React Compiler bails on a value
+      // block (`??`) inside a try, and a bail hides every other rule here.
+      const page = await fetchUnifiedSessionPage<UnifiedSession>(projectId, {
+        signal,
+        summarySince: startOfLocalDay(),
+      }).catch(() => null);
+      if (signal.aborted) return;
+      if (page) {
+        setHeadItems(page.data);
+        setHeadCursor(page.nextCursor ?? null);
+        setSummary(page.summary ?? null);
+      } else {
+        // Keep the page usable, but never let an empty list read as "this
+        // project has no sessions".
+        setIncomplete(incompleteMessage);
+      }
+      setLoading(false);
+    };
+    void loadHead();
+    return () => controller.abort();
+  }, [projectId, incompleteMessage]);
+
+  useEffect(() => {
+    if (!tailWanted || headCursor === null) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+
+    /**
+     * The rest of the list, from the head's cursor to the end, painted page
+     * by page. Only filters, search and the activity sort need it: they are
+     * applied in memory, and over a prefix they would be wrong, not partial.
+     */
+    const loadTail = async () => {
       try {
         await fetchUnifiedSessions<UnifiedSession>(projectId, {
           signal,
+          cursor: headCursor,
           onPage: (rowsSoFar) => {
             if (signal.aborted) return;
-            setItems([...rowsSoFar]);
-            setLoading(false);
+            setTailItems([...rowsSoFar]);
           },
         });
       } catch (error) {
-        // A cancelled load is not a failed one. Its rows belong to a project
-        // that is no longer on screen, so the banner — which claims the list
-        // BELOW it is a prefix — would be a lie about the project that is.
-        //
-        // Otherwise keep whatever is already on screen rather than blanking
-        // the list — but never present a prefix as the list. The counts in
-        // the synthesis band and both sort orders are derived from every
-        // row, so a missing tail is wrong data, not just less of it.
+        // Whatever arrived stays on screen, under a banner saying it is a
+        // prefix: filters and the activity sort over it are not the answer.
         if (!signal.aborted) {
           setIncomplete(
             error instanceof UnifiedSessionListIncompleteError
@@ -310,13 +353,21 @@ export default function SessionsPage() {
           );
         }
       }
-      // Both branches fall through here — what a `finally` did before; the
-      // React Compiler stops at a `finally` clause.
-      if (!signal.aborted) setLoading(false);
+      if (!signal.aborted) setTailDone(true);
     };
-    void loadSessions();
+    void loadTail();
     return () => controller.abort();
-  }, [projectId, incompleteMessage]);
+  }, [projectId, headCursor, tailWanted, incompleteMessage]);
+
+  const items = useMemo(
+    () => (tailItems.length > 0 ? [...headItems, ...tailItems] : headItems),
+    [headItems, tailItems]
+  );
+  /**
+   * The rest of the list is being fetched. An empty filtered view says
+   * nothing yet — "no session matches" would be a claim about rows not read.
+   */
+  const tailLoading = tailWanted && headCursor !== null && !tailDone;
 
   function getDuration(session: AgentSession): string {
     if (!session.startedAt) return "-";
@@ -330,35 +381,17 @@ export default function SessionsPage() {
     return `${secs}s`;
   }
 
-  const agentSessions = useMemo(
-    () => items.filter((i): i is AgentSession => i.kind === "agent_session"),
-    [items]
-  );
-
-  /** Synthesis band — derived from the list the page already has. */
-  const band = useMemo(() => {
-    const running = agentSessions.filter((s) => s.status === "running");
-    const queued = agentSessions.filter((s) => s.status === "queued");
-    const todayTerminal = agentSessions.filter(
-      (s) => isTerminal(s.status) && isToday(s.createdAt)
-    );
-    const todayCost = todayTerminal.reduce(
-      (sum, s) => sum + (typeof s.totalCostUsd === "number" ? s.totalCostUsd : 0),
-      0
-    );
-    const completed = todayTerminal.filter(
-      (s) => s.status === "completed"
-    ).length;
-    const failed = todayTerminal.filter((s) => s.status === "failed").length;
-    return {
-      running: running.length,
-      queued: queued.length,
-      today: todayTerminal.length,
-      todayCost,
-      completed,
-      failed,
-    };
-  }, [agentSessions]);
+  /** Synthesis band — the server's aggregate; `null` when it did not arrive. */
+  const band = summary
+    ? {
+        running: summary.running,
+        queued: summary.queued,
+        today: summary.today,
+        todayCost: summary.todayCostUsd,
+        completed: summary.todayCompleted,
+        failed: summary.todayFailed,
+      }
+    : null;
 
   const visible = useMemo(() => {
     const query = ticketQuery.trim().toLowerCase();
@@ -428,9 +461,11 @@ export default function SessionsPage() {
           label={t("band.running")}
           testId="sessions-band-running"
           value={
-            band.running === 0
-              ? t("band.noneRunning")
-              : t("band.sessions", { count: band.running })
+            !band
+              ? BAND_UNKNOWN
+              : band.running === 0
+                ? t("band.noneRunning")
+                : t("band.sessions", { count: band.running })
           }
         />
         <BandCell
@@ -438,7 +473,9 @@ export default function SessionsPage() {
           label={t("band.today")}
           testId="sessions-band-today"
           value={
-            band.today === 0
+            !band
+              ? BAND_UNKNOWN
+              : band.today === 0
               ? t("band.nothingToday")
               : band.todayCost > 0
                 ? t("band.sessionsWithCost", {
@@ -453,7 +490,9 @@ export default function SessionsPage() {
           label={t("band.successRate")}
           testId="sessions-band-success"
           value={
-            band.completed + band.failed === 0
+            !band
+              ? BAND_UNKNOWN
+              : band.completed + band.failed === 0
               ? t("band.noFinished")
               : // Two numerals and a slash: no letters, so not copy.
                 `${band.completed} / ${band.completed + band.failed}`
@@ -465,11 +504,15 @@ export default function SessionsPage() {
           testId="sessions-band-queue"
           last
           value={
-            band.queued === 0
-              ? t("band.nothingQueued")
-              : t("band.queued", { count: band.queued })
+            !band
+              ? BAND_UNKNOWN
+              : band.queued === 0
+                ? t("band.nothingQueued")
+                : t("band.queued", { count: band.queued })
           }
-          valueClassName={band.queued > 0 ? "text-priority-yellow" : undefined}
+          valueClassName={
+            band && band.queued > 0 ? "text-priority-yellow" : undefined
+          }
         />
       </div>
 
@@ -696,9 +739,11 @@ export default function SessionsPage() {
 
           <div className="min-h-0 flex-1 overflow-y-auto">
             {visible.length === 0 ? (
-              <p className="px-[14px] py-[18px] text-[13px] text-muted-foreground sm:px-[22px]">
-                {t("rows.noMatch")}
-              </p>
+              tailLoading ? null : (
+                <p className="px-[14px] py-[18px] text-[13px] text-muted-foreground sm:px-[22px]">
+                  {t("rows.noMatch")}
+                </p>
+              )
             ) : (
               visible.map((item) =>
                 item.kind === "agent_session" ? (
@@ -716,6 +761,21 @@ export default function SessionsPage() {
                   />
                 )
               )
+            )}
+            {headCursor !== null && !tailDone && (
+              <div className="flex px-[14px] py-[14px] sm:px-[22px]">
+                <PillButton
+                  variant="outline"
+                  outlineTone="neutral"
+                  size="sm"
+                  data-testid="sessions-show-older"
+                  pending={tailLoading}
+                  pendingLabel={t("loadAllPending")}
+                  onClick={() => setTailWanted(true)}
+                >
+                  {t("loadAll")}
+                </PillButton>
+              </div>
             )}
           </div>
         </div>

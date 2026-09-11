@@ -4,17 +4,19 @@
  * `SessionDetail` mirrors, field for field, what
  * `GET /api/projects/:projectId/sessions/:sessionId` returns — every
  * `agent_sessions` column EXCEPT `prompt`, plus the derived extras the route
- * computes (`status`, `cliSessionId`, `logs`, `chunkStreams`, `arijActions`
- * and the three explicit failure flags). The prompt is served only on
- * `?include=prompt` because it reaches 1.8 MB per row on the live database,
- * so it is optional here and arrives through its own lazy request.
+ * computes (`status`, `cliSessionId`, `chunkStreams`, `arijActions` and the
+ * explicit failure flags). The prompt is served only on `?include=prompt`
+ * because it reaches 1.8 MB per row on the live database, so it is optional
+ * here and arrives through its own lazy request. `logs.json` is likewise only
+ * on `?include=logs` (see `fetchSessionLogs`) and is not part of this model:
+ * the polled payload never carries it.
  *
  * `SessionFilesResponse` mirrors the new read-only sibling route
  * `GET /api/projects/:projectId/sessions/:sessionId/files`.
  */
 import type { ArijActionItem } from "@/components/shared/ArijActionsList";
 import type { SessionStreamSeed } from "@/components/sessions/SessionOutputStream";
-import type { AgentSessionStreamType } from "@/lib/agent-sessions/chunks";
+import type { SessionStreamTailSeed } from "@/lib/agent-sessions/session-detail";
 
 export interface SessionDetail {
   id: string;
@@ -51,20 +53,23 @@ export interface SessionDetail {
   estimatedPromptTokens?: number | null;
   estimatedPromptBreakdown?: string | null;
   arijActions?: ArijActionItem[] | null;
-  logs?: {
-    success?: boolean;
-    result?: string;
-    error?: string;
-    duration?: number;
+  /**
+   * Where the run's `logs.json` was written, when it was. A pointer only —
+   * the document itself is read on demand with `?include=logs`.
+   */
+  logsPath?: string | null;
+  /**
+   * Bounded preview of each stream; the rest is paged in on demand. `raw` is
+   * its END (a tail seed, walked back with `before`); `output` and
+   * `response` are their head.
+   */
+  chunkStreams?: {
+    raw?: SessionStreamTailSeed;
+    output?: SessionStreamSeed;
+    response?: SessionStreamSeed;
   } | null;
-  /** Bounded first page of each stream; the rest is paged in on demand. */
-  chunkStreams?: Partial<Record<AgentSessionStreamType, SessionStreamSeed>> | null;
   /** The chunk read failed — distinct from a session that wrote nothing. */
   chunkStreamsUnavailable?: boolean;
-  /** `logs.json` was too large to serve whole, or its result was capped. */
-  logsTruncated?: boolean;
-  /** `logs.json` exists but could not be read or parsed. */
-  logsUnavailable?: boolean;
 }
 
 /** The epic this session was dispatched against, as the header renders it. */

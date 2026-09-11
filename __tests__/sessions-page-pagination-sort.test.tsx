@@ -1,6 +1,11 @@
 /**
  * Sessions list page × the route's keyset pagination.
  *
+ * Since lot 07 (#114) the default view loads ONE page: the band comes from
+ * the server's aggregate, so nothing on screen needs the whole list until a
+ * filter, the search, the activity sort or "Load all sessions" asks for it.
+ * The walk those trigger is the one pinned below.
+ *
  * `GET /api/projects/:id/sessions` is bounded: it serves a page plus a
  * `nextCursor`, and the page follows that cursor to the end. Bounding the
  * response moved a guarantee the list used to get for free — "the order you
@@ -219,13 +224,29 @@ describe("SessionsPage — paged list keeps both sort orders", () => {
     vi.restoreAllMocks();
   });
 
-  it("follows the route's cursor instead of rendering only the first page", async () => {
+  it("loads only the newest page until something needs the rest", async () => {
     const { requestedCursors } = mockPagedSessions([
       { data: PAGE_ONE, nextCursor: "2026-03-09T00:00:00.000Z|conv-created-2nd" },
       { data: PAGE_TWO, nextCursor: null },
     ]);
 
     await renderPage();
+
+    expect(visibleSessionIds()).toEqual(["sess-created-1st", "conv-created-2nd"]);
+    // Give a stray walk the chance to show itself before asserting it never ran.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(requestedCursors).toEqual([null]);
+    expect(screen.getByTestId("sessions-show-older")).toBeInTheDocument();
+  });
+
+  it("follows the route's cursor when asked for older sessions", async () => {
+    const { requestedCursors } = mockPagedSessions([
+      { data: PAGE_ONE, nextCursor: "2026-03-09T00:00:00.000Z|conv-created-2nd" },
+      { data: PAGE_TWO, nextCursor: null },
+    ]);
+
+    await renderPage();
+    fireEvent.click(screen.getByTestId("sessions-show-older"));
 
     await waitFor(() => expect(visibleSessionIds()).toHaveLength(4));
     // The second request echoes the first response's cursor back, so this is
@@ -235,6 +256,55 @@ describe("SessionsPage — paged list keeps both sort orders", () => {
       "2026-03-09T00:00:00.000Z|conv-created-2nd",
     ]);
     expect(screen.queryByTestId("sessions-incomplete")).not.toBeInTheDocument();
+    // The whole list is in: nothing older left to offer.
+    expect(screen.queryByTestId("sessions-show-older")).not.toBeInTheDocument();
+  });
+
+  it("walks the whole list as soon as a filter needs it", async () => {
+    const { requestedCursors } = mockPagedSessions([
+      { data: PAGE_ONE, nextCursor: "2026-03-09T00:00:00.000Z|conv-created-2nd" },
+      { data: PAGE_TWO, nextCursor: null },
+    ]);
+
+    await renderPage();
+    fireEvent.click(screen.getByTestId("sessions-filter-codex"));
+    fireEvent.click(screen.getByTestId("sessions-filter-codex"));
+
+    // Filtering in memory over the first page alone would be wrong data, so
+    // the rest is fetched — once, even though the filter was turned off again.
+    await waitFor(() => expect(visibleSessionIds()).toHaveLength(4));
+    expect(requestedCursors).toEqual([
+      null,
+      "2026-03-09T00:00:00.000Z|conv-created-2nd",
+    ]);
+  });
+
+  it("does not claim that nothing matches while the rest is still loading", async () => {
+    let releasePageTwo: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releasePageTwo = resolve;
+    });
+    mockPagedSessions([
+      { data: PAGE_ONE, nextCursor: "2026-03-09T00:00:00.000Z|conv-created-2nd" },
+      { data: PAGE_TWO, nextCursor: null, release: gate },
+    ]);
+
+    await renderPage();
+    // The button says what it does: the walk goes to the end of the list.
+    expect(screen.getByTestId("sessions-show-older")).toHaveTextContent("Load all sessions");
+    // No session on either page ran on Codex.
+    fireEvent.click(screen.getByTestId("sessions-filter-codex"));
+
+    // Page one has no match, but page two is not in: "none match" would be a
+    // claim about rows the page has not read yet.
+    expect(screen.queryByText("No sessions match these filters.")).not.toBeInTheDocument();
+    expect(screen.getByTestId("sessions-show-older")).toHaveTextContent("Loading all sessions");
+
+    releasePageTwo();
+    await waitFor(() =>
+      expect(screen.getByText("No sessions match these filters.")).toBeInTheDocument()
+    );
+    expect(screen.queryByTestId("sessions-show-older")).not.toBeInTheDocument();
   });
 
   it("keeps the default creation order across the page boundary", async () => {
@@ -244,6 +314,7 @@ describe("SessionsPage — paged list keeps both sort orders", () => {
     ]);
 
     await renderPage();
+    fireEvent.click(screen.getByTestId("sessions-show-older"));
 
     expect(screen.getByLabelText("Sort sessions")).toHaveValue("created");
     await waitFor(() => expect(visibleSessionIds()).toEqual(CREATED_ORDER));
@@ -256,7 +327,6 @@ describe("SessionsPage — paged list keeps both sort orders", () => {
     ]);
 
     await renderPage();
-    await waitFor(() => expect(visibleSessionIds()).toHaveLength(4));
 
     fireEvent.change(screen.getByLabelText("Sort sessions"), {
       target: { value: "last_activity" },
@@ -264,8 +334,9 @@ describe("SessionsPage — paged list keeps both sort orders", () => {
 
     // The two most recently active sessions both live on page 2. A list that
     // stopped at page 1 would still produce a *plausible* order here — it
-    // would just quietly be missing the rows that belong on top.
-    expect(visibleSessionIds()).toEqual(ACTIVITY_ORDER);
+    // would just quietly be missing the rows that belong on top. Choosing
+    // the sort is what fetches page 2.
+    await waitFor(() => expect(visibleSessionIds()).toEqual(ACTIVITY_ORDER));
   });
 
   it("does not lose a sort chosen while the remaining pages are still loading", async () => {
@@ -332,6 +403,7 @@ describe("SessionsPage — paged list keeps both sort orders", () => {
     );
 
     await renderPage();
+    fireEvent.click(screen.getByTestId("sessions-show-older"));
 
     await waitFor(() =>
       expect(screen.getByTestId("sessions-incomplete")).toBeInTheDocument()

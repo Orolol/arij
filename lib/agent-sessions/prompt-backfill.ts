@@ -25,10 +25,12 @@
  * inside a character decodes to U+FFFD, and these are real rows, some of them
  * multi-byte.
  *
- * What this does NOT cover, stated rather than discovered later: a project
- * with no enabled `retention` routine is never swept, exactly as its chunks
- * are never pruned. The routine is the unit of consent for rewriting stored
- * history, and prompts join it rather than getting a second, quieter one.
+ * The backlog itself is swept once per database at boot, across every
+ * project, by `lib/agent-sessions/raw-stream-backfill.ts` through this same
+ * backfiller: no project had ever enabled the `retention` routine, so the
+ * routine alone left the pre-cap rows in place indefinitely. The routine
+ * keeps running this step, which after the boot pass is a guard that caps
+ * nothing.
  *
  * Selection is in BYTES (`length(CAST(prompt AS BLOB))`), never `length()`.
  * `length()` on TEXT counts characters, so a 100k-character CJK prompt reads

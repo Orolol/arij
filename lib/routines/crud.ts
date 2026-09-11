@@ -189,7 +189,10 @@ function validateConfig(
   }
 
   if (kind === "retention") {
+    // Every budget runRetentionRoutine reads with `positiveInteger`: one it
+    // would throw on must be refused here, not at the next scheduled run.
     optionalPositiveInteger(config, "maxDeletedChunks");
+    optionalPositiveInteger(config, "maxCappedPrompts");
     optionalBoolean(config, "vacuum");
     return;
   }

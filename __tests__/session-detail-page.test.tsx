@@ -54,12 +54,16 @@ const mockSession = {
   outcome: "answered",
   error: null,
   totalCostUsd: 0.84,
-  logs: {
-    success: true,
-    result:
-      "Feature implemented successfully.\n\nAll tests passed.\nBuild succeeded.",
-    duration: 60000,
-  },
+  // A pointer only: the document is served on `?include=logs`, never on the
+  // polled payload.
+  logsPath: "/data/sessions/sess-12345678/logs.json",
+};
+
+const mockLogs = {
+  success: true,
+  result:
+    "Feature implemented successfully.\n\nAll tests passed.\nBuild succeeded.",
+  duration: 60000,
 };
 
 const mockFiles = {
@@ -119,6 +123,11 @@ function installFetch({
     const url = String(input);
     if (url.includes("include=prompt")) {
       return Promise.resolve(jsonResponse({ data: { ...session, prompt } }));
+    }
+    if (url.includes("include=logs")) {
+      return Promise.resolve(
+        jsonResponse({ data: { ...session, logs: mockLogs, logsTruncated: false } })
+      );
     }
     if (url.includes("view=arij-actions")) {
       return Promise.resolve(
@@ -514,12 +523,12 @@ describe("live session — session card", () => {
 
     await user.click(await screen.findByText("Export Logs"));
 
-    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(URL.createObjectURL).toHaveBeenCalledTimes(1));
     expect(URL.revokeObjectURL).toHaveBeenCalledTimes(1);
   });
 
   it("hides Export Logs for a session with no logs", async () => {
-    installFetch({ session: { ...mockSession, logs: null } });
+    installFetch({ session: { ...mockSession, logsPath: null } });
     render(<SessionDetailPage />);
 
     await screen.findByText("Session");
@@ -613,7 +622,7 @@ describe("live session — failures", () => {
         status: "failed",
         error: null,
         outcome: "error",
-        logs: null,
+        logsPath: null,
       },
     });
     render(<SessionDetailPage />);

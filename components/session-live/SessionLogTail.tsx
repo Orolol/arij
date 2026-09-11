@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useTranslations } from "next-intl";
 
 import {
@@ -11,7 +11,10 @@ import {
   TimelineLine,
 } from "@/components/piscine";
 import type { SessionStreamSeed } from "@/components/sessions/SessionOutputStream";
-import { isChunkElisionMarker } from "@/lib/agent-sessions/chunk-cap";
+import {
+  isChunkElisionMarker,
+  isRawStreamTrimMarker,
+} from "@/lib/agent-sessions/chunk-cap";
 import { isChunkPruneMarker } from "@/lib/agent-sessions/chunk-retention";
 
 import {
@@ -31,6 +34,10 @@ import { useSessionStreamPager } from "./useSessionStreamPager";
  * `response` are each a single final chunk written once at the end
  * (`"final-output"` / `"final-response"`), so neither of them streams. The old
  * page hid `raw` in a third tab; here the raw stream IS the screen.
+ *
+ * It opens on the END of that stream — the detail route seeds `raw` with its
+ * last chunks — and "Load earlier output" walks back towards the head. While
+ * the session runs, new output is appended from the tail's cursor.
  */
 
 export interface SessionLogTailProps {
@@ -41,7 +48,10 @@ export interface SessionLogTailProps {
   isRunning: boolean;
   /** The session's ISO start, against which each chunk's mm:ss is measured. */
   startedAt: string | null;
-  /** Pre-chunk-store sessions: their text only exists in `logs.json`. */
+  /**
+   * Shown when the stream has no chunks at all — pre-chunk-store sessions,
+   * whose text only exists in `logs.json`, read on demand by the band.
+   */
   logsFallback?: React.ReactNode;
   /** While on, every append re-pins the scroll to the bottom. */
   tailOn: boolean;
@@ -53,6 +63,20 @@ export interface SessionLogTailProps {
 
 /** How far off the bottom counts as "the reader has taken over". */
 const TAIL_RELEASE_PX = 24;
+
+/** The scroll position to restore around a prepend, pinned on one line. */
+interface PrependHold {
+  /** Key of the first line when the earlier page was asked for. */
+  firstKey: string | undefined;
+  /** That line's element — React keeps it across the prepend. */
+  anchor: Element | null;
+  /** Its distance from the top of the scroller's viewport, then. */
+  offset: number;
+}
+
+function offsetInScroller(anchor: Element, scroller: Element): number {
+  return anchor.getBoundingClientRect().top - scroller.getBoundingClientRect().top;
+}
 
 interface RenderLine {
   key: string;
@@ -94,18 +118,33 @@ export function SessionLogTail({
   onTailBreak,
 }: SessionLogTailProps) {
   const t = useTranslations("SessionLive");
-  const { chunks, hasMore, loading, error, truncatedCount, loadMore } =
-    useSessionStreamPager({
-      projectId,
-      sessionId,
-      streamType: "raw",
-      seed,
-      unavailable,
-      isRunning,
-    });
+  const {
+    chunks,
+    hasMore,
+    loading,
+    error,
+    truncatedCount,
+    loadMore,
+    hasEarlier,
+    loadingEarlier,
+    loadEarlier,
+  } = useSessionStreamPager({
+    projectId,
+    sessionId,
+    streamType: "raw",
+    seed,
+    unavailable,
+    isRunning,
+  });
 
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
+  /**
+   * Distance from the bottom to hold across a prepend. Earlier output lands
+   * ABOVE what the reader is looking at; without this the lines under their
+   * eyes would jump down by the height of the new page.
+   */
+  const prependHold = useRef<PrependHold | null>(null);
 
   /**
    * One row per line of output.
@@ -135,6 +174,26 @@ export function SessionLogTail({
     return out;
   }, [chunks, startedAt]);
 
+  async function handleLoadEarlier() {
+    const element = scroller.current;
+    const anchor = content.current?.firstElementChild ?? null;
+    prependHold.current = element
+      ? {
+          firstKey: lines[0]?.key,
+          anchor,
+          offset: anchor ? offsetInScroller(anchor, element) : 0,
+        }
+      : null;
+    // Reading back is not following the end: release the tail so the pin
+    // does not yank the view back down past the page just loaded.
+    onTailBreak();
+    const prepended = await loadEarlier();
+    // Nothing is coming (empty, unreadable or failed page): a hold left in
+    // place would be spent on the next unrelated change of the lines — a
+    // live append seconds later — and jump the view.
+    if (prepended === 0) prependHold.current = null;
+  }
+
   /**
    * Tailing: pin to the bottom and STAY there.
    *
@@ -163,6 +222,24 @@ export function SessionLogTail({
     if (inner) observer.observe(inner);
     return () => observer.disconnect();
   }, [tailOn, pinKey]);
+
+  /**
+   * Keep the line the reader was on where it was once earlier output lands
+   * above it. Measured on that line, not as a distance from the bottom: an
+   * append can land in the same render (a live session keeps writing), and
+   * a bottom-relative hold would then shift the view by the appended height.
+   * Spent only by the render where the first line actually changed — an
+   * append that lands while the earlier page is still out leaves it alone.
+   */
+  useLayoutEffect(() => {
+    const element = scroller.current;
+    const hold = prependHold.current;
+    if (!element || !hold) return;
+    if (lines[0]?.key === hold.firstKey) return;
+    prependHold.current = null;
+    if (!hold.anchor || !hold.anchor.isConnected) return;
+    element.scrollTop += offsetInScroller(hold.anchor, element) - hold.offset;
+  }, [lines]);
 
   function handleScroll() {
     if (!tailOn) return;
@@ -201,16 +278,18 @@ export function SessionLogTail({
       // `plain` every other unrecognised line gets — read as muted mono it
       // disappears into the output it is reporting on. Colour here is the
       // band's own stratum, not a state.
-      if (isChunkElisionMarker(line.text) || isChunkPruneMarker(line.text)) {
+      // The write-path cap on the whole raw stream (`raw-trimmed`) is the
+      // same voice: reading from the end walks back into it.
+      const markerTestId = isChunkPruneMarker(line.text)
+        ? "chunk-prune-marker"
+        : isChunkElisionMarker(line.text)
+          ? "chunk-elision-marker"
+          : isRawStreamTrimMarker(line.text)
+            ? "raw-trim-marker"
+            : null;
+      if (markerTestId) {
         return (
-          <span
-            key={line.key}
-            data-testid={
-              isChunkPruneMarker(line.text)
-                ? "chunk-prune-marker"
-                : "chunk-elision-marker"
-            }
-          >
+          <span key={line.key} data-testid={markerTestId}>
             <Mono size={11.5} tone="live-mid">
               {line.stamp ? `${line.stamp} ` : ""}
               {line.text}
@@ -259,24 +338,28 @@ export function SessionLogTail({
         radius={10}
         className="flex min-h-0 flex-1 flex-col gap-[8px] px-[16px] py-[13px]"
       >
-        {hasMore && (
+        {hasEarlier && (
           <PillButton
             variant="outline"
             outlineTone="neutral"
             size="sm"
-            onClick={loadMore}
-            disabled={loading}
+            onClick={handleLoadEarlier}
+            disabled={loadingEarlier}
             className="self-start"
-            data-testid="stream-load-more-raw"
+            data-testid="stream-load-earlier-raw"
           >
-            {loading ? t("log.loadingMore") : t("log.loadMore")}
+            {loadingEarlier ? t("log.loadingMore") : t("log.loadEarlier")}
           </PillButton>
         )}
         {truncatedCount > 0 && (
           <span data-testid="stream-truncated-raw">
             <Mono size={10.5} tone="live-mid">
               {t("log.truncated", { count: truncatedCount })}
-              {hasMore ? t("log.truncatedLoadMore") : ""}
+              {hasMore
+                ? t("log.truncatedLoadMore")
+                : hasEarlier
+                  ? t("log.truncatedLoadEarlier")
+                  : ""}
             </Mono>
           </span>
         )}
@@ -304,6 +387,22 @@ export function SessionLogTail({
             {body}
           </div>
         </div>
+        {/* Below the log, where newer output goes: the seed is the end of the
+            stream, so this only appears when a live follow fell a page
+            behind. */}
+        {hasMore && (
+          <PillButton
+            variant="outline"
+            outlineTone="neutral"
+            size="sm"
+            onClick={loadMore}
+            disabled={loading}
+            className="self-start"
+            data-testid="stream-load-more-raw"
+          >
+            {loading ? t("log.loadingMore") : t("log.loadMore")}
+          </PillButton>
+        )}
       </SurfaceCard>
     </div>
   );

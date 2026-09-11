@@ -15,6 +15,9 @@ import {
   SESSION_LIST_DEFAULT_PAGE_SIZE,
   SESSION_LIST_ERROR_PREVIEW_CHARS,
   SESSION_LIST_MAX_PAGE_SIZE,
+  SESSION_LIST_SUMMARY_PARAM,
+  SESSION_LIST_SUMMARY_SINCE_PARAM,
+  type SessionListSummary,
 } from "@/lib/agent-sessions/session-list";
 
 /**
@@ -155,6 +158,55 @@ function parseLimit(raw: string | null): number {
   return Math.min(Math.max(parsed, 1), SESSION_LIST_MAX_PAGE_SIZE);
 }
 
+/**
+ * The synthesis band, counted in one indexed pass over the project's agent
+ * sessions. Statuses are matched in their stored spellings, `pending` and a
+ * NULL status included, so the counts agree with `getSessionStatusForApi`,
+ * which serves both as "queued".
+ * `julianday()` reads both stored timestamp shapes — ISO with a zone and
+ * SQLite's zone-less UTC `CURRENT_TIMESTAMP` — as instants, so the bound is
+ * compared by time and not by string.
+ */
+function selectSessionListSummary(
+  projectId: string,
+  since: string
+): SessionListSummary {
+  const terminalSince = sql`(${agentSessions.status} IN ('completed', 'failed', 'cancelled')
+    AND julianday(${agentSessions.createdAt}) >= julianday(${since}))`;
+  const row = db
+    .select({
+      running: sql<number>`coalesce(sum(${agentSessions.status} = 'running'), 0)`,
+      queued: sql<number>`coalesce(sum(coalesce(${agentSessions.status}, 'queued') IN ('queued', 'pending')), 0)`,
+      today: sql<number>`coalesce(sum(${terminalSince}), 0)`,
+      todayCompleted: sql<number>`coalesce(sum(${terminalSince} AND ${agentSessions.status} = 'completed'), 0)`,
+      todayFailed: sql<number>`coalesce(sum(${terminalSince} AND ${agentSessions.status} = 'failed'), 0)`,
+      todayCostUsd: sql<number>`coalesce(sum(CASE WHEN ${terminalSince} THEN ${agentSessions.totalCostUsd} END), 0)`,
+    })
+    .from(agentSessions)
+    .where(eq(agentSessions.projectId, projectId))
+    .get();
+  return {
+    running: Number(row?.running ?? 0),
+    queued: Number(row?.queued ?? 0),
+    today: Number(row?.today ?? 0),
+    todayCompleted: Number(row?.todayCompleted ?? 0),
+    todayFailed: Number(row?.todayFailed ?? 0),
+    todayCostUsd: Number(row?.todayCostUsd ?? 0),
+    since,
+  };
+}
+
+/** The caller's start of day as a UTC ISO string; the server's when absent. */
+function parseSummarySince(raw: string | null): string | null {
+  if (raw === null || raw.trim() === "") {
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    return midnight.toISOString();
+  }
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
@@ -163,6 +215,16 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const limit = parseLimit(searchParams.get("limit"));
   const cursor = decodeCursor(searchParams.get("cursor"));
+  const wantsSummary = searchParams.get(SESSION_LIST_SUMMARY_PARAM) === "1";
+  const summarySince = wantsSummary
+    ? parseSummarySince(searchParams.get(SESSION_LIST_SUMMARY_SINCE_PARAM))
+    : null;
+  if (wantsSummary && summarySince === null) {
+    return NextResponse.json(
+      { error: `\`${SESSION_LIST_SUMMARY_SINCE_PARAM}\` must be a timestamp` },
+      { status: 400 }
+    );
+  }
 
   runBackfillRecentSessionLastNonEmptyTextOnce(projectId);
 
@@ -268,5 +330,13 @@ export async function GET(
   const nextCursor =
     merged.length > limit && last ? encodeCursor(last) : null;
 
-  return NextResponse.json({ data: page, nextCursor });
+  return NextResponse.json(
+    summarySince !== null
+      ? {
+          data: page,
+          nextCursor,
+          summary: selectSessionListSummary(projectId, summarySince),
+        }
+      : { data: page, nextCursor }
+  );
 }

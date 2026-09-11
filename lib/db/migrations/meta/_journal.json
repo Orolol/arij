@@ -400,6 +400,13 @@
       "when": 1786715800000,
       "tag": "0057_release_published_at",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "6",
+      "when": 1786716100000,
+      "tag": "0061_agent_session_tool_calls",
+      "breakpoints": true
     }
   ]
 }

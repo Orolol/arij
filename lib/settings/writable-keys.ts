@@ -123,6 +123,12 @@ export const SERVER_MANAGED_SETTING_KEYS: readonly string[] = [
   // panel, stamped by every write path. (A manual edit made mid-dream is
   // caught by the writers' `expectedPrevious` guard, not by this row.)
   "memory_provenance",
+  // Marks of the one-shot trim of pre-cap history at boot
+  // (lib/agent-sessions/raw-stream-backfill.ts): its completion, and the
+  // single VACUUM it still owes. Clearing the first re-runs a full walk of
+  // every raw stream; that is an operator's call, not a client's.
+  "raw_stream_backfill_trimmed_at",
+  "raw_stream_backfill_vacuum_due_at",
   // Capability credentials with their own guarded route
   // (`PUT /api/settings/webhooks`); `GET /api/settings` masks them.
   "webhook_url",

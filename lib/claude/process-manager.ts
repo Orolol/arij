@@ -8,6 +8,10 @@ import {
   isTerminalSessionStatus,
 } from "@/lib/agent-sessions/lifecycle";
 import { appendSessionChunk } from "@/lib/agent-sessions/chunks";
+import {
+  startArijToolCallIndex,
+  type ArijToolCallIndexer,
+} from "@/lib/agent-sessions/arij-action-scan";
 import { notifySessionTerminal } from "@/lib/agent-sessions/terminal-hooks";
 import {
   isMcpToolsEnabled,
@@ -399,39 +403,67 @@ class ClaudeProcessManager {
       );
     }
 
-    const providerSession: ProviderSession = getProvider(provider).spawn({
-      sessionId,
-      prompt: options.prompt,
-      cwd: options.cwd || process.cwd(),
-      mode: options.mode,
-      allowedTools: options.allowedTools,
-      model: options.model,
-      cliSessionId: options.cliSessionId,
-      resumeSession: options.resumeSession,
-      logIdentifier: options.logIdentifier,
-      mcp: options.mcp,
-      cliOptions: options.cliOptions,
-      killGraceMs: options.killGraceMs,
-      // Streamed by the providers that stream (codex, omp, agy); claude-code
-      // returns one document on exit and never calls this — its result is
-      // persisted below by persistResultAsChunk instead.
-      onChunk: (chunk) => {
-        try {
-          appendSessionChunk({
-            sessionId,
-            streamType: chunk.streamType,
-            content: chunk.text,
-            chunkKey: chunk.chunkKey ?? null,
-            createdAt: chunk.emittedAt,
-          });
-        } catch (error) {
-          console.error(
-            `[process-manager] Failed to persist ${provider} chunk for session ${sessionId}`,
-            error
-          );
-        }
-      },
-    });
+    // Index this run's Arij tool calls as its raw chunks are written, so the
+    // session's Arij-actions list never has to re-walk the raw stream (#236).
+    // Needs the session row (the index rows reference it). A run that cannot
+    // produce a complete index still gets an indexer: it only marks the run
+    // live, which keeps the read-side scan from persisting a session whose
+    // raw output is still growing. Per-spawn rather than per-session-id: a
+    // re-dispatch gets its own, and the previous run's is dropped with its
+    // closure — after `finish()`, which the paths below always reach.
+    let toolCallIndex: ArijToolCallIndexer | null = sessionRow
+      ? startArijToolCallIndex(sessionId)
+      : null;
+
+    let providerSession: ProviderSession;
+    try {
+      providerSession = getProvider(provider).spawn({
+        sessionId,
+        prompt: options.prompt,
+        cwd: options.cwd || process.cwd(),
+        mode: options.mode,
+        allowedTools: options.allowedTools,
+        model: options.model,
+        cliSessionId: options.cliSessionId,
+        resumeSession: options.resumeSession,
+        logIdentifier: options.logIdentifier,
+        mcp: options.mcp,
+        cliOptions: options.cliOptions,
+        killGraceMs: options.killGraceMs,
+        // Every provider streams here. claude-code runs in stream-json mode
+        // whenever onChunk is passed (#172) and emits each NDJSON event line
+        // as a raw chunk, then its final text as output/response — so its
+        // tool_use records feed the Arij tool-call index below exactly like
+        // codex's and omp's do.
+        onChunk: (chunk) => {
+          try {
+            appendSessionChunk({
+              sessionId,
+              streamType: chunk.streamType,
+              content: chunk.text,
+              chunkKey: chunk.chunkKey ?? null,
+              createdAt: chunk.emittedAt,
+            });
+          } catch (error) {
+            console.error(
+              `[process-manager] Failed to persist ${provider} chunk for session ${sessionId}`,
+              error
+            );
+          }
+          // Only the running log carries tool calls; output/response are the
+          // final text. Fed even when the append above failed or was trimmed
+          // by the raw cap — the index is what outlives the raw stream.
+          // Never throws: indexing failures give the session back to the scan.
+          if (chunk.streamType === "raw") {
+            toolCallIndex?.push(chunk.text, chunk.emittedAt ?? null);
+          }
+        },
+      });
+    } catch (error) {
+      // No process, so no `.finally` below to release the run.
+      toolCallIndex?.finish();
+      throw error;
+    }
     const kill = providerSession.kill;
     const promise: Promise<ClaudeResult> = providerSession.promise;
     const mcpConfigPath = providerSession.mcpConfigPath;
@@ -551,6 +583,11 @@ class ClaudeProcessManager {
         }
       })
       .finally(() => {
+        // The process is gone: commit a last unterminated line, then let the
+        // scanner (and its line carry) go.
+        toolCallIndex?.finish();
+        toolCallIndex = null;
+
         const tracked = this.sessions.get(sessionId);
         if (tracked) {
           tracked.processClosed = true;

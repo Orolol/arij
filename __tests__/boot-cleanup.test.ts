@@ -12,6 +12,11 @@ vi.mock("@/lib/db", async () => {
   return { db: created.db, sqlite: created.sqlite, ensureDbReady: vi.fn() };
 });
 
+// The one-shot history trim is scheduled on a later macrotask; left real, it
+// would touch this suite's database after the test body, possibly closed.
+const backfillMocks = vi.hoisted(() => ({ scheduleRawStreamBackfill: vi.fn() }));
+vi.mock("@/lib/agent-sessions/raw-stream-backfill", () => backfillMocks);
+
 const { db, ensureDbReady } = await import("@/lib/db");
 const {
   agentSessions,
@@ -344,6 +349,10 @@ describe("instrumentation register()", () => {
     logSpy.mockRestore();
 
     expect(ensureDbReady).toHaveBeenCalled();
+    expect(backfillMocks.scheduleRawStreamBackfill).toHaveBeenCalledTimes(1);
+    expect(
+      backfillMocks.scheduleRawStreamBackfill.mock.invocationCallOrder[0]
+    ).toBeGreaterThan(vi.mocked(ensureDbReady).mock.invocationCallOrder[0]);
     expect(getSession(queuedId)).toMatchObject({
       status: "cancelled",
       error: ORPHANED_BY_RESTART_REASON,

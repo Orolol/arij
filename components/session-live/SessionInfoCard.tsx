@@ -38,7 +38,12 @@ export interface SessionInfoCardProps {
   providerLabel: string;
   isRunning: boolean;
   onRefresh: () => void;
+  /** Reads `logs.json` with `?include=logs` and hands it over as a file. */
   onExportLogs: () => void;
+  /** The export's read is in flight. */
+  exportingLogs?: boolean;
+  /** Why the last export produced no file, in words. */
+  exportLogsError?: string | null;
   onDistill: () => void;
   distilling: boolean;
   distillError: string | null;
@@ -93,6 +98,8 @@ export function SessionInfoCard({
   isRunning,
   onRefresh,
   onExportLogs,
+  exportingLogs = false,
+  exportLogsError = null,
   onDistill,
   distilling,
   distillError,
@@ -315,13 +322,19 @@ export function SessionInfoCard({
             {t("info.distill")}
           </PillButton>
         )}
-        {session.logs && (
+        {/* The file is read when the button is pressed, not on the 3-second
+            poll. The row names its path from the moment the session is
+            created, long before the run writes it at the end — so a session
+            that is running or queued offers no export yet. */}
+        {session.logsPath && !isRunning && session.status !== "queued" && (
           <PillButton
             variant="outline"
             outlineTone="neutral"
             size="sm"
             icon={Download}
             onClick={onExportLogs}
+            pending={exportingLogs}
+            pendingLabel={t("info.exportingLogs")}
           >
             {t("info.exportLogs")}
           </PillButton>
@@ -340,6 +353,11 @@ export function SessionInfoCard({
       {distillError && (
         <Mono size={11} tone="danger">
           {distillError}
+        </Mono>
+      )}
+      {exportLogsError && (
+        <Mono size={11} tone="danger">
+          {exportLogsError}
         </Mono>
       )}
     </StrataBand>

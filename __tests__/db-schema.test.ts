@@ -222,6 +222,24 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       createdAt: "created_at",
     },
   },
+  agentSessionToolCalls: {
+    sqlName: "agent_session_tool_calls",
+    columns: {
+      id: "id",
+      sessionId: "session_id",
+      sequence: "sequence",
+      tool: "tool",
+      at: "at",
+      callId: "call_id",
+    },
+  },
+  agentSessionToolCallIndex: {
+    sqlName: "agent_session_tool_call_index",
+    columns: {
+      sessionId: "session_id",
+      createdAt: "created_at",
+    },
+  },
   frictions: {
     sqlName: "frictions",
     columns: {
@@ -906,6 +924,18 @@ const INDEXES: Record<string, IndexSpec[]> = {
       name: "agent_session_chunks_session_stream_sequence_idx",
       unique: false,
       columns: ["session_id", "stream_type", "sequence"],
+    },
+  ],
+  agentSessionToolCalls: [
+    {
+      name: "agent_session_tool_calls_session_sequence_unique",
+      unique: true,
+      columns: ["session_id", "sequence"],
+    },
+    {
+      name: "agent_session_tool_calls_session_call_id_unique",
+      unique: true,
+      columns: ["session_id", "call_id"],
     },
   ],
   frictions: [
