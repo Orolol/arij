@@ -204,11 +204,97 @@ export function findPiRunFailure(stdout: string, cliName = "Pi"): string | null 
   );
 }
 
+/**
+ * pi/omp progress events that carry the WHOLE accumulated output of a running
+ * tool on every emission (`partialResult`), so persisting them stores a
+ * result of final size f as n frames of growing size — O(n²). Measured on the
+ * live database on 2026-09-10: one `npm test` call = 517 frames, 24.7 MB
+ * persisted for 51,150 bytes of final text; 543 MB of the 817 MB of omp raw
+ * output were these frames. The matching `tool_execution_end` event carries
+ * the final result once, and is kept.
+ */
+export const PI_PROGRESS_EVENT_TYPE = "tool_execution_update";
+
+/** True for an NDJSON line that is one of the progress events above. */
+export function isPiProgressEventLine(line: string): boolean {
+  // The type is the first key omp writes; searching the whole line would
+  // also match a tool RESULT that happens to quote the event name.
+  return line.startsWith(`{"type":"${PI_PROGRESS_EVENT_TYPE}"`);
+}
+
+/**
+ * Splits a byte stream into NDJSON lines and drops the progress frames. A
+ * pipe read (up to 64 KiB) can end mid-line, so the remainder is carried to
+ * the next read and emitted by `flush()` at exit.
+ */
+export function createPiRawLineFilter(
+  emit: (text: string) => void,
+): { push: (text: string) => void; flush: () => void } {
+  let buffer = "";
+  const emitLine = (line: string): void => {
+    if (line.length === 0) return;
+    if (isPiProgressEventLine(line)) return;
+    emit(`${line}\n`);
+  };
+  return {
+    push(text: string): void {
+      buffer += text;
+      let newline = buffer.indexOf("\n");
+      while (newline !== -1) {
+        emitLine(buffer.slice(0, newline).replace(/\r$/, ""));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+      }
+    },
+    flush(): void {
+      const rest = buffer;
+      buffer = "";
+      if (rest.length > 0 && !isPiProgressEventLine(rest)) emit(rest);
+    },
+  };
+}
+
 export abstract class PiProvider extends BaseCliProvider {
   abstract readonly type: ProviderType;
 
   get binaryName(): string {
     return "pi";
+  }
+
+  /**
+   * The raw stream is persisted per NDJSON LINE rather than per pipe read,
+   * with the cumulative progress frames dropped — see PI_PROGRESS_EVENT_TYPE.
+   * stderr is passed through untouched; the output/response chunks are the
+   * base class's.
+   */
+  buildChunkCallbacks(options: ProviderSpawnOptions): BaseProviderChunkCallbacks {
+    const base = super.buildChunkCallbacks(options);
+    if (!base.onRawChunk) return base;
+    const onRawChunk = base.onRawChunk;
+    let index = 0;
+    const filter = createPiRawLineFilter((text) => {
+      index += 1;
+      onRawChunk({
+        source: "stdout",
+        index,
+        text,
+        emittedAt: new Date().toISOString(),
+      });
+    });
+    return {
+      ...base,
+      onRawChunk: (chunk) => {
+        if (chunk.source === "stdout") {
+          filter.push(chunk.text);
+          return;
+        }
+        onRawChunk(chunk);
+      },
+      flush: () => {
+        filter.flush();
+        base.flush?.();
+      },
+    };
   }
 
   /** Human-readable CLI name used in error messages. */

@@ -9,7 +9,6 @@ import {
 } from "@/lib/agent-sessions/lifecycle";
 import { appendSessionChunk } from "@/lib/agent-sessions/chunks";
 import { notifySessionTerminal } from "@/lib/agent-sessions/terminal-hooks";
-import { parseClaudeOutput, isNoTextualOutputFallback } from "./json-parser";
 import {
   isMcpToolsEnabled,
   providerSupportsMcp,
@@ -523,10 +522,10 @@ class ClaudeProcessManager {
           this.persistCliSessionId(sessionId, resolvedCliSessionId);
         }
 
-        // For Claude Code sessions, persist result text as a session chunk
-        // so that lastNonEmptyText gets populated (non-CC providers do this
-        // via the onChunk callback during execution).
-        this.persistResultAsChunk(sessionId, result, tracked.provider);
+        // The final text reaches the chunk store through the provider's own
+        // output/response chunks (`final-output` / `final-response`), for
+        // claude-code like for the rest; writing it a second time here under
+        // `result-<id>` used to store every result twice.
 
         // Only transition if the move is valid (e.g. not already cancelled)
         if (isValidSessionTransition(tracked.status, targetStatus)) {
@@ -856,41 +855,6 @@ class ClaudeProcessManager {
     } catch (error) {
       console.warn(
         `[process-manager] Failed to remove MCP config file for session ${sessionId}`,
-        error,
-      );
-    }
-  }
-
-  /**
-   * Persist the result text from a completed session as a session chunk.
-   *
-   * Non-Claude-Code providers stream chunks via onChunk during execution,
-   * which populates `lastNonEmptyText`. Claude Code only returns stdout on
-   * exit, so we need to do it here.
-   */
-  private persistResultAsChunk(
-    sessionId: string,
-    result: ClaudeResult,
-    provider: ProviderType,
-  ): void {
-    if (!result.result) return;
-
-    try {
-      const parsed = parseClaudeOutput(result.result);
-      const text = parsed.content;
-
-      // Skip if we only got a fallback message — nothing useful to persist
-      if (!text || isNoTextualOutputFallback(text)) return;
-
-      appendSessionChunk({
-        sessionId,
-        streamType: "output",
-        content: text,
-        chunkKey: `result-${sessionId}`,
-      });
-    } catch (error) {
-      console.error(
-        `[process-manager] Failed to persist result chunk for ${provider} session ${sessionId}`,
         error,
       );
     }

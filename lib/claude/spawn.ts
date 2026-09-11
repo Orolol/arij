@@ -15,11 +15,7 @@ import {
   type NamedAgentCliOptions,
 } from "@/lib/providers/options-registry";
 import type { McpSpawnConfig } from "@/lib/providers/types";
-import {
-  createChildKiller,
-  isChildAlive,
-  signalChild,
-} from "@/lib/providers/process-signals";
+import { createChildKiller } from "@/lib/providers/process-signals";
 
 export interface ClaudeOptions {
   /**
@@ -56,6 +52,16 @@ export interface ClaudeOptions {
   cliOptions?: NamedAgentCliOptions;
   /** Grace period in ms before SIGTERM escalates to SIGKILL (defaults to 5000ms). */
   killGraceMs?: number;
+  /**
+   * Live output. When set, the CLI runs with `--output-format stream-json`
+   * and every NDJSON line of its stdout is handed here as it arrives; the
+   * `result` envelope that closes the stream is what `ClaudeResult.result`
+   * then carries, so consumers see the same document as in json mode.
+   * Without it the spawn keeps `--output-format json`, which yields nothing
+   * until exit — the reason the LIVE LOG of claude-code sessions used to stay
+   * empty for their whole duration.
+   */
+  onRawLine?: (line: string) => void;
 }
 
 export interface ClaudeResult {
@@ -251,12 +257,40 @@ export function prepareClaudeSpawn(
  * The returned `kill` function can be called to abort the process early.
  */
 export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
-  const { prompt, cwd, cliSessionId, logIdentifier } = options;
+  const { prompt, cwd, cliSessionId, logIdentifier, onRawLine } = options;
 
-  const { args, mcpConfigPath } = prepareClaudeSpawn(options, "json");
+  const { args, mcpConfigPath } = prepareClaudeSpawn(
+    options,
+    onRawLine ? "stream-json" : "json",
+  );
 
   const effectiveCwd = cwd || process.cwd();
   const promptOnStdin = promptExceedsArgv(prompt);
+
+  // stream-json: stdout is one event per line and the last `result` event is
+  // the same envelope json mode prints alone. Lines are relayed as they
+  // arrive; the envelope is what the caller gets as `result`.
+  let lineBuffer = "";
+  let resultEnvelope: string | null = null;
+  const relayLine = (line: string): void => {
+    const trimmed = line.replace(/\r$/, "");
+    if (!trimmed) return;
+    if (trimmed.startsWith('{"type":"result"')) resultEnvelope = trimmed;
+    try {
+      onRawLine?.(trimmed);
+    } catch {
+      // A listener must never take the spawn down with it.
+    }
+  };
+  const relayStdout = (chunk: Buffer): void => {
+    lineBuffer += chunk.toString("utf-8");
+    let newline = lineBuffer.indexOf("\n");
+    while (newline !== -1) {
+      relayLine(lineBuffer.slice(0, newline));
+      lineBuffer = lineBuffer.slice(newline + 1);
+      newline = lineBuffer.indexOf("\n");
+    }
+  };
 
   let logCtx: StreamLogContext | null = null;
   if (logIdentifier) {
@@ -305,6 +339,7 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
+      if (onRawLine) relayStdout(chunk);
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -345,7 +380,18 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
       // Session end (normal exit, failure, or kill) — drop the token file.
       cleanupMcpConfigFile(mcpConfigPath);
       finishLog(code, killed ? "Process was cancelled." : undefined);
-      const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+      if (onRawLine && lineBuffer.length > 0) {
+        relayLine(lineBuffer);
+        lineBuffer = "";
+      }
+      // In stream mode the whole event log is on stdout; the result envelope
+      // is the document every consumer expects. Fall back to the full stdout
+      // when no envelope arrived (a crash before the result), where the
+      // NDJSON-aware parsers still find what they can.
+      const stdout =
+        onRawLine && resultEnvelope
+          ? resultEnvelope
+          : Buffer.concat(stdoutChunks).toString("utf-8");
       const stderr = Buffer.concat(stderrChunks).toString("utf-8");
       const parsedCliSessionId =
         extractCliSessionIdFromOutput(stdout) ?? cliSessionId;

@@ -10,13 +10,16 @@
  * .spawn(...)` regardless of provider, so there is no `provider !==
  * "claude-code"` branch left to copy from one call site to the next.
  *
- * What the class cannot do yet: stream. spawnClaude runs `--output-format
- * json`, which yields one document on exit, so `onChunk` is accepted and
- * ignored — the LIVE LOG band stays empty for claude-code sessions until the
- * spawn moves to stream-json (session storage lot).
+ * Streaming: when the caller passes `onChunk`, the spawn runs in stream-json
+ * mode and every NDJSON event line becomes a `raw` chunk as it arrives — the
+ * LIVE LOG band of a claude-code session used to stay empty for its whole
+ * duration because json mode yields nothing before exit. The final text is
+ * emitted as the `output`/`response` chunks the other providers emit, with
+ * the same keys, so the process manager persists nothing itself.
  */
 
 import { spawnClaude } from "@/lib/claude/spawn";
+import { parseClaudeOutput, isNoTextualOutputFallback } from "@/lib/claude/json-parser";
 import { BaseCliProvider } from "./base-provider";
 import type {
   ProviderSpawnOptions,
@@ -60,8 +63,10 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       mcp,
       cliOptions,
       killGraceMs,
+      onChunk,
     } = options;
 
+    let rawIndex = 0;
     const { promise: rawPromise, kill, command, mcpConfigPath } = spawnClaude({
       mode,
       prompt,
@@ -74,17 +79,45 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       mcp,
       cliOptions,
       killGraceMs,
+      ...(onChunk
+        ? {
+            onRawLine: (line: string) => {
+              rawIndex += 1;
+              onChunk({
+                streamType: "raw",
+                text: `${line}\n`,
+                chunkKey: `stdout:${rawIndex}`,
+                emittedAt: new Date().toISOString(),
+              });
+            },
+          }
+        : {}),
     });
 
-    // Map ClaudeResult → ProviderResult
-    const promise: Promise<ProviderResult> = rawPromise.then((r) => ({
-      success: r.success,
-      result: r.result,
-      error: r.error,
-      duration: r.duration,
-      cliSessionId: r.cliSessionId,
-      endedWithQuestion: r.endedWithQuestion,
-    }));
+    // Map ClaudeResult → ProviderResult, and emit the final chunks the way
+    // BaseCliProvider.emitFinalChunks does for the other CLIs.
+    const promise: Promise<ProviderResult> = rawPromise.then((r) => {
+      if (onChunk && r.result) {
+        try {
+          const text = parseClaudeOutput(r.result).content;
+          if (text && !isNoTextualOutputFallback(text)) {
+            const emittedAt = new Date().toISOString();
+            onChunk({ streamType: "output", text, chunkKey: "final-output", emittedAt });
+            onChunk({ streamType: "response", text, chunkKey: "final-response", emittedAt });
+          }
+        } catch {
+          // A listener must never turn a finished run into a failed one.
+        }
+      }
+      return {
+        success: r.success,
+        result: r.result,
+        error: r.error,
+        duration: r.duration,
+        cliSessionId: r.cliSessionId,
+        endedWithQuestion: r.endedWithQuestion,
+      };
+    });
 
     return {
       handle: `cc-${options.sessionId}`,
