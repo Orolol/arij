@@ -67,10 +67,16 @@ function applyMigration(conn: Database.Database) {
 }
 
 describe("0057_release_published_at", () => {
-  it("is the journal's last entry, in apply order", () => {
-    // Renumber it (file, idx, `when`) when merging behind newer migrations:
-    // drizzle applies only a `when` above the last one a database recorded.
-    expect(journal.entries.at(-1)?.tag).toBe(MIGRATION_TAG);
+  it("sits after every migration it depends on, in apply order", () => {
+    // Drizzle applies only a `when` above the last one a database recorded,
+    // so what matters is that this entry comes after 0056 (the last one on
+    // main when it was written) and that the whole journal stays ordered.
+    // It no longer has to be LAST: later migrations are stacked on it.
+    const tags = journal.entries.map((e) => e.tag);
+    expect(tags).toContain(MIGRATION_TAG);
+    expect(tags.indexOf(MIGRATION_TAG)).toBeGreaterThan(
+      tags.indexOf("0056_agent_sessions_epic_cost_idx")
+    );
     const whens = journal.entries.map((e) => e.when);
     expect([...whens].sort((a, b) => a - b)).toEqual(whens);
     expect(new Set(whens).size).toBe(whens.length);
