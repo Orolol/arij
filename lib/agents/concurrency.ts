@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, or } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions } from "@/lib/db/schema";
+import { processManager } from "@/lib/claude/process-manager";
 
 export {
   AGENT_ALREADY_RUNNING_CODE,
@@ -89,12 +90,33 @@ function findRunningSessionForTarget(
 
 /**
  * Returns the most recent active (queued or running) session for the
- * target, or null when the target is free.
+ * target, or null when the target is free. Also considers sessions whose
+ * underlying child process / process group has not completed teardown.
  */
 export function getRunningSessionForTarget(
   target: AgentTaskTarget
 ): ActiveAgentSessionSummary | null {
-  return findRunningSessionForTarget(target);
+  const activeSession = findRunningSessionForTarget(target);
+  if (activeSession) return activeSession;
+
+  const occupying = processManager.getOccupyingSessionForTarget?.(target);
+  if (occupying) {
+    return {
+      id: occupying.sessionId,
+      projectId: occupying.projectId ?? target.projectId,
+      epicId:
+        occupying.epicId ??
+        (target.scope === "epic" ? target.epicId : target.epicId ?? null),
+      userStoryId:
+        occupying.userStoryId ??
+        (target.scope === "story" ? target.storyId : null),
+      mode: null,
+      provider: occupying.provider,
+      startedAt: occupying.startedAt.toISOString(),
+    };
+  }
+
+  return null;
 }
 
 export function createAgentAlreadyRunningPayload(

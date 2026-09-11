@@ -29,6 +29,7 @@ import { dagBatchRegistry } from "@/lib/agents/dag-batch-registry";
 import { nightRunRegistry } from "@/lib/night/registry";
 import { autoModeRegistry } from "./registry";
 import { AUTO_MODE_MAX_REVIEW_REJECTIONS } from "./constants";
+import { processManager } from "@/lib/claude/process-manager";
 
 /**
  * Candidate selection for Full Auto Mode: which tickets may be built,
@@ -375,6 +376,13 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
   for (const row of activeRows) {
     if (row.epicId) busyEpicIds.add(row.epicId);
     if (row.userStoryId) busyStoryIds.add(row.userStoryId);
+  }
+
+  // Also include epics and stories occupied by sessions whose child processes
+  // have not completed teardown (e.g. cancelled sessions during SIGTERM grace / SIGKILL).
+  for (const occupying of processManager.listOccupyingSessions?.(projectId) ?? []) {
+    if (occupying.epicId) busyEpicIds.add(occupying.epicId);
+    if (occupying.userStoryId) busyStoryIds.add(occupying.userStoryId);
   }
 
   // 4 + 9. Review/code freshness facts per epic, and the blocking open

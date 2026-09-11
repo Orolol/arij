@@ -8,6 +8,7 @@ import {
   isTerminalSessionStatus,
 } from "@/lib/agent-sessions/lifecycle";
 import { appendSessionChunk } from "@/lib/agent-sessions/chunks";
+import { notifySessionTerminal } from "@/lib/agent-sessions/terminal-hooks";
 import { parseClaudeOutput, isNoTextualOutputFallback } from "./json-parser";
 import {
   isMcpToolsEnabled,
@@ -56,6 +57,14 @@ export interface TrackedSession {
   providerSession?: ProviderSession;
   /** Temp `--mcp-config` file for claude-code spawns, cleared on teardown. */
   mcpConfigPath?: string;
+  /** Settle promise for the underlying child process / provider spawn. */
+  closePromise?: Promise<void>;
+  /** Whether the underlying process has emitted close / exited. */
+  processClosed?: boolean;
+  projectId?: string;
+  epicId?: string | null;
+  userStoryId?: string | null;
+  cwd?: string;
 }
 
 export interface SessionInfo {
@@ -67,6 +76,7 @@ export interface SessionInfo {
   duration?: number;
   result?: ClaudeResult;
   cliSessionId?: string;
+  processClosed?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +477,11 @@ class ClaudeProcessManager {
       }
     }
 
+    let markProcessClosed!: () => void;
+    const closePromise = new Promise<void>((resolve) => {
+      markProcessClosed = resolve;
+    });
+
     const session: TrackedSession = {
       sessionId,
       status: "running",
@@ -477,6 +492,12 @@ class ClaudeProcessManager {
       kill,
       providerSession,
       mcpConfigPath,
+      closePromise,
+      processClosed: false,
+      projectId: sessionRow?.projectId,
+      epicId: sessionRow?.epicId,
+      userStoryId: sessionRow?.userStoryId,
+      cwd: options.cwd,
     };
 
     this.sessions.set(sessionId, session);
@@ -531,6 +552,23 @@ class ClaudeProcessManager {
             duration: Date.now() - tracked.startedAt.getTime(),
           };
         }
+      })
+      .finally(() => {
+        const tracked = this.sessions.get(sessionId);
+        if (tracked) {
+          tracked.processClosed = true;
+        }
+        markProcessClosed();
+        if (tracked?.status === "cancelled") {
+          try {
+            notifySessionTerminal({
+              sessionId,
+              status: "cancelled",
+            });
+          } catch {
+            // best-effort
+          }
+        }
       });
 
     return this.toSessionInfo(session);
@@ -575,6 +613,136 @@ class ClaudeProcessManager {
     if (!session) return null;
 
     return this.toSessionInfo(session);
+  }
+
+  /**
+   * Returns the settlement promise for the session's underlying child process.
+   * Resolves when the process emits close/error, regardless of whether the session
+   * ended normally or was cancelled.
+   */
+  getClosePromise(sessionId: string): Promise<void> | null {
+    return this.sessions.get(sessionId)?.closePromise ?? null;
+  }
+
+  /**
+   * Whether the underlying process has exited. Unknown sessions are considered closed.
+   */
+  isProcessClosed(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    return !session || session.processClosed === true;
+  }
+
+  /**
+   * Waits until the session's underlying child process has actually closed,
+   * bounded by an optional grace period (defaults to 8000ms).
+   */
+  async waitForClose(
+    sessionId: string,
+    graceMs: number = 8000
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.processClosed || !session.closePromise) return;
+
+    let timer: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, graceMs);
+      timer.unref?.();
+    });
+
+    try {
+      await Promise.race([session.closePromise, timeoutPromise]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private lookupSessionField(
+    sessionId: string,
+    field: "projectId" | "epicId" | "userStoryId"
+  ): string | null {
+    try {
+      const row = db
+        .select({
+          projectId: agentSessions.projectId,
+          epicId: agentSessions.epicId,
+          userStoryId: agentSessions.userStoryId,
+        })
+        .from(agentSessions)
+        .where(eq(agentSessions.id, sessionId))
+        .get();
+      return row ? (row[field] ?? null) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Returns any tracked session currently occupying the target, meaning its underlying
+   * child process or process group has not completed teardown (`processClosed !== true`).
+   * Covers cancelled sessions that are still in their termination grace period.
+   */
+  getOccupyingSessionForTarget(target: {
+    scope: "epic" | "story";
+    projectId: string;
+    epicId?: string | null;
+    storyId?: string;
+  }): TrackedSession | null {
+    for (const session of this.sessions.values()) {
+      if (session.processClosed) continue;
+      const projId =
+        session.projectId ??
+        this.lookupSessionField(session.sessionId, "projectId");
+      if (projId && projId !== target.projectId) continue;
+
+      const epicId =
+        session.epicId ??
+        this.lookupSessionField(session.sessionId, "epicId");
+      const storyId =
+        session.userStoryId ??
+        this.lookupSessionField(session.sessionId, "userStoryId");
+
+      if (target.scope === "epic") {
+        if (epicId === target.epicId) {
+          return session;
+        }
+      } else {
+        if (storyId === target.storyId) {
+          return session;
+        }
+        if (target.epicId && epicId === target.epicId) {
+          return session;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns all tracked sessions in a project that are still occupying their target/worktree.
+   */
+  listOccupyingSessions(projectId?: string): TrackedSession[] {
+    const results: TrackedSession[] = [];
+    for (const session of this.sessions.values()) {
+      if (session.processClosed) continue;
+      const projId =
+        session.projectId ??
+        this.lookupSessionField(session.sessionId, "projectId");
+      if (projectId && projId && projId !== projectId) continue;
+      results.push(session);
+    }
+    return results;
+  }
+
+  /**
+   * Whether the target currently has a session whose process has not closed yet.
+   */
+  isTargetOccupied(target: {
+    scope: "epic" | "story";
+    projectId: string;
+    epicId?: string | null;
+    storyId?: string;
+  }): boolean {
+    return this.getOccupyingSessionForTarget(target) !== null;
   }
 
   /**
@@ -731,6 +899,10 @@ class ClaudeProcessManager {
 
     if (session.cliSessionId) {
       info.cliSessionId = session.cliSessionId;
+    }
+
+    if (session.processClosed !== undefined) {
+      info.processClosed = session.processClosed;
     }
 
     return info;
