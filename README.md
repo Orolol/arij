@@ -135,6 +135,7 @@ Use whichever AI coding tool you prefer:
 | **OpenAI Codex** | `codex` CLI via Codex SDK |
 | **Oh My Pi** | `omp` CLI — standalone multi-agent orchestrator (fork of pi) |
 | **Antigravity** | `agy` CLI — Google Antigravity's agent |
+| **Pi (Arij)** | Bundled fork of Pi, with per-session MCP; run it with `arij pi` |
 
 Every provider carries Arij's MCP tool channel per session — that is the bar
 for being on this list. Agents use it to move tickets, file review findings,
@@ -218,9 +219,9 @@ It refuses to touch a ticket another agent already has, and it never overrides a
 
 ### Prerequisites
 
-- **Node.js** >= 20.9
+- **Node.js** >= 22.19
 - **Git** installed
-- At least one AI coding CLI:
+- Pi is included with Arij. Authenticate with `arij pi` → `/login`, or configure a provider API key. Other CLIs are optional:
   - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — `npm install -g @anthropic-ai/claude-code`, then `claude auth`
   - [OpenAI Codex](https://github.com/openai/codex) — optional
   - [omp](https://omp.sh) (Oh My Pi) — optional
@@ -243,7 +244,7 @@ Open **http://localhost:3000** in your browser. The database is created automati
 `install.sh` runs three phases, each skippable with `--skip-app`, `--skip-cli`
 or `--skip-mcp`, and `--yes` takes the defaults for an unattended run:
 
-1. **the app** — checks Node and git, `npm install`, creates `data/`
+1. **the app** — checks Node and git, `npm install` (including Pi), creates `data/`
 2. **the CLIs** — offers Claude Code, Codex and omp one at a time, skipping any already on your PATH
 3. **the channel** — registers Arij's MCP server in each CLI's own config
 
@@ -260,6 +261,28 @@ Which providers actually reach the channel, and what was measured to establish
 that, is in [docs/architecture/mcp-provider-matrix.md](docs/architecture/mcp-provider-matrix.md).
 
 Prefer to do it by hand? `npm install && npm run dev` is still the whole app.
+
+### Bundled Pi
+
+The [Orolol/pi fork](https://github.com/Orolol/pi/tree/arij) is installed from a
+pinned GitHub release (also archived in `vendor/`). No global Pi installation or separate source build
+is needed. In a source checkout, run `node bin/arij.mjs pi` (or `arij pi` when
+Arij is installed as a command), then `/login`. Configuration and credentials
+live in `~/.arij-pi/agent`; API-key environment variables also work.
+
+Choose **Pi (Arij)** when creating or editing a named agent. Existing agent
+assignments and default providers are preserved. Models can be specified as
+`provider/model`; the agent editor exposes Pi's thinking level and headless
+permission policy. **Pi (Arij) — persistent** is also available for chat.
+Pi streams answers and structured questions, supports team-build delegation,
+and reports session usage/costs and MCP actions in Arij's existing views.
+
+Arij injects its MCP channel and global/project servers per session, with
+separate credentials and tool allowlists. Supported transports are stdio and
+Streamable HTTP with configured headers. Repository read-only modes retain
+board tools. Sessions can be resumed, and cancellation stops the CLI and its
+children. See [the integration contract](docs/architecture/bundled-pi.md) for
+packaging, verification and remaining limitations.
 
 ### Your First Project
 
@@ -366,7 +389,7 @@ All agent work happens in isolated git worktrees, so multiple features can be bu
 | Design system | "Piscine" — CSS custom-property tokens in `app/globals.css`, primitives in `components/piscine/` |
 | Typography | Bricolage Grotesque / Instrument Sans / Space Mono via `next/font/google` |
 | Database | SQLite via better-sqlite3 + Drizzle ORM |
-| Agent execution | Claude Code CLI (`claude`) spawned as a child process — plus Codex, Oh My Pi, and Antigravity |
+| Agent execution | Claude Code CLI (`claude`) spawned as a child process — plus Codex, Oh My Pi, Antigravity, and bundled Pi |
 
 ---
 

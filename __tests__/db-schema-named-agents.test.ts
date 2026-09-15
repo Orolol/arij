@@ -36,6 +36,7 @@ describe("Schema: namedAgents table and provider types", () => {
     expect(isAgentProvider("claude-code")).toBe(true);
     expect(isAgentProvider("codex")).toBe(true);
     expect(isAgentProvider("oh-my-pi")).toBe(true);
+    expect(isAgentProvider("pi")).toBe(true); // Bundled Arij fork, with MCP support.
     // Removed in the 2026-08 MCP cleanup — no longer valid providers.
     expect(isAgentProvider("gemini-cli")).toBe(false);
     expect(isAgentProvider("mistral-vibe")).toBe(false);
@@ -44,7 +45,6 @@ describe("Schema: namedAgents table and provider types", () => {
     expect(isAgentProvider("deepseek")).toBe(false);
     expect(isAgentProvider("kimi")).toBe(false);
     expect(isAgentProvider("zai")).toBe(false);
-    expect(isAgentProvider("pi")).toBe(false);
     expect(isAgentProvider("invalid")).toBe(false);
   });
 
@@ -55,6 +55,7 @@ describe("Schema: namedAgents table and provider types", () => {
       "codex",
       "oh-my-pi",
       "agy",
+      "pi",
     ]);
   });
 

@@ -59,6 +59,7 @@ export interface ClaudeResult {
   cliSessionId?: string;
   /** True when the agent ended by asking a user question. */
   endedWithQuestion?: boolean;
+  usage?: { inputTokens?: number; outputTokens?: number; totalCostUsd?: number };
 }
 
 export interface SpawnedClaude {

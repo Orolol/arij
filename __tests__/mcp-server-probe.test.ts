@@ -1,3 +1,5 @@
+// @vitest-environment node
+// Real HTTP fetch must use Node's AbortSignal, not jsdom's incompatible signal.
 /**
  * Story "Test de connexion et remontée de l'état de santé".
  *

@@ -698,7 +698,7 @@ describe("providerSupportsMcp — contract verdicts", () => {
     ["claude-code", true],
     ["codex", true],
     ["oh-my-pi", true],
-    ["pi", false],
+    ["pi", true],
     ["gemini-cli", false],
     ["mistral-vibe", false],
     ["qwen-code", false],

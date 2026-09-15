@@ -155,7 +155,7 @@ const STATUS_CONFIG: Record<
 
 /** State chips (single-select) and provider chips (toggle) of the filter bar. */
 type StateFilter = "all" | "running" | "failed" | "night";
-type ProviderFilter = "claude-code" | "codex" | null;
+type ProviderFilter = "claude-code" | "codex" | "pi" | null;
 type SortOption = "created" | "last_activity";
 
 /**
@@ -517,6 +517,13 @@ export default function SessionsPage() {
           onClick={() => setProviderFilter((p) => (p === "codex" ? null : "codex"))}
         >
           {t("filters.codex")}
+        </FilterChip>
+        <FilterChip
+          testId="sessions-filter-pi"
+          active={providerFilter === "pi"}
+          onClick={() => setProviderFilter((p) => (p === "pi" ? null : "pi"))}
+        >
+          {PROVIDER_LABELS.pi}
         </FilterChip>
 
         <div className="flex items-center gap-[7px] text-[12.5px] text-muted-foreground sm:ml-auto">

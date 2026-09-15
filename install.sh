@@ -16,8 +16,8 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHIM_PATH="$REPO_ROOT/bin/arij-mcp.mjs"
-MIN_NODE_MAJOR=20
-MIN_NODE_MINOR=9
+MIN_NODE_MAJOR=22
+MIN_NODE_MINOR=19
 SERVER_NAME="arij"
 
 ASSUME_YES=0
@@ -157,7 +157,7 @@ offer_cli() {
 
 install_clis() {
   step "Agent CLIs"
-  info "Arij needs at least one. Skip anything you do not want."
+  info "Pi is bundled with Arij (arij pi). The following CLIs are optional."
 
   offer_cli "Claude Code" claude \
     "npm install -g @anthropic-ai/claude-code" \

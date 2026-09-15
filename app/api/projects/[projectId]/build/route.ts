@@ -63,6 +63,7 @@ import { NIGHT_RUN_ID_PREFIX } from "@/lib/night/constants";
 import { nightRunRegistry } from "@/lib/night/registry";
 import { startNightRun } from "@/lib/night/run";
 import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
+import { supportsTeamDelegation } from "@/lib/providers/capabilities";
 import {
   createPromptSectionCapture,
   finalizeCapturedPrompt,
@@ -180,11 +181,11 @@ export const POST = withAgentResolutionErrors(async function POST(
     }
   }
 
-  // Team mode is Claude Code exclusive — no sub-agent delegation outside Claude today.
+  // Only providers with an implemented Task runtime may coordinate a team.
   const resolvedTeamCheck = resolveAgentByNamedId("team_build", projectId, namedAgentId);
-  if (team && resolvedTeamCheck.provider !== "claude-code") {
+  if (team && !supportsTeamDelegation(resolvedTeamCheck.provider)) {
     return NextResponse.json(
-      { error: "Team mode is only available with Claude Code. Other providers do not support sub-agent delegation." },
+      { error: "Team mode is available with Claude Code and Pi (Arij). This provider does not support sub-agent delegation." },
       { status: 400 }
     );
   }
@@ -238,9 +239,9 @@ export const POST = withAgentResolutionErrors(async function POST(
         projectId,
         namedAgentId
       );
-      if (resolvedTeamAgent.provider !== "claude-code") {
+      if (!supportsTeamDelegation(resolvedTeamAgent.provider)) {
         return NextResponse.json(
-          { error: "Team mode is only available with Claude Code." },
+          { error: "Team mode is available with Claude Code and Pi (Arij)." },
           { status: 400 }
         );
       }

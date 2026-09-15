@@ -37,7 +37,7 @@ beforeEach(() => {
 });
 
 describe("createChatCliToolChannel", () => {
-  it.each(["claude-code", "codex"])(
+  it.each(["claude-code", "codex", "pi"])(
     "builds a chat-toolset channel with a live project-scoped token for %s",
     (provider) => {
       const channel = createChatCliToolChannel({
@@ -123,7 +123,7 @@ describe("createChatCliToolChannel", () => {
     channel!.release();
   });
 
-  it.each(["gemini-cli", "mistral-vibe", "pi", "openai-compatible"])(
+  it.each(["gemini-cli", "mistral-vibe", "openai-compatible"])(
     "returns null for provider %s (no MCP injection surface)",
     (provider) => {
       expect(

@@ -18,16 +18,14 @@ import { PROVIDER_OPTIONS } from "@/lib/agent-config/constants";
 
 describe("isResumableProvider", () => {
   it("accepts every provider whose CLI can continue a session", () => {
-    for (const provider of ["claude-code", "oh-my-pi"]) {
+    for (const provider of ["claude-code", "oh-my-pi", "pi"]) {
       expect(isResumableProvider(provider), provider).toBe(true);
     }
   });
 
   it("rejects providers with no usable resume handle", () => {
     expect(isResumableProvider("codex")).toBe(false);
-    // Legacy DB rows may still say "pi" (removed provider); they must never
-    // be offered for resume.
-    expect(isResumableProvider("pi")).toBe(false);
+    // Pi now names the bundled fork, whose CLI reports a usable session id.
   });
 
   it("rejects unknown values", () => {

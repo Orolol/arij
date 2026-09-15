@@ -26,6 +26,7 @@ import type { ProviderType } from "@/lib/providers/types";
  * codex". This list is that verdict, in one place.
  */
 const RESUMABLE_PROVIDERS = new Set<ProviderType>([
+  "pi",
   "claude-code",
   "oh-my-pi",
   "agy",
@@ -39,6 +40,7 @@ const RESUMABLE_PROVIDERS = new Set<ProviderType>([
  * by the CLI, and then replayed into the resume flag on a later run.
  */
 const SELF_REPORTED_SESSION_ID_PROVIDERS = new Set<ProviderType>([
+  "pi",
   "oh-my-pi",
   "agy",
 ]);
