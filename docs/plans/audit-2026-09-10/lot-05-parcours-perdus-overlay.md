@@ -305,3 +305,31 @@ Rendre un état de chargement minimal (titre en Mono « … » ou skeleton) à p
 
 </details>
 
+
+## État au 16/09/2026 — fait, intégré sur main
+
+Commit `0085aed4` sur `main` (écrit sur `feature/lots-03-05-10`, puis
+appliqué par-dessus l'intégration). Trois implémentations (overlay, serveur de
+réordonnancement, carte PIPELINE), deux revues adverses, une passe de corrections.
+
+Fait : #119, #81, #22 (route `POST/GET /api/projects/:id/epics/:epicId/position`,
+up/down/top/bottom en une transaction, rang de colonne « Queue #n of m » dans la
+carte PIPELINE ; route drag, source `drag` et écriture directe de `position` par
+PATCH retirées ; le MCP `reorder_tickets` reste), #72 (la carte lit le registre :
+étape, tentative, cycle de fix, story, raison et date du dernier run ;
+`GET /pipeline/runs?epicId=`), #120 (puces de dépendances cliquables), #122 (409
+affiché dans la carte hors page projet ; une seule pile de toasts, celle du
+provider, où desk, QA et chat lèvent aussi), #133 (Diff depuis CONFLICT et depuis
+un finding QA), #134 (état d'attente, teinte et nom du projet depuis le contexte
+partagé, plus de GET projet), #121 (déjà vrai à l'exécution, type ajouté).
+
+Choix : le rang affiché est celui de la colonne (ce que Full Auto lit), pas le
+numéro d'UP NEXT qui fusionne en cours/à faire et saute les tickets exclus.
+
+Reste :
+- positions des user stories encore écrites en direct par PATCH ;
+- mode « déplacement » de `reorderTickets` (sans `reorderOnly`) sans appelant
+  de production, gardé pour `refinement-reorder-core.test.ts` ;
+- badge pipeline sur les lignes de la page Sessions (suggestion de la fiche, non
+  faite) ; aucun événement propre au pipeline : poll de 10 s limité aux runs actifs ;
+- la raison terminale d'un run est affichée brute, en anglais.

@@ -117,21 +117,29 @@ sondes asynchrones, y compris OMP. La reprise couvre aussi le streaming Claude
 nécessaire à l'unification, sans déclarer le reste du lot 07 terminé. Voir le
 [compte rendu des changements et vérifications](implementation-lot-14.md).
 
+**Intégration sur `main` le 16/09/2026** : l'arbre partagé (rationalisation et lots
+des autres sessions), les lots 14/07/11 de `feature/lot-07-sessions-lecture` et les
+lots 03, 10 et 05 sont sur `main` (tête `0085aed4`), sans commit de merge au-dessus.
+Migrations renumérotées : `0062_release_published_at`, `0063_agent_session_tool_calls`,
+`0064_chat_orphan_messages_cutover`. Suite complète verte (9 436 tests) ; tsc garde
+57 erreurs, toutes antérieures à l'intégration. Restent : lot 19 (en partie),
+lot 25 (décision), lot 17 (à confirmer).
+
 ## Les lots
 
 | Lot | Titre | Difficulté | Findings | Impact | Effort | Statut |
 |---|---|---|---|---|---|---|
 | [01](lot-01-retrait-notifications.md) | Retrait complet du sous-système notifications | 2/4 | 5 | 2 fort · 0 moyen · 3 faible | 2 S · 2 M · 1 L | fait le 11/09 |
 | [02](lot-02-retrait-agents-review-personnalises.md) | Retrait des agents de review personnalisés | 1/4 | 1 | 1 fort · 0 moyen · 0 faible | 0 S · 0 M · 1 L | fait le 11/09 |
-| [03](lot-03-retablir-preuves-visuelles.md) | Rétablir les preuves visuelles (galerie + réglage) | 2/4 | 2 | 1 fort · 0 moyen · 1 faible | 1 S · 1 M · 0 L | branche `feature/lots-03-05-10` (16/09) |
+| [03](lot-03-retablir-preuves-visuelles.md) | Rétablir les preuves visuelles (galerie + réglage) | 2/4 | 2 | 1 fort · 0 moyen · 1 faible | 1 S · 1 M · 0 L | fait le 16/09 |
 | [04](lot-04-code-mort-mecanique.md) | Code mort mécanique : fichiers, exports, routes, tokens, restes du board | 1/4 | 26 | 0 fort · 0 moyen · 26 faible | 26 S · 0 M · 0 L | fait le 11/09 |
-| [05](lot-05-parcours-perdus-overlay.md) | Parcours perdus dans l'overlay ticket et le desk | 2/4 | 9 | 1 fort · 4 moyen · 4 faible | 7 S · 2 M · 0 L | en cours, branche `feature/lots-03-05-10` |
+| [05](lot-05-parcours-perdus-overlay.md) | Parcours perdus dans l'overlay ticket et le desk | 2/4 | 9 | 1 fort · 4 moyen · 4 faible | 7 S · 2 M · 0 L | fait le 16/09 |
 | [06](lot-06-dispatch-unifie-sessions.md) | Un seul chemin de lancement de session (build, review, merge, pull, create-epics) | 4/4 | 8 | 4 fort · 4 moyen · 0 faible | 2 S · 4 M · 2 L | fait le 11/09 |
-| [07](lot-07-stockage-sessions-live-log.md) | Stockage des sessions, rétention, LIVE LOG | 4/4 | 15 | 5 fort · 7 moyen · 3 faible | 5 S · 10 M · 0 L | branche `feature/lot-07-sessions-lecture` (11/09) |
+| [07](lot-07-stockage-sessions-live-log.md) | Stockage des sessions, rétention, LIVE LOG | 4/4 | 15 | 5 fort · 7 moyen · 3 faible | 5 S · 10 M · 0 L | fait le 11/09 |
 | [08](lot-08-tickets-serveur-read-model.md) | Tickets côté serveur : projection de GET /epics, GET unitaire, read-model partagé | 3/4 | 10 | 3 fort · 6 moyen · 1 faible | 3 S · 7 M · 0 L | fait le 11/09 |
 | [09](lot-09-tickets-client-polling.md) | Tickets côté client : polling, rafraîchissements, helpers partagés | 2/4 | 11 | 0 fort · 7 moyen · 4 faible | 2 S · 9 M · 0 L | fait le 11/09 |
-| [10](lot-10-chat.md) | Chat : une seule interface, un seul runner de tour | 4/4 | 14 | 1 fort · 6 moyen · 7 faible | 10 S · 2 M · 2 L | branche `feature/lots-03-05-10` (16/09) |
-| [11](lot-11-spec-memoire-releases.md) | Spec, mémoire (dreaming/distill) et releases | 3/4 | 16 | 4 fort · 7 moyen · 5 faible | 12 S · 4 M · 0 L | branche `feature/lot-07-sessions-lecture` (11/09) |
+| [10](lot-10-chat.md) | Chat : une seule interface, un seul runner de tour | 4/4 | 14 | 1 fort · 6 moyen · 7 faible | 10 S · 2 M · 2 L | fait le 16/09 |
+| [11](lot-11-spec-memoire-releases.md) | Spec, mémoire (dreaming/distill) et releases | 3/4 | 16 | 4 fort · 7 moyen · 5 faible | 12 S · 4 M · 0 L | fait le 11/09 |
 | [12](lot-12-git-github-projets.md) | Git, GitHub, import et suppression de projet | 2/4 | 9 | 1 fort · 5 moyen · 3 faible | 6 S · 3 M · 0 L | fait le 16/09 |
 | [13](lot-13-prompts-securite-coherence.md) | Couche prompts : neutralisation, doublons, cohérence des règles | 2/4 | 11 | 1 fort · 7 moyen · 3 faible | 8 S · 3 M · 0 L | fait le 16/09 |
 | [14](lot-14-providers-spawn.md) | Providers : sandbox codex, signaux de processus, fuite mémoire | 3/4 | 6 | 2 fort · 4 moyen · 0 faible | 3 S · 3 M · 0 L | fait le 16/09 |
@@ -155,14 +163,14 @@ nécessaire à l'unification, sans déclarer le reste du lot 07 terminé. Voir l
 2. Lot 04 — Code mort mécanique : fichiers, exports, routes, tokens, restes du board (1/4) — **fait le 11/09**
 3. Lot 01 — Retrait complet du sous-système notifications (2/4) — **fait le 11/09**
 4. Lot 02 — Retrait des agents de review personnalisés (1/4) — **fait le 11/09**
-5. Lot 03 — Rétablir les preuves visuelles (galerie + réglage) (2/4)
+5. Lot 03 — Rétablir les preuves visuelles (galerie + réglage) (2/4) — **fait le 16/09**
 6. Lot 21 — Usage et base de données : calculs inutiles, colonnes, journal (1/4) — **fait le 16/09**
 7. Lot 22 — i18n : libellés anglais en dur côté serveur (1/4) — **fait le 16/09**
 8. Lot 18 — Réglages et cohérence de l'UI partagée (1/4) — **fait le 16/09**
 9. Lot 20 — App shell, distribution, docs et CI (1/4) — **fait le 16/09**
 10. Lot 25 — Frictions : fermer la boucle ou retirer (1/4)
 11. Lot 12 — Git, GitHub, import et suppression de projet (2/4) — **fait le 16/09**
-12. Lot 05 — Parcours perdus dans l'overlay ticket et le desk (2/4)
+12. Lot 05 — Parcours perdus dans l'overlay ticket et le desk (2/4) — **fait le 16/09**
 13. Lot 08 — Tickets côté serveur : projection de GET /epics, GET unitaire, read-model partagé (3/4) — **fait le 11/09**
 14. Lot 09 — Tickets côté client : polling, rafraîchissements, helpers partagés (2/4) — **fait le 11/09**
 15. Lot 13 — Couche prompts : neutralisation, doublons, cohérence des règles (2/4) — **fait le 16/09**
@@ -170,10 +178,10 @@ nécessaire à l'unification, sans déclarer le reste du lot 07 terminé. Voir l
 17. Lot 14 — Providers : sandbox codex, signaux de processus, fuite mémoire (3/4) — **fait le 16/09**
 18. Lot 06 — Un seul chemin de lancement de session (build, review, merge, pull, create-epics) (4/4) — **fait le 11/09**
 19. Lot 15 — Full Auto, night runs, batch DAG, routines (3/4) — **fait le 11/09**
-20. Lot 11 — Spec, mémoire (dreaming/distill) et releases (3/4)
+20. Lot 11 — Spec, mémoire (dreaming/distill) et releases (3/4) — **fait le 11/09**
 21. Lot 16 — Review, QA, findings et verdicts (3/4) — **fait le 16/09**
-22. Lot 10 — Chat : une seule interface, un seul runner de tour (4/4)
-23. Lot 07 — Stockage des sessions, rétention, LIVE LOG (4/4)
+22. Lot 10 — Chat : une seule interface, un seul runner de tour (4/4) — **fait le 16/09**
+23. Lot 07 — Stockage des sessions, rétention, LIVE LOG (4/4) — **fait le 11/09**
 24. Lot 17 — Portage Piscine des îlots restants (3/4)
 25. Lot 19 — Suite de tests : harnais partagés, attentes temporisées, doublons (2/4) — **fait en partie le 11/09** (#162, #165, #169 différés)
 
