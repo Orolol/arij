@@ -471,15 +471,19 @@ class ClaudeProcessManager {
     const promise: Promise<ClaudeResult> = providerSession.promise;
     const mcpConfigPath = providerSession.mcpConfigPath;
 
-    // Persist CLI command
-    if (providerSession.command) {
+    // Async preflights may only expose the command once they have completed.
+    let commandPersisted = false;
+    const persistCommand = () => {
+      if (commandPersisted || !providerSession.command) return;
       try {
         db.update(agentSessions)
           .set({ cliCommand: providerSession.command })
           .where(eq(agentSessions.id, sessionId))
           .run();
+        commandPersisted = true;
       } catch { /* best-effort */ }
-    }
+    };
+    persistCommand();
 
     // Record what the child actually got. `options.mcp` is cleared when the
     // injection block failed; `mcpConfigPath` is absent when the claude
@@ -593,6 +597,7 @@ class ClaudeProcessManager {
 
         const tracked = this.sessions.get(sessionId);
         if (tracked === session) {
+          persistCommand();
           tracked.processClosed = true;
           // The prompt was handed to the CLI whole and is persisted (capped)
           // on the session row; nothing reads it back from here once the

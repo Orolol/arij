@@ -110,6 +110,16 @@ describe("Process Manager", () => {
     });
   });
 
+  it("waits for a cancelled process to close before reusing its id", async () => {
+    processManager.start("closing-retry", { mode: "code", prompt: "first" });
+    processManager.cancel("closing-retry");
+    expect(() => processManager.start("closing-retry", { mode: "code", prompt: "retry" }))
+      .toThrow("still stopping");
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(() => processManager.start("closing-retry", { mode: "code", prompt: "retry" }))
+      .not.toThrow();
+  });
+
   describe("cancel()", () => {
     it("cancels a running CC session", () => {
       processManager.start("s4", { mode: "code", prompt: "test" });

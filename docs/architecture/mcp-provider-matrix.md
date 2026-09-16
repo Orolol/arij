@@ -82,6 +82,22 @@ prompt sentence in the wrong spelling names a tool that does not exist. The same
 applies to a third-party server: `extraMcpToolPrefix()` spells `mcp__godot__*`
 for claude/codex, `mcp__godot_*` for omp, and bare names for agy.
 
+## Shared provider lifecycle
+
+One-shot callers use `getProvider(type).spawn(...)`, including Claude Code.
+`ProviderSession` carries its MCP config path so the process manager can release
+it. With `onChunk`, Claude relays NDJSON lines as raw chunks while the agent is
+running, then emits the final output and response once. The fresh chat stream
+uses the provider's optional `spawnStream` capability; resume and retry use
+`spawn`, preserving CLI options and the MCP channel.
+
+All CLI spawners, including persistent chat, own detached process groups and
+share `lib/providers/process-signals.ts`: cancellation sends SIGTERM and then
+SIGKILL after five seconds if the child or its descendants survive. The process
+manager tracks teardown separately from the cancelled status, drops the prompt
+and process handles at closure, and retains the final result for five minutes
+before removing its entry. Completion polling therefore still sees the result.
+
 ## Additional (third-party) MCP servers
 
 Users can declare their own MCP servers — Godot, Confluence, Playwright — either
@@ -300,7 +316,9 @@ agents running `--permission-mode bypassPermissions`.
 
 That containment is enforced, not assumed. `CodexProvider.preflight` refuses a
 `plan`, `chat` or `analyze` spawn whose cwd is not inside `.arij-worktrees`
-(`lib/providers/spawn-containment.ts`): the session fails with an actionable
+(`lib/providers/spawn-containment.ts`). The check resolves symlinks and requires
+a directory below the worktree storage root; the root itself is refused.
+The session fails with an actionable
 message naming the providers that do have a read-only posture. Measured on
 2026-09-10 before the gate, chat turns, spec generation, QA epic extraction,
 conversation titling (cwd = Arij's own repository), dreaming, memory

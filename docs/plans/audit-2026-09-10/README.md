@@ -111,6 +111,12 @@ QA et vérification déterministe. Les validations ciblées et les limites des
 contrôles globaux sont détaillées dans le
 [compte rendu des changements et vérifications](implementation-lots-12-13-16.md).
 
+**Lot 14 réalisé le 16/09/2026** : garde Codex hors worktree, arrêt des groupes
+de processus, contrat commun des providers, éviction des sessions terminées et
+sondes asynchrones, y compris OMP. La reprise couvre aussi le streaming Claude
+nécessaire à l'unification, sans déclarer le reste du lot 07 terminé. Voir le
+[compte rendu des changements et vérifications](implementation-lot-14.md).
+
 ## Les lots
 
 | Lot | Titre | Difficulté | Findings | Impact | Effort | Statut |
@@ -128,7 +134,7 @@ contrôles globaux sont détaillées dans le
 | [11](lot-11-spec-memoire-releases.md) | Spec, mémoire (dreaming/distill) et releases | 3/4 | 16 | 4 fort · 7 moyen · 5 faible | 12 S · 4 M · 0 L | branche `feature/lot-07-sessions-lecture` (11/09) |
 | [12](lot-12-git-github-projets.md) | Git, GitHub, import et suppression de projet | 2/4 | 9 | 1 fort · 5 moyen · 3 faible | 6 S · 3 M · 0 L | fait le 16/09 |
 | [13](lot-13-prompts-securite-coherence.md) | Couche prompts : neutralisation, doublons, cohérence des règles | 2/4 | 11 | 1 fort · 7 moyen · 3 faible | 8 S · 3 M · 0 L | fait le 16/09 |
-| [14](lot-14-providers-spawn.md) | Providers : sandbox codex, signaux de processus, fuite mémoire | 3/4 | 6 | 2 fort · 4 moyen · 0 faible | 3 S · 3 M · 0 L | branche `feature/lot-07-sessions-lecture` (11/09) |
+| [14](lot-14-providers-spawn.md) | Providers : sandbox codex, signaux de processus, fuite mémoire | 3/4 | 6 | 2 fort · 4 moyen · 0 faible | 3 S · 3 M · 0 L | fait le 16/09 |
 | [15](lot-15-auto-mode-night-batch-routines.md) | Full Auto, night runs, batch DAG, routines | 3/4 | 10 | 0 fort · 6 moyen · 4 faible | 8 S · 2 M · 0 L | fait le 11/09 |
 | [16](lot-16-review-qa-findings-verdicts.md) | Review, QA, findings et verdicts | 3/4 | 17 | 2 fort · 8 moyen · 7 faible | 11 S · 6 M · 0 L | fait le 16/09 |
 | [17](lot-17-ilots-pre-piscine.md) | Portage Piscine des îlots restants | 3/4 | 11 | 0 fort · 7 moyen · 4 faible | 3 S · 3 M · 5 L | à faire |
@@ -161,7 +167,7 @@ contrôles globaux sont détaillées dans le
 14. Lot 09 — Tickets côté client : polling, rafraîchissements, helpers partagés (2/4) — **fait le 11/09**
 15. Lot 13 — Couche prompts : neutralisation, doublons, cohérence des règles (2/4) — **fait le 16/09**
 16. Lot 24 — Configuration d'agents et workshop (2/4) — **fait le 16/09**
-17. Lot 14 — Providers : sandbox codex, signaux de processus, fuite mémoire (3/4)
+17. Lot 14 — Providers : sandbox codex, signaux de processus, fuite mémoire (3/4) — **fait le 16/09**
 18. Lot 06 — Un seul chemin de lancement de session (build, review, merge, pull, create-epics) (4/4) — **fait le 11/09**
 19. Lot 15 — Full Auto, night runs, batch DAG, routines (3/4) — **fait le 11/09**
 20. Lot 11 — Spec, mémoire (dreaming/distill) et releases (3/4)

@@ -65,7 +65,7 @@ vi.mock("@/lib/db/schema", () => ({
 import { spawnClaude, spawnClaudeStream } from "@/lib/claude/spawn";
 import { processManager } from "@/lib/claude/process-manager";
 import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import { signalChild, isChildAlive } from "@/lib/providers/process-signals";
+import { signalChild } from "@/lib/providers/process-signals";
 import { getRunningSessionForTarget } from "@/lib/agents/concurrency";
 import { checkPipelineGuards } from "@/lib/pipeline/stage-guards";
 

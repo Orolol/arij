@@ -227,30 +227,33 @@ codex.ts:103 `function codexApprovalArgs(): string[] { return ["--dangerously-by
 
 </details>
 
-## État au 11/09/2026
+## État au 16/09/2026 — réalisé
 
-Livré sur la branche `feature/lot-14-providers-spawn` (worktree
-`/home/orosius/workspace/.arij-worktrees/lot-14-providers-spawn`), commit unique
-au-dessus du merge de `feature/epic-HeywuEXp4qYp` (fix SIGKILL, #171).
+Les six findings sont traités dans l'arbre de travail courant. Les corrections
+existantes de la branche SIGKILL puis de `feature/lot-14-providers-spawn` ont
+été reprises et adaptées aux lots déjà présents, sans fusion Git de l'arbre
+partagé non commité. Le prérequis de streaming Claude du lot 07 est repris.
 
-- #170 / #193 : preflight codex (`lib/providers/spawn-containment.ts`), refus de
-  plan/chat/analyze hors `.arij-worktrees`. Docs mises à jour.
-- #171 : branche mergée ; correction d'un défaut de la branche (repli sur
-  `child.kill` quand le signal de groupe répond ESRCH sur un enfant vivant).
-- #173 : claude-code passe par `getProvider` dans le process manager et les routes
-  chat (POST non-stream), generate-spec, QA create-epics. **Reste** : la branche
-  resume de `chat/stream/route.ts` (spawnClaude ×2) et le chemin streaming — à
-  traiter avec le lot 10. Le LIVE LOG claude-code (onChunk stream-json) reste au
-  lot 07.
-- #174 : éviction après 5 min, prompt libéré à la fermeture.
-- #181 : `which`/`codex login status` asynchrones ; mémo négatif omp 5 s. La sonde
-  omp reste synchrone (préflight synchrone partagé avec le runner persistant,
-  fichier réécrit par la rationalisation en cours).
+- **#170 / #193** : préflight Codex commun, avant toute préparation de spawn,
+  refusant plan/chat/analyze hors d'un répertoire `.arij-worktrees/<worktree>`.
+  Le chemin réel est contrôlé : la racine de stockage et les liens symboliques
+  qui ressortent vers le clone principal sont refusés.
+- **#171** : arrêt du groupe de processus, SIGTERM puis SIGKILL, commun aux
+  deux spawners Claude, au provider de base et au runner persistant. Les
+  descendants sont surveillés même après la sortie du processus principal.
+- **#173** : lancement par `getProvider` dans le process manager et les routes.
+  Claude fournit `mcpConfigPath`, les chunks raw en direct et les chunks finaux.
+  Le chat utilise la capacité `spawnStream` du provider pour les sessions
+  fraîches ; resume et retry utilisent `spawn`. Les branches de lancement
+  spécifiques à Claude ont disparu, y compris dans le chat stream.
+- **#174** : prompt et poignées de processus libérés à la fermeture ; résultat
+  conservé cinq minutes pour les lecteurs puis entrée supprimée. Un ancien
+  minuteur ne supprime pas une nouvelle exécution du même identifiant. La
+  réutilisation attend la fermeture du processus annulé.
+- **#181** : disponibilité et version OMP sondées avec `execFile` asynchrone,
+  timeout cinq secondes ; appels OMP concurrents mutualisés, verdict négatif
+  mémorisé cinq secondes. Les runners one-shot et persistants attendent le
+  préflight avant d'allouer leurs ressources ou de lancer l'agent.
 
-Validation : tsc 0, eslint 0 sur les fichiers touchés, i18n 0 écart, suite
-vitest verte sur `npm ci` propre sauf `documents-upload-platform-body-cap`
-(boot `next dev` à froid > 10 s, échoue aussi sur le commit de base dans un
-worktree neuf).
-
-À merger sur `main` après la rationalisation du 10/09 ; conflits attendus faibles
-(`generate-spec/route.ts` : hunks disjoints).
+Validation, provenance des reprises et limites :
+[compte rendu du lot 14](implementation-lot-14.md).
