@@ -22,8 +22,8 @@ describe("package.json configuration", () => {
     expect(pkg.bin.arij).toBe("./bin/arij.mjs");
   });
 
-  it("should not be marked as private", () => {
-    expect(pkg.private).not.toBe(true);
+  it("should be marked as private for git-clone distribution", () => {
+    expect(pkg.private).toBe(true);
   });
 });
 

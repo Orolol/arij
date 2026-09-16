@@ -42,6 +42,7 @@ vi.mock("@/lib/git/manager", () => ({
   mergeWorktree: gitMocks.mergeWorktree,
   attachWorktree: gitMocks.attachWorktree,
   captureMergeCheckpoint: gitMocks.captureMergeCheckpoint,
+  resolveDefaultBranch: vi.fn(async (_path: string, preferred?: string | null) => preferred ?? "main"),
   rollbackMerge: gitMocks.rollbackMerge,
 }));
 
@@ -94,7 +95,6 @@ const {
   ticketComments,
   ticketActivityLog,
   reviewComments,
-  notifications,
   settings,
   verifyReports,
 } = await import("@/lib/db/schema");
@@ -283,11 +283,6 @@ function completeReviewPass(sessionId: string): void {
     .run();
 }
 
-/** The reviewer ran but produced no verdict — nothing to approve with. */
-function completeReviewSilently(sessionId: string): void {
-  finishSession(sessionId, "silent");
-}
-
 /** Review rejected: the driver bounces the epic back to in_progress. */
 function completeReviewChangesRequested(sessionId: string): void {
   const session = db
@@ -406,7 +401,6 @@ function reviewSessionsFor(epicId: string): unknown[] {
 }
 
 beforeEach(() => {
-  db.delete(notifications).run();
   db.delete(ticketComments).run();
   db.delete(ticketActivityLog).run();
   db.delete(reviewComments).run();
@@ -798,7 +792,6 @@ describe("merge gate", () => {
 
     expect(gitMocks.mergeWorktree).toHaveBeenCalledTimes(2);
     expect(autoModeRegistry.isParked(PROJECT_ID, "e1")).toBe(true);
-    expect(db.select().from(notifications).all()).toHaveLength(1);
 
     const after = await sweepProject(PROJECT_ID, deps());
     expect(after.merged).toEqual([]);

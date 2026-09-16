@@ -69,6 +69,19 @@ describe("GET /api/agent-config/stats", () => {
     expect(mockStats.getAgentReliabilityStats).toHaveBeenCalledWith(undefined);
   });
 
+  it("skips computing agents when include=reviewBounce is requested", async () => {
+    const res = await GET(
+      mockNextRequest({ searchParams: { include: "reviewBounce" } }),
+    );
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.reviewBounce).toEqual([BOUNCE_ROW]);
+    expect(json.data.agents).toBeUndefined();
+    expect(mockStats.getAgentReliabilityStats).not.toHaveBeenCalled();
+    expect(mockStats.getReviewBounceStats).toHaveBeenCalledWith(undefined);
+  });
+
   it("returns { error } with status 500 when aggregation fails", async () => {
     mockStats.getAgentReliabilityStats.mockImplementation(() => {
       throw new Error("no such table: agent_sessions");

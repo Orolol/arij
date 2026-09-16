@@ -1,8 +1,6 @@
-import { Suspense } from "react";
 import { getTranslations } from "next-intl/server";
 
 import { UnderlineTabNav } from "@/components/piscine";
-import { SettingsTabSync } from "@/components/settings-piscine";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
 
 /**
@@ -56,10 +54,6 @@ export default async function SettingsLayout({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background font-sans text-foreground">
-      {/* useSearchParams needs a boundary; the sync renders nothing. */}
-      <Suspense fallback={null}>
-        <SettingsTabSync />
-      </Suspense>
       <div className="flex h-[44px] shrink-0 items-center px-[14px]">
         <UnderlineTabNav items={tabs} />
       </div>

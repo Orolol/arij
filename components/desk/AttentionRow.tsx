@@ -160,7 +160,7 @@ function useRowEnter(onEnter: () => void) {
 export interface AsksYouRowProps {
   item: DeskAwaitingReply;
   project: DeskProject | undefined;
-  onReply: (item: DeskAwaitingReply, message: string) => void | Promise<void>;
+  onReply: (item: DeskAwaitingReply, message: string) => boolean | void | Promise<boolean | void>;
   onSendToDev: (item: DeskAwaitingReply, message: string) => void | Promise<void>;
   /** Omit to hide the ✕ — the row still works without a dismissal store. */
   onDismiss?: (item: DeskAwaitingReply) => void | Promise<void>;
@@ -182,11 +182,11 @@ export function AsksYouRow({
   const [focusKey, setFocusKey] = useState<number | undefined>(undefined);
   const onKeyDown = useRowEnter(() => setFocusKey((key) => (key ?? 0) + 1));
 
-  const send = () => {
+  const send = async () => {
     const message = draft.trim();
-    if (!message) return;
-    void onReply(item, message);
-    setDraft("");
+    if (!message || pending) return;
+    const sent = await Promise.resolve(onReply(item, message)).catch(() => false);
+    if (sent !== false) setDraft((current) => current.trim() === message ? "" : current);
   };
 
   return (

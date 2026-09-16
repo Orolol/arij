@@ -1,11 +1,12 @@
 "use client";
 
+import { requestJson } from "@/lib/api/client";
 import { useLocale, useTranslations } from "next-intl";
 import { formatDateTime } from "@/lib/i18n/format";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { CheckCircle2, FileCode2, Loader2, TriangleAlert, X } from "lucide-react";
+import { Check, CheckCircle2, FileCode2, Loader2, X } from "lucide-react";
 import type { Friction } from "@/lib/db/schema";
 import {
   FRICTION_CATEGORIES,
@@ -14,26 +15,37 @@ import {
   type FrictionCategory,
   type FrictionStatus,
 } from "@/lib/frictions/constants";
-import {
-  FRICTION_CATEGORY_LABELS,
-  FRICTION_STATUS_LABELS,
-  frictionToEpicDraft,
-} from "@/lib/frictions/presentation";
+import type { ManualEpicDraft } from "@/lib/epics/manual-epic-form";
+import type { TranslationKey } from "@/lib/i18n/catalogue";
 import { EpicCreateDialog } from "@/components/kanban/EpicCreateDialog";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+import { FieldKicker, Mono, PillButton, Stamp, SurfaceCard } from "@/components/piscine";
+import { usePolledResource } from "@/hooks/usePolledResource";
 
 type CategoryFilter = "all" | FrictionCategory;
 type StatusFilter = "all" | "open" | FrictionStatus;
 
-const STATUS_STYLES: Record<FrictionStatus, string> = {
-  new: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
-  triaged: "border-blue-500/30 bg-blue-500/10 text-blue-700 dark:text-blue-300",
-  converted: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
-  dismissed: "border-border bg-muted text-muted-foreground",
+const FRICTION_CATEGORY_KEYS: Record<FrictionCategory, TranslationKey> = {
+  broken_tooling: "ProjectFrictions.category.broken_tooling",
+  misleading_docs: "ProjectFrictions.category.misleading_docs",
+  flaky_test: "ProjectFrictions.category.flaky_test",
+  unclear_convention: "ProjectFrictions.category.unclear_convention",
+  other: "ProjectFrictions.category.other",
 };
+
+const FRICTION_STATUS_KEYS: Record<FrictionStatus, TranslationKey> = {
+  new: "ProjectFrictions.status.new",
+  triaged: "ProjectFrictions.status.triaged",
+  converted: "ProjectFrictions.status.converted",
+  dismissed: "ProjectFrictions.status.dismissed",
+};
+
+interface FrictionsData { frictions: Friction[]; openCount: number }
+const NO_FRICTIONS: Friction[] = [];
+function isFrictionsData(value: unknown): value is FrictionsData {
+  if (!value || typeof value !== "object") return false;
+  const data = value as Partial<FrictionsData>;
+  return Array.isArray(data.frictions) && typeof data.openCount === "number";
+}
 
 function isOpen(friction: Friction): boolean {
   return OPEN_FRICTION_STATUSES.includes(
@@ -42,38 +54,27 @@ function isOpen(friction: Friction): boolean {
 }
 
 export default function ProjectFrictionsPage() {
+  const { projectId } = useParams<{ projectId: string }>();
+  return <ProjectFrictionsContent key={projectId} projectId={projectId} />;
+}
+
+function ProjectFrictionsContent({ projectId }: { projectId: string }) {
   const locale = useLocale();
   const t = useTranslations("ProjectFrictions");
-  const { projectId } = useParams<{ projectId: string }>();
-  const [frictions, setFrictions] = useState<Friction[]>([]);
-  const [openCount, setOpenCount] = useState(0);
+  const tKey = useTranslations();
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("open");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [actionError, setError] = useState<string | null>(null);
+  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
+  const pending = useRef(new Set<string>());
   const [selectedFriction, setSelectedFriction] = useState<Friction | null>(null);
 
-  const loadFrictions = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/projects/${projectId}/frictions`);
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || t("page.loadFailed"));
-      setFrictions(payload.data?.frictions ?? []);
-      setOpenCount(payload.data?.openCount ?? 0);
-      setError(null);
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error ? loadError.message : t("page.loadFailed"),
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId, t]);
-
-  useEffect(() => {
-    void loadFrictions();
-  }, [loadFrictions]);
+  const errorMessage = useCallback(() => t("page.loadFailed"), [t]);
+  const { data, loading, error: loadError, refresh: loadFrictions } = usePolledResource<FrictionsData>(
+    `/api/projects/${projectId}/frictions`, null, errorMessage, { validateData: isFrictionsData },
+  );
+  const frictions = data?.frictions ?? NO_FRICTIONS;
+  const error = actionError ?? loadError;
 
   const visibleFrictions = useMemo(
     () =>
@@ -96,94 +97,92 @@ export default function ProjectFrictionsPage() {
     [categoryFilter, frictions, statusFilter],
   );
 
-  const selectedDraft = useMemo(
-    () => (selectedFriction ? frictionToEpicDraft(selectedFriction) : undefined),
-    [selectedFriction],
-  );
+  const selectedDraft = useMemo((): ManualEpicDraft | undefined => {
+    if (!selectedFriction) return undefined;
+    const categoryLabel = tKey(FRICTION_CATEGORY_KEYS[selectedFriction.category]);
+    const subject = selectedFriction.filePath
+      ? `${categoryLabel}: ${selectedFriction.filePath}`
+      : `${categoryLabel} ${t("draft.frictionSuffix")}`;
+    const title = subject.length <= 200 ? subject : `${subject.slice(0, 197)}...`;
+    const location = selectedFriction.filePath ? t("draft.location", { path: selectedFriction.filePath }) : "";
+    const recurrence = t("draft.recurrence", { count: selectedFriction.occurrences });
 
-  async function dismissFriction(frictionId: string) {
-    setPendingId(frictionId);
+    return {
+      title,
+      description: `${selectedFriction.description}${location}${recurrence}`,
+      userStories: [],
+    };
+  }, [selectedFriction, t, tKey]);
+
+  async function updateFrictionStatus(frictionId: string, status: "triaged" | "dismissed") {
+    if (pending.current.has(frictionId)) return;
+    pending.current.add(frictionId);
+    setPendingIds(new Set(pending.current));
     setError(null);
-    try {
-      const response = await fetch(
-        `/api/projects/${projectId}/frictions/${frictionId}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ status: "dismissed" }),
-        },
-      );
-      const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error || t("page.dismissFailed"));
-      await loadFrictions();
-    } catch (dismissError) {
-      setError(
-        dismissError instanceof Error
-          ? dismissError.message
-          : t("page.dismissFailed"),
-      );
-    } finally {
-      setPendingId(null);
-    }
+    const response = await requestJson<Friction>(`/api/projects/${projectId}/frictions/${frictionId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status }),
+      errorMessage: t("page.dismissFailed"),
+    });
+    if (response.error) setError(response.error);
+    else await loadFrictions();
+    pending.current.delete(frictionId);
+    setPendingIds(new Set(pending.current));
   }
 
   return (
     <div className="h-full overflow-y-auto p-4 sm:p-6">
-      <div className="mx-auto max-w-5xl space-y-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <h2 className="flex items-center gap-2 text-xl font-semibold">
-              <TriangleAlert className="h-5 w-5 text-amber-600 dark:text-amber-400" />
-              {t("page.heading")}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {t("page.description")}
-            </p>
+      <div className="mx-auto max-w-5xl space-y-4">
+        {/* Controls row: filters on the left, open count on the right */}
+        <div className="flex flex-wrap items-center justify-between gap-3" aria-label={t("page.filtersLabel")}>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              {t("page.category")}
+              <select
+                value={categoryFilter}
+                onChange={(event) =>
+                  setCategoryFilter(event.target.value as CategoryFilter)
+                }
+                className="h-8 rounded-md border border-border bg-card px-2.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-action"
+              >
+                <option value="all">{t("page.allCategories")}</option>
+                {FRICTION_CATEGORIES.map((category) => (
+                  <option key={category} value={category}>
+                    {tKey(FRICTION_CATEGORY_KEYS[category])}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              {t("page.status")}
+              <select
+                value={statusFilter}
+                onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+                className="h-8 rounded-md border border-border bg-card px-2.5 text-xs text-foreground outline-none focus:ring-1 focus:ring-action"
+              >
+                <option value="open">{t("page.open")}</option>
+                <option value="all">{t("page.allStatuses")}</option>
+                {FRICTION_STATUSES.map((status) => (
+                  <option key={status} value={status}>
+                    {tKey(FRICTION_STATUS_KEYS[status])}
+                  </option>
+                ))}
+              </select>
+            </label>
           </div>
-          <Badge variant="outline" className="px-2.5 py-1 text-xs">
-            {t("page.openCount", { count: openCount })}
-          </Badge>
-        </div>
 
-        <div className="flex flex-wrap gap-3" aria-label={t("page.filtersLabel")}>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            {t("page.category")}
-            <select
-              value={categoryFilter}
-              onChange={(event) =>
-                setCategoryFilter(event.target.value as CategoryFilter)
-              }
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-            >
-              <option value="all">{t("page.allCategories")}</option>
-              {FRICTION_CATEGORIES.map((category) => (
-                <option key={category} value={category}>
-                  {FRICTION_CATEGORY_LABELS[category]}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            {t("page.status")}
-            <select
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
-              className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
-            >
-              <option value="open">{t("page.open")}</option>
-              <option value="all">{t("page.allStatuses")}</option>
-              {FRICTION_STATUSES.map((status) => (
-                <option key={status} value={status}>
-                  {FRICTION_STATUS_LABELS[status]}
-                </option>
-              ))}
-            </select>
-          </label>
+          <FieldKicker stratum="land" size={11}>
+            {data ? t("page.openCount", { count: data.openCount }) : "—"}
+          </FieldKicker>
         </div>
 
         {error && (
-          <div role="alert" className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">
-            {error}
+          <div role="alert" className="flex items-center gap-3 rounded-lg border border-border bg-card p-3 text-xs text-foreground">
+            <span>{error}</span>
+            <PillButton variant="secondary" size="sm" onClick={() => { setError(null); void loadFrictions(); }}>
+              {t("page.retry")}
+            </PillButton>
           </div>
         )}
 
@@ -192,94 +191,107 @@ export default function ProjectFrictionsPage() {
             <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" />
             <span className="sr-only">{t("page.loading")}</span>
           </div>
-        ) : visibleFrictions.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border py-16 text-center text-sm text-muted-foreground">
+        ) : error && !data ? null : visibleFrictions.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border py-16 text-center text-xs text-muted-foreground">
             {t("page.empty")}
           </div>
         ) : (
-          <div className="space-y-3" data-testid="friction-list">
+          <div className="space-y-2.5" data-testid="friction-list">
             {visibleFrictions.map((friction) => (
-              <Card key={friction.id} data-testid={`friction-${friction.id}`}>
-                <CardContent className="p-4">
-                  <div className="flex flex-wrap items-start gap-3">
-                    <div
-                      className="flex h-10 min-w-10 items-center justify-center rounded-lg bg-amber-500/10 px-2 text-sm font-semibold text-amber-700 dark:text-amber-300"
-                      title={t("page.occurrences", {
-                        count: friction.occurrences,
-                      })}
-                    >
-                      ×{friction.occurrences}
+              <SurfaceCard key={friction.id} data-testid={`friction-${friction.id}`} className="p-3.5">
+                <div className="flex flex-wrap items-start gap-3">
+                  <div
+                    className="flex h-8 min-w-8 items-center justify-center rounded bg-card-translucent text-xs font-semibold"
+                    title={t("page.occurrences", {
+                      count: friction.occurrences,
+                    })}
+                  >
+                    <Mono size={11}>×{friction.occurrences}</Mono>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        {tKey(FRICTION_CATEGORY_KEYS[friction.category])}
+                      </span>
+                      <Stamp tone="card" size="xs">
+                        {tKey(FRICTION_STATUS_KEYS[friction.status])}
+                      </Stamp>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          {FRICTION_CATEGORY_LABELS[friction.category]}
+                    <p className="mt-1.5 whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
+                      {friction.description}
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+                      {friction.filePath && (
+                        <span className="inline-flex min-w-0 items-center gap-1 font-mono">
+                          <FileCode2 className="h-3 w-3 shrink-0" />
+                          <code className="truncate">{friction.filePath}</code>
                         </span>
-                        <Badge
-                          variant="outline"
-                          className={cn("text-[11px]", STATUS_STYLES[friction.status])}
-                        >
-                          {FRICTION_STATUS_LABELS[friction.status]}
-                        </Badge>
-                      </div>
-                      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed">
-                        {friction.description}
-                      </p>
-                      <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                        {friction.filePath && (
-                          <span className="inline-flex min-w-0 items-center gap-1">
-                            <FileCode2 className="h-3.5 w-3.5 shrink-0" />
-                            <code className="truncate">{friction.filePath}</code>
-                          </span>
-                        )}
-                        <Link
-                          href={`/projects/${projectId}/sessions/${friction.agentSessionId}`}
-                          className="hover:text-foreground hover:underline"
-                        >
-                          {t("page.sourceSession")}
-                        </Link>
-                        <time dateTime={friction.createdAt}>
-                          {formatDateTime(friction.createdAt, { locale, style: "dateTimeSeconds" })}
-                        </time>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap gap-2">
-                      {isOpen(friction) && (
-                        <>
-                          <Button
-                            size="sm"
-                            onClick={() => setSelectedFriction(friction)}
-                            disabled={pendingId === friction.id}
-                          >
-                            {t("page.createTicket")}
-                          </Button>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => void dismissFriction(friction.id)}
-                            disabled={pendingId === friction.id}
-                          >
-                            {pendingId === friction.id ? (
-                              <Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
-                            ) : (
-                              <X className="h-4 w-4" />
-                            )}
-                            {t("page.dismiss")}
-                          </Button>
-                        </>
                       )}
-                      {friction.status === "converted" && friction.epicId && (
-                        <Button asChild size="sm" variant="outline">
-                          <Link href={`/projects/${projectId}?ticket=${friction.epicId}`}>
-                            <CheckCircle2 className="h-4 w-4" />
-                            {t("page.viewTicket")}
+                      <span>
+                        {friction.agentSessionId ? (
+                          <Link
+                            href={`/projects/${projectId}/sessions/${friction.agentSessionId}`}
+                            className="underline hover:text-foreground"
+                          >
+                            {t("page.sourceSession")}
                           </Link>
-                        </Button>
-                      )}
+                        ) : (
+                          t("page.sourceSession")
+                        )}
+                      </span>
+                      <time dateTime={friction.createdAt}>
+                        {formatDateTime(friction.createdAt, locale, "short")}
+                      </time>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    {isOpen(friction) && (
+                      <>
+                        <PillButton
+                          size="sm"
+                          variant="primary"
+                          onClick={() => setSelectedFriction(friction)}
+                          disabled={pendingIds.has(friction.id)}
+                        >
+                          {t("page.createTicket")}
+                        </PillButton>
+                        {friction.status === "new" && (
+                          <PillButton
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => void updateFrictionStatus(friction.id, "triaged")}
+                            disabled={pendingIds.has(friction.id)}
+                          >
+                            <Check className="h-3.5 w-3.5" />
+                            {t("actions.markTriaged")}
+                          </PillButton>
+                        )}
+                        <PillButton
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => void updateFrictionStatus(friction.id, "dismissed")}
+                          disabled={pendingIds.has(friction.id)}
+                        >
+                          {pendingIds.has(friction.id) ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+                          ) : (
+                            <X className="h-3.5 w-3.5" />
+                          )}
+                          {t("page.dismiss")}
+                        </PillButton>
+                      </>
+                    )}
+                    {friction.status === "converted" && friction.epicId && (
+                      <Link href={`/projects/${projectId}?ticket=${friction.epicId}`}>
+                        <PillButton size="sm" variant="secondary">
+                          <CheckCircle2 className="h-3.5 w-3.5" />
+                          {t("page.viewTicket")}
+                        </PillButton>
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              </SurfaceCard>
             ))}
           </div>
         )}

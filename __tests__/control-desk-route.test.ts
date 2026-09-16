@@ -216,6 +216,38 @@ describe("GET /api/control-desk", () => {
     expect(data.today.sessions).toBe(2);
   });
 
+  it("counts shipped tickets once and ignores terminal same-state activity", async () => {
+    db.insert(epics).values([
+      { id: "shipped", projectId: "p1", title: "Shipped", status: "released" },
+      { id: "old", projectId: "p1", title: "Old delivery", status: "done" },
+    ]).run();
+    db.insert(ticketActivityLog).values([
+      { id: "merge", projectId: "p1", epicId: "shipped", fromStatus: "to_merge", toStatus: "done", actor: "agent", createdAt: today(1) },
+      { id: "release", projectId: "p1", epicId: "shipped", fromStatus: "done", toStatus: "released", actor: "user", createdAt: today(2) },
+      { id: "note", projectId: "p1", epicId: "old", fromStatus: "done", toStatus: "done", actor: "agent", createdAt: today(3) },
+    ]).run();
+    expect((await payload()).today.ticketsShipped).toBe(1);
+  });
+
+  it("keeps SQLite failures after the lookback instant on its boundary day", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-09-10T12:00:00.000Z"));
+    try {
+      db.insert(epics).values([
+        { id: "recent", projectId: "p1", title: "Recent" },
+        { id: "old", projectId: "p1", title: "Old" },
+      ]).run();
+      const boundary = new Date(Date.now() - CONTROL_DESK_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
+      db.insert(agentSessions).values([
+        { id: "recent-failure", projectId: "p1", epicId: "recent", status: "failed", createdAt: `${boundary} 13:00:00` },
+        { id: "old-failure", projectId: "p1", epicId: "old", status: "failed", createdAt: `${boundary} 11:00:00` },
+      ]).run();
+      expect((await payload()).yourTurn.failed.map((row: { epicId: string }) => row.epicId)).toEqual(["recent"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("reports an em-dash-able null when nothing reported a cost", async () => {
     db.insert(agentSessions)
       .values({ id: "s1", projectId: "p1", status: "completed", createdAt: today(7) })
@@ -390,7 +422,7 @@ describe("GET /api/control-desk", () => {
       .run();
 
     const inboxCount = async (): Promise<number> => {
-      const response = await INBOX_GET();
+      const response = await INBOX_GET(new Request("http://localhost/api/inbox"));
       const body = await response.json();
       return body.data.unreadCount as number;
     };

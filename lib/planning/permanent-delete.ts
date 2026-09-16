@@ -7,6 +7,7 @@ import {
   chatConversations,
   epics,
   ticketComments,
+  ticketDependencies,
   userStories,
 } from "@/lib/db/schema";
 import {
@@ -35,6 +36,8 @@ export function deleteEpicPermanently(projectId: string, epicId: string) {
   if (!epic) {
     throw new ScopedDeleteNotFoundError("Epic not found");
   }
+
+  assertTicketIdle(epicId);
 
   // Read before the delete, unlink after it commits: the rows carrying these
   // paths are gone by the time the transaction ends, and unlinking first would
@@ -83,6 +86,8 @@ export function deleteEpicPermanently(projectId: string, epicId: string) {
     // `foreign_keys` is ON — the screenshots must go with the ticket whatever
     // the connection's pragma happens to be.
     db.delete(chatAttachments).where(eq(chatAttachments.epicId, epicId)).run();
+    db.delete(ticketDependencies).where(or(eq(ticketDependencies.ticketId, epicId), eq(ticketDependencies.dependsOnTicketId, epicId))).run();
+    db.delete(userStories).where(eq(userStories.epicId, epicId)).run();
     db.delete(epics).where(eq(epics.id, epicId)).run();
   });
 
@@ -112,6 +117,7 @@ export function deleteUserStoryPermanently(projectId: string, storyId: string) {
     throw new ScopedDeleteNotFoundError("Story not found");
   }
 
+  assertTicketIdle(story.epicId);
   const transaction = sqliteClient().transaction(() => {
     const sessions = db
       .select({ id: agentSessions.id })
@@ -137,3 +143,14 @@ export function deleteUserStoryPermanently(projectId: string, storyId: string) {
   return { epicId: story.epicId };
 }
 
+
+/** Deletion must never invalidate a queued or running process's target. */
+export function assertTicketIdle(epicId: string): void {
+  const storyIds = db.select({ id: userStories.id }).from(userStories).where(eq(userStories.epicId, epicId));
+  const projectId = db.select({ projectId: epics.projectId }).from(epics).where(eq(epics.id, epicId));
+  const active = db.select({ id: agentSessions.id }).from(agentSessions).where(and(
+    inArray(agentSessions.status, ["queued", "running"]),
+    or(eq(agentSessions.epicId, epicId), inArray(agentSessions.userStoryId, storyIds), and(inArray(agentSessions.projectId, projectId), eq(agentSessions.agentType, "team_build"))),
+  )).get();
+  if (active) throw new Error("Cannot delete a ticket with an active session");
+}

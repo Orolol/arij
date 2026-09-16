@@ -52,7 +52,6 @@ import {
   removePromptFile,
   writePromptFile,
 } from "./prompt-transport";
-import type { StreamLogContext } from "@/lib/claude/logger";
 import type {
   ProviderResult,
   ProviderSpawnOptions,
@@ -73,8 +72,6 @@ interface PiSpawnContext extends ProviderSpawnContext {
   promptFilePath?: string;
 }
 
-/** Built-in pi tools that cannot modify the working tree. */
-export const PI_READONLY_TOOLS = ["read", "grep", "find", "ls"];
 const WRITE_TOOL = "write";
 
 /** An assistant turn as reported by a pi `message_end` event. */
@@ -207,28 +204,24 @@ export function findPiRunFailure(stdout: string, cliName = "Pi"): string | null 
 export abstract class PiProvider extends BaseCliProvider {
   abstract readonly type: ProviderType;
 
-  get binaryName(): string {
-    return "pi";
-  }
-
-  /** Human-readable CLI name used in error messages. */
-  protected get cliDisplayName(): string {
-    return "Pi";
-  }
+  /**
+   * The six CLI-specific answers are ABSTRACT here, not pi's values.
+   *
+   * No concrete subclass wears the `pi` binary: the only one is
+   * OhMyPiProvider (`omp`), which overrides every one of them. Leaving pi's
+   * own defaults on the base made them look like live configuration and made
+   * the failure messages name a CLI Arij cannot select — see the header for
+   * why the base itself stays.
+   */
+  protected abstract get cliDisplayName(): string;
 
   /** Built-in tools that cannot modify the working tree (omp's set differs). */
-  protected readonlyTools(): string[] {
-    return PI_READONLY_TOOLS;
-  }
+  protected abstract readonlyTools(): string[];
 
-  /** Arguments that resume `cliSessionId` — pi's flag is `--session`, omp's is `--resume`. */
-  protected resumeArgs(cliSessionId: string): string[] {
-    return ["--session", cliSessionId];
-  }
+  /** Arguments that resume `cliSessionId` (`omp`: `--resume`). */
+  protected abstract resumeArgs(cliSessionId: string): string[];
 
-  protected notAuthenticatedMessage(): string {
-    return "Pi is not authenticated. Run `pi` and use /login, or set the provider API key.";
-  }
+  protected abstract notAuthenticatedMessage(): string;
 
   /**
    * A prompt past the argv cap goes to a temp file; anything smaller keeps
@@ -298,9 +291,7 @@ export abstract class PiProvider extends BaseCliProvider {
     // pi-family base picks up whatever the concrete subclass declares — omp
     // today, and nothing at all for a subclass with no registry entry.
     args.push(
-      ...buildProviderOptionArgs(this.type, cliOptions, {
-        resume: !!(cliSessionId && resumeSession),
-      }),
+      ...buildProviderOptionArgs(this.type, cliOptions),
     );
 
     if (promptFilePath) {
@@ -338,11 +329,7 @@ export abstract class PiProvider extends BaseCliProvider {
     );
   }
 
-  protected buildSpawnErrorMessage(err: Error): string {
-    return err.message.includes("ENOENT")
-      ? "Pi CLI not found. Install it with: npm i -g @earendil-works/pi-coding-agent"
-      : `Failed to spawn Pi CLI: ${err.message}`;
-  }
+  protected abstract buildSpawnErrorMessage(err: Error): string;
 
   protected buildExitError(
     code: number | null,
@@ -376,9 +363,8 @@ export abstract class PiProvider extends BaseCliProvider {
   protected handleExit(
     info: ProviderExitInfo,
     callbacks: BaseProviderChunkCallbacks,
-    logCtx: StreamLogContext | null,
   ): ProviderResult {
-    const result = super.handleExit(info, callbacks, logCtx);
+    const result = super.handleExit(info, callbacks);
     if (!result.success) return result;
 
     const failure = findPiRunFailure(info.stdout, this.cliDisplayName);

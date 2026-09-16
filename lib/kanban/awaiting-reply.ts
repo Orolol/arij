@@ -1,3 +1,5 @@
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
+
 /**
  * "Awaiting reply" signal for kanban cards.
  *
@@ -17,25 +19,15 @@ export interface AwaitingReplySignal {
   latestUserCommentCreatedAt?: string | null;
 }
 
-/**
- * Timestamps mix ISO-8601 (`2026-08-16T09:00:00.000Z`, written by routes)
- * and SQLite CURRENT_TIMESTAMP (`2026-08-16 09:00:00`, both UTC). Normalizing
- * the separator makes lexicographic comparison chronologically correct.
- */
-function normalizeTimestamp(value: string | null | undefined): string | null {
-  if (!value) return null;
-  return value.includes("T") ? value : value.replace(" ", "T");
-}
-
 export function isAwaitingReply(signal: AwaitingReplySignal): boolean {
   if (signal.latestSessionOutcome !== "asked_question") return false;
 
-  const asked = normalizeTimestamp(signal.latestSessionEndedAt);
-  const replied = normalizeTimestamp(signal.latestUserCommentCreatedAt);
+  const asked = parseStoredTimestamp(signal.latestSessionEndedAt ?? "");
+  const replied = parseStoredTimestamp(signal.latestUserCommentCreatedAt ?? "");
 
   // No user comment at all -> the question is definitely unanswered.
-  if (!replied) return true;
+  if (replied === null) return true;
   // Cannot order the reply against the question -> assume it answered.
-  if (!asked) return false;
+  if (asked === null) return false;
   return replied <= asked;
 }

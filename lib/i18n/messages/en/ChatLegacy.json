@@ -44,5 +44,12 @@
     "open": "Open chat panel",
     "showStrip": "Show chat strip",
     "stripLabel": "Chat"
+  },
+  "conversations": {
+    "loadFailed": "Failed to load conversations.",
+    "createFailed": "Failed to create the conversation.",
+    "updateFailed": "Failed to update the conversation.",
+    "deleteFailed": "Failed to delete the conversation.",
+    "restartFailed": "Failed to restart the conversation."
   }
 }

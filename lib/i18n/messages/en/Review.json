@@ -1,4 +1,10 @@
 {
+  "errors": {
+    "loadComments": "Failed to load review comments.",
+    "saveComment": "Failed to save the review comment.",
+    "deleteComment": "Failed to delete the review comment.",
+    "loadingComments": "Loading review comments..."
+  },
   "diff": {
     "loading": "Loading diff...",
     "retry": "Retry",
@@ -27,6 +33,7 @@
     "submit": "Comment"
   },
   "thread": {
+    "add": "Add review comment",
     "agent": "Agent",
     "you": "You",
     "resolved": "Resolved",

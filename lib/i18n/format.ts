@@ -36,6 +36,7 @@
  * (`il y a 12 s`, `il y a 4 min`) were drawn with U+0020 on the same grid.
  */
 
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
 import type { UiLocale } from "./locales";
 import enFormat from "./messages/en/Format.json";
 import frFormat from "./messages/fr/Format.json";
@@ -50,14 +51,12 @@ function formatValue(locale: UiLocale, key: `Format.${keyof typeof enFormat}`): 
 /** Anything the app stores or receives as a point in time. */
 export type Timestamp = string | number | Date | null | undefined;
 
-const SQLITE_TIMESTAMP = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?$/;
-
 /**
  * Epoch milliseconds, or `NaN` when the value cannot be read.
  *
- * SQLite's `CURRENT_TIMESTAMP` writes `2026-08-30 06:00:00` — no `T`, no zone
- * marker — and is UTC by contract, so that shape is normalised to an ISO UTC
- * instant first. Everything else goes through `Date.parse` unchanged.
+ * Zoneless stored shapes (SQLite `CURRENT_TIMESTAMP`, legacy `T` separators)
+ * go through `parseStoredTimestamp`, the single normaliser; `Date`, numbers
+ * and explicit ISO strings are read as they are.
  */
 export function parseTimestamp(value: Timestamp): number {
   if (value === null || value === undefined) return Number.NaN;
@@ -65,9 +64,7 @@ export function parseTimestamp(value: Timestamp): number {
   if (typeof value === "number") return value;
   const trimmed = value.trim();
   if (!trimmed) return Number.NaN;
-  return Date.parse(
-    SQLITE_TIMESTAMP.test(trimmed) ? `${trimmed.replace(" ", "T")}Z` : trimmed,
-  );
+  return parseStoredTimestamp(trimmed) ?? Number.NaN;
 }
 
 function nowMs(now: number | Date | undefined): number {

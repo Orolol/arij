@@ -1,115 +1,66 @@
 "use client";
 
+import { useCallback } from "react";
 import { useTranslations } from "next-intl";
-
-import { useState, useCallback, useEffect } from "react";
+import { requestJson } from "@/lib/api/client";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { useScopedMutation } from "@/hooks/useScopedMutation";
 
 interface GitStatus {
   ahead: number;
   behind: number;
-  /** Epoch ms of the server's last successful `git fetch`, null if never. */
   lastFetchedAt: number | null;
-  /** Why the server's implicit fetch failed on the last status read, if it did. */
   lastFetchError: string | null;
   loading: boolean;
   error: string | null;
-  refresh: () => void;
+  refresh: () => Promise<void>;
   push: () => Promise<void>;
   pushing: boolean;
 }
 
-/**
- * Fetches ahead/behind status for a branch relative to its remote tracking branch.
- * Only active when GitHub is configured and a branch name is provided.
- */
-export function useGitStatus(
-  projectId: string,
-  branchName: string | null,
-  githubConfigured: boolean
-): GitStatus {
+interface StatusData {
+  ahead: number;
+  behind: number;
+  lastFetchedAt?: number | null;
+  lastFetchError?: string | null;
+}
+function isStatus(value: unknown): value is StatusData {
+  if (!value || typeof value !== "object") return false;
+  const data = value as StatusData;
+  return Number.isInteger(data.ahead) && data.ahead >= 0 && Number.isInteger(data.behind) && data.behind >= 0;
+}
+
+/** Ahead/behind for a local branch, only while a repository and branch exist. */
+export function useGitStatus(projectId: string, branchName: string | null, enabled: boolean): GitStatus {
   const tErrors = useTranslations("ClientErrors");
-  const [ahead, setAhead] = useState(0);
-  const [behind, setBehind] = useState(0);
-  const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
-  const [lastFetchError, setLastFetchError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [pushing, setPushing] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!branchName || !githubConfigured) return;
-
-    setLoading(true);
-    setError(null);
-
-    try {
-      const res = await fetch(
-        `/api/projects/${projectId}/git/status?branch=${encodeURIComponent(branchName)}`
-      );
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || tErrors("failedToFetchStatus"));
-        return;
-      }
-
-      setAhead(data.data?.ahead ?? 0);
-      setBehind(data.data?.behind ?? 0);
-      setLastFetchedAt(data.data?.lastFetchedAt ?? null);
-      setLastFetchError(data.data?.lastFetchError ?? null);
-    } catch {
-      setError(tErrors("failedToFetchGitStatus"));
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId, branchName, githubConfigured, tErrors]);
+  const url = branchName && enabled
+    ? `/api/projects/${projectId}/git/status?branch=${encodeURIComponent(branchName)}` : null;
+  const errorMessage = useCallback((status?: number) =>
+    status ? tErrors("failedToFetchStatus") : tErrors("failedToFetchGitStatus"), [tErrors]);
+  const { data, loading, error, refresh: reload } = usePolledResource<StatusData>(
+    url, null, errorMessage, { validateData: isStatus },
+  );
+  const { run, pending: pushing, error: mutationError, clearError } = useScopedMutation(url);
 
   const push = useCallback(async () => {
-    if (!branchName || !githubConfigured) return;
-
-    setPushing(true);
-    setError(null);
-
-    try {
-      const res = await fetch(`/api/projects/${projectId}/git/push`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ branch: branchName }),
+    if (!url || !data) return;
+    await run(async () => {
+      const response = await requestJson<unknown>(`/api/projects/${projectId}/git/push`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ branch: branchName }), errorMessage: tErrors("pushFailed"),
       });
+      if (response.error !== null) throw new Error(response.error);
+      // Refresh invalidates reads made before the push, including manual fetches
+      // that may still be pending. A callback from an old branch is inert.
+      await reload();
+      return true;
+    }, tErrors("pushFailed"));
+  }, [url, data, projectId, branchName, run, reload, tErrors]);
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || tErrors("pushFailed"));
-        return;
-      }
-
-      // Refresh status after push
-      await refresh();
-    } catch {
-      setError(tErrors("pushFailed"));
-    } finally {
-      setPushing(false);
-    }
-  }, [projectId, branchName, githubConfigured, refresh, tErrors]);
-
-  // Auto-fetch on mount when conditions are met
-  useEffect(() => {
-    if (branchName && githubConfigured) {
-      refresh();
-    }
-  }, [branchName, githubConfigured, refresh]);
-
+  const refresh = useCallback(async () => { clearError(); await reload(); }, [clearError, reload]);
   return {
-    ahead,
-    behind,
-    lastFetchedAt,
-    lastFetchError,
-    loading,
-    error,
-    refresh,
-    push,
-    pushing,
+    ahead: data?.ahead ?? 0, behind: data?.behind ?? 0,
+    lastFetchedAt: data?.lastFetchedAt ?? null, lastFetchError: data?.lastFetchError ?? null,
+    loading, error: mutationError ?? error, refresh, push, pushing,
   };
 }

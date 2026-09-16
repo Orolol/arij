@@ -1,34 +1,21 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback } from "react";
+import { useTranslations } from "next-intl";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import type { ProjectEpicListRow } from "@/lib/types/kanban";
 
-export interface ProjectEpicSummary {
-  id: string;
-  title: string;
-  status: string;
-}
+export type ProjectEpicSummary = Pick<
+  ProjectEpicListRow,
+  "id" | "title" | "readableId"
+>;
 
-/**
- * Fetches the list of epics in a project (id/title/status) for dropdowns
- * such as the dependency editor. Only fetches while `open` is true and an
- * epic is selected; refetches when the selected epic changes.
- */
-export function useProjectEpicsList(
-  projectId: string,
-  epicId: string | null,
-  open: boolean
-) {
-  const [epics, setEpics] = useState<ProjectEpicSummary[]>([]);
-
-  useEffect(() => {
-    if (!open || !epicId) return;
-    fetch(`/api/projects/${projectId}/epics`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (d.data) setEpics(d.data);
-      })
-      .catch(() => {});
-  }, [projectId, epicId, open]);
-
-  return { epics };
+/** Narrow index for ticket dependency links, retained while switching tickets. */
+export function useProjectEpicsList(projectId: string, epicId: string | null, open: boolean) {
+  const t = useTranslations("ClientErrors");
+  const errorMessage = useCallback(() => t("networkErrorTheUpdateWasNotApplied"), [t]);
+  const resource = usePolledResource<ProjectEpicSummary[]>(
+    open && epicId ? `/api/projects/${projectId}/epics?view=index` : null, null, errorMessage,
+  );
+  return { epics: resource.data ?? [], error: resource.error };
 }

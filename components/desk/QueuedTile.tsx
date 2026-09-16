@@ -34,6 +34,7 @@ export function QueuedTile({
   className,
 }: QueuedTileProps) {
   const t = useTranslations("Desk");
+  const tKey = useTranslations();
   const visible = queued.slice(0, VISIBLE_ROWS);
   const overflow = queued.length - visible.length;
 
@@ -71,7 +72,7 @@ export function QueuedTile({
               size="sm"
             />
             <span className="line-clamp-1 min-w-0 font-sans text-[13px] font-medium text-foreground">
-              {session.title}
+              {session.titleKey ? tKey(session.titleKey) : session.title}
             </span>
           </button>
         );

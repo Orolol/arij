@@ -1,18 +1,18 @@
 "use client";
 
-import { useState } from "react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { MentionTextarea } from "@/components/documents/MentionTextarea";
 import { ImageAttachmentStrip } from "@/components/shared/ImageAttachmentStrip";
-import { useImageAttachments } from "@/hooks/useImageAttachments";
+import { useChatComposer, type ChatSend } from "@/hooks/useChatComposer";
 import { ArrowRight, ImagePlus, Loader2 } from "lucide-react";
 
 export type { PendingAttachment } from "@/hooks/useImageAttachments";
 
 interface MessageInputProps {
   projectId: string;
-  onSend: (content: string, attachmentIds: string[]) => void;
+  conversationId?: string | null;
+  onSend: ChatSend;
   disabled?: boolean;
   /** Defaults to the catalogue's `input.placeholder` when the caller omits it. */
   placeholder?: string;
@@ -26,43 +26,19 @@ interface MessageInputProps {
 
 export function MessageInput({
   projectId,
+  conversationId,
   onSend,
-  disabled,
+  disabled: parentDisabled,
   placeholder,
   attachmentsDisabled = false,
 }: MessageInputProps) {
   const t = useTranslations("ChatLegacy");
-  const [value, setValue] = useState("");
   const {
-    attachments,
-    uploading,
-    fileInputProps,
-    openFilePicker,
-    handlePaste,
-    remove: removeAttachment,
-    clear: clearAttachments,
-  } = useImageAttachments({ projectId, disabled: attachmentsDisabled });
-
-  const effectiveAttachments = attachmentsDisabled ? [] : attachments;
-
-  function handleSubmit() {
-    const trimmed = value.trim();
-    if ((!trimmed && effectiveAttachments.length === 0) || disabled || uploading) return;
-    onSend(trimmed, effectiveAttachments.map((a) => a.id));
-    setValue("");
-    if (!attachmentsDisabled) {
-      clearAttachments();
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSubmit();
-    }
-  }
-
-  const hasContent = value.trim().length > 0 || effectiveAttachments.length > 0;
+    value, setValue, attachments: effectiveAttachments, uploading, error,
+    fileInputProps, openFilePicker, handlePaste, removeAttachment,
+    handleSubmit, handleKeyDown, onCompositionStart, onCompositionEnd,
+    hasContent, disabled,
+  } = useChatComposer({ projectId, conversationId, onSend, disabled: parentDisabled, attachmentsDisabled });
 
   return (
     <div className="border-t border-border px-[18px] py-[14px]">
@@ -80,6 +56,8 @@ export function MessageInput({
           value={value}
           onValueChange={setValue}
           onKeyDown={handleKeyDown}
+          onCompositionStart={onCompositionStart}
+          onCompositionEnd={onCompositionEnd}
           onPaste={handlePaste}
           placeholder={placeholder ?? t("input.placeholder")}
           rows={2}
@@ -114,6 +92,7 @@ export function MessageInput({
         </div>
       </div>
 
+      {error && <p role="alert" className="mt-2 text-[12px] text-destructive">{error}</p>}
       <input {...fileInputProps} />
     </div>
   );

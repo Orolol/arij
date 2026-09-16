@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  compareStoredTimestamps,
   latestActivityTimestamp,
   parseStoredTimestamp,
-} from "@/lib/agent-sessions/last-activity";
+} from "@/lib/utils/timestamps";
 
 const originalTimezone = process.env.TZ;
 
@@ -42,4 +43,19 @@ describe("stored session activity timestamps", () => {
   it("returns null when no valid activity exists", () => {
     expect(latestActivityTimestamp(null, undefined, "invalid")).toBeNull();
   });
+
+  it("sorts mixed formats by instant and keeps unknown dates last in both directions", () => {
+    const times = [null, "2026-02-12T22:30:00.000Z", "2026-02-12 23:00:00", "invalid"];
+    expect([...times].sort((a, b) => compareStoredTimestamps(a, b))).toEqual([
+      "2026-02-12T22:30:00.000Z", "2026-02-12 23:00:00", null, "invalid",
+    ]);
+    expect([...times].sort((a, b) => compareStoredTimestamps(a, b, "desc"))).toEqual([
+      "2026-02-12 23:00:00", "2026-02-12T22:30:00.000Z", null, "invalid",
+    ]);
+    expect(compareStoredTimestamps("2026-02-12T23:00:00Z", "2026-02-13T01:00:00.000+02:00")).toBe(0);
+  });
+  it("also treats legacy T-separated zoneless timestamps as UTC", () => {
+    expect(parseStoredTimestamp("2026-02-12T23:00:00.125")).toBe(Date.parse("2026-02-12T23:00:00.125Z"));
+  });
+
 });

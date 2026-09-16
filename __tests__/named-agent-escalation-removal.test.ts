@@ -12,14 +12,13 @@
  * and no LIVE CODE still reads it. A schema-only assertion would stay green
  * against a resolver still selecting a column that has quietly become NULL.
  */
-import Database from "better-sqlite3";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getTableColumns } from "drizzle-orm";
 import { initDb } from "@/lib/db/init";
 import { namedAgents } from "@/lib/db/schema";
+import { withMigratedDb } from "./helpers/migration";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
 const MIGRATION_TAG = "0054_drop_named_agent_escalation";
@@ -35,19 +34,8 @@ afterEach(() => {
   }
 });
 
-function withDb<T>(fn: (conn: Database.Database) => T): T {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arij-escalation-removal-"));
-  tempDirs.push(dir);
-  const conn = new Database(path.join(dir, "arij.db"));
-  try {
-    return fn(conn);
-  } finally {
-    conn.close();
-  }
-}
-
 describe("0054_drop_named_agent_escalation", () => {
-  it("is a hand-written journal migration with a unique increasing timestamp", () => {
+  it("is a hand-written journal migration, applied in the right order", async () => {
     const sql = fs.readFileSync(
       path.join(MIGRATIONS_FOLDER, `${MIGRATION_TAG}.sql`),
       "utf-8"
@@ -59,20 +47,15 @@ describe("0054_drop_named_agent_escalation", () => {
     );
     expect(entry).toBeDefined();
 
-    // Appended, never spliced in: every entry recorded after it must carry a
-    // strictly later timestamp, or drizzle would skip one of them.
+
+    // It must land AFTER the migration that created the column, or the chain
+    // would drop something that does not exist yet. (The journal's own
+    // ordering rules — `when` strictly increasing, unique, `idx` derived from
+    // the position — are asserted for every entry in
+    // `__tests__/migrations-journal.test.ts`.)
     const position = journal.entries.findIndex(
       (candidate) => candidate.tag === MIGRATION_TAG
     );
-    for (const later of journal.entries.slice(position + 1)) {
-      expect(later.when).toBeGreaterThan(entry!.when);
-    }
-    expect(
-      new Set(journal.entries.map((candidate) => candidate.when)).size
-    ).toBe(journal.entries.length);
-
-    // It must land AFTER the migration that created the column, or the chain
-    // would drop something that does not exist yet.
     const added = journal.entries.findIndex(
       (candidate) => candidate.tag === "0039_named_agent_escalation"
     );
@@ -81,7 +64,7 @@ describe("0054_drop_named_agent_escalation", () => {
   });
 
   it("leaves a migrated database with no escalation column", () => {
-    withDb((conn) => {
+    withMigratedDb((conn) => {
       initDb(conn);
 
       const schemaColumns = Object.values(getTableColumns(namedAgents)).map(

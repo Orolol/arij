@@ -118,8 +118,6 @@ export const epics = sqliteTable("epics", {
   images: text("images"), // JSON array of image paths
   readableId: text("readable_id"), // E-project-001 or B-project-002
   githubIssueNumber: integer("github_issue_number"),
-  githubIssueUrl: text("github_issue_url"),
-  githubIssueState: text("github_issue_state"),
   releaseId: text("release_id").references(() => releases.id, { onDelete: "set null" }),
 },
 (table) => ({
@@ -163,8 +161,6 @@ export const chatConversations = sqliteTable("chat_conversations", {
   status: text("status").default("active"), // active | generating | generated | error
   epicId: text("epic_id").references(() => epics.id),
   provider: text("provider").default("claude-code"), // see PROVIDER_OPTIONS in lib/agent-config/constants.ts
-  // Legacy column, scheduled for removal — read only via resolveCliSessionId().
-  claudeSessionId: text("claude_session_id"),
   cliSessionId: text("cli_session_id"),
   namedAgentId: text("named_agent_id"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
@@ -181,6 +177,22 @@ export const chatMessages = sqliteTable("chat_messages", {
   metadata: text("metadata"), // JSON
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
+
+/** Durable deduplication of an epic proposal across tabs and request retries. */
+export const chatEpicProposals = sqliteTable("chat_epic_proposals", {
+  projectId: text("project_id").notNull().references(() => projects.id, { onDelete: "cascade" }),
+  conversationId: text("conversation_id").notNull().references(() => chatConversations.id, { onDelete: "cascade" }),
+  proposalHash: text("proposal_hash").notNull(),
+  // Keep a tombstone after deletion: a delayed retry must not recreate it.
+  epicId: text("epic_id").references(() => epics.id, { onDelete: "set null" }),
+  userStoriesCreated: integer("user_stories_created").notNull(),
+  dependenciesCreated: integer("dependencies_created").notNull().default(0),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => ({
+  pk: primaryKey({ columns: [table.projectId, table.conversationId, table.proposalHash] }),
+  conversationIdx: index("chat_epic_proposals_conversation_idx").on(table.conversationId),
+  epicIdx: index("chat_epic_proposals_epic_idx").on(table.epicId),
+}));
 
 /**
  * An uploaded file and, in the three owner columns, what keeps it alive.
@@ -252,8 +264,6 @@ export const agentSessions = sqliteTable("agent_sessions", {
   // Batch/night run that dispatched this session (see lib/night); NULL for
   // standalone dispatches.
   batchRunId: text("batch_run_id"),
-  // Legacy column, scheduled for removal — read only via resolveCliSessionId().
-  claudeSessionId: text("claude_session_id"),
   cliSessionId: text("cli_session_id"),
   namedAgentId: text("named_agent_id"),
   // The COMPOSITE that dispatched this session, when one did; NULL for a
@@ -494,26 +504,6 @@ export const agentPrompts = sqliteTable(
   }),
 );
 
-export const customReviewAgents = sqliteTable(
-  "custom_review_agents",
-  {
-    id: text("id").primaryKey(),
-    name: text("name").notNull(),
-    systemPrompt: text("system_prompt").notNull(),
-    scope: text("scope").notNull(), // 'global' | projectId
-    position: integer("position").notNull().default(0),
-    isEnabled: integer("is_enabled").notNull().default(1),
-    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
-    updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
-  },
-  (table) => ({
-    nameScopeUnique: uniqueIndex("custom_review_agents_name_scope_unique").on(
-      table.name,
-      table.scope
-    ),
-  }),
-);
-
 export const namedAgents = sqliteTable(
   "named_agents",
   {
@@ -521,7 +511,6 @@ export const namedAgents = sqliteTable(
     name: text("name").notNull(),
     provider: text("provider").notNull(), // see PROVIDER_OPTIONS in lib/agent-config/constants.ts
     model: text("model").notNull(),
-    readableAgentName: text("readable_agent_name"), // Ancient Greek name
     // Per-CLI options, JSON object of NON-DEFAULT values only. Keys and
     // accepted values are declared in lib/providers/options-registry.ts;
     // '{}' means "every option at the CLI's own default".
@@ -541,7 +530,6 @@ export const namedAgents = sqliteTable(
   },
   (table) => ({
     nameUnique: uniqueIndex("named_agents_name_unique").on(table.name),
-    readableAgentNameUnique: uniqueIndex("named_agents_readable_agent_name_unique").on(table.readableAgentName),
   }),
 );
 
@@ -642,7 +630,8 @@ export const reviewComments = sqliteTable(
     lineNumber: integer("line_number").notNull(),
     body: text("body").notNull(),
     author: text("author").notNull().default("user"), // user | agent
-    status: text("status").notNull().default("open"), // open | resolved
+    status: text("status").notNull().default("open"), // open | resolved | dismissed
+    dismissedReason: text("dismissed_reason"),
     // Review session that filed this finding (MCP submit_findings). NULL for
     // user-authored rows and for anything written before migration 0032 —
     // deliberately not backfilled, see that migration. No FK: a finding
@@ -705,7 +694,7 @@ export const gitSyncLog = sqliteTable("git_sync_log", {
   }),
   operation: text("operation").notNull(), // clone | push | pull | fetch | detect | tag_push | pr_create | pr_sync | release
   branch: text("branch"),
-  status: text("status").notNull(), // success | failure
+  status: text("status").notNull(), // success | failed
   detail: text("detail"), // JSON payload for error info
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -728,7 +717,6 @@ export const githubIssues = sqliteTable(
     updatedAtGitHub: text("updated_at_github"),
     syncedAt: text("synced_at").default(sql`CURRENT_TIMESTAMP`),
     importedEpicId: text("imported_epic_id").references(() => epics.id, { onDelete: "set null" }),
-    importedAt: text("imported_at"),
   },
   (table) => ({
     projectIssueUnique: uniqueIndex("github_issues_project_issue_unique").on(
@@ -821,8 +809,6 @@ export type NewQaPrompt = typeof qaPrompts.$inferInsert;
 export type AgentPrompt = typeof agentPrompts.$inferSelect;
 export type NewAgentPrompt = typeof agentPrompts.$inferInsert;
 
-export type CustomReviewAgent = typeof customReviewAgents.$inferSelect;
-export type NewCustomReviewAgent = typeof customReviewAgents.$inferInsert;
 
 export type AgentProviderDefault = typeof agentProviderDefaults.$inferSelect;
 export type NewAgentProviderDefault = typeof agentProviderDefaults.$inferInsert;
@@ -871,51 +857,15 @@ export const ticketActivityLog = sqliteTable(
   (table) => ({
     epicIdx: index("ticket_activity_log_epic_idx").on(table.epicId),
     projectIdx: index("ticket_activity_log_project_idx").on(table.projectId),
+    toStatusCreatedAtIdx: index("ticket_activity_log_to_status_created_at_idx").on(
+      table.toStatus,
+      table.createdAt,
+    ),
   })
 );
 
 export type TicketActivityLog = typeof ticketActivityLog.$inferSelect;
 export type NewTicketActivityLog = typeof ticketActivityLog.$inferInsert;
-
-// ---------------------------------------------------------------------------
-// Notifications
-// ---------------------------------------------------------------------------
-
-export const notifications = sqliteTable(
-  "notifications",
-  {
-    id: text("id").primaryKey(),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id, { onDelete: "cascade" }),
-    projectName: text("project_name").notNull(), // denormalized for fast reads
-    sessionId: text("session_id").references(() => agentSessions.id, {
-      onDelete: "set null",
-    }),
-    agentType: text("agent_type"),
-    status: text("status").notNull(), // completed | failed
-    title: text("title").notNull(),
-    // Full error message for failed session notifications (0031). NULL for
-    // completed sessions and non-session notifications — the title alone is
-    // not enough for a failure: it is the one place a cross-project user
-    // sees "what went wrong" without opening the session.
-    message: text("message"),
-    targetUrl: text("target_url").notNull(),
-    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
-  },
-  (table) => ({
-    createdAtIdx: index("notifications_created_at_idx").on(table.createdAt),
-  })
-);
-
-export const notificationReadCursor = sqliteTable("notification_read_cursor", {
-  id: integer("id").primaryKey(), // always 1
-  readAt: text("read_at").notNull(), // ISO timestamp
-});
-
-export type Notification = typeof notifications.$inferSelect;
-export type NewNotification = typeof notifications.$inferInsert;
-export type NotificationReadCursor = typeof notificationReadCursor.$inferSelect;
 
 // ---------------------------------------------------------------------------
 // Ticket read cursors
@@ -964,7 +914,6 @@ export const deskDismissals = sqliteTable(
     kind: text("kind").notNull(),
     /** ISO timestamp of the signal that was waved off. */
     signalAt: text("signal_at"),
-    dismissedAt: text("dismissed_at").notNull(), // ISO timestamp
   },
   (table) => [primaryKey({ columns: [table.epicId, table.kind] })],
 );
@@ -989,7 +938,6 @@ export const providerUsageSnapshots = sqliteTable("provider_usage_snapshots", {
   secondaryUsedPercent: real("secondary_used_percent"),
   secondaryWindowMinutes: integer("secondary_window_minutes"),
   secondaryResetsAt: integer("secondary_resets_at"),
-  sourceFile: text("source_file"),
   rawJson: text("raw_json").notNull(),
   updatedAt: text("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -1070,4 +1018,3 @@ export const mcpServers = sqliteTable(
 
 export type McpServer = typeof mcpServers.$inferSelect;
 export type NewMcpServer = typeof mcpServers.$inferInsert;
-

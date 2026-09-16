@@ -6,6 +6,18 @@
  * better-sqlite3 transaction writes all positions atomically, and status
  * changes are applied through the same transition service afterwards, so a
  * half-reordered board is never visible.
+ *
+ * THIS MODULE, TOGETHER WITH THE TWO TRANSITION-ONLY WRITERS BELOW IT, IS THE
+ * DEFINITION OF `epics.position`. Position is a per-column 0..n-1 sequence
+ * (`KANBAN_COLUMNS` scoping every write) and it is Full Auto's
+ * execution-order input: `compareExecutionOrder` (lib/kanban/queue.ts) reads
+ * status rank then position, and `selectBuildCandidates` inherits that order.
+ * Two consequences for every other module: never write a position to express
+ * a DISPLAY order (a desk band's sort must stay in the derivation — see
+ * `deriveReadyToLand` in lib/control-desk/aggregate.ts), and never treat
+ * position as a global sequence across columns. The retired board's
+ * `persistedColumnOrder` helper used to spell this contract out; it went with
+ * the board, so it lives here now.
  */
 
 import Database from "better-sqlite3";

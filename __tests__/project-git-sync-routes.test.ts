@@ -87,7 +87,7 @@ vi.mock("@/lib/agent-sessions/validate-resume", () => ({
 }));
 
 vi.mock("@/lib/github/sync-log", () => ({
-  writeGitSyncLog: mockWriteGitSyncLog,
+  logSyncOperation: mockWriteGitSyncLog,
 }));
 
 describe("Project git sync routes", () => {
@@ -314,7 +314,7 @@ describe("GET git status implicit fetch (TTL)", () => {
 
     expect(res.status).toBe(200);
     expect(mockFetchGitRemote).toHaveBeenCalledTimes(1);
-    expect(mockFetchGitRemote).toHaveBeenCalledWith("/repo-ttl-cold", "origin");
+    expect(mockFetchGitRemote).toHaveBeenCalledWith("/repo-ttl-cold", "origin", expect.any(AbortSignal));
     expect(json.data.lastFetchError).toBeNull();
     expect(json.data.lastFetchedAt).toBeGreaterThanOrEqual(before);
   });

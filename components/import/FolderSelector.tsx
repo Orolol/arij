@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
+import { PillButton } from "@/components/piscine";
 import { Input } from "@/components/ui/input";
 import { FolderOpen } from "lucide-react";
 
@@ -27,9 +27,9 @@ export function FolderSelector({ onAnalyze }: FolderSelectorProps) {
             className="pl-10"
           />
         </div>
-        <Button onClick={() => onAnalyze(path)} disabled={!path.trim()}>
+        <PillButton variant="filled" onClick={() => onAnalyze(path)} disabled={!path.trim()}>
           {t("folder.analyze")}
-        </Button>
+        </PillButton>
       </div>
     </div>
   );

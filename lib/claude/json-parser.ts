@@ -454,11 +454,6 @@ function findSessionIdInValue(value: unknown): string | null {
   if (typeof value.sessionId === "string" && value.sessionId.trim().length > 0) {
     return value.sessionId.trim();
   }
-  // OpenCode uses sessionID (capital D)
-  if (typeof value.sessionID === "string" && value.sessionID.trim().length > 0) {
-    return value.sessionID.trim();
-  }
-
   const session = value.session;
   if (isRecord(session) && typeof session.id === "string" && session.id.trim().length > 0) {
     return session.id.trim();
@@ -641,17 +636,6 @@ function extractTextFromBlock(block: ClaudeJsonBlock): string {
     return block.text;
   }
 
-  // OpenCode event format: text content nested in part.text
-  const part = block.part;
-  if (
-    typeof part === "object" &&
-    part !== null &&
-    !Array.isArray(part) &&
-    typeof (part as Record<string, unknown>).text === "string"
-  ) {
-    return (part as Record<string, unknown>).text as string;
-  }
-
   // Result field (top-level response object)
   if (typeof block.result === "string") {
     const nestedResultText = extractTextFromJsonString(block.result);
@@ -686,25 +670,6 @@ function extractTextFromBlock(block: ClaudeJsonBlock): string {
         const nested = extractTextFromBlock(item as ClaudeJsonBlock);
         if (nested) {
           parts.push(nested);
-        }
-      }
-    }
-    if (parts.length > 0) {
-      return parts.join("\n");
-    }
-  }
-
-  if (Array.isArray(block.candidates)) {
-    const parts: string[] = [];
-    const candidates = block.candidates as Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    for (const candidate of candidates) {
-      const candidateParts = candidate.content?.parts;
-      if (!Array.isArray(candidateParts)) {
-        continue;
-      }
-      for (const part of candidateParts) {
-        if (typeof part.text === "string" && part.text.trim().length > 0) {
-          parts.push(part.text);
         }
       }
     }

@@ -33,7 +33,7 @@ export async function GET(
       namedAgentId: chatConversations.namedAgentId,
       cliSessionId: chatConversations.cliSessionId,
       createdAt: chatConversations.createdAt,
-      namedAgentName: namedAgents.readableAgentName,
+      namedAgentName: namedAgents.name,
     })
     .from(chatConversations)
     .leftJoin(namedAgents, eq(chatConversations.namedAgentId, namedAgents.id))
@@ -145,9 +145,6 @@ export async function PATCH(
       // fallback provider if the named agent is later removed from the roster.
       if (namedAgent.kind !== "composite") updates.provider = namedAgent.provider;
       updates.cliSessionId = null;
-      // Also clear the legacy column so stale legacy-row fallbacks cannot
-      // resurrect a session from the previous agent.
-      updates.claudeSessionId = null;
     } else if (
       typeof body.provider === "string" &&
       isChatProvider(body.provider.trim())
@@ -155,7 +152,6 @@ export async function PATCH(
       updates.provider = body.provider.trim();
       updates.namedAgentId = null;
       updates.cliSessionId = null;
-      updates.claudeSessionId = null;
     } else {
       // Clearing a conversation-specific named agent without naming a
       // provider lands the conversation on the same default a NEW one opens
@@ -172,7 +168,6 @@ export async function PATCH(
       updates.namedAgentId = resolved.namedAgentId;
       updates.provider = resolved.provider;
       updates.cliSessionId = null;
-      updates.claudeSessionId = null;
     }
   } else if (
     typeof body.provider === "string" &&
@@ -182,7 +177,6 @@ export async function PATCH(
     updates.provider = body.provider.trim();
     updates.namedAgentId = null;
     updates.cliSessionId = null;
-    updates.claudeSessionId = null;
   }
 
   if (typeof body.label === "string" && body.label.trim().length > 0) {

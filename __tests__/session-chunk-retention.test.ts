@@ -278,6 +278,41 @@ describe("session chunk pruner", () => {
     expect(chunkCount("default-stamped")).toBe(20);
   });
 
+  it.each([
+    ["recent-offset", "2026-08-06T11:00:00-02:00", false],
+    ["old-offset", "2026-08-06T13:00:00+02:00", true],
+    ["recent-fraction", "2026-08-06T12:00:00.001Z", false],
+    ["at-cutoff", "2026-08-06T12:00:00Z", true],
+    ["invalid-terminal", "!invalid", false],
+  ])("uses the actual terminal instant for %s", (id, endedAt, eligible) => {
+    seedSession({ id, status: "completed", endedAt, createdAt: daysAgo(60) });
+    const content = filler(0, FORENSIC_RAW_TAIL_MAX_CHARS + 20_000);
+    seedChunk(id, "raw", content);
+
+    const result = prune();
+
+    expect(result.scannedSessions).toBe(eligible ? 1 : 0);
+    expect(result.truncatedChunks).toBe(eligible ? 1 : 0);
+    if (!eligible) expect(storedChars(id)).toBe(content.length);
+  });
+
+  it("does not prune when the cutoff is invalid", () => {
+    seedSession({ id: "invalid-cutoff", status: "completed", endedAt: daysAgo(60) });
+    const content = filler(0, FORENSIC_RAW_TAIL_MAX_CHARS + 20_000);
+    seedChunk("invalid-cutoff", "raw", content);
+
+    const result = createSessionChunkPruner(sqlite).prune({
+      projectId: PROJECT_ID,
+      cutoff: "unknown",
+      tailChars: SESSION_CHUNK_RETAINED_TAIL_CHARS,
+      maxDeletedChunks: 50_000,
+      prunedAt: NOW.toISOString(),
+    });
+
+    expect(result.scannedSessions).toBe(0);
+    expect(storedChars("invalid-cutoff")).toBe(content.length);
+  });
+
   it("derives lastNonEmptyText from the chunks it is about to delete", () => {
     seedSession({
       id: "no-last-text",

@@ -8,7 +8,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { McpServersSection } from "@/components/settings/McpServersSection";
 import {
   MCP_SERVER_NAME_MAX_LENGTH,
@@ -662,5 +662,83 @@ describe("which surfaces the section says these servers reach", () => {
     expect(
       screen.getByText(/Not used by the OpenAI-compatible chat mode/i),
     ).toBeInTheDocument();
+  });
+});
+
+
+describe("MCP editor request lifetime", () => {
+  it("restores the inherited global after deleting its local override", async () => {
+    mockFetch({
+      "/api/projects/p1/mcp-servers": { data: { servers: [{ ...godot, id: "local", projectId: "p1" }],
+        inherited: [{ ...godot, shadowed: true }], unsupportedProviders: [] } },
+      "DELETE /api/projects/p1/mcp-servers/local": { data: { id: "local", deleted: true } },
+    });
+    render(<McpServersSection projectId="p1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    expect(await screen.findByRole("button", { name: "Disable for this project" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Delete" })).not.toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows initial read errors with retry and blocks creating from an unknown list", async () => {
+    mockFetch({ "/api/settings/mcp-servers": { error: "Unavailable" } });
+    render(<McpServersSection projectId={null} />);
+    expect(await screen.findByText("Unavailable")).toHaveAttribute("role", "alert");
+    expect(screen.getByRole("button", { name: "Add MCP server" })).toBeDisabled();
+    vi.mocked(fetch).mockResolvedValueOnce({ ok: true, json: async () => ({ data: [] }) } as Response);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Add MCP server" })).toBeEnabled());
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("applies a canonical save directly and cannot submit it twice", async () => {
+    const calls = mockFetch({ "/api/settings/mcp-servers": { data: [godot] } });
+    render(<McpServersSection projectId={null} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByDisplayValue("scenes and nodes"), { target: { value: "New hint" } });
+    let finish!: (response: Response) => void;
+    const post = vi.fn().mockReturnValue(new Promise<Response>((resolve) => { finish = resolve; }));
+    vi.mocked(fetch).mockImplementation(post);
+    const save = screen.getByRole("button", { name: "Save" });
+    act(() => { fireEvent.click(save); fireEvent.click(save); });
+    expect(post).toHaveBeenCalledTimes(1);
+    await act(async () => { finish({ ok: true, json: async () => ({ data: { ...godot, usageHint: "New hint" } }) } as Response); });
+    expect(await screen.findByText("New hint")).toBeInTheDocument();
+    expect(screen.queryByTestId("mcp-server-form")).not.toBeInTheDocument();
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("keeps a refused deletion visible", async () => {
+    mockFetch({ "/api/settings/mcp-servers": { data: [godot] },
+      "DELETE /api/settings/mcp-servers/srv-1": { error: "Delete refused" } });
+    render(<McpServersSection projectId={null} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+    expect(await screen.findByText("Delete refused")).toHaveAttribute("role", "alert");
+    expect(screen.getByTestId("mcp-server-godot")).toBeInTheDocument();
+  });
+
+  it("freezes submitted fields until the save result arrives", async () => {
+    mockFetch({ "/api/settings/mcp-servers": { data: [godot] } });
+    render(<McpServersSection projectId={null} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    let finish!: (response: Response) => void;
+    vi.mocked(fetch).mockReturnValueOnce(new Promise<Response>((resolve) => { finish = resolve; }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByTestId("mcp-server-command")).toBeDisabled();
+    expect(screen.getByTestId("mcp-server-secrets")).toBeDisabled();
+    await act(async () => { finish({ ok: false, json: async () => ({ error: "Save refused" }) } as Response); });
+    expect(screen.getByTestId("mcp-server-command")).toBeEnabled();
+    expect(screen.getByTestId("mcp-server-command")).toHaveValue(godot.command);
+  });
+
+  it("drops the global secret draft when switching to a project", async () => {
+    mockFetch({ "/api/settings/mcp-servers": { data: [godot] } });
+    const { rerender } = render(<McpServersSection projectId={null} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByTestId("mcp-server-secrets"), { target: { value: "TOKEN=unsaved-global" } });
+    rerender(<McpServersSection projectId="p1" />);
+    expect(screen.queryByTestId("mcp-server-form")).not.toBeInTheDocument();
+    await waitFor(() => expect(fetch).toHaveBeenCalledWith("/api/projects/p1/mcp-servers"));
   });
 });

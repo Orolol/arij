@@ -1,12 +1,6 @@
-import fs from "fs";
-import { and, eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { agentSessions, projects } from "@/lib/db/schema";
-import { resolveVerifyConfigForProject } from "@/lib/verify/config";
-import type { VerifyConfig } from "@/lib/verify/verify-constants";
+import { planEpicVerification } from "@/lib/verify/plan";
 import { withVerificationWorktreeLock } from "@/lib/verify/execution-lock";
 import { runVerification as executeVerification } from "@/lib/verify/runner";
-import { assertManagedEpicWorktreePath } from "@/lib/verify/worktree";
 import { emitTicketUpdated } from "@/lib/events/emit";
 import type { PipelineDeterministicVerificationOutcome } from "./runner";
 import type { PipelineStageDriverInit } from "./stage-driver-init";
@@ -23,7 +17,7 @@ export async function runPipelineVerification(
 ): Promise<PipelineDeterministicVerificationOutcome> {
   // Applicability is decided by plain DB reads plus path checks. ONLY those
   // reads sit inside the try: the stage must be TOTAL for faults that say
-  // nothing about the branch (mirroring lib/pipeline/verify.ts), while a
+  // nothing about the branch (mirroring lib/pipeline/regression-gate.ts), while a
   // genuine execution fault still reaches the runner's crash path. Every
   // non-disabled skip carries a reason: the runner traces it into
   // ticket_activity_log, because a silent skip would be indistinguishable
@@ -37,64 +31,9 @@ export async function runPipelineVerification(
     return { ran: false, result: null, skipReason: reason };
   };
 
-  let plan: {
-    worktreePath: string;
-    commands: VerifyConfig["commands"];
-    timeoutMs: number;
-  } | null = null;
-  try {
-    const config = resolveVerifyConfigForProject(init.projectId);
-    if (!config.enabled) return notRun();
-    if (!lastCodeSessionId) {
-      return skip("deterministic verification requires a code session");
-    }
-
-    const codeSession = db
-      .select({ worktreePath: agentSessions.worktreePath })
-      .from(agentSessions)
-      .where(
-        and(
-          eq(agentSessions.id, lastCodeSessionId),
-          eq(agentSessions.projectId, init.projectId),
-          eq(agentSessions.epicId, init.epicId)
-        )
-      )
-      .get();
-    if (!codeSession?.worktreePath) {
-      return skip("no epic worktree recorded by the last code session");
-    }
-    const worktreePath = codeSession.worktreePath;
-
-    const project = db
-      .select({ gitRepoPath: projects.gitRepoPath })
-      .from(projects)
-      .where(eq(projects.id, init.projectId))
-      .get();
-    if (!project?.gitRepoPath) {
-      return skip("deterministic verification requires a Git repository");
-    }
-    // Hard constraint: never execute in the repository checkout or any
-    // unmanaged path, even when durable session state records one.
-    assertManagedEpicWorktreePath(worktreePath, project.gitRepoPath);
-
-    // A session row can outlive a worktree pruned after a merge. Spawning
-    // into a missing cwd would surface as a spawn error — a phantom
-    // "failing command" that burns a real fix cycle.
-    if (!fs.existsSync(worktreePath)) {
-      return skip(
-        "the recorded epic worktree no longer exists on disk (pruned?)"
-      );
-    }
-
-    plan = {
-      worktreePath,
-      commands: config.commands,
-      timeoutMs: config.timeoutMs,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    return skip(`applicability check failed: ${message}`);
-  }
+  const planned = planEpicVerification(init.projectId, init.epicId, { codeSessionId: lastCodeSessionId });
+  if (!planned.plan) return planned.reason ? skip(planned.reason) : notRun();
+  const plan = planned.plan;
 
   // Deliberately OUTSIDE the applicability try: from here on a thrown fault
   // is an execution fault, and it belongs to the runner's crash path rather

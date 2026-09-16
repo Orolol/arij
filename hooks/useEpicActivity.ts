@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { usePolling } from "@/hooks/usePolling";
+import { usePolledResource } from "@/hooks/usePolledResource";
+const loadError = () => "Unable to load ticket activity";
+const isEntries = (value: unknown): value is EpicActivityEntry[] => Array.isArray(value);
 
 /** One kanban transition from the ticket activity log (newest first from the API). */
 export interface EpicActivityEntry {
@@ -34,31 +35,6 @@ export function useEpicActivity(
     ? `/api/projects/${projectId}/epics/${epicId}/activity`
     : null;
 
-  const [loadedEntries, setEntries] = useState<EpicActivityEntry[]>([]);
-  const [isLoading, setLoading] = useState(true);
-
-  // A null epicId has an empty, settled feed. Deriving that beats the reset
-  // effect it replaces: correct on the first render rather than one commit
-  // later, and re-opening an epic still shows its cached feed.
-  const entries = activityUrl ? loadedEntries : EMPTY_ENTRIES;
-  const loading = activityUrl ? isLoading : false;
-
-  const loadActivity = useCallback(async () => {
-    if (!activityUrl) return;
-    try {
-      const res = await fetch(activityUrl);
-      const data = await res.json();
-      if (data.data) {
-        setEntries(data.data);
-      }
-    } catch {
-      // silently fail on poll
-    }
-    setLoading(false);
-  }, [activityUrl]);
-
-  // Initial load + 5s polling while visible
-  usePolling(loadActivity, 5000, !!activityUrl && enabled);
-
-  return { entries, loading, refresh: loadActivity };
+  const { data, loading, error, refresh } = usePolledResource<EpicActivityEntry[]>(enabled && projectId ? activityUrl : null, 5000, loadError, { validateData: isEntries });
+  return { entries: data ?? EMPTY_ENTRIES, loading, error, refresh };
 }

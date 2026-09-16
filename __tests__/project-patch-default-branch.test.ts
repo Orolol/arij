@@ -11,25 +11,10 @@ vi.mock("@/lib/db", () => ({
   db: mockDb,
 }));
 
-vi.mock("@/lib/db/schema", () => ({
-  projects: {
-    id: "id",
-    name: "name",
-    defaultBranch: "default_branch",
-    cloneSource: "clone_source",
-    gitRepoPath: "git_repo_path",
-    description: "description",
-    githubOwnerRepo: "github_owner_repo",
-    gitRemoteUrl: "git_remote_url",
-    status: "status",
-    createdAt: "created_at",
-    updatedAt: "updated_at",
-  },
-}));
-
-vi.mock("@/lib/export/arji-json", () => ({
-  tryExportArjiJson: vi.fn(),
-}));
+// The route imports `tryExportArjiJson` from `@/lib/sync/export`, which is a
+// no-op under VITEST (lib/sync/export.ts). Nothing to stub — the previous
+// mock pointed at `@/lib/export/arji-json`, a path that never existed, so it
+// was inert and made the test look guarded when it was not.
 
 import { PATCH } from "@/app/api/projects/[projectId]/route";
 import { POST } from "@/app/api/projects/route";

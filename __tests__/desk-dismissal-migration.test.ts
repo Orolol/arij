@@ -1,10 +1,9 @@
 /** Migration coverage for the desk_dismissals table (0050). */
 import Database from "better-sqlite3";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
-import { initDb, defaultMigrationsFolder } from "@/lib/db/init";
+import { withMigratedDb } from "./helpers/migration";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
 const MIGRATION_TAG = "0050_desk_dismissals";
@@ -28,18 +27,6 @@ afterEach(() => {
  * machine that happened to create it — which is how the first version of this
  * file passed locally and failed in CI.
  */
-function withDb<T>(fn: (conn: Database.Database) => T): T {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arij-desk-dismissals-"));
-  tempDirs.push(dir);
-  const conn = new Database(path.join(dir, "arij.db"));
-  try {
-    initDb(conn, { migrationsFolder: defaultMigrationsFolder() });
-    return fn(conn);
-  } finally {
-    conn.close();
-  }
-}
-
 function tableInfo(db: Database.Database) {
   return db.prepare("PRAGMA table_info(desk_dismissals)").all() as {
     name: string;
@@ -50,7 +37,7 @@ function tableInfo(db: Database.Database) {
 }
 
 describe("0050_desk_dismissals", () => {
-  it("is a hand-written journal migration with a unique increasing timestamp", () => {
+  it("is a hand-written journal migration with a unique increasing timestamp", async () => {
     const sql = fs.readFileSync(
       path.join(MIGRATIONS_FOLDER, `${MIGRATION_TAG}.sql`),
       "utf-8",
@@ -94,14 +81,13 @@ describe("0050_desk_dismissals", () => {
     }
   });
 
-  it("applies on a fresh database", () => {
-    withDb((conn) => {
+  it("applies on a fresh database", async () => {
+    withMigratedDb((conn) => {
       const cols = tableInfo(conn);
       expect(cols.map((c) => c.name)).toEqual([
         "epic_id",
         "kind",
         "signal_at",
-        "dismissed_at",
       ]);
       // Composite PK on (epic_id, kind).
       expect(cols.filter((c) => c.pk > 0).map((c) => c.name)).toEqual([
@@ -115,16 +101,16 @@ describe("0050_desk_dismissals", () => {
     });
   });
 
-  it("keeps the route's upsert to one row per (epic, kind)", () => {
-    withDb((conn) => {
+  it("keeps the route's upsert to one row per (epic, kind)", async () => {
+    withMigratedDb((conn) => {
       const upsert = conn.prepare(
-        "INSERT INTO desk_dismissals (epic_id, kind, signal_at, dismissed_at) VALUES (?,?,?,?) " +
-          "ON CONFLICT(epic_id, kind) DO UPDATE SET signal_at=excluded.signal_at, dismissed_at=excluded.dismissed_at",
+        "INSERT INTO desk_dismissals (epic_id, kind, signal_at) VALUES (?,?,?) " +
+          "ON CONFLICT(epic_id, kind) DO UPDATE SET signal_at=excluded.signal_at",
       );
-      upsert.run("e1", "asks", "2026-08-31T09:00:00.000Z", "2026-08-31T09:00:01.000Z");
-      upsert.run("e1", "asks", "2026-08-31T10:00:00.000Z", "2026-08-31T10:00:01.000Z");
+      upsert.run("e1", "asks", "2026-08-31T09:00:00.000Z");
+      upsert.run("e1", "asks", "2026-08-31T10:00:00.000Z");
       // Same epic, different family: a separate row, not a replacement.
-      upsert.run("e1", "failed", "2026-08-31T11:00:00.000Z", "2026-08-31T11:00:01.000Z");
+      upsert.run("e1", "failed", "2026-08-31T11:00:00.000Z");
 
       const rows = conn
         .prepare("SELECT epic_id, kind, signal_at FROM desk_dismissals ORDER BY kind")

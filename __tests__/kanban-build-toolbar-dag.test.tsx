@@ -1,3 +1,4 @@
+import userEvent from "@testing-library/user-event";
 /**
  * Toolbar tests for the third batch build mode ("Waves (DAG)"): option
  * rendering, the explainer hint, and the request body it produces.
@@ -16,15 +17,10 @@ import {
   useCallback,
   type ReactNode,
 } from "react";
+import { installMockEventSource } from "./helpers/event-source-mock";
 
 // Mock EventSource (used by useProjectEvents)
-class MockEventSource {
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  close() {}
-}
-(globalThis as Record<string, unknown>).EventSource = MockEventSource;
+installMockEventSource();
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ projectId: "proj1" }),
@@ -153,11 +149,12 @@ vi.mock("@/components/shared/NamedAgentSelect", () => ({
 
 import KanbanPage from "@/app/projects/[projectId]/page";
 
-function selectDagMode() {
-  fireEvent.change(screen.getByTestId("build-mode-select"), {
-    target: { value: "dag" },
-  });
+async function chooseMode(label: string) {
+  const user = userEvent.setup();
+  await user.click(screen.getByTestId("build-mode-select"));
+  await user.click(screen.getByRole("menuitem", { name: label }));
 }
+async function selectDagMode() { await chooseMode("Waves (DAG)"); }
 
 describe("Kanban Build Toolbar — Waves (DAG) mode", () => {
   beforeEach(() => {
@@ -171,27 +168,24 @@ describe("Kanban Build Toolbar — Waves (DAG) mode", () => {
     });
   });
 
-  it("offers all three build modes, parallel still the default", () => {
+  it("offers all three build modes, parallel still the default", async () => {
     render(<KanbanPage />);
     fireEvent.click(screen.getByTestId("toggle-epic1"));
 
-    const select = screen.getByTestId("build-mode-select") as HTMLSelectElement;
-    expect(select.value).toBe("parallel");
-    const labels = Array.from(select.options).map((o) => o.textContent);
-    expect(labels).toEqual(["Parallel", "Sequential", "Waves (DAG)"]);
+    expect(screen.getByTestId("build-mode-select")).toHaveTextContent("Parallel");
+    await userEvent.setup().click(screen.getByTestId("build-mode-select"));
+    expect(screen.getAllByRole("menuitem").map((item) => item.textContent)).toEqual(["Parallel", "Sequential", "Waves (DAG)"]);
   });
 
-  it("shows the waves explainer hint only when dag mode is selected", () => {
+  it("shows the waves explainer hint only when dag mode is selected", async () => {
     render(<KanbanPage />);
     fireEvent.click(screen.getByTestId("toggle-epic1"));
 
     expect(screen.queryByTestId("dag-mode-hint")).not.toBeInTheDocument();
-    selectDagMode();
+    await selectDagMode();
     expect(screen.getByTestId("dag-mode-hint")).toBeInTheDocument();
 
-    fireEvent.change(screen.getByTestId("build-mode-select"), {
-      target: { value: "sequential" },
-    });
+    await chooseMode("Sequential");
     expect(screen.queryByTestId("dag-mode-hint")).not.toBeInTheDocument();
   });
 
@@ -201,7 +195,7 @@ describe("Kanban Build Toolbar — Waves (DAG) mode", () => {
     render(<KanbanPage />);
     fireEvent.click(screen.getByTestId("toggle-epic1"));
     fireEvent.click(screen.getByTestId("toggle-epic2"));
-    selectDagMode();
+    await selectDagMode();
 
     fireEvent.click(screen.getByText("Build all"));
 
@@ -244,7 +238,7 @@ describe("Kanban Build Toolbar — Waves (DAG) mode", () => {
   it("announces the wave launch in the success toast", async () => {
     render(<KanbanPage />);
     fireEvent.click(screen.getByTestId("toggle-epic1"));
-    selectDagMode();
+    await selectDagMode();
     fireEvent.click(screen.getByText("Build all"));
 
     await waitFor(() => {

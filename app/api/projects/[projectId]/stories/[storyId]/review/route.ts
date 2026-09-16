@@ -1,72 +1,44 @@
+import { resolveAgentForDispatch } from "@/lib/agent-config/agent-resolution";
+import { REVIEW_LABELS, REVIEW_TYPE_TO_AGENT_TYPE, VALID_REVIEW_TYPES } from "@/lib/agent-config/constants";
+import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
+import { dispatchReviewSession } from "@/lib/agent-sessions/dispatch-ticket-session";
+import { createSessionLogsPath } from "@/lib/agent-sessions/session-paths";
+import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
+import {
+  createAgentAlreadyRunningPayload,
+  getRunningSessionForTarget,
+} from "@/lib/agents/concurrency";
 import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
-import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import {
-  userStories,
-  ticketComments,
-} from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
-import { createId } from "@/lib/utils/nanoid";
-import { createWorktree, isGitRepo } from "@/lib/git/manager";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import { loadPromptComments } from "@/lib/claude/prompt-comments";
-import { assembleStoryReviewPrompt } from "@/lib/tokens";
-import { type ReviewType } from "@/lib/claude/prompt-builder";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
-import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
 import {
   getEpicOr404,
   getProjectOr404,
   getStoryOr404,
   isErrorResponse,
 } from "@/lib/api/route-helpers";
-import fs from "fs";
-import path from "path";
-import { REVIEW_TYPE_TO_AGENT_TYPE } from "@/lib/agent-config/constants";
-import { resolveAgentForDispatch } from "@/lib/agent-config/agent-resolution";
+import { type ReviewType } from "@/lib/claude/prompt-builder";
+import { loadPromptComments } from "@/lib/claude/prompt-comments";
 import {
-  createAgentAlreadyRunningPayload,
-  getRunningSessionForTarget,
-} from "@/lib/agents/concurrency";
-import { agentScheduler } from "@/lib/agents/scheduler";
+  resolveSessionOutput
+} from "@/lib/claude/resolve-session-output";
+import { db } from "@/lib/db";
 import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
+  ticketComments,
+  userStories,
+} from "@/lib/db/schema";
+import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import {
-  buildEpicTargetUrl,
-  createUnresolvedMentionsNotification,
-} from "@/lib/notifications/create";
-import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
-import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
-import { transitionReviewRejected } from "@/lib/workflow/automatic-transitions";
-import {
-  resolveReviewVerdict,
   resolvePriorFindingsFromProse,
+  resolveReviewVerdict,
 } from "@/lib/pipeline/findings";
+import { assembleStoryReviewPrompt } from "@/lib/tokens";
+import { createId } from "@/lib/utils/nanoid";
+import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
+import { transitionReviewRejected } from "@/lib/workflow/automatic-transitions";
+import { postUnresolvedMentionsComment } from "@/lib/workflow/system-comment";
+import { eq } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
-
-const VALID_REVIEW_TYPES: ReviewType[] = [
-  "security",
-  "code_review",
-  "compliance",
-  "feature_review",
-];
-
-const REVIEW_LABELS: Record<ReviewType, string> = {
-  security: "Security Review",
-  code_review: "Code Review",
-  compliance: "Compliance & Accessibility Review",
-  feature_review: "Feature Review",
-};
 
 export const POST = withAgentResolutionErrors(async function POST(request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
@@ -182,12 +154,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
       comments,
     });
     const enrichedPrompt = assembled.prompt;
-    createUnresolvedMentionsNotification({
-      projectId,
-      missing: assembled.missingDocuments ?? [],
-      agentType: REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
-      targetUrl: buildEpicTargetUrl(projectId, epic.id),
-    });
+    postUnresolvedMentionsComment({ epicId: epic.id, missing: assembled.missingDocuments, agentType: REVIEW_TYPE_TO_AGENT_TYPE[reviewType] });
     const resolvedAgent = await resolveAgentForDispatch(
       REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
       projectId,
@@ -197,9 +164,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
 
     const sessionId = createId();
     const now = new Date().toISOString();
-    const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-    fs.mkdirSync(logsDir, { recursive: true });
-    const logsPath = path.join(logsDir, "logs.json");
+    const logsPath = createSessionLogsPath(sessionId);
 
     // All review types run in code mode: plan mode refuses mutating MCP
     // tools (submit_findings, create_bug) and read-only provider postures
@@ -225,7 +190,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
       ? resumeCliSessionId
       : mintAssignedCliSessionId(resolvedAgent.provider);
 
-    createQueuedSession({
+    const row = {
       id: sessionId,
       projectId,
       epicId: epic.id,
@@ -245,57 +210,12 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
       model: resolvedAgent.model || null,
       agentType: REVIEW_TYPE_TO_AGENT_TYPE[reviewType],
       createdAt: now,
-    });
+    };
 
-    // Scheduled launch via the per-project scheduler. The closure spawns
-    // the agent — feature_review runs in code mode, others in plan mode
-    // (read-only) — waits for completion, and posts the review comment.
-    const label = REVIEW_LABELS[reviewType];
-    ((sid, lbl) => {
-      agentScheduler.submit(projectId, sid, async () => {
-        markSessionRunning(sid);
-        processManager.start(sid, {
-          mode: agentMode,
-          prompt: enrichedPrompt,
-          cwd: worktreePath,
-          model: resolvedAgent.model,
-          cliSessionId,
-          resumeSession: useResume,
-        }, resolvedAgent.provider);
-
-        const info = await waitForProcessCompletion(sid);
-
-        const completedAt = new Date().toISOString();
-        const result = info?.result;
-
-        // Write logs
-        try {
-          fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-        } catch {
-          // ignore
-        }
-
-        // Update session
-        const outcome = classifySessionOutcome(result, sid);
-
-        try {
-          markSessionTerminal(
-            sid,
-            {
-              success: !!result?.success,
-              error: result?.error || null,
-              outcome,
-              usage: extractSessionUsage(result),
-            },
-            completedAt
-          );
-        } catch (error) {
-          if (!isSessionLifecycleConflictError(error)) {
-            console.error("[story review] Failed to finalize session", error);
-          }
-        }
-
-        // Post review as comment with label
+    const sid = sessionId;
+    const lbl = REVIEW_LABELS[reviewType];
+    dispatchReviewSession({ row, resolvedAgent, resumeSession: useResume,
+      onTerminal: ({ result, outcome, completedAt }) => {
         const output = resolveSessionOutput(result, sid, "Review agent completed without output.");
 
         db.insert(ticketComments)
@@ -363,8 +283,8 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
             });
           }
         }
-      });
-    })(sessionId, label);
+      },
+    });
 
     sessionsCreated.push(sessionId);
     resolutions.push({

@@ -57,6 +57,8 @@ export const MCP_EXEMPT_AGENT_TYPES: readonly string[] = [
   // response is persisted as the report body. Appending ticket-tool guidance
   // would be both unusable and after its output contract.
   "failure_digest",
+  "forensic",
+  "spec_generation",
 ];
 
 export function isMcpExemptAgentType(
@@ -115,27 +117,6 @@ export function parseDreamingAfterNightRunSetting(
     if (normalized === "false") return false;
   }
   return null;
-}
-
-/**
- * Resolves the effective "dream after a night run" answer for a project from
- * a settings map (as returned by GET /api/settings, already JSON-parsed):
- * per-project key wins, then the global key, then OFF.
- */
-export function resolveDreamingAfterNightRunDefault(
-  settings: Record<string, unknown> | null | undefined,
-  projectId: string
-): boolean {
-  if (!settings) return false;
-  const perProject = parseDreamingAfterNightRunSetting(
-    settings[dreamingAfterNightRunSettingKey(projectId)]
-  );
-  if (perProject !== null) return perProject;
-  return (
-    parseDreamingAfterNightRunSetting(
-      settings[DREAMING_AFTER_NIGHT_RUN_SETTING_KEY]
-    ) ?? false
-  );
 }
 
 /**

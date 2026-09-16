@@ -1,40 +1,32 @@
-import { eq } from "drizzle-orm";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { dagBatchRegistry } from "@/lib/agents/dag-batch-registry";
 import { db } from "@/lib/db";
-import { epics, settings } from "@/lib/db/schema";
+import { settings } from "@/lib/db/schema";
 import type { BatchExecutionPlan } from "@/lib/dependencies/scheduler";
+import { startWaveBatch } from "@/lib/dependencies/start-wave-batch";
 import {
   countPlanStatuses,
-  runExecutionWaves,
   type WaveFailurePolicy,
   type WaveLaunchHandle,
-  type WaveSkippedTicket,
-  type WaveTicketResult,
+  type WaveTicketResult
 } from "@/lib/dependencies/wave-runner";
-import { dagBatchRegistry } from "@/lib/agents/dag-batch-registry";
-import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { logTransition } from "@/lib/workflow/log";
-import {
-  buildNightRunSummaryTitle,
-  createDagWaveOutcomeNotification,
-  createNightRunSummaryNotification,
-} from "@/lib/notifications/create";
-import { durationMsBetween, sendProjectWebhook } from "@/lib/webhooks/send";
-import { maybeDreamAfterNightRun } from "@/lib/workflow/dreaming";
+import { buildNightRunSummaryTitle } from "@/lib/night/run-summary";
 import {
   startPipelineRun,
   type PipelineStageResult,
   type PipelineTerminalSummary,
 } from "@/lib/pipeline";
 import type { PipelineTerminalState } from "@/lib/pipeline/runner";
+import { durationMsBetween, sendProjectWebhook } from "@/lib/webhooks/send";
+import { maybeDreamAfterNightRun } from "@/lib/workflow/dreaming";
+import { eq } from "drizzle-orm";
 import {
   DEFAULT_NIGHT_CIRCUIT_BREAKER,
   NIGHT_CIRCUIT_BREAKER_SETTING_KEY,
   NIGHT_COST_CAP_SETTING_KEY,
   NIGHT_STOPPED_ABORT_REASON,
-  nightCircuitBreakerSettingKey,
-  nightCostCapSettingKey,
   parseNightCircuitBreaker,
-  parseNightCostCap,
+  parseNightCostCap
 } from "./constants";
 import { nightRunRegistry } from "./registry";
 import { isNightRunCostPartial, sumNightRunCost } from "./summary";
@@ -115,7 +107,6 @@ export function resolveNightCircuitBreaker(
   const fromOverride = parseNightCircuitBreaker(override ?? null);
   if (fromOverride !== null) return fromOverride;
   for (const key of [
-    nightCircuitBreakerSettingKey(projectId),
     NIGHT_CIRCUIT_BREAKER_SETTING_KEY,
   ]) {
     const parsed = parseNightCircuitBreaker(readSettingValue(key));
@@ -135,7 +126,6 @@ export function resolveNightCostCap(
   const fromOverride = parseNightCostCap(override ?? null);
   if (fromOverride !== null) return fromOverride;
   for (const key of [
-    nightCostCapSettingKey(projectId),
     NIGHT_COST_CAP_SETTING_KEY,
   ]) {
     const parsed = parseNightCostCap(readSettingValue(key));
@@ -394,39 +384,6 @@ export function startNightRun(input: StartNightRunInput): StartNightRunHandle {
     return null;
   };
 
-  const skipReason = (skip: WaveSkippedTicket): string => {
-    if (skip.kind === "aborted") {
-      // markSkipped stored the abort reason verbatim.
-      return plan.failureReasons.get(skip.epicId) ?? "night run aborted";
-    }
-    if (skip.kind === "stopped") {
-      return `skipped: batch stopped after wave ${skip.wave} failure`;
-    }
-    const blocker = skip.blockedById
-      ? db
-          .select({ readableId: epics.readableId, title: epics.title })
-          .from(epics)
-          .where(eq(epics.id, skip.blockedById))
-          .get()
-      : null;
-    const ref =
-      blocker?.readableId || blocker?.title || skip.blockedById || "unknown";
-    return skip.kind === "failed"
-      ? `skipped: dependency ${ref} failed`
-      : `skipped: dependency ${ref} asked a question`;
-  };
-
-  let resolveFirstWave!: (sessionIds: string[]) => void;
-  let firstWaveResolved = false;
-  const firstWaveLaunched = new Promise<string[]>((resolve) => {
-    resolveFirstWave = resolve;
-  });
-  const settleFirstWave = (sessionIds: string[]): void => {
-    if (firstWaveResolved) return;
-    firstWaveResolved = true;
-    resolveFirstWave(sessionIds);
-  };
-
   /**
    * Single terminal choke point (normal finish AND the crash safety net):
    * final counts to both registries, night ring snapshot, monitor cleanup,
@@ -467,23 +424,6 @@ export function startNightRun(input: StartNightRunInput): StartNightRunHandle {
     }
 
     const durationMs = durationMsBetween(startedAt, endedAt);
-    try {
-      createNightRunSummaryNotification({
-        projectId,
-        runId,
-        counts,
-        totalCostUsd,
-        costIsPartial,
-        abortReason: abortInfo.abortReason,
-        durationMs,
-      });
-    } catch (error) {
-      console.warn(
-        "[night] Summary notification failed:",
-        error instanceof Error ? error.message : error
-      );
-    }
-
     void sendProjectWebhook(projectId, {
       event: "night_run.completed",
       summary: buildNightRunSummaryTitle(
@@ -515,7 +455,8 @@ export function startNightRun(input: StartNightRunInput): StartNightRunHandle {
     });
   };
 
-  const engineRun = runExecutionWaves({
+  const { firstWaveLaunched, engineDone: engineRun } = startWaveBatch({
+    projectId,
     plan,
     graph,
     failurePolicy,
@@ -527,68 +468,13 @@ export function startNightRun(input: StartNightRunInput): StartNightRunHandle {
         nightRunRegistry.update(runId, { currentWave: wave });
         syncRegistries();
       },
-      onWaveLaunched: (_wave, sessionIds) => {
-        settleFirstWave(sessionIds);
-      },
       onWaveSettled: (_wave, results) => {
         for (const result of results) {
           breaker.observe(observationFor(result));
         }
         syncRegistries();
       },
-      onSkip: (skip) => {
-        syncRegistries();
-        // The skipped ticket never moves — log the decision so the board
-        // history answers "why didn't this build?".
-        try {
-          const held = db
-            .select({ status: epics.status })
-            .from(epics)
-            .where(eq(epics.id, skip.epicId))
-            .get();
-          const heldStatus = held?.status ?? "backlog";
-          logTransition({
-            projectId,
-            epicId: skip.epicId,
-            fromStatus: heldStatus,
-            toStatus: heldStatus,
-            actor: "system",
-            reason: skipReason(skip),
-            sessionId: skip.blockedBySessionId ?? undefined,
-          });
-        } catch (error) {
-          console.warn(
-            `[night] Failed to log skip for epic ${skip.epicId}`,
-            error
-          );
-        }
-      },
-      onWaveBlocked: (wave, blocked, waveSkipped) => {
-        // Same dedupe as the plain DAG route: a wave blocked *solely* by
-        // questions that skipped nothing adds no information beyond the
-        // per-session asked-question notifications.
-        const onlyUnblockingQuestions =
-          blocked.every((b) => b.success) && waveSkipped.length === 0;
-        if (onlyUnblockingQuestions) return;
-
-        try {
-          createDagWaveOutcomeNotification({
-            projectId,
-            wave,
-            totalWaves,
-            blocked: blocked.map((b) => ({
-              epicId: b.epicId,
-              kind: b.success
-                ? ("asked_question" as const)
-                : ("failed" as const),
-            })),
-            skippedCount: waveSkipped.length,
-            stopped: failurePolicy === "stop",
-          });
-        } catch (error) {
-          console.warn("[night] Failed to create wave notification", error);
-        }
-      },
+      onSkip: () => syncRegistries(),
       onFinish: (summary) => {
         finishRun({
           abortReason: summary.abortReason,
@@ -609,10 +495,7 @@ export function startNightRun(input: StartNightRunInput): StartNightRunHandle {
         finishRun({ abortReason: "night engine error", abortedAtWave: null });
       }
     )
-    .then(() => {
-      // However the run ended, the dispatch response must never hang.
-      settleFirstWave([]);
-    });
+    ;
 
   return { firstWaveLaunched, engineDone };
 }

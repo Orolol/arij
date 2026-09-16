@@ -2,8 +2,6 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog,
   DialogContent,
@@ -12,14 +10,14 @@ import {
   DialogDescription,
   DialogFooter,
 } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
+import { PillButton, Stamp } from "@/components/piscine";
 import { Hammer, GitMerge, Loader2, MessageSquare, CheckCheck } from "lucide-react";
 import type { ReviewComment } from "@/hooks/useReviewComments";
 import { MarkdownContent } from "@/components/chat/MarkdownContent";
 
 interface ReviewActionsProps {
-  projectId: string;
-  epicId: string;
+  projectId?: string;
+  epicId?: string;
   epicStatus: string;
   openCount: number;
   comments: ReviewComment[];
@@ -29,11 +27,10 @@ interface ReviewActionsProps {
   onResolveAll: () => Promise<unknown>;
   dispatching?: boolean;
   isRunning?: boolean;
+  disabled?: boolean;
 }
 
 export function ReviewActions({
-  projectId,
-  epicId,
   epicStatus,
   openCount,
   comments,
@@ -42,6 +39,7 @@ export function ReviewActions({
   onResolveAll,
   dispatching,
   isRunning,
+  disabled = false,
 }: ReviewActionsProps) {
   const [backToDevOpen, setBackToDevOpen] = useState(false);
   const [additionalComment, setAdditionalComment] = useState("");
@@ -50,8 +48,8 @@ export function ReviewActions({
   const [resolvingAll, setResolvingAll] = useState(false);
   const t = useTranslations("Review");
 
-  const actionsLocked = dispatching || isRunning;
-  const canBackToDev = ["review", "to_merge", "in_progress", "todo", "backlog"].includes(epicStatus);
+  const actionsLocked = dispatching || isRunning || disabled;
+  const canBackToDev = ["review", "to_merge"].includes(epicStatus);
   const canMerge = epicStatus === "to_merge";
 
   async function handleBackToDev() {
@@ -121,23 +119,23 @@ export function ReviewActions({
 
   return (
     <>
-      <div className="flex items-center gap-2 flex-wrap border border-border rounded-lg p-3 bg-muted/30">
+      <div className="flex items-center gap-2 flex-wrap rounded-[12px] bg-card p-3 border border-border/40">
         {openCount > 0 && (
-          <Badge variant="outline" className="gap-1 text-xs text-blue-500 border-blue-500/30">
+          <Stamp tone="live">
             <MessageSquare className="h-3 w-3" />
             {t("actions.open", { count: openCount })}
-          </Badge>
+          </Stamp>
         )}
 
         <div className="flex-1" />
 
         {openCount > 0 && (
-          <Button
+          <PillButton
             size="sm"
             variant="outline"
+            outlineTone="neutral"
             onClick={handleResolveAll}
-            disabled={resolvingAll}
-            className="h-7 text-xs"
+            disabled={resolvingAll || actionsLocked}
           >
             {resolvingAll ? (
               <Loader2 className="h-3 w-3 animate-spin mr-1" />
@@ -145,31 +143,31 @@ export function ReviewActions({
               <CheckCheck className="h-3 w-3 mr-1" />
             )}
             {t("actions.resolveAll")}
-          </Button>
+          </PillButton>
         )}
 
         {canBackToDev && openCount > 0 && (
-          <Button
+          <PillButton
             size="sm"
             variant="outline"
+            outlineTone="neutral"
             onClick={() => {
               setAdditionalComment("");
               setBackToDevOpen(true);
             }}
             disabled={actionsLocked}
-            className="h-7 text-xs"
           >
             <Hammer className="h-3 w-3 mr-1" />
             {t("actions.backToDev")}
-          </Button>
+          </PillButton>
         )}
 
         {canMerge && (
-          <Button
+          <PillButton
             size="sm"
+            variant="filled"
             onClick={handleMerge}
             disabled={merging || actionsLocked}
-            className="h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
           >
             {merging ? (
               <Loader2 className="h-3 w-3 animate-spin mr-1" />
@@ -177,7 +175,7 @@ export function ReviewActions({
               <GitMerge className="h-3 w-3 mr-1" />
             )}
             {t("actions.merge")}
-          </Button>
+          </PillButton>
         )}
       </div>
 
@@ -191,7 +189,7 @@ export function ReviewActions({
             </DialogDescription>
           </DialogHeader>
 
-          <div className="max-h-48 overflow-y-auto border rounded-lg p-3 bg-muted/30 text-xs space-y-2">
+          <div className="max-h-48 overflow-y-auto rounded-[8px] border border-border/40 p-3 bg-muted/20 text-xs space-y-2">
             {comments
               .filter((c) => c.status === "open")
               .map((c) => (
@@ -206,29 +204,37 @@ export function ReviewActions({
               ))}
           </div>
 
-          <Textarea
+          <textarea
             value={additionalComment}
             onChange={(e) => setAdditionalComment(e.target.value)}
             placeholder={t("backToDevDialog.placeholder")}
+            aria-label={t("backToDevDialog.placeholder")}
             rows={3}
-            className="text-sm"
+            className="w-full rounded-[8px] bg-background p-2.5 text-xs font-mono border border-border/50 outline-none focus:border-primary resize-y"
           />
 
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBackToDevOpen(false)}>
+          <DialogFooter className="gap-2 sm:gap-2">
+            <PillButton
+              size="sm"
+              variant="outline"
+              outlineTone="neutral"
+              onClick={() => setBackToDevOpen(false)}
+            >
               {t("backToDevDialog.cancel")}
-            </Button>
-            <Button
+            </PillButton>
+            <PillButton
+              size="sm"
+              variant="filled"
               onClick={handleBackToDev}
               disabled={sendingBack || actionsLocked}
             >
               {sendingBack ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
               ) : (
-                <Hammer className="h-4 w-4 mr-1" />
+                <Hammer className="h-3.5 w-3.5 mr-1" />
               )}
               {t("backToDevDialog.send")}
-            </Button>
+            </PillButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -1,7 +1,7 @@
 /**
  * Provider abstraction types for AI agent backends.
  *
- * Claude Code, Codex, and Gemini CLI implement this interface so that build
+ * Claude Code, Codex, oh-my-pi and agy implement this interface so that build
  * routes, review routes, and the process manager can work with any backend.
  */
 
@@ -139,7 +139,11 @@ export interface ProviderSpawnOptions {
   sessionId: string;
   /** The prompt/instructions for the agent. */
   prompt: string;
-  /** Working directory for the agent. */
+  /**
+   * Working directory for the agent. For a provider that cannot be made
+   * read-only (codex), a restricted mode is only allowed when this is a
+   * disposable Arij worktree — see lib/providers/spawn-containment.ts.
+   */
   cwd: string;
   /**
    * Agent mode: "plan" = read-only, "code" = full write access, "analyze" =
@@ -155,11 +159,13 @@ export interface ProviderSpawnOptions {
   model?: string;
   /** Optional chunk callback (used by Codex session persistence). */
   onChunk?: (chunk: ProviderChunk) => void;
-  /** Optional identifier for NDJSON session logging. */
-  logIdentifier?: string;
-  /** CLI session UUID for resume support (Claude/Gemini only). */
+  /** CLI session UUID the provider resumes from, or one it was assigned. */
   cliSessionId?: string;
-  /** When true, use --resume instead of --session-id. */
+  /**
+   * When true, continue `cliSessionId` through the provider's resume flag
+   * (`--resume`, `exec resume`, `--conversation`). `isResumableProvider`
+   * gates which providers ever see it set — codex does not.
+   */
   resumeSession?: boolean;
   /** Arij MCP tool-channel injection (claude-code, codex, oh-my-pi). */
   mcp?: McpSpawnConfig;
@@ -171,6 +177,8 @@ export interface ProviderSpawnOptions {
    * is exactly what it was before the registry existed.
    */
   cliOptions?: NamedAgentCliOptions;
+  /** Grace period in ms before SIGTERM escalates to SIGKILL (defaults to 5000ms). */
+  killGraceMs?: number;
 }
 
 export interface ProviderResult {
@@ -193,6 +201,13 @@ export interface ProviderSession {
   promise: Promise<ProviderResult>;
   /** The CLI command that was spawned (prompt replaced with <prompt>). */
   command?: string;
+  /**
+   * Temp `--mcp-config` file of a claude-code spawn, when MCP injection was
+   * active. The spawn deletes it on its own exit path; exposed so the process
+   * manager can also clear it on teardown (cancel, late completion handler).
+   * Absent for providers whose MCP wiring has no file form.
+   */
+  mcpConfigPath?: string;
 }
 
 export interface AgentProvider {
@@ -209,6 +224,8 @@ export interface AgentProvider {
 
   /** Spawn a new agent session. Returns a handle for tracking. */
   spawn(options: ProviderSpawnOptions): ProviderSession;
+  /** Optional incremental chat stream, preserving tool questions and status events. */
+  spawnStream?(options: ProviderSpawnOptions): SpawnedClaudeStream;
 
   /** Cancel a running session by its handle. Returns true if cancelled. */
   cancel(session: ProviderSession): boolean;
@@ -216,3 +233,26 @@ export interface AgentProvider {
   /** Check if the provider is available (CLI installed, API key set, etc.). */
   isAvailable(): Promise<boolean>;
 }
+
+export interface QuestionOption {
+  label: string;
+  description: string;
+}
+
+export interface QuestionData {
+  question: string;
+  header: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+}
+
+export type StreamChunk =
+  | { type: "text"; text: string }
+  | { type: "questions"; questions: QuestionData[] }
+  | { type: "status"; status: string };
+
+export interface SpawnedClaudeStream {
+  stream: ReadableStream<StreamChunk>;
+  kill: () => void;
+}
+

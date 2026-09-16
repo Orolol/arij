@@ -28,7 +28,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
   execSync: vi.fn(),
-  execFileSync: vi.fn(),
+  probeOutput: vi.fn(),
   createChannel: vi.fn(),
   writeMcpConfigFile: vi.fn(() => "/tmp/arij-persistent-mcp.json"),
   cleanupMcpConfigFile: vi.fn(),
@@ -38,11 +38,11 @@ vi.mock("child_process", () => ({
   default: {
     spawn: mocks.spawn,
     execSync: mocks.execSync,
-    execFileSync: mocks.execFileSync,
+    execFile: (_file: string, _args: string[], _options: unknown, callback: (error: unknown, out: string, err: string) => void) => { try { callback(null, mocks.probeOutput(), ""); } catch (error) { callback(error, "", ""); } },
   },
   spawn: mocks.spawn,
   execSync: mocks.execSync,
-  execFileSync: mocks.execFileSync,
+  execFile: (_file: string, _args: string[], _options: unknown, callback: (error: unknown, out: string, err: string) => void) => { try { callback(null, mocks.probeOutput(), ""); } catch (error) { callback(error, "", ""); } },
 }));
 vi.mock("@/lib/chat/cli-tool-channel", () => ({
   createChatCliToolChannel: mocks.createChannel,
@@ -63,6 +63,7 @@ import {
 import { OhMyPiProvider } from "@/lib/providers/oh-my-pi";
 import {
   OMP_MIN_ALLOWLIST_VERSION,
+  OMP_REFUSAL_MEMO_MS,
   ompAllowlistIsEnforced,
   ompRestrictedToolsBlockReason,
   parseOmpVersion,
@@ -95,12 +96,12 @@ class FakeChild extends EventEmitter {
 
 /** `omp --version` answers with this release. */
 function installedOmp(version: string): void {
-  mocks.execFileSync.mockReturnValue(`omp/${version}\n`);
+  mocks.probeOutput.mockReturnValue(`omp/${version}\n`);
 }
 
 /** `omp` is not on PATH at all. */
 function ompNotInstalled(): void {
-  mocks.execFileSync.mockImplementation(() => {
+  mocks.probeOutput.mockImplementation(() => {
     const error: NodeJS.ErrnoException = new Error("spawnSync omp ENOENT");
     error.code = "ENOENT";
     throw error;
@@ -179,41 +180,55 @@ describe("omp version comparison", () => {
 });
 
 describe("omp version probe", () => {
-  it("reports a missing binary separately from an unreadable version", () => {
+  it("reports a missing binary separately from an unreadable version", async () => {
     ompNotInstalled();
-    expect(probeOmpVersion()).toEqual({ status: "absent" });
-    expect(ompRestrictedToolsBlockReason()).toBeNull();
+    expect(await probeOmpVersion()).toEqual({ status: "absent" });
+    expect(await ompRestrictedToolsBlockReason()).toBeNull();
   });
 
-  it("refuses when the binary answers with something unparseable", () => {
-    mocks.execFileSync.mockReturnValue("omp: some future banner\n");
-    expect(probeOmpVersion().status).toBe("unreadable");
-    expect(ompRestrictedToolsBlockReason()).toMatch(
+  it("refuses when the binary answers with something unparseable", async () => {
+    mocks.probeOutput.mockReturnValue("omp: some future banner\n");
+    expect((await probeOmpVersion()).status).toBe("unreadable");
+    expect(await ompRestrictedToolsBlockReason()).toMatch(
       /Could not determine the Oh My Pi version/,
     );
   });
 
-  it("refuses when `omp --version` itself fails", () => {
-    mocks.execFileSync.mockImplementation(() => {
+  it("refuses when `omp --version` itself fails", async () => {
+    mocks.probeOutput.mockImplementation(() => {
       throw new Error("Command failed: omp --version");
     });
-    expect(probeOmpVersion().status).toBe("unreadable");
-    expect(ompRestrictedToolsBlockReason()).toContain("omp update");
+    expect((await probeOmpVersion()).status).toBe("unreadable");
+    expect(await ompRestrictedToolsBlockReason()).toContain("omp update");
   });
 
-  it("memoises a trusted version but re-probes a refusal", () => {
-    installedOmp(SAFE_VERSION);
-    expect(ompRestrictedToolsBlockReason()).toBeNull();
-    expect(ompRestrictedToolsBlockReason()).toBeNull();
-    expect(mocks.execFileSync).toHaveBeenCalledTimes(1);
+  it("memoises a trusted version for good, a refusal only briefly", async () => {
+    vi.useFakeTimers();
+    try {
+      installedOmp(SAFE_VERSION);
+      expect(await ompRestrictedToolsBlockReason()).toBeNull();
+      expect(await ompRestrictedToolsBlockReason()).toBeNull();
+      expect(mocks.probeOutput).toHaveBeenCalledTimes(1);
 
-    // A refusal must NOT stick: a user who reacts to the error by running
-    // `omp update` gets unblocked without restarting the Arij server.
-    resetOmpVersionProbeForTests();
-    installedOmp(LEAKY_VERSION);
-    expect(ompRestrictedToolsBlockReason()).not.toBeNull();
-    installedOmp(SAFE_VERSION);
-    expect(ompRestrictedToolsBlockReason()).toBeNull();
+      // A refusal is remembered for a few seconds so a burst of restricted
+      // spawns on a too-old install does not re-run the synchronous probe
+      // for each of them…
+      resetOmpVersionProbeForTests();
+      mocks.probeOutput.mockClear();
+      installedOmp(LEAKY_VERSION);
+      expect(await ompRestrictedToolsBlockReason()).not.toBeNull();
+      expect(await ompRestrictedToolsBlockReason()).not.toBeNull();
+      expect(mocks.probeOutput).toHaveBeenCalledTimes(1);
+
+      // …but it must NOT stick: a user who reacts to the error by running
+      // `omp update` gets unblocked without restarting the Arij server.
+      installedOmp(SAFE_VERSION);
+      vi.advanceTimersByTime(OMP_REFUSAL_MEMO_MS + 1);
+      expect(await ompRestrictedToolsBlockReason()).toBeNull();
+      expect(mocks.probeOutput).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
@@ -245,15 +260,23 @@ describe("one-shot omp spawns", () => {
 
   it.each(["plan", "chat", "analyze"] as const)(
     "runs %s mode on an omp that does enforce it",
-    (mode) => {
+    async (mode) => {
       installedOmp(SAFE_VERSION);
       provider.spawn(spawnOptions({ mode }));
-      expect(mocks.spawn).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledTimes(1));
       const [binary, args] = mocks.spawn.mock.calls[0] as [string, string[]];
       expect(binary).toBe("omp");
       expect(args).toContain("--tools");
     },
   );
+
+  it("does not launch an agent cancelled while its preflight is pending", async () => {
+    installedOmp(SAFE_VERSION);
+    const session = provider.spawn(spawnOptions({ mode: "plan" }));
+    session.kill();
+    expect((await session.promise).error).toContain("cancelled");
+    expect(mocks.spawn).not.toHaveBeenCalled();
+  });
 
   it("leaves code mode alone: it restricts nothing, so it claims nothing", () => {
     installedOmp(LEAKY_VERSION);
@@ -262,16 +285,17 @@ describe("one-shot omp spawns", () => {
     expect(mocks.spawn.mock.calls[0][1]).not.toContain("--tools");
   });
 
-  it("lets a missing binary reach the CLI-not-found path", () => {
+  it("lets a missing binary reach the CLI-not-found path", async () => {
     ompNotInstalled();
     provider.spawn(spawnOptions({ mode: "plan" }));
+    await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledTimes(1));
     // Nothing to isolate when nothing runs — the spawn's own ENOENT message
     // is more useful than a version complaint.
     expect(mocks.spawn).toHaveBeenCalledTimes(1);
   });
 
   it("refuses when the version cannot be read at all", async () => {
-    mocks.execFileSync.mockReturnValue("");
+    mocks.probeOutput.mockReturnValue("");
     const session = provider.spawn(spawnOptions({ mode: "plan" }));
     expect(mocks.spawn).not.toHaveBeenCalled();
 
@@ -344,7 +368,7 @@ describe("every omp spawn site is gated", () => {
     // Both known spawn paths, listed so a REMOVED one is as visible as a new
     // one: the one-shot provider and the persistent RPC chat runner.
     expect(gated.sort()).toEqual([
-      "lib/chat/persistent-runner.ts",
+      "lib/chat/persistent-providers/oh-my-pi.ts",
       "lib/providers/oh-my-pi.ts",
     ]);
   });

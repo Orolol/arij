@@ -3,7 +3,7 @@
  *
  * This file replaces nine overlapping per-feature schema tests
  * (github-schema, github-issues-schema, github-release-schema,
- * github-releases-schema, notifications-schema, schema-columns,
+ * github-releases-schema, schema-columns,
  * schema-pr-tables, pr-schema, review-comments-schema). Each Drizzle table gets
  * exactly ONE column block here, so drift shows up in a single place.
  *
@@ -100,8 +100,6 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       images: "images",
       readableId: "readable_id",
       githubIssueNumber: "github_issue_number",
-      githubIssueUrl: "github_issue_url",
-      githubIssueState: "github_issue_state",
       releaseId: "release_id",
     },
   },
@@ -128,7 +126,6 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       status: "status",
       epicId: "epic_id",
       provider: "provider",
-      claudeSessionId: "claude_session_id",
       cliSessionId: "cli_session_id",
       namedAgentId: "named_agent_id",
       createdAt: "created_at",
@@ -143,6 +140,18 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       role: "role",
       content: "content",
       metadata: "metadata",
+      createdAt: "created_at",
+    },
+  },
+  chatEpicProposals: {
+    sqlName: "chat_epic_proposals",
+    columns: {
+      projectId: "project_id",
+      conversationId: "conversation_id",
+      proposalHash: "proposal_hash",
+      epicId: "epic_id",
+      userStoriesCreated: "user_stories_created",
+      dependenciesCreated: "dependencies_created",
       createdAt: "created_at",
     },
   },
@@ -189,7 +198,6 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       estimatedPromptTokens: "estimated_prompt_tokens",
       estimatedPromptBreakdown: "estimated_prompt_breakdown",
       batchRunId: "batch_run_id",
-      claudeSessionId: "claude_session_id",
       cliSessionId: "cli_session_id",
       namedAgentId: "named_agent_id",
       compositeAgentId: "composite_agent_id",
@@ -312,19 +320,6 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       updatedAt: "updated_at",
     },
   },
-  customReviewAgents: {
-    sqlName: "custom_review_agents",
-    columns: {
-      id: "id",
-      name: "name",
-      systemPrompt: "system_prompt",
-      scope: "scope",
-      position: "position",
-      isEnabled: "is_enabled",
-      createdAt: "created_at",
-      updatedAt: "updated_at",
-    },
-  },
   namedAgents: {
     sqlName: "named_agents",
     columns: {
@@ -332,7 +327,6 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       name: "name",
       provider: "provider",
       model: "model",
-      readableAgentName: "readable_agent_name",
       options: "options",
       personaPrompt: "persona_prompt",
       kind: "kind",
@@ -383,6 +377,7 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       body: "body",
       author: "author",
       status: "status",
+      dismissedReason: "dismissed_reason",
       // 0032: the review session that filed the finding, so the Dreaming
       // digest can attribute it exactly instead of guessing from timestamps.
       agentSessionId: "agent_session_id",
@@ -451,7 +446,6 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       updatedAtGitHub: "updated_at_github",
       syncedAt: "synced_at",
       importedEpicId: "imported_epic_id",
-      importedAt: "imported_at",
     },
   },
   qaReports: {
@@ -508,28 +502,6 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       createdAt: "created_at",
     },
   },
-  notifications: {
-    sqlName: "notifications",
-    columns: {
-      id: "id",
-      projectId: "project_id",
-      projectName: "project_name",
-      sessionId: "session_id",
-      agentType: "agent_type",
-      status: "status",
-      title: "title",
-      message: "message",
-      targetUrl: "target_url",
-      createdAt: "created_at",
-    },
-  },
-  notificationReadCursor: {
-    sqlName: "notification_read_cursor",
-    columns: {
-      id: "id",
-      readAt: "read_at",
-    },
-  },
   ticketReadCursors: {
     sqlName: "ticket_read_cursors",
     columns: {
@@ -544,7 +516,6 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       epicId: "epic_id",
       kind: "kind",
       signalAt: "signal_at",
-      dismissedAt: "dismissed_at",
     },
   },
   providerUsageSnapshots: {
@@ -559,7 +530,6 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       secondaryUsedPercent: "secondary_used_percent",
       secondaryWindowMinutes: "secondary_window_minutes",
       secondaryResetsAt: "secondary_resets_at",
-      sourceFile: "source_file",
       rawJson: "raw_json",
       updatedAt: "updated_at",
     },
@@ -645,6 +615,7 @@ const DEFAULTS: [string, string, unknown][] = [
   ["chatConversations", "label", "Brainstorm"],
   ["chatConversations", "status", "active"],
   ["chatConversations", "provider", "claude-code"],
+  ["chatEpicProposals", "dependenciesCreated", 0],
   ["agentSessions", "status", "queued"],
   ["agentSessions", "mode", "code"],
   ["agentSessions", "orchestrationMode", "solo"],
@@ -654,8 +625,6 @@ const DEFAULTS: [string, string, unknown][] = [
   ["frictions", "status", "new"],
   ["pullRequests", "status", "open"],
   ["pullRequests", "baseBranch", "main"],
-  ["customReviewAgents", "position", 0],
-  ["customReviewAgents", "isEnabled", 1],
   ["ticketDependencies", "scopeType", "project"],
   ["reviewComments", "author", "user"],
   ["reviewComments", "status", "open"],
@@ -686,6 +655,12 @@ const NOT_NULL: [string, string][] = [
   ["userStories", "title"],
   ["chatMessages", "role"],
   ["chatMessages", "content"],
+  ["chatEpicProposals", "projectId"],
+  ["chatEpicProposals", "conversationId"],
+  ["chatEpicProposals", "proposalHash"],
+  ["chatEpicProposals", "userStoriesCreated"],
+  ["chatEpicProposals", "dependenciesCreated"],
+  ["chatEpicProposals", "createdAt"],
   ["chatAttachments", "fileName"],
   ["chatAttachments", "filePath"],
   ["chatAttachments", "mimeType"],
@@ -731,11 +706,6 @@ const NOT_NULL: [string, string][] = [
   ["ticketActivityLog", "fromStatus"],
   ["ticketActivityLog", "toStatus"],
   ["ticketActivityLog", "actor"],
-  ["notifications", "projectName"],
-  ["notifications", "status"],
-  ["notifications", "title"],
-  ["notifications", "targetUrl"],
-  ["notificationReadCursor", "readAt"],
   ["ticketReadCursors", "lastReadAt"],
   ["ticketReadCursors", "updatedAt"],
   // A snapshot without its provider event timestamp or its raw payload could
@@ -763,8 +733,6 @@ const NULLABLE: [string, string][] = [
   ["epics", "prUrl"],
   ["epics", "prStatus"],
   ["epics", "githubIssueNumber"],
-  ["epics", "githubIssueUrl"],
-  ["epics", "githubIssueState"],
   ["epics", "releaseId"],
   ["releases", "githubReleaseId"],
   ["releases", "githubReleaseUrl"],
@@ -775,7 +743,6 @@ const NULLABLE: [string, string][] = [
   // 0029_git_sync_log_nullable_project.
   ["gitSyncLog", "projectId"],
   ["githubIssues", "importedEpicId"],
-  ["githubIssues", "importedAt"],
   ["agentSessions", "cliSessionId"],
   ["agentSessions", "namedAgentId"],
   ["agentSessions", "inputTokens"],
@@ -783,12 +750,12 @@ const NULLABLE: [string, string][] = [
   ["agentSessions", "totalCostUsd"],
   ["chatConversations", "cliSessionId"],
   ["chatConversations", "namedAgentId"],
+  ["chatEpicProposals", "epicId"],
   ["verifyReports", "agentSessionId"],
-  ["notifications", "sessionId"],
-  ["notifications", "agentType"],
   ["gradingReports", "agentSessionId"],
   ["frictions", "epicId"],
   ["frictions", "filePath"],
+  ["reviewComments", "dismissedReason"],
 ];
 
 describe("db schema: nullable columns", () => {
@@ -804,6 +771,18 @@ describe("db schema: nullable columns", () => {
 type IndexSpec = { name: string; unique: boolean; columns: string[] };
 
 const INDEXES: Record<string, IndexSpec[]> = {
+  chatEpicProposals: [
+    {
+      name: "chat_epic_proposals_conversation_idx",
+      unique: false,
+      columns: ["conversation_id"],
+    },
+    {
+      name: "chat_epic_proposals_epic_idx",
+      unique: false,
+      columns: ["epic_id"],
+    },
+  ],
   epics: [
     {
       // Board reads: project-scoped, bucketed by status, ordered by position.
@@ -935,20 +914,8 @@ const INDEXES: Record<string, IndexSpec[]> = {
       columns: ["agent_type", "scope"],
     },
   ],
-  customReviewAgents: [
-    {
-      name: "custom_review_agents_name_scope_unique",
-      unique: true,
-      columns: ["name", "scope"],
-    },
-  ],
   namedAgents: [
     { name: "named_agents_name_unique", unique: true, columns: ["name"] },
-    {
-      name: "named_agents_readable_agent_name_unique",
-      unique: true,
-      columns: ["readable_agent_name"],
-    },
   ],
   compositeAgentMembers: [
     {
@@ -1079,17 +1046,21 @@ const INDEXES: Record<string, IndexSpec[]> = {
       unique: false,
       columns: ["project_id"],
     },
-  ],
-  notifications: [
     {
-      name: "notifications_created_at_idx",
+      name: "ticket_activity_log_to_status_created_at_idx",
       unique: false,
-      columns: ["created_at"],
+      columns: ["to_status", "created_at"],
     },
   ],
 };
 
 describe("db schema: indexes and unique constraints", () => {
+  it("keys chat epic proposal claims by project, conversation and normalized proposal", () => {
+    expect(getTableConfig(schema.chatEpicProposals).primaryKeys.map(
+      (key) => key.columns.map((column) => column.name),
+    )).toEqual([["project_id", "conversation_id", "proposal_hash"]]);
+  });
+
   it.each(Object.entries(INDEXES))("%s declares its indexes", (exportName, specs) => {
     const actual = getTableConfig(tableByExportName(exportName)).indexes.map(
       (idx) => ({
@@ -1121,6 +1092,11 @@ type ForeignKeySpec = {
 };
 
 const FOREIGN_KEYS: Record<string, ForeignKeySpec[]> = {
+  chatEpicProposals: [
+    { columns: ["project_id"], foreignTable: "projects", foreignColumns: ["id"], onDelete: "cascade" },
+    { columns: ["conversation_id"], foreignTable: "chat_conversations", foreignColumns: ["id"], onDelete: "cascade" },
+    { columns: ["epic_id"], foreignTable: "epics", foreignColumns: ["id"], onDelete: "set null" },
+  ],
   routines: [
     { columns: ["project_id"], foreignTable: "projects", foreignColumns: ["id"], onDelete: "cascade" },
   ],
@@ -1160,10 +1136,6 @@ const FOREIGN_KEYS: Record<string, ForeignKeySpec[]> = {
   gradingReports: [
     { columns: ["epic_id"], foreignTable: "epics", foreignColumns: ["id"], onDelete: "cascade" },
     { columns: ["agent_session_id"], foreignTable: "agent_sessions", foreignColumns: ["id"], onDelete: "set null" },
-  ],
-  notifications: [
-    { columns: ["project_id"], foreignTable: "projects", foreignColumns: ["id"], onDelete: "cascade" },
-    { columns: ["session_id"], foreignTable: "agent_sessions", foreignColumns: ["id"], onDelete: "set null" },
   ],
   agentSessionChunks: [
     { columns: ["session_id"], foreignTable: "agent_sessions", foreignColumns: ["id"], onDelete: "cascade" },
@@ -1322,16 +1294,6 @@ describe("db schema: exported types", () => {
       createdAt: null,
       updatedAt: null,
     };
-    const customReviewAgent: schema.CustomReviewAgent = {
-      id: "cra_1",
-      name: "UI Review",
-      systemPrompt: "Review UI details",
-      scope: "global",
-      position: 0,
-      isEnabled: 1,
-      createdAt: null,
-      updatedAt: null,
-    };
     const providerDefault: schema.AgentProviderDefault = {
       id: "apd_1",
       agentType: "build",
@@ -1342,7 +1304,6 @@ describe("db schema: exported types", () => {
       updatedAt: null,
     };
     expect(agentPrompt.agentType).toBe("build");
-    expect(customReviewAgent.name).toBe("UI Review");
     expect(providerDefault.provider).toBe("claude-code");
   });
 
@@ -1387,27 +1348,6 @@ describe("db schema: exported types", () => {
     expect(report.status).toBe("pass");
   });
 
-  it("Notification select shapes", () => {
-    const notification: schema.Notification = {
-      id: "n1",
-      projectId: "p1",
-      projectName: "My Project",
-      sessionId: "s1",
-      agentType: "build",
-      status: "completed",
-      title: "Build completed",
-      message: null,
-      targetUrl: "/projects/p1/sessions/s1",
-      createdAt: null,
-    };
-    const cursor: schema.NotificationReadCursor = {
-      id: 1,
-      readAt: "2026-01-01T00:00:00.000Z",
-    };
-    expect(notification.status).toBe("completed");
-    expect(cursor.id).toBe(1);
-  });
-
   it("TicketReadCursor select shape", () => {
     const cursor: schema.TicketReadCursor = {
       epicId: "e1",
@@ -1440,6 +1380,28 @@ const MIGRATION_INDEX_NAMES: Record<string, string> = {
 };
 
 describe("db schema: migrated database", () => {
+  it("migrates the complete chat epic proposal claim and tombstone shape", () => {
+    const { sqlite } = createTestDb();
+    try {
+      const columns = sqlite.prepare("PRAGMA table_info(chat_epic_proposals)").all() as Array<{
+        name: string; type: string; notnull: number; dflt_value: string | null; pk: number;
+      }>;
+      expect(columns.map((column) => [
+        column.name, column.type.toUpperCase(), column.notnull, column.dflt_value, column.pk,
+      ])).toEqual([
+        ["project_id", "TEXT", 1, null, 1],
+        ["conversation_id", "TEXT", 1, null, 2],
+        ["proposal_hash", "TEXT", 1, null, 3],
+        ["epic_id", "TEXT", 0, null, 0],
+        ["user_stories_created", "INTEGER", 1, null, 0],
+        ["dependencies_created", "INTEGER", 1, "0", 0],
+        ["created_at", "TEXT", 1, "CURRENT_TIMESTAMP", 0],
+      ]);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   it("creates a table for every schema export", () => {
     const { sqlite } = createTestDb();
     try {
@@ -1471,67 +1433,6 @@ describe("db schema: migrated database", () => {
         .map((spec) => MIGRATION_INDEX_NAMES[spec.name] ?? spec.name);
       const missing = expectedNames.filter((name) => !indexNames.includes(name));
       expect(missing).toEqual([]);
-    } finally {
-      sqlite.close();
-    }
-  });
-
-  it("enforces the notifications project_id foreign key", () => {
-    const { sqlite } = createTestDb();
-    try {
-      expect(() => {
-        sqlite
-          .prepare(
-            "INSERT INTO notifications (id, project_id, project_name, status, title, target_url) VALUES ('n1', 'nonexistent', 'Test', 'completed', 'Title', '/url')"
-          )
-          .run();
-      }).toThrow();
-    } finally {
-      sqlite.close();
-    }
-  });
-
-  it("round-trips a notification row", () => {
-    const { sqlite } = createTestDb();
-    try {
-      sqlite.prepare("INSERT INTO projects (id, name) VALUES ('p1', 'MyProject')").run();
-      sqlite
-        .prepare(
-          "INSERT INTO notifications (id, project_id, project_name, session_id, agent_type, status, title, target_url) VALUES ('n1', 'p1', 'MyProject', NULL, 'build', 'completed', 'Build done', '/projects/p1')"
-        )
-        .run();
-
-      const rows = sqlite
-        .prepare("SELECT * FROM notifications")
-        .all() as Record<string, unknown>[];
-      expect(rows).toHaveLength(1);
-      expect(rows[0].project_name).toBe("MyProject");
-      expect(rows[0].status).toBe("completed");
-    } finally {
-      sqlite.close();
-    }
-  });
-
-  it("supports the single-row notification_read_cursor upsert", () => {
-    const { sqlite } = createTestDb();
-    try {
-      sqlite
-        .prepare(
-          "INSERT INTO notification_read_cursor (id, read_at) VALUES (1, '2026-01-01T00:00:00.000Z')"
-        )
-        .run();
-      sqlite
-        .prepare(
-          "INSERT OR REPLACE INTO notification_read_cursor (id, read_at) VALUES (1, '2026-02-01T00:00:00.000Z')"
-        )
-        .run();
-
-      const rows = sqlite
-        .prepare("SELECT * FROM notification_read_cursor")
-        .all() as Record<string, unknown>[];
-      expect(rows).toHaveLength(1);
-      expect(rows[0].id).toBe(1);
-      expect(rows[0].read_at).toBe("2026-02-01T00:00:00.000Z");
     } finally {
       sqlite.close();
     }
@@ -1592,24 +1493,6 @@ describe("db schema: migrated database", () => {
       expect(rows[0].epic_id).toBe("e1");
       expect(rows[0].last_read_at).toBe("2026-02-01T00:00:00.000Z");
       expect(rows[1].epic_id).toBe("e2");
-    } finally {
-      sqlite.close();
-    }
-  });
-
-  it("cascades notification deletes when the project is removed", () => {
-    const { sqlite } = createTestDb();
-    try {
-      sqlite.prepare("INSERT INTO projects (id, name) VALUES ('p1', 'MyProject')").run();
-      sqlite
-        .prepare(
-          "INSERT INTO notifications (id, project_id, project_name, status, title, target_url) VALUES ('n1', 'p1', 'MyProject', 'completed', 'Title', '/url')"
-        )
-        .run();
-
-      sqlite.prepare("DELETE FROM projects WHERE id = 'p1'").run();
-
-      expect(sqlite.prepare("SELECT * FROM notifications").all()).toHaveLength(0);
     } finally {
       sqlite.close();
     }

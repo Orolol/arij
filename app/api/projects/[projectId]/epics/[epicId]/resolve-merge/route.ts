@@ -1,57 +1,50 @@
-import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
-import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
+import { dispatchMergeResolution } from "@/lib/agent-sessions/dispatch-ticket-session";
+import { recordSessionTransitionRefusal } from "@/lib/agent-sessions/lifecycle";
+import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
+import { createSessionLogsPath } from "@/lib/agent-sessions/session-paths";
+import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
 import {
-  epics,
-  ticketComments,
-  settings,
-} from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+  createAgentAlreadyRunningPayload,
+  getRunningSessionForTarget,
+} from "@/lib/agents/concurrency";
+import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
 import {
   errorResponse,
   getEpicOr404,
   getProjectOr404,
   isErrorResponse,
 } from "@/lib/api/route-helpers";
-import { createId } from "@/lib/utils/nanoid";
+import { autoModeRegistry } from "@/lib/auto-mode/registry";
+import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
+import {
+  resolveSessionOutput
+} from "@/lib/claude/resolve-session-output";
+import { db } from "@/lib/db";
+import {
+  epics,
+  ticketComments
+} from "@/lib/db/schema";
 import {
   attachWorktree,
   isGitRepo,
-  startMergeInWorktree,
   mergeWorktree,
+  resolveDefaultBranch,
+  startMergeInWorktree,
   type MergeWorktreeResult,
 } from "@/lib/git/manager";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import { buildMergeResolutionPrompt } from "@/lib/claude/prompt-builder";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
-import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { tryExportArjiJson } from "@/lib/sync/export";
-import {
-  createAgentAlreadyRunningPayload,
-  getRunningSessionForTarget,
-} from "@/lib/agents/concurrency";
-import { autoModeRegistry } from "@/lib/auto-mode/registry";
-import { isGitRefusalMergeReason } from "@/lib/workflow/merge-failure";
-import fs from "fs";
-import path from "path";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
-import { createMergeRetryFailedNotification } from "@/lib/notifications/create";
-import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
-import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
-import { applyTransition } from "@/lib/workflow/transition-service";
-import { resolveOpenReviewComments } from "@/lib/workflow/merge-approval";
 import type { KanbanStatus } from "@/lib/types/kanban";
+import { createId } from "@/lib/utils/nanoid";
+import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
+import { resolveOpenReviewComments } from "@/lib/workflow/merge-approval";
+import { isGitRefusalMergeReason } from "@/lib/workflow/merge-failure";
+import { postTicketSystemComment } from "@/lib/workflow/system-comment";
+import { applyTransition } from "@/lib/workflow/transition-service";
+import { eq } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -109,6 +102,14 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
     );
   }
 
+  if (!autoModeRegistry.beginMergeWork(projectId, epicId)) return NextResponse.json({ error: "A merge is already in flight" }, { status: 409 });
+  if (!autoModeRegistry.tryLockProjectMerge(projectId)) {
+    autoModeRegistry.endMergeWork(projectId, epicId);
+    return NextResponse.json({ error: "Another merge is in progress" }, { status: 409 });
+  }
+  let backgroundOwnsTicket = false;
+  let projectLocked = true;
+  try {
   // Ensure worktree exists for the epic's stored branch.
   // `attachWorktree` attaches the worktree to `epic.branchName` rather than
   // re-deriving the branch name from `epic.title`: if the epic title was
@@ -133,7 +134,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
   try {
     mergeResult = await startMergeInWorktree(
       worktreePath,
-      project.defaultBranch || "main"
+      await resolveDefaultBranch(gitRepoPath, project.defaultBranch)
     );
   } catch (error) {
     return errorResponse(error, "Failed to start merge");
@@ -154,15 +155,6 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
     if (!preflight.valid) {
       return NextResponse.json({ error: preflight.error }, { status: 400 });
     }
-    if (!autoModeRegistry.tryLockProjectMerge(projectId)) {
-      return NextResponse.json(
-        {
-          error:
-            "Another merge is in progress in this repository — retry in a moment.",
-        },
-        { status: 409 }
-      );
-    }
     let finalMerge: MergeWorktreeResult;
     try {
       finalMerge = await mergeWorktree(gitRepoPath, branchName, worktreePath, {
@@ -174,8 +166,6 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
         error: e instanceof Error ? e.message : "Final merge failed",
         reason: "error",
       };
-    } finally {
-      autoModeRegistry.unlockProjectMerge(projectId);
     }
     if (!finalMerge.merged) {
       // `mergeFailed` marks the failures where GIT refused, the same flag the
@@ -224,12 +214,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
 
   // Conflicts exist — spawn an agent to resolve them
 
-  const settingsRow = db
-    .select()
-    .from(settings)
-    .where(eq(settings.key, "global_prompt"))
-    .get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+  const globalPrompt = await resolveAgentPrompt("merge", projectId);
 
   const prompt = buildMergeResolutionPrompt(
     project,
@@ -242,9 +227,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
   // Create session
   const sessionId = createId();
   const now = new Date().toISOString();
-  const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-  fs.mkdirSync(logsDir, { recursive: true });
-  const logsPath = path.join(logsDir, "logs.json");
+  const logsPath = createSessionLogsPath(sessionId);
 
   // Resume support — scope-guarded
   let cliSessionId: string | undefined;
@@ -264,11 +247,11 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
     cliSessionId = mintAssignedCliSessionId(provider);
   }
 
-  createQueuedSession({
+  const row = {
     id: sessionId,
     projectId,
     epicId,
-    mode: "code",
+    mode: "code" as const,
     provider,
     prompt,
     logsPath,
@@ -281,52 +264,20 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
     namedAgentName: resolved.name || null,
     model: resolved.model || null,
     createdAt: now,
-  });
+  };
 
-  // Spawn agent in the worktree
-  markSessionRunning(sessionId, now);
-  processManager.start(sessionId, {
-    mode: "code",
-    prompt,
-    cwd: worktreePath,
-    model,
-    allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-    cliSessionId,
-    resumeSession,
-  }, provider);
-
-  // Background completion handler
-  (async () => {
-    const info = await waitForProcessCompletion(sessionId);
-
-    const completedAt = new Date().toISOString();
-    const result = info?.result;
-
-    try {
-      fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-    } catch {
-      // ignore
-    }
-
-    try {
-      markSessionTerminal(
-        sessionId,
-        {
-          success: !!result?.success,
-          error: result?.error || null,
-          outcome: classifySessionOutcome(result, sessionId),
-          usage: extractSessionUsage(result),
-        },
-        completedAt
-      );
-    } catch (error) {
-      if (!isSessionLifecycleConflictError(error)) {
-        console.error("[resolve merge] Failed to finalize session", error);
-      }
-    }
-
+  autoModeRegistry.unlockProjectMerge(projectId);
+  projectLocked = false;
+  const dispatched = dispatchMergeResolution({ row, resolvedAgent: resolved, resumeSession,
+    onTerminal: async ({ result, completedAt, outcome }) => {
+    const refused = (error: string) => {
+      recordSessionTransitionRefusal(sessionId, error);
+      return { success: false, outcome: "transition_refused", error };
+    };
+    let mergeFailure: string | null = null;
+    if (outcome === "asked_question") handleAskedQuestionOutcome({ projectId, epicIds: [epicId], sessionId });
     // On success: attempt the final merge into main
-    if (result?.success) {
+    if (result?.success && outcome !== "asked_question") {
       const currentStatus = (db
         .select({ status: epics.status })
         .from(epics)
@@ -358,29 +309,22 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
               createdAt: completedAt,
             })
             .run();
-          createMergeRetryFailedNotification({
-            projectId,
-            epicId,
-            sessionId,
-            error: preflight.error ?? "Workflow transition refused",
-          });
         } catch (trailError) {
           console.error(
             "[resolve merge] Failed to record the refusal trail:",
             trailError
           );
         }
-        return;
+        return refused(preflight.error ?? "Merge completion refused");
       }
       if (!autoModeRegistry.tryLockProjectMerge(projectId)) {
-        createMergeRetryFailedNotification({
-          projectId,
+        postTicketSystemComment({
           epicId,
           sessionId,
-          error:
-            "Final merge blocked: another merge is in progress in this repository.",
+          content:
+            "**Final merge blocked: another merge is in progress in this repository.** The epic keeps its current status. Run Resolve Merge again once the other merge finishes.",
         });
-        return;
+        return refused("Another merge is in progress");
       }
       let finalMerge: MergeWorktreeResult;
       try {
@@ -431,7 +375,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
               trailError
             );
           }
-          return;
+          return refused(transition.error ?? "Ticket completion refused after merge");
         }
         // After the transition, never before (lib/workflow/merge-approval.ts).
         resolveOpenReviewComments(epicId);
@@ -449,22 +393,12 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
         // silent swallow here would be exactly the bug this route exists to
         // kill: an epic that never closes and no word on why.
         const mergeError = finalMerge.error || "Merge failed";
+        mergeFailure = mergeError;
         try {
-          db.insert(ticketComments)
-            .values({
-              id: createId(),
-              epicId,
-              author: "agent",
-              content: `**Merge resolution finished, but the final merge still failed.** ${mergeError}\n\nThe epic keeps its current status. Run Resolve Merge again to land the branch.`,
-              createdAt: completedAt,
-            })
-            .run();
-
-          createMergeRetryFailedNotification({
-            projectId,
+          postTicketSystemComment({
             epicId,
             sessionId,
-            error: mergeError,
+            content: `**Merge resolution finished, but the final merge still failed.** ${mergeError}\n\nThe epic keeps its current status. Run Resolve Merge again to land the branch.`,
           });
         } catch (trailError) {
           console.error(
@@ -488,9 +422,16 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
         createdAt: completedAt,
       })
       .run();
-  })();
+    if (mergeFailure) return refused(mergeFailure);
+  }});
 
+  backgroundOwnsTicket = true;
+  void dispatched.settled.then(() => autoModeRegistry.endMergeWork(projectId, epicId));
   return NextResponse.json({
     data: { sessionId, resolved: false },
   });
+  } finally {
+    if (projectLocked) autoModeRegistry.unlockProjectMerge(projectId);
+    if (!backgroundOwnsTicket) autoModeRegistry.endMergeWork(projectId, epicId);
+  }
 });

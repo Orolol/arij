@@ -4,28 +4,6 @@ const mockState = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown>>,
 }));
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
-  or: vi.fn(() => ({})),
-  desc: vi.fn(() => ({})),
-  inArray: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: {
-    id: "id",
-    projectId: "projectId",
-    epicId: "epicId",
-    userStoryId: "userStoryId",
-    status: "status",
-    mode: "mode",
-    provider: "provider",
-    startedAt: "startedAt",
-    createdAt: "createdAt",
-  },
-}));
-
 vi.mock("@/lib/db", () => {
   const chain: {
     select: ReturnType<typeof vi.fn>;

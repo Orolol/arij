@@ -1,3 +1,4 @@
+import { isStoredPathWithin as isWithin } from "@/lib/storage/stored-path";
 /**
  * Resolve a registered visual proof to its durable bytes. Both the URL's
  * artifact id and every database-derived path segment are treated as
@@ -47,15 +48,7 @@ function isSafeSegment(value: unknown): value is string {
   );
 }
 
-function isWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative.length > 0 &&
-    relative !== ".." &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
-  );
-}
+
 
 export function lookupServableSessionArtifact(
   projectId: string,

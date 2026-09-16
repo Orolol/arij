@@ -11,7 +11,7 @@ import {
   toPromptAnatomySegments,
   type PromptTokenBreakdown,
 } from "@/lib/tokens/estimator";
-import type { PromptAnatomyRow } from "@/components/spec/spec-format";
+import type { PromptAnatomyRow } from "@/lib/types/prompt-anatomy";
 
 /**
  * GET /api/projects/[projectId]/prompt-anatomy

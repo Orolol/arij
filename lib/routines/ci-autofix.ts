@@ -1,9 +1,9 @@
 import type { PullRequestCiFailureEvidence } from "@/lib/github/pull-requests";
 export {
-  CI_AUTOFIX_ATTEMPT_PREFIX,
-  ciAutofixAttemptId,
-  parseCiAutofixPayload,
-  type CiAutofixPayload,
+CI_AUTOFIX_ATTEMPT_PREFIX,
+ciAutofixAttemptId,
+parseCiAutofixPayload,
+type CiAutofixPayload
 } from "@/lib/routines/ci-autofix-shared";
 
 export interface CiAutofixRequest {
@@ -23,39 +23,16 @@ export type CiAutofixLaunchResult =
     };
 
 /**
- * Dispatch through the ordinary epic-build route. That route owns worktree
+ * Dispatch through the shared epic-build service. It owns worktree
  * creation, workflow transitions, the persisted session lifecycle, provider
  * resolution, monitoring events, usage capture, and the project agent queue.
  */
 export async function launchCiAutofixSession(
   input: CiAutofixRequest
 ): Promise<CiAutofixLaunchResult> {
-  const [{ NextRequest }, { POST }] = await Promise.all([
-    import("next/server"),
-    import("@/app/api/projects/[projectId]/epics/[epicId]/build/route"),
-  ]);
-  const request = new NextRequest(
-    `http://localhost/api/projects/${encodeURIComponent(
-      input.projectId
-    )}/epics/${encodeURIComponent(input.epicId)}/build`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        pipeline: false,
-        ciAutofix: {
-          prNumber: input.prNumber,
-          headSha: input.headSha,
-          failures: input.failures,
-        },
-      }),
-    }
-  );
-  const response = await POST(request, {
-    params: Promise.resolve({
-      projectId: input.projectId,
-      epicId: input.epicId,
-    }),
+  const { dispatchEpicBuild } = await import("@/lib/build/dispatch-epic");
+  const response = await dispatchEpicBuild(input.projectId, input.epicId, {
+    pipeline: false, ciAutofix: { prNumber: input.prNumber, headSha: input.headSha, failures: input.failures },
   });
   const payload = (await response.json().catch(() => ({}))) as {
     error?: string;

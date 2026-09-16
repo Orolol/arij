@@ -7,15 +7,6 @@ const mockDbState = vi.hoisted(() => ({
 
 const mockGetRunningForTarget = vi.hoisted(() => vi.fn());
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-  and: vi.fn(() => ({})),
-  or: vi.fn(() => ({})),
-  desc: vi.fn(() => ({})),
-  inArray: vi.fn(() => ({})),
-  notInArray: vi.fn(() => ({})),
-}));
-
 vi.mock("@/lib/db", () => {
   const chain: {
     select: ReturnType<typeof vi.fn>;
@@ -64,52 +55,6 @@ vi.mock("@/lib/db", () => {
 vi.mock("@/lib/pipeline", () => ({
   resolvePipelineEnabled: vi.fn(() => false),
   startPipelineRun: vi.fn(() => ({ runId: "run-test" })),
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  projects: { id: "id", gitRepoPath: "gitRepoPath" },
-  epics: {
-    id: "id",
-    status: "status",
-    branchName: "branchName",
-    title: "title",
-    description: "description",
-    updatedAt: "updatedAt",
-  },
-  userStories: {
-    id: "id",
-    epicId: "epicId",
-    status: "status",
-    position: "position",
-  },
-  documents: { projectId: "projectId" },
-  agentSessions: {
-    id: "id",
-    epicId: "epicId",
-    userStoryId: "userStoryId",
-    status: "status",
-    mode: "mode",
-    createdAt: "createdAt",
-  },
-  ticketComments: { userStoryId: "userStoryId", createdAt: "createdAt" },
-  settings: { key: "key", value: "value" },
-  reviewComments: {
-    id: "id",
-    epicId: "epicId",
-    status: "status",
-    createdAt: "createdAt",
-  },
-  ticketActivityLog: {
-    id: "id",
-    projectId: "projectId",
-    epicId: "epicId",
-    fromStatus: "fromStatus",
-    toStatus: "toStatus",
-    actor: "actor",
-    reason: "reason",
-    sessionId: "sessionId",
-    createdAt: "createdAt",
-  },
 }));
 
 vi.mock("@/lib/workflow/log", () => ({
@@ -169,7 +114,8 @@ vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentForDispatch: vi.fn(async () => ({ provider: "claude-code", namedAgentId: null })),
 }));
 
-vi.mock("@/lib/agent-config/constants", () => ({
+vi.mock("@/lib/agent-config/constants", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/agent-config/constants")>()),
   REVIEW_TYPE_TO_AGENT_TYPE: {
     security: "review_security",
     code_review: "review_code",

@@ -22,6 +22,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { claudeEnvelope } from "./helpers/provider-fixtures";
 
 const processManagerState = vi.hoisted(() => ({
   result: undefined as Record<string, unknown> | undefined,
@@ -92,20 +93,6 @@ const {
 } = await import("@/lib/night/summary");
 
 let counter = 0;
-
-async function flushBackground() {
-  await new Promise((r) => setTimeout(r, 25));
-  await new Promise((r) => setTimeout(r, 25));
-}
-
-function claudeEnvelope(text: string, costUsd?: number): string {
-  return JSON.stringify({
-    type: "result",
-    subtype: "success",
-    result: text,
-    ...(costUsd !== undefined ? { total_cost_usd: costUsd } : {}),
-  });
-}
 
 function seedProject() {
   counter += 1;
@@ -198,7 +185,7 @@ describe("dispatchMemoryDistillSession", () => {
       model: "gemini-flash",
     });
 
-    const { sessionId } = await dispatchMemoryDistillSession({ projectId });
+    const { sessionId, settled } = await dispatchMemoryDistillSession({ projectId });
     const row = db
       .select()
       .from(agentSessions)
@@ -216,7 +203,8 @@ describe("dispatchMemoryDistillSession", () => {
       namedAgentName: "Lightweight Distiller",
       model: "gemini-flash",
     });
-    await flushBackground();
+    // Let the run finish before the next test seeds its own world.
+    await settled;
   });
 
   it("runs a memory_distill session and replaces the memory doc on answered completion", async () => {
@@ -224,11 +212,11 @@ describe("dispatchMemoryDistillSession", () => {
     saveProjectMemory(projectId, "- Old rule: keep tests green");
     const sourceId = seedSourceSession(projectId, epicId);
 
-    const { sessionId } = await dispatchMemoryDistillSession({
+    const { sessionId, settled } = await dispatchMemoryDistillSession({
       projectId,
       sourceSessionId: sourceId,
     });
-    await flushBackground();
+    await settled;
 
     const session = db
       .select()
@@ -284,8 +272,7 @@ describe("dispatchMemoryDistillSession", () => {
       duration: 1000,
     };
 
-    await dispatchMemoryDistillSession({ projectId, sourceSessionId: sourceId });
-    await flushBackground();
+    await (await dispatchMemoryDistillSession({ projectId, sourceSessionId: sourceId })).settled;
 
     expect(getProjectMemoryContent(projectId)).toHaveLength(
       PROJECT_MEMORY_MAX_CHARS
@@ -300,8 +287,7 @@ describe("dispatchMemoryDistillSession", () => {
       duration: 1000,
     };
 
-    await dispatchMemoryDistillSession({ projectId });
-    await flushBackground();
+    await (await dispatchMemoryDistillSession({ projectId })).settled;
 
     expect(getProjectMemoryContent(projectId)).toBe("- fenced rule");
   });
@@ -324,11 +310,11 @@ describe("dispatchMemoryDistillSession", () => {
       };
     });
 
-    const { sessionId } = await dispatchMemoryDistillSession({
+    const { sessionId, settled } = await dispatchMemoryDistillSession({
       projectId,
       sourceSessionId: sourceId,
     });
-    await flushBackground();
+    await settled;
 
     // The run itself is a success — its output stays readable on the session
     // row, so nothing is lost, it is simply not applied.
@@ -362,11 +348,11 @@ describe("dispatchMemoryDistillSession", () => {
       duration: 1000,
     };
 
-    const { sessionId } = await dispatchMemoryDistillSession({
+    const { sessionId, settled } = await dispatchMemoryDistillSession({
       projectId,
       sourceSessionId: sourceId,
     });
-    await flushBackground();
+    await settled;
 
     const session = db
       .select()
@@ -403,7 +389,6 @@ describe("dispatchMemoryDistillSession", () => {
           sourceSessionId: writerId,
         })
       ).rejects.toThrow(/cannot itself be distilled/i);
-      await flushBackground();
 
       expect(distillSessions(projectId)).toHaveLength(
         agentType === "memory_distill" ? 1 : 0 // only the seeded source itself
@@ -421,7 +406,6 @@ describe("dispatchMemoryDistillSession", () => {
     await expect(
       dispatchMemoryDistillSession({ projectId, sourceSessionId: askedId })
     ).rejects.toThrow(/ask a question/i);
-    await flushBackground();
 
     expect(distillSessions(projectId)).toHaveLength(0);
   });
@@ -436,7 +420,6 @@ describe("dispatchMemoryDistillSession", () => {
     await expect(
       dispatchMemoryDistillSession({ projectId, sourceSessionId: runningId })
     ).rejects.toThrow(/completed/i);
-    await flushBackground();
 
     expect(distillSessions(projectId)).toHaveLength(0);
   });
@@ -468,7 +451,7 @@ describe("maybeAutoDistillAfterSessionTerminal", () => {
     });
 
     const decision = await maybeAutoDistillAfterSessionTerminal(sourceId);
-    await flushBackground();
+    await decision.settled;
 
     expect(decision.allowed).toBe(false);
     expect(distillSessions(projectId)).toHaveLength(0);
@@ -482,9 +465,9 @@ describe("maybeAutoDistillAfterSessionTerminal", () => {
     });
 
     const decision = await maybeAutoDistillAfterSessionTerminal(sourceId);
-    await flushBackground();
+    await decision.settled;
 
-    expect(decision).toEqual({ allowed: true, reason: "eligible" });
+    expect(decision).toMatchObject({ allowed: true, reason: "eligible" });
     const spawned = distillSessions(projectId);
     expect(spawned).toHaveLength(1);
     expect(spawned[0].status).toBe("completed");
@@ -501,7 +484,7 @@ describe("maybeAutoDistillAfterSessionTerminal", () => {
     });
 
     const decision = await maybeAutoDistillAfterSessionTerminal(distillId);
-    await flushBackground();
+    await decision.settled;
 
     expect(decision.allowed).toBe(false);
     expect(distillSessions(projectId)).toHaveLength(1); // only the seed itself
@@ -517,7 +500,7 @@ describe("maybeAutoDistillAfterSessionTerminal", () => {
     });
 
     const decision = await maybeAutoDistillAfterSessionTerminal(failedId);
-    await flushBackground();
+    await decision.settled;
 
     expect(decision.allowed).toBe(false);
     expect(distillSessions(projectId)).toHaveLength(0);
@@ -536,7 +519,7 @@ describe("maybeAutoDistillAfterSessionTerminal", () => {
     });
 
     const decision = await maybeAutoDistillAfterSessionTerminal(sourceId);
-    await flushBackground();
+    await decision.settled;
 
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toContain("already pending");
@@ -558,7 +541,7 @@ describe("memory_distill — batch_run_id inheritance", () => {
     enableAutoDistill();
     processManagerState.result = {
       success: true,
-      result: claudeEnvelope("- Distilled rule", 0.75),
+      result: claudeEnvelope("- Distilled rule", { costUsd: 0.75 }),
       duration: 1000,
     };
 
@@ -570,7 +553,7 @@ describe("memory_distill — batch_run_id inheritance", () => {
     });
 
     const decision = await maybeAutoDistillAfterSessionTerminal(sourceId);
-    await flushBackground();
+    await decision.settled;
     expect(decision.allowed).toBe(true);
 
     const spawned = distillSessions(projectId);
@@ -592,9 +575,10 @@ describe("memory_distill — batch_run_id inheritance", () => {
     const detail = computeNightRunDetail(runId)!;
     expect(detail.totalCostUsd).toBeCloseTo(2.75, 10);
     // The distill carries no epicId, so it lands in the run total but not
-    // against the epic — whose own entry stays at its build cost.
+    // against the epic — whose own entry stays at its build cost. (The
+    // per-epic entry no longer carries session ids; the cost is the part of
+    // this contract that matters.)
     const entry = detail.epics.find((e) => e.epicId === epicId)!;
-    expect(entry.sessionIds).toEqual([sourceId]);
     expect(entry.costUsd).toBeCloseTo(2, 10);
   });
 
@@ -605,8 +589,7 @@ describe("memory_distill — batch_run_id inheritance", () => {
       agentType: "build",
     });
 
-    await maybeAutoDistillAfterSessionTerminal(sourceId);
-    await flushBackground();
+    await (await maybeAutoDistillAfterSessionTerminal(sourceId)).settled;
 
     const spawned = distillSessions(projectId);
     expect(spawned).toHaveLength(1);
@@ -621,11 +604,11 @@ describe("memory_distill — batch_run_id inheritance", () => {
       batchRunId: runId,
     });
 
-    const { sessionId } = await dispatchMemoryDistillSession({
+    const { sessionId, settled } = await dispatchMemoryDistillSession({
       projectId,
       sourceSessionId: sourceId,
     });
-    await flushBackground();
+    await settled;
 
     const row = db
       .select()
@@ -638,8 +621,8 @@ describe("memory_distill — batch_run_id inheritance", () => {
   it("a distill with no source session carries no tag", async () => {
     const { projectId } = seedProject();
 
-    const { sessionId } = await dispatchMemoryDistillSession({ projectId });
-    await flushBackground();
+    const { sessionId, settled } = await dispatchMemoryDistillSession({ projectId });
+    await settled;
 
     const row = db
       .select()

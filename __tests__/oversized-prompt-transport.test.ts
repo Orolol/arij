@@ -34,10 +34,29 @@ import { CodexProvider } from "@/lib/providers/codex";
 import { BaseCliProvider } from "@/lib/providers/base-provider";
 import { buildClaudeArgs } from "@/lib/claude/spawn";
 import type { ProviderSpawnOptions } from "@/lib/providers/types";
+import { createFakeChild, type FakeChild } from "./helpers/fake-child";
 
 /** Concrete stand-in for the abstract pi-family base (see pi-providers.test.ts). */
 class TestPiProvider extends PiProvider {
   readonly type = "oh-my-pi" as const;
+  get binaryName(): string {
+    return "omp";
+  }
+  protected get cliDisplayName(): string {
+    return "Oh My Pi";
+  }
+  protected readonlyTools(): string[] {
+    return ["read", "grep"];
+  }
+  protected resumeArgs(cliSessionId: string): string[] {
+    return ["--resume", cliSessionId];
+  }
+  protected notAuthenticatedMessage(): string {
+    return "Oh My Pi is not authenticated.";
+  }
+  protected buildSpawnErrorMessage(err: Error): string {
+    return `Failed to spawn Oh My Pi CLI: ${err.message}`;
+  }
 }
 
 /**
@@ -57,34 +76,7 @@ class ArgvOnlyProvider extends BaseCliProvider {
   }
 }
 
-type Listener = (...args: unknown[]) => void;
-
 /** Fake child whose stdin writes the test can inspect. */
-function createFakeChild() {
-  const listeners = new Map<string, Listener[]>();
-  const stdinWrites: string[] = [];
-
-  return {
-    stdinWrites,
-    stdin: {
-      on: () => {},
-      end: (chunk: string) => stdinWrites.push(chunk),
-    },
-    stdout: { on: () => {} },
-    stderr: { on: () => {} },
-    on: (event: string, fn: Listener) => {
-      const arr = listeners.get(event) ?? [];
-      arr.push(fn);
-      listeners.set(event, arr);
-    },
-    kill: vi.fn(),
-    killed: false,
-    emitClose(code: number | null) {
-      for (const fn of listeners.get("close") ?? []) fn(code);
-    },
-  };
-}
-
 /** A prompt past the argv cap, shaped like a real build prompt. */
 const HUGE_PROMPT = `# Project: Arij\n\n${"Comment history line.\n".repeat(8000)}`;
 const SMALL_PROMPT = "Implement a hello world function";
@@ -93,7 +85,7 @@ function options(prompt: string): ProviderSpawnOptions {
   return { sessionId: "test-123", prompt, cwd: "/tmp/test", mode: "code" };
 }
 
-let fakeChild: ReturnType<typeof createFakeChild>;
+let fakeChild: FakeChild;
 
 beforeEach(() => {
   fakeChild = createFakeChild();

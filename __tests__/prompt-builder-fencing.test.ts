@@ -59,7 +59,6 @@ import {
   UNTRUSTED_CONTENT_NOTICE,
 } from "@/lib/claude/untrusted";
 import type {
-  CustomReviewAgentPrompt,
   PromptComment,
   PromptDocument,
   PromptEpic,
@@ -238,10 +237,6 @@ const teamEpic: TeamEpic = {
   userStories: [story],
 };
 
-const customReview: CustomReviewAgentPrompt = {
-  name: "Queue reviewer",
-  systemPrompt: "Check the ranking rules.",
-};
 
 const emptySnapshot: RefinementSnapshot = { backlog: [], todo: [] };
 
@@ -498,7 +493,7 @@ const BUILDERS: Record<string, BuilderCase> = {
   buildReviewPrompt: {
     channel: "fenced",
     build: (p) =>
-      promptBuilder.buildReviewPrompt(p, documents, epic, story, customReview, null),
+      promptBuilder.buildReviewPrompt(p, documents, epic, story, "code_review", null),
   },
   buildGradingPrompt: {
     channel: "fenced",
@@ -707,10 +702,7 @@ const NOT_PROMPT_BUILDERS: Record<string, string> = {
     "operator's own verify_commands name and command plus a duration — " +
     "checked, not assumed: it never reads VerifyCommandResult.tail, so it " +
     "carries no captured output and has no evidence channel.",
-  userStoriesSection: "Re-export of lib/claude/prompt-sections.ts.",
   commentHistorySection: "Re-export of lib/claude/prompt-sections.ts.",
-  renderRefinementSnapshot:
-    "Renders the board snapshot; buildRefinementPrompt fences its output.",
 };
 
 // ---------------------------------------------------------------------------

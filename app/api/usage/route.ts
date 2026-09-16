@@ -38,7 +38,9 @@ export async function GET(request: Request) {
       getClaudeQuotaCached(fresh), // never rejects; null data = fallback
       getCodexQuotaCached(fresh),
     ]);
-    refreshCodexUsageSnapshot(); // best-effort, never throws
+    if (codexLive.data === null) {
+      refreshCodexUsageSnapshot(); // best-effort fallback, only when live poll is absent/failed
+    }
     return NextResponse.json({
       data: getUsageReport({ claudeLive, codexLive }, range),
     });

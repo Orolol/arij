@@ -1,59 +1,44 @@
-import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
-import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
+import { dispatchBuildSession } from "@/lib/agent-sessions/dispatch-ticket-session";
+import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
+import { createSessionLogsPath } from "@/lib/agent-sessions/session-paths";
+import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
 import {
-  epics,
-  ticketComments,
-} from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+  createAgentAlreadyRunningPayload,
+  getRunningSessionForTarget,
+} from "@/lib/agents/concurrency";
+import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
 import {
   getEpicOr404,
   getProjectOr404,
   getStoryOr404,
   isErrorResponse,
 } from "@/lib/api/route-helpers";
-import { createId } from "@/lib/utils/nanoid";
-import { createWorktree, isGitRepo } from "@/lib/git/manager";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import { assembleStoryBuildPrompt } from "@/lib/tokens";
 import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
+  resolveSessionOutput
 } from "@/lib/claude/resolve-session-output";
-import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { db } from "@/lib/db";
 import {
-  createAgentAlreadyRunningPayload,
-  getRunningSessionForTarget,
-} from "@/lib/agents/concurrency";
-import { agentScheduler } from "@/lib/agents/scheduler";
-import fs from "fs";
-import path from "path";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import {
-  buildEpicTargetUrl,
-  createUnresolvedMentionsNotification,
-} from "@/lib/notifications/create";
-import { validateResumeSession } from "@/lib/agent-sessions/validate-resume";
-import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
-import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
+  epics,
+  ticketComments,
+} from "@/lib/db/schema";
+import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import {
   resolvePipelineEnabled,
-  startPipelineRun,
-  type PipelineStageResult,
+  startPipelineRun
 } from "@/lib/pipeline";
+import { assembleStoryBuildPrompt } from "@/lib/tokens";
+import { createId } from "@/lib/utils/nanoid";
 import {
   finalizeBuildTerminalOutcome,
   resolveBuildSessionResult,
   transitionBuildStarted,
   WorkflowTransitionError,
 } from "@/lib/workflow/automatic-transitions";
+import { postUnresolvedMentionsComment } from "@/lib/workflow/system-comment";
+import { eq } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
@@ -131,12 +116,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
     commentAlreadyPersisted: true,
   });
   const enrichedPrompt = assembled.prompt;
-  createUnresolvedMentionsNotification({
-    projectId,
-    missing: assembled.missingDocuments ?? [],
-    agentType: "ticket_build",
-    targetUrl: buildEpicTargetUrl(projectId, epic.id),
-  });
+  postUnresolvedMentionsComment({ epicId: epic.id, missing: assembled.missingDocuments, agentType: "ticket_build" });
   const resolvedAgent = resolveAgentByNamedId("ticket_build", projectId, namedAgentId);
 
   // Resume support — scope-guarded
@@ -161,9 +141,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
   // Create session
   const sessionId = createId();
   const now = new Date().toISOString();
-  const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-  fs.mkdirSync(logsDir, { recursive: true });
-  const logsPath = path.join(logsDir, "logs.json");
+  const logsPath = createSessionLogsPath(sessionId);
 
   // Check concurrency guard
   const conflict = getRunningSessionForTarget({
@@ -204,12 +182,12 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
     .where(eq(epics.id, epic.id))
     .run();
 
-  createQueuedSession({
+  const row = {
     id: sessionId,
     projectId,
     epicId: epic.id,
     userStoryId: storyId,
-    mode: "code",
+    mode: "code" as const,
     provider: resolvedAgent.provider,
     prompt: enrichedPrompt,
     estimatedPromptTokens: assembled.tokens.total,
@@ -224,57 +202,15 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
     namedAgentName: resolvedAgent.name || null,
     model: resolvedAgent.model || null,
     createdAt: now,
-  });
+  };
 
   // Batch-style launch via the per-project scheduler: the session stays
   // 'queued' until a slot frees, then the closure spawns the agent, waits
   // for completion, updates the DB, and posts the agent comment. It returns
   // the {success, outcome, error} triple so the pipeline's settle wrapper
   // can observe the terminal result.
-  const runBuildSession = async () => {
-    markSessionRunning(sessionId);
-    processManager.start(sessionId, {
-      mode: "code",
-      prompt: enrichedPrompt,
-      cwd: worktreePath,
-      allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-      model: resolvedAgent.model,
-      cliSessionId,
-      resumeSession,
-    }, resolvedAgent.provider);
-
-    const info = await waitForProcessCompletion(sessionId);
-
-    const completedAt = new Date().toISOString();
-    const result = info?.result;
-
-    // Write logs
-    try {
-      fs.writeFileSync(logsPath, JSON.stringify(result, null, 2));
-    } catch {
-      // ignore
-    }
-
-    // Update session
-    const outcome = classifySessionOutcome(result, sessionId);
-
-    try {
-      markSessionTerminal(
-        sessionId,
-        {
-          success: !!result?.success,
-          error: result?.error || null,
-          outcome,
-          usage: extractSessionUsage(result),
-        },
-        completedAt
-      );
-    } catch (error) {
-      if (!isSessionLifecycleConflictError(error)) {
-        console.error("[story build] Failed to finalize session", error);
-      }
-    }
-
+  const dispatched = dispatchBuildSession({ row, resolvedAgent, resumeSession,
+    onTerminal: async ({ result, outcome, completedAt }) => {
     const terminal = finalizeBuildTerminalOutcome({
       projectId,
       epicId: epic.id,
@@ -305,7 +241,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
       outcome,
       error: result?.error ?? null,
     });
-  };
+  }});
 
   // Autonomous pipeline: when active, wrap the launch closure with the
   // settle pattern (copied from the batch route's launchEpic) so the run's
@@ -314,28 +250,6 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
 
   let pipeline: { runId: string } | null = null;
   if (pipelineActive) {
-    let settleLaunch!: (result: PipelineStageResult) => void;
-    const settled = new Promise<PipelineStageResult>((resolve) => {
-      settleLaunch = resolve;
-    });
-
-    agentScheduler.submit(projectId, sessionId, async () => {
-      try {
-        settleLaunch({ sessionId, ...(await runBuildSession()) });
-      } catch (error) {
-        // The scheduler's safety net finalizes the session row; the
-        // pipeline only needs to know this stage settled as failed.
-        settleLaunch({
-          sessionId,
-          success: false,
-          outcome: "error",
-          error:
-            error instanceof Error ? error.message : "Agent launch failed",
-        });
-        throw error;
-      }
-    });
-
     pipeline = startPipelineRun({
       projectId,
       scope: "story",
@@ -344,11 +258,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
       buildSessionId: sessionId,
       buildProvider: resolvedAgent.provider,
       buildNamedAgentId: namedAgentId,
-      buildSettled: settled,
-    });
-  } else {
-    agentScheduler.submit(projectId, sessionId, async () => {
-      await runBuildSession();
+      buildSettled: dispatched.settled,
     });
   }
 

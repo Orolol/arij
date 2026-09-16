@@ -1,5 +1,5 @@
 import { parseRefinementActions } from "@/lib/refinement/options";
-import { spawnClaude, type ClaudeOptions, type ClaudeResult } from "./spawn";
+import type { ClaudeOptions, ClaudeResult } from "./spawn";
 import { getProvider, type ProviderType, type ProviderSession } from "@/lib/providers";
 import {
   type AgentSessionLifecycleStatus,
@@ -8,7 +8,7 @@ import {
   isTerminalSessionStatus,
 } from "@/lib/agent-sessions/lifecycle";
 import { appendSessionChunk } from "@/lib/agent-sessions/chunks";
-import { parseClaudeOutput, isNoTextualOutputFallback } from "./json-parser";
+import { notifySessionTerminal } from "@/lib/agent-sessions/terminal-hooks";
 import {
   isMcpToolsEnabled,
   providerSupportsMcp,
@@ -56,6 +56,14 @@ export interface TrackedSession {
   providerSession?: ProviderSession;
   /** Temp `--mcp-config` file for claude-code spawns, cleared on teardown. */
   mcpConfigPath?: string;
+  /** Settle promise for the underlying child process / provider spawn. */
+  closePromise?: Promise<void>;
+  /** Whether the underlying process has emitted close / exited. */
+  processClosed?: boolean;
+  projectId?: string;
+  epicId?: string | null;
+  userStoryId?: string | null;
+  cwd?: string;
 }
 
 export interface SessionInfo {
@@ -67,7 +75,22 @@ export interface SessionInfo {
   duration?: number;
   result?: ClaudeResult;
   cliSessionId?: string;
+  processClosed?: boolean;
 }
+
+/**
+ * How long a terminal session stays in the map after its process closed.
+ *
+ * The map used to keep every session for the life of the server — each entry
+ * holding the full prompt as handed to the CLI (persona and tools section
+ * included, uncapped) and the full result text — with `remove()` called by
+ * nothing but tests. A `next start` that chains Full Auto or night-run
+ * sessions therefore grew without bound. The grace period covers everything
+ * that reads a finished session back: `waitForProcessCompletion` polls
+ * `getStatus` right after the close, the dispatch routes read `result` from
+ * it, and the worktree guards read `processClosed`.
+ */
+export const TERMINAL_SESSION_RETENTION_MS = 5 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
 // Singleton process manager
@@ -98,7 +121,9 @@ class ClaudeProcessManager {
    * Spawns a new provider session and tracks it under the given session ID.
    * If a session with the same ID is already running, it throws an error.
    *
-   * When provider is not 'claude-code', dispatches via the provider abstraction.
+   * Every provider — claude-code included — is spawned through
+   * `getProvider(provider).spawn(...)`; the claude-specific argv and MCP
+   * config file live behind ClaudeCodeProvider, not in a branch here.
    *
    * Returns the session info immediately. The process runs in the background
    * and updates the session state on completion.
@@ -113,6 +138,10 @@ class ClaudeProcessManager {
       throw new Error(
         `Session ${sessionId} is already running. Cancel it before starting a new one.`,
       );
+    }
+
+    if (existing && existing.processClosed === false) {
+      throw new Error(`Session ${sessionId} is still stopping. Wait for its process to close before restarting it.`);
     }
 
     // Work on a COPY. Both blocks below rewrite `prompt`, and a retry ladder
@@ -234,9 +263,10 @@ class ClaudeProcessManager {
     // Arij MCP tool channel — mint a per-session bearer token, attach the
     // MCP server config for the provider to inject, and append the tools
     // prompt section. This is the single wiring point for AGENT sessions:
-    // every dispatch route threads through here. Direct spawnClaude call
-    // sites (generate-spec, import) never get injection; CLI chat turns get
-    // their own chat-toolset channel from lib/chat/cli-tool-channel.ts.
+    // every dispatch route threads through here. Routes that spawn a
+    // provider directly (generate-spec, import, QA epic extraction) never get
+    // injection; CLI chat turns get their own chat-toolset channel from
+    // lib/chat/cli-tool-channel.ts.
     // Strictly best-effort: a session must never fail to spawn because
     // injection did. Gates: settings toggle (absent row = enabled),
     // provider support (claude-code/codex/oh-my-pi), an agent_sessions row —
@@ -332,7 +362,7 @@ class ClaudeProcessManager {
           options.prompt +=
             "\n" +
             arijToolsSection(
-              row.agentType ?? null, arijMcpToolPrefix(provider), refinementActions,
+              row.agentType ?? null, arijMcpToolPrefix(provider), refinementActions, Boolean(row.epicId),
             ) +
             extraMcpServersSection(extras.servers, provider);
           // Re-persist the prompt WITH the appended section — same display
@@ -373,74 +403,55 @@ class ClaudeProcessManager {
       );
     }
 
-    let kill: () => void;
-    let promise: Promise<ClaudeResult>;
-    let providerSession: ProviderSession | undefined;
-    let mcpConfigPath: string | undefined;
-
-    if (provider !== "claude-code") {
-      const dynamicProvider = getProvider(provider);
-      const session = dynamicProvider.spawn({
-        sessionId,
-        prompt: options.prompt,
-        cwd: options.cwd || process.cwd(),
-        mode: options.mode,
-        allowedTools: options.allowedTools,
-        model: options.model,
-        cliSessionId: options.cliSessionId,
-        resumeSession: options.resumeSession,
-        mcp: options.mcp,
-        cliOptions: options.cliOptions,
-        onChunk: (chunk) => {
-          try {
-            appendSessionChunk({
-              sessionId,
-              streamType: chunk.streamType,
-              content: chunk.text,
-              chunkKey: chunk.chunkKey ?? null,
-              createdAt: chunk.emittedAt,
-            });
-          } catch (error) {
-            console.error(
-              `[process-manager] Failed to persist ${provider} chunk for session ${sessionId}`,
-              error
-            );
-          }
-        },
-      });
-      kill = session.kill;
-      promise = session.promise;
-      providerSession = session;
-
-      // Persist CLI command
-      if (session.command) {
+    const providerSession: ProviderSession = getProvider(provider).spawn({
+      sessionId,
+      prompt: options.prompt,
+      cwd: options.cwd || process.cwd(),
+      mode: options.mode,
+      allowedTools: options.allowedTools,
+      model: options.model,
+      cliSessionId: options.cliSessionId,
+      resumeSession: options.resumeSession,
+      logIdentifier: options.logIdentifier,
+      mcp: options.mcp,
+      cliOptions: options.cliOptions,
+      killGraceMs: options.killGraceMs,
+      // Streamed by the providers that stream (codex, omp, agy); claude-code
+      // returns one document on exit and never calls this — its result is
+      // persisted below by persistResultAsChunk instead.
+      onChunk: (chunk) => {
         try {
-          db.update(agentSessions)
-            .set({ cliCommand: session.command })
-            .where(eq(agentSessions.id, sessionId))
-            .run();
-        } catch { /* best-effort */ }
-      }
-    } else {
-      // Default: Claude Code CLI
-      const spawned = spawnClaude(options);
-      kill = spawned.kill;
-      promise = spawned.promise;
-      mcpConfigPath = spawned.mcpConfigPath;
+          appendSessionChunk({
+            sessionId,
+            streamType: chunk.streamType,
+            content: chunk.text,
+            chunkKey: chunk.chunkKey ?? null,
+            createdAt: chunk.emittedAt,
+          });
+        } catch (error) {
+          console.error(
+            `[process-manager] Failed to persist ${provider} chunk for session ${sessionId}`,
+            error
+          );
+        }
+      },
+    });
+    const kill = providerSession.kill;
+    const promise: Promise<ClaudeResult> = providerSession.promise;
+    const mcpConfigPath = providerSession.mcpConfigPath;
 
-      // Persist CLI command
-      if (spawned.command) {
-        try {
-          db.update(agentSessions)
-            .set({ cliCommand: spawned.command })
-            .where(eq(agentSessions.id, sessionId))
-            .run();
-        } catch { /* best-effort */ }
-      }
+    // Persist CLI command
+    if (providerSession.command) {
+      try {
+        db.update(agentSessions)
+          .set({ cliCommand: providerSession.command })
+          .where(eq(agentSessions.id, sessionId))
+          .run();
+      } catch { /* best-effort */ }
     }
 
     // Record what the child actually got. `options.mcp` is cleared when the
-    // injection block failed; `spawned.mcpConfigPath` is null when the claude
+    // injection block failed; `mcpConfigPath` is absent when the claude
     // spawn could not write its config file and dropped --mcp-config. Either
     // way the session ran WITHOUT the tools, and only the row says so — the
     // child never reaches the HTTP route, so no 401 is traced.
@@ -467,6 +478,11 @@ class ClaudeProcessManager {
       }
     }
 
+    let markProcessClosed!: () => void;
+    const closePromise = new Promise<void>((resolve) => {
+      markProcessClosed = resolve;
+    });
+
     const session: TrackedSession = {
       sessionId,
       status: "running",
@@ -477,6 +493,12 @@ class ClaudeProcessManager {
       kill,
       providerSession,
       mcpConfigPath,
+      closePromise,
+      processClosed: false,
+      projectId: sessionRow?.projectId,
+      epicId: sessionRow?.epicId,
+      userStoryId: sessionRow?.userStoryId,
+      cwd: options.cwd,
     };
 
     this.sessions.set(sessionId, session);
@@ -491,7 +513,7 @@ class ClaudeProcessManager {
         this.teardownMcpChannel(sessionId, mcpConfigPath);
 
         const tracked = this.sessions.get(sessionId);
-        if (!tracked) return;
+        if (tracked !== session) return;
 
         const targetStatus: SessionStatus = result.success ? "completed" : "failed";
         const resolvedCliSessionId =
@@ -504,10 +526,10 @@ class ClaudeProcessManager {
           this.persistCliSessionId(sessionId, resolvedCliSessionId);
         }
 
-        // For Claude Code sessions, persist result text as a session chunk
-        // so that lastNonEmptyText gets populated (non-CC providers do this
-        // via the onChunk callback during execution).
-        this.persistResultAsChunk(sessionId, result, tracked.provider);
+        // The final text reaches the chunk store through the provider's own
+        // output/response chunks (`final-output` / `final-response`), for
+        // claude-code like for the rest; writing it a second time here under
+        // `result-<id>` used to store every result twice.
 
         // Only transition if the move is valid (e.g. not already cancelled)
         if (isValidSessionTransition(tracked.status, targetStatus)) {
@@ -520,7 +542,7 @@ class ClaudeProcessManager {
         this.teardownMcpChannel(sessionId, mcpConfigPath);
 
         const tracked = this.sessions.get(sessionId);
-        if (!tracked) return;
+        if (tracked !== session) return;
 
         if (isValidSessionTransition(tracked.status, "failed")) {
           tracked.status = "failed";
@@ -531,9 +553,53 @@ class ClaudeProcessManager {
             duration: Date.now() - tracked.startedAt.getTime(),
           };
         }
+      })
+      .finally(() => {
+        const tracked = this.sessions.get(sessionId);
+        if (tracked === session) {
+          tracked.processClosed = true;
+          // The prompt was handed to the CLI whole and is persisted (capped)
+          // on the session row; nothing reads it back from here once the
+          // process is gone. Drop it now rather than at eviction.
+          tracked.options = { ...tracked.options, prompt: "" };
+          tracked.kill = () => {};
+          tracked.providerSession = undefined;
+          this.scheduleEviction(sessionId, tracked);
+        }
+        markProcessClosed();
+        if (tracked?.status === "cancelled") {
+          try {
+            notifySessionTerminal({
+              sessionId,
+              status: "cancelled",
+            });
+          } catch {
+            // best-effort
+          }
+        }
       });
 
     return this.toSessionInfo(session);
+  }
+
+  /**
+   * Forgets a closed session after TERMINAL_SESSION_RETENTION_MS. Re-checked
+   * at eviction time: a session re-dispatched under the same id in the
+   * meantime is a different entry and must not be evicted by the previous
+   * run's timer.
+   */
+  private scheduleEviction(sessionId: string, closedSession: TrackedSession): void {
+    const timer = setTimeout(() => {
+      const tracked = this.sessions.get(sessionId);
+      if (
+        tracked === closedSession &&
+        tracked.processClosed === true &&
+        isTerminalSessionStatus(tracked.status)
+      ) {
+        this.sessions.delete(sessionId);
+      }
+    }, TERMINAL_SESSION_RETENTION_MS);
+    timer.unref?.();
   }
 
   /**
@@ -575,6 +641,136 @@ class ClaudeProcessManager {
     if (!session) return null;
 
     return this.toSessionInfo(session);
+  }
+
+  /**
+   * Returns the settlement promise for the session's underlying child process.
+   * Resolves when the process emits close/error, regardless of whether the session
+   * ended normally or was cancelled.
+   */
+  getClosePromise(sessionId: string): Promise<void> | null {
+    return this.sessions.get(sessionId)?.closePromise ?? null;
+  }
+
+  /**
+   * Whether the underlying process has exited. Unknown sessions are considered closed.
+   */
+  isProcessClosed(sessionId: string): boolean {
+    const session = this.sessions.get(sessionId);
+    return !session || session.processClosed === true;
+  }
+
+  /**
+   * Waits until the session's underlying child process has actually closed,
+   * bounded by an optional grace period (defaults to 8000ms).
+   */
+  async waitForClose(
+    sessionId: string,
+    graceMs: number = 8000
+  ): Promise<void> {
+    const session = this.sessions.get(sessionId);
+    if (!session || session.processClosed || !session.closePromise) return;
+
+    let timer: NodeJS.Timeout | null = null;
+    const timeoutPromise = new Promise<void>((resolve) => {
+      timer = setTimeout(resolve, graceMs);
+      timer.unref?.();
+    });
+
+    try {
+      await Promise.race([session.closePromise, timeoutPromise]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  private lookupSessionField(
+    sessionId: string,
+    field: "projectId" | "epicId" | "userStoryId"
+  ): string | null {
+    try {
+      const row = db
+        .select({
+          projectId: agentSessions.projectId,
+          epicId: agentSessions.epicId,
+          userStoryId: agentSessions.userStoryId,
+        })
+        .from(agentSessions)
+        .where(eq(agentSessions.id, sessionId))
+        .get();
+      return row ? (row[field] ?? null) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Returns any tracked session currently occupying the target, meaning its underlying
+   * child process or process group has not completed teardown (`processClosed !== true`).
+   * Covers cancelled sessions that are still in their termination grace period.
+   */
+  getOccupyingSessionForTarget(target: {
+    scope: "epic" | "story";
+    projectId: string;
+    epicId?: string | null;
+    storyId?: string;
+  }): TrackedSession | null {
+    for (const session of this.sessions.values()) {
+      if (session.processClosed) continue;
+      const projId =
+        session.projectId ??
+        this.lookupSessionField(session.sessionId, "projectId");
+      if (projId && projId !== target.projectId) continue;
+
+      const epicId =
+        session.epicId ??
+        this.lookupSessionField(session.sessionId, "epicId");
+      const storyId =
+        session.userStoryId ??
+        this.lookupSessionField(session.sessionId, "userStoryId");
+
+      if (target.scope === "epic") {
+        if (epicId === target.epicId) {
+          return session;
+        }
+      } else {
+        if (storyId === target.storyId) {
+          return session;
+        }
+        if (target.epicId && epicId === target.epicId) {
+          return session;
+        }
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Returns all tracked sessions in a project that are still occupying their target/worktree.
+   */
+  listOccupyingSessions(projectId?: string): TrackedSession[] {
+    const results: TrackedSession[] = [];
+    for (const session of this.sessions.values()) {
+      if (session.processClosed) continue;
+      const projId =
+        session.projectId ??
+        this.lookupSessionField(session.sessionId, "projectId");
+      if (projectId && projId && projId !== projectId) continue;
+      results.push(session);
+    }
+    return results;
+  }
+
+  /**
+   * Whether the target currently has a session whose process has not closed yet.
+   */
+  isTargetOccupied(target: {
+    scope: "epic" | "story";
+    projectId: string;
+    epicId?: string | null;
+    storyId?: string;
+  }): boolean {
+    return this.getOccupyingSessionForTarget(target) !== null;
   }
 
   /**
@@ -670,41 +866,6 @@ class ClaudeProcessManager {
     }
   }
 
-  /**
-   * Persist the result text from a completed session as a session chunk.
-   *
-   * Non-Claude-Code providers stream chunks via onChunk during execution,
-   * which populates `lastNonEmptyText`. Claude Code only returns stdout on
-   * exit, so we need to do it here.
-   */
-  private persistResultAsChunk(
-    sessionId: string,
-    result: ClaudeResult,
-    provider: ProviderType,
-  ): void {
-    if (!result.result) return;
-
-    try {
-      const parsed = parseClaudeOutput(result.result);
-      const text = parsed.content;
-
-      // Skip if we only got a fallback message — nothing useful to persist
-      if (!text || isNoTextualOutputFallback(text)) return;
-
-      appendSessionChunk({
-        sessionId,
-        streamType: "output",
-        content: text,
-        chunkKey: `result-${sessionId}`,
-      });
-    } catch (error) {
-      console.error(
-        `[process-manager] Failed to persist result chunk for ${provider} session ${sessionId}`,
-        error,
-      );
-    }
-  }
-
   private toSessionInfo(session: TrackedSession): SessionInfo {
     const info: SessionInfo = {
       sessionId: session.sessionId,
@@ -731,6 +892,10 @@ class ClaudeProcessManager {
 
     if (session.cliSessionId) {
       info.cliSessionId = session.cliSessionId;
+    }
+
+    if (session.processClosed !== undefined) {
+      info.processClosed = session.processClosed;
     }
 
     return info;

@@ -1,127 +1,74 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { markRead as markTicketRead, replyToEpic } from "@/lib/inbox/client";
+import type { InboxData, InboxItem } from "@/lib/inbox/types";
 
-import { useState, useCallback } from "react";
-import { usePolling } from "@/hooks/usePolling";
+export type { InboxItem } from "@/lib/inbox/types";
 
-/** Row shape returned by GET /api/inbox (see app/api/inbox/route.ts). */
-export interface InboxItem {
-  epicId: string;
-  projectId: string;
-  projectName: string;
-  readableId: string | null;
-  title: string;
-  status: string | null;
-  type: string | null;
-  awaitingReply: boolean;
-  unread: boolean;
-  latestCommentAuthor: string | null;
-  latestCommentExcerpt: string | null;
-  latestCommentCreatedAt: string | null;
-  lastReadAt: string | null;
-}
+const EMPTY_ITEMS: InboxItem[] = [];
 
-interface InboxState {
-  items: InboxItem[];
-  /** Every row in the inbox — the rule the bar badge counts. */
-  unreadCount: number;
-  /** Rows whose latest agent message has not been read yet. */
-  unreadMessageCount: number;
-  /** Rows holding a question the user has genuinely not answered. */
-  awaitingReplyCount: number;
-  loading: boolean;
-}
-
-const POLL_INTERVAL_MS = 5000;
-
-/**
- * Cross-project inbox of unread agent messages: reports on tickets that may
- * well be finished, plus the questions an agent is genuinely held on. Polls
- * /api/inbox (house pattern, same cadence as useNotifications).
- *
- * The three counters are the route's (see app/api/inbox/route.ts): the row
- * count the bar badge has always shown, and the two category counters the
- * inbox page prints so a pile of unread reports is not read as a pile of
- * blocked agents.
- */
-export function useInbox() {
+/** Cross-project inbox. Confirmed writes invalidate older polling snapshots. */
+export function useInbox({ summaryOnly = false, enabled = true }: { summaryOnly?: boolean; enabled?: boolean } = {}) {
+  const [requestedPage, setPage] = useState(1);
+  const t = useTranslations("Inbox");
   const tErrors = useTranslations("ClientErrors");
-  const [state, setState] = useState<InboxState>({
-    items: [],
-    unreadCount: 0,
-    unreadMessageCount: 0,
-    awaitingReplyCount: 0,
-    loading: true,
-  });
+  const loadError = useCallback(() => t("loadError"), [t]);
+  const { data, loading, error, refresh } = usePolledResource<InboxData>(
+    !enabled ? null : summaryOnly ? "/api/inbox?summary=1" : requestedPage === 1 ? "/api/inbox" : `/api/inbox?page=${requestedPage}`, 5000, loadError,
+  );
+  // Reading the final item can remove the requested page. Adopt the server's
+  // clamped page before rendering; future arrivals must not jump us back to an
+  // old page number. usePolledResource only exposes data for the current URL.
+  const confirmedPage = data?.pagination?.page;
+  if (confirmedPage !== undefined && Number.isSafeInteger(confirmedPage)
+      && confirmedPage >= 1 && confirmedPage < requestedPage) {
+    setPage(confirmedPage);
+  }
+  const latestRefresh = useRef(refresh);
+  useEffect(() => { latestRefresh.current = refresh; }, [refresh]);
+  const [mutationError, setMutationError] = useState<string | null>(null);
 
-  const fetchInbox = useCallback(async () => {
-    try {
-      const res = await fetch("/api/inbox");
-      if (!res.ok) return;
-      const body = await res.json();
-      setState({
-        items: body.data?.items || [],
-        unreadCount: body.data?.unreadCount ?? 0,
-        unreadMessageCount: body.data?.unreadMessageCount ?? 0,
-        awaitingReplyCount: body.data?.awaitingReplyCount ?? 0,
-        loading: false,
-      });
-    } catch {
-      // Silently ignore — polling will retry
+  const markRead = useCallback(async (epicId: string) => {
+    setMutationError(null);
+    const result = await markTicketRead(epicId, t("row.markReadError"));
+    if (result.error !== null) throw new Error(result.error);
+    await latestRefresh.current();
+  }, [t]);
+
+  const reply = useCallback(async (
+    item: Pick<InboxItem, "projectId" | "epicId">,
+    content: string,
+  ) => {
+    const result = await replyToEpic(item, content, tErrors("failedToPostReply"));
+    if (result.error !== null) throw new Error(result.error);
+    // The reply is durable even if the separate read cursor cannot be saved.
+    const marked = await markRead(item.epicId).then(() => true, () => false);
+    if (!marked) {
+      setMutationError(t("row.markReadError"));
+      await latestRefresh.current();
     }
-  }, []);
+  }, [markRead, t, tErrors]);
 
-  usePolling(fetchInbox, POLL_INTERVAL_MS);
-
-  /** Move the epic's read cursor to now, then re-fetch the inbox. */
-  const markRead = useCallback(
-    async (epicId: string) => {
-      try {
-        await fetch("/api/inbox/read", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ epicId }),
-        });
-      } catch {
-        // Best-effort — the item just stays until the next successful mark.
-      }
-      await fetchInbox();
-    },
-    [fetchInbox]
-  );
-
-  /**
-   * Post a user reply on the ticket (existing per-epic comments route) and
-   * mark it read. Throws on failure so the caller can surface the error.
-   */
-  const reply = useCallback(
-    async (item: Pick<InboxItem, "projectId" | "epicId">, content: string) => {
-      const res = await fetch(
-        `/api/projects/${item.projectId}/epics/${item.epicId}/comments`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ author: "user", content }),
-        }
-      );
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || body.error) {
-        throw new Error(body.error || tErrors("failedToPostReply"));
-      }
-      await markRead(item.epicId);
-    },
-    [markRead, tErrors]
-  );
+  const retry = useCallback(async () => {
+    setMutationError(null);
+    await refresh();
+  }, [refresh]);
 
   return {
-    items: state.items,
-    unreadCount: state.unreadCount,
-    unreadMessageCount: state.unreadMessageCount,
-    awaitingReplyCount: state.awaitingReplyCount,
-    loading: state.loading,
+    page: data?.pagination?.page ?? requestedPage,
+    totalPages: data?.pagination?.totalPages ?? 1,
+    setPage,
+    items: data?.items ?? EMPTY_ITEMS,
+    unreadCount: data?.unreadCount ?? 0,
+    unreadMessageCount: data?.unreadMessageCount ?? 0,
+    awaitingReplyCount: data?.awaitingReplyCount ?? 0,
+    loading,
+    error: mutationError ?? error,
     markRead,
     reply,
-    refresh: fetchInbox,
+    refresh: retry,
   };
 }

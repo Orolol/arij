@@ -1,4 +1,13 @@
-import { eq } from "drizzle-orm";
+import type { AgentType } from "@/lib/agent-config/constants";
+import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import {
+  buildDeterministicVerificationReviewSection,
+  buildEpicReviewPrompt,
+  buildReviewPrompt,
+  type PromptComment,
+} from "@/lib/claude/prompt-builder";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
+import type { ClaudeResult } from "@/lib/claude/spawn";
 import { db } from "@/lib/db";
 import {
   agentSessions,
@@ -8,32 +17,19 @@ import {
   userStories,
 } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
-import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import type { AgentType } from "@/lib/agent-config/constants";
-import {
-  buildDeterministicVerificationReviewSection,
-  buildEpicReviewPrompt,
-  buildReviewPrompt,
-  type PromptComment,
-} from "@/lib/claude/prompt-builder";
-import type { ClaudeResult } from "@/lib/claude/spawn";
-import {
-  emitSessionCompleted,
-  emitSessionFailed,
-} from "@/lib/events/emit";
 import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
 import {
-  transitionReviewRejected,
   transitionReviewPassed,
+  transitionReviewRejected,
 } from "@/lib/workflow/automatic-transitions";
+import { eq } from "drizzle-orm";
 import { PIPELINE_REVIEW_TYPE } from "./constants";
 import {
   assessReviewOutcome,
-  resolveReviewVerdict,
-  resolvePriorFindingsFromProse,
   collectBlockingFindings,
   readSessionFindingsWindow,
+  resolvePriorFindingsFromProse,
+  resolveReviewVerdict,
 } from "./findings";
 import type { PipelineReviewAssessment, PipelineStageRequest } from "./runner";
 import type { PipelineStageDriverInit } from "./stage-driver-init";
@@ -106,7 +102,7 @@ export async function buildReviewStagePrompt(input: {
   // review stages see the epic's open findings too, which is what makes a
   // sibling story's unfixed finding stay visible instead of being rediscovered.
   const priorFindings = buildPriorFindingsSection(
-    readOpenReviewComments(epicId),
+    readOpenReviewComments(epicId, true),
     request.fixCycle + 1
   );
   if (priorFindings) {
@@ -158,8 +154,6 @@ export async function assessPipelineReview(
   return {
     blocking: assessment.blocking,
     blockingCount: assessment.blockingFindings.length,
-    agentCommentCount: assessment.agentCommentCount,
-    usedProseFallback: assessment.usedProseFallback,
     verdictSource: assessment.verdictSource,
     structuredVerdict: assessment.structuredVerdict,
     unverifiable: assessment.unverifiable,
@@ -240,19 +234,6 @@ export function finalizeReviewSession(input: {
         sessionOutput: output,
       });
   const isNegativeVerdict = decision?.negative ?? false;
-
-  if (scope === "epic") {
-    if (result?.success) {
-      emitSessionCompleted(projectId, epicId, sessionId);
-    } else {
-      emitSessionFailed(
-        projectId,
-        epicId,
-        sessionId,
-        result?.error || "Review failed"
-      );
-    }
-  }
 
   if (!isNegativeVerdict) {
     // A verdict that PASSED promotes the ticket to the merge boundary. An

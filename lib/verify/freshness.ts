@@ -1,6 +1,7 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions, verifyReports } from "@/lib/db/schema";
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
 import {
   isVerifyCommandResult,
   type VerificationReport,
@@ -18,19 +19,7 @@ import {
  */
 
 /** Code sessions whose work a report has to be newer than to still apply. */
-const CODE_SESSION_TYPES = ["build", "fix", "merge"];
-
-/**
- * Makes two stored timestamps lexically comparable. Reports always store ISO
- * ("2026-08-19T09:05:00.000Z") while a session row that fell back to the
- * schema default carries SQLite's "2026-08-19 09:05:00" — and 'T' (0x54)
- * sorts after ' ' (0x20), so an unnormalised comparison would call every ISO
- * report newer than any same-day default-format session and fail the
- * staleness check open.
- */
-export function normalizeInstant(value: string): string {
-  return value.includes("T") ? value : value.replace(" ", "T");
-}
+const CODE_SESSION_TYPES = ["build", "ticket_build", "team_build", "fix", "merge"];
 
 /** Why the newest report cannot vouch for the branch. */
 export type VerificationProblemKind = "missing" | "failed" | "stale";
@@ -55,7 +44,7 @@ export interface VerificationAssessment {
  * whose entries are half-readable is evidence nobody should act on, and a
  * shorter list would silently drop exactly the failing command.
  */
-function parseReport(
+export function parseVerifyReportRow(
   row: typeof verifyReports.$inferSelect
 ): VerificationReport | null {
   let parsed: unknown;
@@ -95,6 +84,7 @@ export function assessEpicVerification(
       id: agentSessions.id,
       createdAt: agentSessions.createdAt,
       endedAt: agentSessions.endedAt,
+      completedAt: agentSessions.completedAt,
     })
     .from(agentSessions)
     .where(
@@ -104,22 +94,16 @@ export function assessEpicVerification(
         inArray(agentSessions.agentType, CODE_SESSION_TYPES)
       )
     )
-    .orderBy(desc(agentSessions.createdAt))
+    .orderBy(
+      // An undated code change cannot be proven older than any report.
+      desc(sql`julianday(COALESCE(${agentSessions.endedAt}, ${agentSessions.completedAt}, ${agentSessions.createdAt})) IS NULL`),
+      desc(sql`julianday(COALESCE(${agentSessions.endedAt}, ${agentSessions.completedAt}, ${agentSessions.createdAt}))`),
+      desc(agentSessions.id),
+    )
     .get();
   const lastCodeSessionId = lastCodeSession?.id ?? null;
 
-  const row = db
-    .select()
-    .from(verifyReports)
-    .where(
-      and(
-        eq(verifyReports.projectId, projectId),
-        eq(verifyReports.epicId, epicId)
-      )
-    )
-    .orderBy(desc(verifyReports.finishedAt), desc(verifyReports.id))
-    .get();
-  const report = row ? parseReport(row) : null;
+  const report = latestVerifyReport(projectId, epicId);
 
   if (!report) {
     return {
@@ -142,12 +126,23 @@ export function assessEpicVerification(
     };
   }
 
+  const reportFinishedAt = parseStoredTimestamp(report.finishedAt);
   const codeEndedAt = lastCodeSession
-    ? (lastCodeSession.endedAt ?? lastCodeSession.createdAt)
+    ? (lastCodeSession.endedAt ?? lastCodeSession.completedAt ?? lastCodeSession.createdAt)
     : null;
+  const codeInstant = codeEndedAt ? parseStoredTimestamp(codeEndedAt) : null;
+  if (reportFinishedAt === null || (lastCodeSession && codeInstant === null)) {
+    return {
+      report,
+      lastCodeSessionId,
+      problem: {
+        kind: "stale",
+        reason: "verification freshness cannot be established from the stored timestamps",
+      },
+    };
+  }
   if (
-    codeEndedAt &&
-    normalizeInstant(report.finishedAt) < normalizeInstant(codeEndedAt)
+    codeInstant !== null && reportFinishedAt < codeInstant
   ) {
     return {
       report,
@@ -160,4 +155,20 @@ export function assessEpicVerification(
   }
 
   return { report, lastCodeSessionId, problem: null };
+}
+
+export function latestVerifyReport(projectId: string, epicId: string): VerificationReport | null {
+  const row = db
+    .select()
+    .from(verifyReports)
+    .where(
+      and(
+        eq(verifyReports.projectId, projectId),
+        eq(verifyReports.epicId, epicId)
+      )
+    )
+    .orderBy(desc(sql`julianday(${verifyReports.finishedAt})`), desc(verifyReports.id))
+    .get();
+  return row ? parseVerifyReportRow(row) : null;
+
 }

@@ -1,41 +1,45 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
-/**
- * Generate-spec fetch flow for a project: POSTs to the generate-spec endpoint
- * with the given provider, tracks in-flight/error state, and refreshes the
- * router on success.
- */
-export function useSpecGeneration(projectId: string, provider: string) {
+/** The server resolves the project's spec_generation agent assignment. */
+export function useSpecGeneration(projectId: string) {
   const tErrors = useTranslations("ClientErrors");
   const router = useRouter();
-  const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const owner = useMemo(() => ({ projectId }), [projectId]);
+  const activeOwner = useRef<typeof owner | null>(owner);
+  const inFlight = useRef(new Set<typeof owner>());
+  const [state, setState] = useState<{ owner: typeof owner; generating: boolean; error: string | null }>({
+    owner, generating: false, error: null,
+  });
+  if (state.owner !== owner) setState({ owner, generating: false, error: null });
+
+  useEffect(() => {
+    activeOwner.current = owner;
+    return () => { activeOwner.current = null; };
+  }, [owner]);
 
   const generateSpec = useCallback(async () => {
-    setGenerating(true);
-    setError(null);
+    if (!projectId || activeOwner.current !== owner || inFlight.current.has(owner)) return;
+    inFlight.current.add(owner);
+    setState({ owner, generating: true, error: null });
+    let error: string | null = null;
     try {
-      const res = await fetch(`/api/projects/${projectId}/generate-spec`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider }),
-      });
-      const json = await res.json();
+      const res = await fetch(`/api/projects/${projectId}/generate-spec`, { method: "POST" });
+      const json = await res.json().catch(() => ({}));
       if (!res.ok || json.error) {
-        setError(json.error || tErrors("specHttp", { status: res.status }));
-      } else {
-        router.refresh();
+        error = json.error || tErrors("specHttp", { status: res.status });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : tErrors("specGenerationRequestFailed"));
+      error = err instanceof Error ? err.message : tErrors("specGenerationRequestFailed");
     }
-    setGenerating(false);
-  }, [projectId, provider, router, tErrors]);
+    inFlight.current.delete(owner);
+    if (activeOwner.current !== owner) return;
+    setState({ owner, generating: false, error });
+    if (!error) router.refresh();
+  }, [projectId, owner, router, tErrors]);
 
-  return { generateSpec, generating, error };
+  return { generateSpec, generating: state.generating, error: state.error };
 }

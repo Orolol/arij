@@ -1,10 +1,11 @@
+import { parseProseVerdict } from "@/lib/review/verdict";
 /**
  * Dreaming — window maths, per-session rendering and the fair-truncation
  * budget. Pure functions only: no database, no filesystem, no clock of its
  * own (every entry point takes `now`), so the collector's rules are testable
  * without seeding a schema.
  *
- * The DB-backed collector that feeds these lives in lib/workflow/dreaming.ts.
+ * The DB-backed collector that feeds these lives in dreaming-collector.ts.
  */
 
 import {
@@ -17,6 +18,7 @@ import {
   DREAM_MAX_FINDINGS_PER_SESSION,
   DREAM_WINDOW_DAYS,
 } from "./dreaming-constants";
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
 
 /* ------------------------------------------------------------------ */
 /* Window                                                              */
@@ -34,17 +36,8 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  * offset and could land on the wrong side of a dream's cutoff. Normalizing the
  * SQLite form to explicit UTC before parsing keeps both shapes on one clock.
  */
-const SQLITE_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}(?:\.\d+)?)$/;
-
 export function parseTimestampMs(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const trimmed = value.trim();
-  const sqliteMatch = trimmed.match(SQLITE_TIMESTAMP_RE);
-  const normalized = sqliteMatch
-    ? `${sqliteMatch[1]}T${sqliteMatch[2]}Z`
-    : trimmed;
-  const parsed = Date.parse(normalized);
-  return Number.isNaN(parsed) ? null : parsed;
+  return value ? parseStoredTimestamp(value) : null;
 }
 
 export interface DreamWindow {
@@ -154,11 +147,8 @@ export function tailText(text: string, max: number, marker = "…[cut] "): strin
 export function extractReviewVerdict(
   text: string | null | undefined
 ): string | null {
-  if (!text) return null;
-  const match = text.match(/\*\*Overall Verdict:\s*([^*\n]+)\*\*/i);
-  if (!match) return null;
-  const verdict = match[1].trim();
-  return verdict.length > 0 ? verdict : null;
+  const verdict = parseProseVerdict(text);
+  return verdict === "approved" ? "Approved" : verdict === "approved_with_minor_issues" ? "Approved with Minor Issues" : verdict === "changes_requested" ? "Changes Requested" : null;
 }
 
 function formatDuration(ms: number | null): string | null {

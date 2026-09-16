@@ -1,11 +1,10 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { useCallback, useMemo, useState } from "react";
 
-import type { KanbanStatus } from "@/lib/types/kanban";
+import { usePolledResource } from "@/hooks/usePolledResource";
 import type { RegistrySort, RegistrySortDirection } from "@/lib/tickets-registry/sort";
-import { usePolling } from "@/hooks/usePolling";
 import {
   REGISTRY_DONE_WINDOW,
   REGISTRY_RELEASED_WINDOW,
@@ -13,6 +12,7 @@ import {
   type RegistryGroup,
   type TicketsRegistryPayload,
 } from "@/lib/tickets-registry/types";
+import type { KanbanStatus } from "@/lib/types/kanban";
 
 /**
  * The registry's single data source: one poll of `GET /api/tickets`.
@@ -24,14 +24,7 @@ import {
  * the registry is a lookup surface, not an attention surface, and its query is
  * the heavier of the two.
  *
- * THE STALE GUARD is the same one the desk and the board carry. The 6a overlay
- * opens over this table and can delete or dispatch a ticket; a poll issued
- * before that write can still be in flight when the overlay closes, and
- * applying it would repaint the pre-overlay world. `requestSeq` numbers each
- * request, `appliedSeq` records the newest one that reached the state, and a
- * response that lost the race is dropped. There is no `mutationSeq` here on
- * purpose: this screen issues no writes of its own, so there is no confirmed
- * write whose timing a refresh would have to be tied to.
+ * usePolledResource owns refresh generations and stale-response protection.
  */
 
 const POLL_INTERVAL_MS = 10_000;
@@ -59,16 +52,10 @@ export function useTicketsRegistry(
   status: KanbanStatus | "all" = "all",
 ): UseTicketsRegistry {
   const t = useTranslations("Registry");
-  const [data, setData] = useState<TicketsRegistryPayload | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [win, setWin] = useState<TicketsRegistryWindow>({
     done: REGISTRY_DONE_WINDOW,
     released: REGISTRY_RELEASED_WINDOW,
   });
-
-  const requestSeqRef = useRef(0);
-  const appliedSeqRef = useRef(0);
 
   const href = useMemo(() => {
     const params = new URLSearchParams();
@@ -86,43 +73,8 @@ export function useTicketsRegistry(
     return search ? `/api/tickets?${search}` : "/api/tickets";
   }, [projectId, query, win.done, win.released, sort, direction, status]);
 
-  const load = useCallback(async () => {
-    const requestSeq = ++requestSeqRef.current;
-    // Checked after the last await, so nothing can slip in between the check
-    // and the state it guards.
-    const stale = () => requestSeq !== requestSeqRef.current || requestSeq <= appliedSeqRef.current;
-    const fetchRegistry = async () => {
-      try {
-        const res = await fetch(href);
-        if (!res.ok) {
-          if (stale()) return;
-          appliedSeqRef.current = requestSeq;
-          setError(t("errors.loadFailedStatus", { status: res.status }));
-          return;
-        }
-        const body = await res.json();
-        if (stale()) return;
-        appliedSeqRef.current = requestSeq;
-        if (body?.error) {
-          setError(String(body.error));
-          return;
-        }
-        setError(null);
-        setData(body.data as TicketsRegistryPayload);
-      } catch {
-        if (stale()) return;
-        appliedSeqRef.current = requestSeq;
-        setError(t("errors.loadFailed"));
-      }
-    };
-    // A `.finally` call, not a `finally` clause: the React Compiler stops at
-    // the clause, and stopping left this hook unread by every compiler rule.
-    await fetchRegistry().finally(() => setLoading(false));
-  }, [href, t]);
-
-  const refresh = useCallback(async () => {
-    await load();
-  }, [load]);
+  const errorMessage = useCallback((status?: number) => status ? t("errors.loadFailedStatus", { status }) : t("errors.loadFailed"), [t]);
+  const { data, loading, error, refresh } = usePolledResource<TicketsRegistryPayload>(href, POLL_INTERVAL_MS, errorMessage);
 
   const setWindow = useCallback((group: RegistryGroup, limit: number) => {
     const clamped = Math.min(REGISTRY_WINDOW_MAX, Math.max(1, Math.trunc(limit)));
@@ -138,7 +90,6 @@ export function useTicketsRegistry(
     });
   }, []);
 
-  usePolling(load, POLL_INTERVAL_MS);
 
   return { data, loading, error, window: win, refresh, setWindow };
 }

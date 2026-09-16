@@ -16,33 +16,7 @@ import type { QaFinding } from "@/lib/qa/types";
 
 import { FindingSeverityStamp } from "./FindingSeverityStamp";
 
-/**
- * "Dismiss ce finding" — one line saying why, then the write.
- *
- * WHERE THE REASON GOES, AND WHY IT GOES THERE. `review_comments` is
- * `id, epicId, filePath, lineNumber, body, author, status, agentSessionId,
- * createdAt, updatedAt` and `status` is `open | resolved`. There is NO
- * dismissal-reason column, no `dismissed` status and no dismissal table, and
- * this packet may not add one (migrations are hand-written and out of scope).
- *
- * So the reason is appended to the finding's own `body`, which is the one free
- * text column the row has, through the PATCH route that already accepts both
- * `body` and `status`. Three facts make the append harmless:
- *   - `blocksMergeSql` and `blockingFindingSeverity` match on the LEADING
- *     prefix only (`SUBSTR(body,1,n) = '[critical]'`), so appending to the tail
- *     cannot reclassify the row;
- *   - the next reviewer's prompt lists `status = 'open'` rows only, so a
- *     dismissed row never re-enters a prompt;
- *   - `resolved` is exactly what the merge itself would have written — the
- *     merge IS the approval and resolves what remains.
- *
- * A `dismissed_reason` column (plus a `dismissed` status distinct from
- * `resolved`) is the correct fix, and is what someone writing migrations
- * anyway should add.
- *
- * THE CONFIRM IS DISABLED UNTIL THE REASON IS NON-EMPTY. An empty reason is a
- * silently-lost finding.
- */
+/** Human dismissal preserves the finding body and stores a separate reason. */
 export interface DismissDialogProps {
   finding: QaFinding | null;
   open: boolean;

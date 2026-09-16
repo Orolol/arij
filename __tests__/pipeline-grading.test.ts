@@ -94,8 +94,6 @@ function harness(options: {
     assessReview: async () => ({
       blocking: false,
       blockingCount: 0,
-      agentCommentCount: 0,
-      usedProseFallback: false,
     }),
     readSessionStatus: () => null,
     checkGuards: () => ({

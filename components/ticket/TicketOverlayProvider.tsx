@@ -14,21 +14,18 @@
  * provider decides what to render, which is what let frame 6a land as a swap
  * of the panel body alone.
  *
- * WHAT CHANGED WHEN 6a LANDED: the default panel is now the real
- * `TicketOverlay`, which paints its own scrim and modal (it needs the full
- * 1200px / max-height / overflow geometry and the Escape *precedence* rules —
- * a delete or dispatch dialog on top must swallow Escape, and only a
- * component that knows those dialogs are open can decide that). The
- * `renderPanel` seam keeps its previous behaviour exactly: a custom panel is
- * still wrapped in the provider's own scrim and still gets the provider's
- * plain Escape-closes handling.
+ * WHAT CHANGED WHEN 6a LANDED: the panel is now the real `TicketOverlay`,
+ * which paints its own scrim and modal (it needs the full 1200px /
+ * max-height / overflow geometry and the Escape *precedence* rules — a delete
+ * or dispatch dialog on top must swallow Escape, and only a component that
+ * knows those dialogs are open can decide that). The transitional
+ * `renderPanel` seam that carried 6a in was never passed by any caller and is
+ * gone.
  */
 
 import * as React from "react";
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useCallback, useContext, useMemo, useState } from "react";
 
-import { cn } from "@/lib/utils";
 import { TicketOverlay } from "@/components/ticket/TicketOverlay";
 
 export interface OpenTicketOptions {
@@ -72,22 +69,11 @@ const NOOP_OVERLAY: TicketOverlayContextValue = {
 
 export interface TicketOverlayProviderProps {
   children: React.ReactNode;
-  /**
-   * Render prop for the panel body. Frame 6a's packet replaces the default
-   * placeholder through this seam without changing the context contract.
-   */
-  renderPanel?: (state: {
-    ticketId: string;
-    projectId: string | null;
-    close: () => void;
-  }) => React.ReactNode;
 }
 
 export function TicketOverlayProvider({
   children,
-  renderPanel,
 }: TicketOverlayProviderProps) {
-  const t = useTranslations("Ticket");
   const [ticketId, setTicketId] = useState<string | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
 
@@ -104,19 +90,6 @@ export function TicketOverlayProvider({
     setProjectId(null);
   }, []);
 
-  // Escape closes. The DEFAULT panel owns this itself, because it is the only
-  // thing that knows whether one of its own dialogs is up and should swallow
-  // the key instead; a custom `renderPanel` keeps the provider's plain rule.
-  const escapeHandledByPanel = renderPanel === undefined;
-  useEffect(() => {
-    if (!ticketId || escapeHandledByPanel) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeTicket();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [ticketId, closeTicket, escapeHandledByPanel]);
-
   const value = useMemo<TicketOverlayContextValue>(
     () => ({
       ticketId,
@@ -131,31 +104,7 @@ export function TicketOverlayProvider({
   return (
     <TicketOverlayContext.Provider value={value}>
       {children}
-      {ticketId && renderPanel ? (
-        <div
-          data-testid="ticket-overlay"
-          className={cn(
-            "fixed inset-0 z-50 flex items-center justify-center",
-            "bg-scrim backdrop-blur-[3px]",
-          )}
-          onClick={closeTicket}
-        >
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={t("overlay.dialogLabel")}
-            onClick={(event) => event.stopPropagation()}
-            className={cn(
-              "w-[min(1200px,92vw)] rounded-[20px] bg-background p-6",
-              // The ONLY shadow in the system lives on this overlay.
-              "shadow-[var(--shadow-overlay)]",
-            )}
-          >
-            {renderPanel({ ticketId, projectId, close: closeTicket })}
-          </div>
-        </div>
-      ) : null}
-      {ticketId && !renderPanel ? (
+      {ticketId ? (
         // The real 6a overlay: it paints its own scrim, owns the modal
         // geometry and owns Escape precedence over its dialogs.
         <TicketOverlay

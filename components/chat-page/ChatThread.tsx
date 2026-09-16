@@ -13,7 +13,7 @@ import type { QuestionData } from "@/lib/claude/spawn";
 import type { ProjectTone } from "@/lib/piscine/tokens";
 
 import { AgentBubble } from "./AgentBubble";
-import { DraftedEpicCard, type EpicCreateStatus } from "./DraftedEpicCard";
+import { DraftedEpicCard } from "./DraftedEpicCard";
 import type { ParsedEpic } from "./message-epics";
 import { TypingBubble } from "./TypingBubble";
 import { UserBubble } from "./UserBubble";
@@ -41,6 +41,7 @@ export interface ChatThreadResolvedTicket {
 
 export interface ChatThreadProps {
   projectId: string;
+  conversationId: string | null;
   messages: readonly ChatMessage[];
   loading: boolean;
   /** `useChat.sending` — a stream is open right now. */
@@ -64,7 +65,7 @@ export interface ChatThreadProps {
     created: {
       epicId: string;
       readableId: string | null;
-      status: EpicCreateStatus;
+      status: string;
     },
   ) => void;
   onOpenTicket: (epicId: string) => void;
@@ -83,6 +84,7 @@ export interface ChatThreadProps {
 
 export function ChatThread({
   projectId,
+  conversationId,
   messages,
   loading,
   sending,
@@ -184,9 +186,10 @@ export function ChatThread({
                   agentLabel={agentLabel.toUpperCase()}
                   content={message.content}
                 />
-                {parsed ? (
+                {parsed && conversationId ? (
                   <DraftedEpicCard
                     projectId={projectId}
+                    conversationId={conversationId}
                     epic={parsed}
                     tone={tone}
                     epicId={boundEpicId}

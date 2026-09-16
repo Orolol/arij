@@ -1,6 +1,7 @@
 {
   "name": "arij",
   "version": "0.1.0",
+  "private": true,
   "description": "A local, AI-first project orchestrator with a web interface for managing multi-project workflows with Claude Code as the execution engine.",
   "author": "Gaetan",
   "license": "MIT",
@@ -19,26 +20,11 @@
   "bin": {
     "arij": "./bin/arij.mjs"
   },
-  "files": [
-    "bin",
-    "app",
-    "components",
-    "hooks",
-    "lib",
-    "public",
-    "proxy.ts",
-    "components.json",
-    "next.config.ts",
-    "tsconfig.json",
-    "postcss.config.mjs",
-    "eslint.config.mjs"
-  ],
   "scripts": {
     "dev": "node ./bin/arij.mjs dev",
     "build": "next build",
     "start": "node ./bin/arij.mjs start",
     "lint": "eslint",
-    "lint:prune": "eslint --prune-suppressions",
     "test": "vitest run",
     "test:changed": "vitest run --changed main",
     "test:watch": "vitest",
@@ -50,9 +36,6 @@
     "i18n:check": "node scripts/i18n/build-messages-index.mjs --check && node scripts/i18n/check-keys.mjs"
   },
   "dependencies": {
-    "@dnd-kit/core": "^6.3.1",
-    "@dnd-kit/sortable": "^10.0.0",
-    "@dnd-kit/utilities": "^3.2.2",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@octokit/rest": "^22.0.1",
     "better-sqlite3": "^12.6.2",

@@ -1,11 +1,12 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { useRouter } from "next/navigation";
 
 import { BandHeader, Mono, SegmentedControl, StrataBand } from "@/components/piscine";
-
+import type { UiLocale } from "@/lib/i18n/locales";
 import { SettingsSection } from "./SettingsSection";
 
 /**
@@ -28,7 +29,25 @@ const serverSnapshot = () => false;
 export function AppearanceBand() {
   const t = useTranslations("Settings");
   const { theme, setTheme } = useTheme();
+  const activeLocale = useLocale() as UiLocale;
+  const router = useRouter();
+  const [locale, setLocale] = useState<UiLocale>(activeLocale);
   const mounted = useSyncExternalStore(subscribe, clientSnapshot, serverSnapshot);
+
+  async function handleLocaleChange(next: UiLocale) {
+    if (next === locale) return;
+    setLocale(next);
+    try {
+      await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ui_locale: next }),
+      });
+      router.refresh();
+    } catch {
+      // best-effort
+    }
+  }
 
   return (
     <SettingsSection
@@ -52,6 +71,26 @@ export function AppearanceBand() {
         ) : null}
         <Mono size={10.5} tone="muted" as="div">
           {t("appearance.note")}
+        </Mono>
+      </StrataBand>
+
+      <StrataBand stratum="card">
+        <BandHeader stratum="card" label={t("appearance.languageLabel")} standalone />
+        {mounted ? (
+          <SegmentedControl<UiLocale>
+            chrome="bordered"
+            size="md"
+            className="w-[240px]"
+            options={[
+              { value: "en", label: t("appearance.languageEn") },
+              { value: "fr", label: t("appearance.languageFr") },
+            ]}
+            value={locale}
+            onChange={(next) => void handleLocaleChange(next)}
+          />
+        ) : null}
+        <Mono size={10.5} tone="muted" as="div">
+          {t("appearance.languageNote")}
         </Mono>
       </StrataBand>
     </SettingsSection>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { releases } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
+import { GitHubNotConfiguredError } from "@/lib/github/client";
 import { publishRelease, getRelease } from "@/lib/github/releases";
 import { logSyncOperation } from "@/lib/github/sync-log";
 import {
@@ -108,6 +109,14 @@ export async function POST(_request: NextRequest, { params }: Params) {
 
     return NextResponse.json({ data: updated });
   } catch (error) {
+    // Same recoverable state as the other GitHub routes: 400 + `code`, never a
+    // 500 the UI cannot act on.
+    if (error instanceof GitHubNotConfiguredError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: 400 }
+      );
+    }
     return errorResponse(error, "Failed to publish release.");
   }
 }

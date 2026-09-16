@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { mockJsonRequest, mockRouteContext } from "@/__tests__/helpers/db-mock";
+import { waitForBackground } from "./helpers/background";
 
 const processManagerState = vi.hoisted(() => ({
   result: undefined as Record<string, unknown> | undefined,
@@ -86,7 +87,6 @@ const {
   epics,
   userStories,
   agentSessions,
-  notifications,
   ticketActivityLog,
   ticketComments,
 } = await import("@/lib/db/schema");
@@ -98,11 +98,6 @@ const { emitSessionCompleted, emitSessionFailed } = await import(
 );
 
 let counter = 0;
-
-async function flushBackground() {
-  await new Promise((r) => setTimeout(r, 25));
-  await new Promise((r) => setTimeout(r, 25));
-}
 
 function seedEpic() {
   counter += 1;
@@ -143,8 +138,24 @@ async function dispatchBuild(projectId: string, epicId: string) {
   );
   const json = await res.json();
   expect(res.status).toBe(200);
-  await flushBackground();
-  return json.data.sessionId as string;
+  const sessionId = json.data.sessionId as string;
+  // The route's completion closure runs in the background. What it always
+  // writes, whatever the terminal write does, is the agent's output as a
+  // ticket comment — so that is what this waits for. (The row's status is NOT
+  // a usable signal: one test makes the terminal write fail on purpose and
+  // the session stays 'running', which is the behaviour it pins.)
+  await waitForBackground(
+    () =>
+      expect(
+        db
+          .select({ id: ticketComments.id })
+          .from(ticketComments)
+          .where(eq(ticketComments.agentSessionId, sessionId))
+          .all().length,
+      ).toBeGreaterThan(0),
+    "the build's completion closure recording the agent output",
+  );
+  return sessionId;
 }
 
 beforeEach(() => {
@@ -188,19 +199,9 @@ describe("epic build route — asked_question workflow effects", () => {
       .get();
     expect(story!.status).toBe("in_progress");
 
-    // Exactly one notification — the question one, deep-linking to the epic
-    // (the generic completed notification is suppressed for this verdict).
-    const notifs = db.select().from(notifications).all();
-    expect(notifs).toHaveLength(1);
-    expect(notifs[0]).toMatchObject({
-      projectId,
-      sessionId,
-      status: "completed",
-      targetUrl: `/projects/${projectId}?ticket=${epicId}`,
-    });
-    expect(notifs[0].title).toBe(
-      `Agent asked a question on E-q-${counter}: Login feature`
-    );
+    // The desk's "Your turn" stratum is derived from the session's
+    // `asked_question` outcome — the user-facing signal is the session row
+    // itself (asserted above), not a notification.
 
     // Activity log: the dispatch entry plus the system hold entry.
     const activity = db
@@ -258,15 +259,6 @@ describe("epic build route — asked_question workflow effects", () => {
     const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
     expect(epic!.status).toBe("review");
 
-    // Generic completed notification, targeting the session detail.
-    const notifs = db
-      .select()
-      .from(notifications)
-      .where(eq(notifications.projectId, projectId))
-      .all();
-    expect(notifs).toHaveLength(1);
-    expect(notifs[0].title).toContain("Build completed");
-    expect(notifs[0].targetUrl).toBe(`/projects/${projectId}/sessions/${sessionId}`);
 
     // No system hold entry for this epic.
     const activity = db

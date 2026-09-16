@@ -1,13 +1,10 @@
-import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { settings } from "@/lib/db/schema";
+import { resolveMaxConcurrentForProject } from "@/lib/agents/scheduler";
 import {
   errorResponse,
   getProjectOr404,
   isErrorResponse,
 } from "@/lib/api/route-helpers";
-import { resolveMaxConcurrentForProject } from "@/lib/agents/scheduler";
+import { resolveAutoModeConfigForProject } from "@/lib/auto-mode/config";
 import {
   autoModeBuildAgentSettingKey,
   autoModeBuildConcurrencySettingKey,
@@ -20,9 +17,8 @@ import {
   parseAutoModeConcurrency,
   parseAutoModeEnabled,
 } from "@/lib/auto-mode/constants";
-import { resolveAutoModeConfigForProject } from "@/lib/auto-mode/config";
-import { autoModeRegistry } from "@/lib/auto-mode/registry";
 import { kickAutoMode } from "@/lib/auto-mode/engine";
+import { autoModeRegistry } from "@/lib/auto-mode/registry";
 import {
   loadAutoModeBoard,
   selectBuildCandidates,
@@ -30,6 +26,9 @@ import {
   selectReviewCandidates,
 } from "@/lib/auto-mode/select";
 import type { AutoModeStatus } from "@/lib/auto-mode/status";
+import { db } from "@/lib/db";
+import { upsertSetting } from "@/lib/settings/write";
+import { NextRequest, NextResponse } from "next/server";
 
 /**
  * GET/PUT /api/projects/[projectId]/auto-mode
@@ -44,7 +43,7 @@ import type { AutoModeStatus } from "@/lib/auto-mode/status";
  */
 
 /** Builds the response payload shared by GET and PUT. */
-function buildStatus(projectId: string): AutoModeStatus {
+function buildStatus(projectId: string, includeCandidates = false): AutoModeStatus {
   const config = resolveAutoModeConfigForProject(projectId);
   const snapshot = autoModeRegistry.snapshot(projectId);
 
@@ -52,12 +51,14 @@ function buildStatus(projectId: string): AutoModeStatus {
   // dialog, so they degrade to zero rather than throw.
   let candidates = { build: 0, review: 0, merge: 0 };
   try {
+    if (includeCandidates) {
     const board = loadAutoModeBoard(projectId);
     candidates = {
       build: selectBuildCandidates(projectId, board).length,
       review: selectReviewCandidates(projectId, board).length,
       merge: selectMergeCandidates(projectId, board).length,
     };
+    }
   } catch (error) {
     console.warn(
       "[auto-mode/route] Failed to count candidates:",
@@ -89,7 +90,7 @@ function buildStatus(projectId: string): AutoModeStatus {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
@@ -98,29 +99,9 @@ export async function GET(
   if (isErrorResponse(found)) return found;
 
   try {
-    return NextResponse.json({ data: buildStatus(projectId) });
+    return NextResponse.json({ data: buildStatus(projectId, request.nextUrl.searchParams.get("candidates") === "1") });
   } catch (error) {
     return errorResponse(error, "Failed to read auto mode status");
-  }
-}
-
-/** Upserts one settings row, JSON-encoded exactly like PATCH /api/settings. */
-function putSetting(key: string, value: unknown): void {
-  const jsonValue = JSON.stringify(value);
-  const now = new Date().toISOString();
-  const existing = db
-    .select({ key: settings.key })
-    .from(settings)
-    .where(eq(settings.key, key))
-    .get();
-
-  if (existing) {
-    db.update(settings)
-      .set({ value: jsonValue, updatedAt: now })
-      .where(eq(settings.key, key))
-      .run();
-  } else {
-    db.insert(settings).values({ key, value: jsonValue, updatedAt: now }).run();
   }
 }
 
@@ -228,7 +209,7 @@ export async function PUT(
     // All-or-nothing: a half-applied configuration is how an unattended mode
     // ends up running with settings nobody chose.
     db.transaction(() => {
-      for (const [key, value] of writes) putSetting(key, value);
+      for (const [key, value] of writes) upsertSetting(key, value);
     });
 
     // Mirror the persisted flag into the registry BEFORE building the
@@ -238,7 +219,7 @@ export async function PUT(
     const config = resolveAutoModeConfigForProject(projectId);
     autoModeRegistry.setEnabled(projectId, config.enabled);
 
-    const status = buildStatus(projectId);
+    const status = buildStatus(projectId, true);
 
     // Enabling (or retuning) takes effect now, not on the next 15s tick.
     // Disabling also sweeps: that pass is what settles the registry state.

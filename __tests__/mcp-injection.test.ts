@@ -54,6 +54,7 @@ import {
   type McpSpawnConfig,
   type ProviderSpawnOptions,
 } from "@/lib/providers/types";
+import { createFakeChild } from "./helpers/fake-child";
 
 const TOKEN = "arij-mcp-secret-token-12345";
 
@@ -88,16 +89,6 @@ const EXPECTED_MCP_CONFIG_JSON = JSON.stringify({
 
 /** Stand-in path for the pure buildClaudeArgs tests (no file is written). */
 const FAKE_CONFIG_PATH = "/tmp/arij-mcp-fake/mcp-config.json";
-
-function createFakeChild() {
-  return {
-    stdout: { on: vi.fn() },
-    stderr: { on: vi.fn() },
-    on: vi.fn(),
-    kill: vi.fn(),
-    killed: false,
-  };
-}
 
 describe("buildClaudeArgs — MCP config injection", () => {
   it("stays byte-identical without mcp (no MCP flags leak into plain spawns)", () => {
@@ -475,7 +466,7 @@ describe("CodexProvider.buildArgs — -c mcp_servers overrides", () => {
     },
   );
 
-  it("opens the same gate on the resume subcommand", () => {
+  it("ignores resumeSession — codex has no reachable resume argv", () => {
     const args = provider.buildArgs(
       baseOptions({
         mode: "plan",
@@ -485,7 +476,11 @@ describe("CodexProvider.buildArgs — -c mcp_servers overrides", () => {
       }),
       spawnContext,
     );
-    expect(args.slice(0, 2)).toEqual(["exec", "resume"]);
+    // The `exec resume` subcommand was never reachable (codex is excluded
+    // from `isResumableProvider`), so a resume-shaped call builds the plain
+    // exec argv — same gate, same overrides.
+    expect(args[0]).toBe("exec");
+    expect(args).not.toContain("resume");
     expect(args).toContain("--dangerously-bypass-approvals-and-sandbox");
   });
 
@@ -507,7 +502,7 @@ describe("CodexProvider.buildArgs — -c mcp_servers overrides", () => {
     expect(args[args.length - 1]).toBe("PROMPT");
   });
 
-  it("adds the same overrides in the resume branch", () => {
+  it("carries the same overrides on a resume-shaped call", () => {
     const args = provider.buildArgs(
       baseOptions({
         mcp: sampleMcp,
@@ -517,7 +512,9 @@ describe("CodexProvider.buildArgs — -c mcp_servers overrides", () => {
       spawnContext,
     );
 
-    expect(args.slice(0, 3)).toEqual(["exec", "resume", "cli-123"]);
+    // No resume subcommand to reach: the overrides ride the plain exec argv.
+    expect(args[0]).toBe("exec");
+    expect(args).not.toContain("resume");
     expect(args).toContain('mcp_servers.arij.command="/usr/bin/node"');
     expect(args).toContain('mcp_servers.arij.args=["/app/bin/arij-mcp.mjs"]');
     expect(args).toContain(
@@ -655,6 +652,8 @@ describe("isMcpExemptAgentType", () => {
 
   it("exempts the ticket-less failure digest report writer", () => {
     expect(isMcpExemptAgentType("failure_digest")).toBe(true);
+    expect(isMcpExemptAgentType("forensic")).toBe(true);
+    expect(isMcpExemptAgentType("spec_generation")).toBe(true);
   });
 
   it("leaves every ticket-scoped agent on the channel", () => {
@@ -664,7 +663,6 @@ describe("isMcpExemptAgentType", () => {
       "team_build",
       "review_code",
       "merge",
-      "forensic",
       null,
       undefined,
     ]) {

@@ -27,11 +27,10 @@
  *     a no-op unless the 'memory_auto_distill' setting is on,
  *   - the Full Auto Mode kick — a freed slot should be refilled now, not up
  *     to 15s later (the interval sweep stays as the backstop),
- *   - the failed-session notification (lib/agent-sessions/terminal-notification.ts)
- *     — a session that is finalized as failed by a path whose closure dies
- *     first (scheduler safety net, boot cleanup, engines) must still ring
- *     the bell with the full error message, not just sit there labelled
- *     "Agent error".
+ *   - the terminal session webhook
+ *     (lib/agent-sessions/session-outcome-webhook.ts) — a session finalized
+ *     by a path whose closure dies first (scheduler safety net, boot cleanup,
+ *     engines) must still reach the project's webhook receiver.
  * The hook slot is globalThis-backed and registration simply replaces it, so
  * hot reloads are safe here too.
  */
@@ -80,19 +79,19 @@ export async function register(): Promise<void> {
     const { maybeAutoDistillAfterSessionTerminal } = await import(
       "@/lib/workflow/memory-distill"
     );
-    const { createTerminalSessionNotification } = await import(
-      "@/lib/agent-sessions/terminal-notification"
+    const { sendTerminalSessionWebhook } = await import(
+      "@/lib/agent-sessions/session-outcome-webhook"
     );
     setSessionTerminalHook((event) => {
       // Every terminal status frees a scheduler slot, so the supervisor is
       // kicked regardless of how the session ended.
       kickAutoModeForSession(event.sessionId);
 
-      // A failure finalized outside a live route closure (scheduler safety
-      // net, boot cleanup, night/auto-mode engines) is notified here, at
-      // the moment the row is finalized. The routes' own emit path hits
-      // createNotificationFromSession's per-session idempotency guard.
-      createTerminalSessionNotification(event);
+      // The outbound session.completed / session.failed webhook fires here,
+      // at the one choke point every finalization path runs through — so a
+      // session finalized by a closure that died first (scheduler safety net,
+      // boot cleanup, night/auto-mode engines) still reaches the receiver.
+      sendTerminalSessionWebhook(event);
 
       if (event.status !== "completed") return;
       // Fire-and-forget: the trigger owns its guards and never rejects.

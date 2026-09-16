@@ -29,6 +29,8 @@ vi.mock("@/lib/utils/nanoid", () => ({
   createId: vi.fn(() => "test-release-id"),
 }));
 
+vi.mock("@/lib/git/authenticated", () => ({ runAuthenticatedGit: mockGitPush }));
+
 // Mock simple-git
 vi.mock("simple-git", () => ({
   default: vi.fn(() => ({
@@ -324,13 +326,13 @@ describe("Release creation with pushToGitHub", () => {
     expect(mockLogSyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: "tag_push",
-        status: "failure",
+        status: "failed",
       })
     );
     expect(mockLogSyncOperation).toHaveBeenCalledWith(
       expect.objectContaining({
         operation: "release",
-        status: "failure",
+        status: "failed",
       })
     );
   });

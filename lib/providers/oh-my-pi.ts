@@ -129,9 +129,9 @@ export class OhMyPiProvider extends PiProvider {
    * chat and analyze are covered and code mode — which restricts nothing and
    * claims no isolation — runs on any version.
    */
-  protected preflight(options: ProviderSpawnOptions): string | undefined {
+  protected preflight(options: ProviderSpawnOptions): string | undefined | Promise<string | undefined> {
     if (!this.toolAllowlist(options.mode)) return undefined;
-    return ompRestrictedToolsBlockReason() ?? undefined;
+    return ompRestrictedToolsBlockReason().then((reason) => reason ?? undefined);
   }
 
   /**

@@ -1,4 +1,10 @@
 import { z } from "zod";
+import { isSafeRepoSegment } from "@/lib/git/github-url";
+
+const githubOwnerRepoSchema = z.string().max(200).refine((value) => {
+  const parts = value.split("/");
+  return parts.length === 2 && parts.every(isSafeRepoSegment);
+}, "Expected a valid GitHub owner/repo").nullish();
 import { isAgentProvider } from "@/lib/agent-config/constants";
 import { MAX_TICKET_IMAGES } from "@/lib/uploads/image-attachments";
 import { DESK_DISMISSAL_KINDS } from "@/lib/control-desk/aggregate";
@@ -17,7 +23,7 @@ export const createProjectSchema = z.object({
   name: z.string().min(1, "Name is required").max(200),
   description: z.string().max(5000).nullish(),
   gitRepoPath: z.string().max(1000).nullish(),
-  githubOwnerRepo: z.string().max(200).nullish(),
+  githubOwnerRepo: githubOwnerRepoSchema,
   gitRemoteUrl: z.string().max(1000).nullish(),
   defaultBranch: z.string().max(255).nullish(),
 });
@@ -26,7 +32,7 @@ export const updateProjectSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(5000).nullish(),
   gitRepoPath: z.string().max(1000).nullish(),
-  githubOwnerRepo: z.string().max(200).nullish(),
+  githubOwnerRepo: githubOwnerRepoSchema,
   defaultBranch: z.string().max(255).nullish(),
   status: z
     .enum(["ideation", "specifying", "building", "done", "archived"])
@@ -97,6 +103,45 @@ const dependencyInput = z.object({
   dependsOnTicketId: z.string(),
 });
 
+/**
+ * `PUT /api/projects/:id/epics/:epicId/dependencies` — replace one ticket's
+ * predecessor list. `epicId` itself is a route param, not body data.
+ */
+export const setTicketDependenciesSchema = z.object({
+  dependsOnIds: z.array(z.string()),
+});
+
+/**
+ * `POST /api/projects/:id/epics/reorder` — the board's ordering endpoint,
+ * used by drag-and-drop and by whole-column sorts.
+ */
+export const reorderTicketsSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string().min(1),
+      status: z.string().min(1),
+      position: z.number(),
+    })
+  ),
+  /**
+   * "I am only reordering; never move anything." See `reorderOnly` in
+   * lib/workflow/reorder.ts for why a whole-column sort needs it and
+   * drag-and-drop does not.
+   */
+  reorderOnly: z.boolean().optional(),
+});
+
+/**
+ * A ticket comment, on an epic or a story — the two routes take the same body
+ * and differ only in which column the row carries. `agentSessionId` is
+ * optional and belongs to agent-authored comments.
+ */
+export const createTicketCommentSchema = z.object({
+  author: z.string().min(1, "author is required"),
+  content: z.string().min(1, "content is required"),
+  agentSessionId: z.string().optional(),
+});
+
 export const createEpicSchema = z.object({
   // Trimmed before both checks: `"   "` is not a title, and the caps are
   // measured on the value that actually gets stored — which is also what the
@@ -119,6 +164,8 @@ export const createEpicSchema = z.object({
    * and belongs to the project before linking it to the new ticket.
    */
   frictionId: z.string().min(1).max(64).optional(),
+  /** Deduplicate this proposal within its project-owned chat conversation. */
+  sourceConversationId: z.string().trim().min(1).max(64).optional(),
   userStories: z.array(userStoryInput).optional(),
   dependencies: z.array(dependencyInput).optional(),
 });
@@ -179,14 +226,7 @@ export const updateStorySchema = z.object({
 });
 
 // Bulk story PATCH uses `id` in the body
-export const updateStoryByIdSchema = z.object({
-  id: z.string().min(1, "id is required"),
-  title: z.string().min(1).max(STORY_TITLE_MAX_LENGTH).optional(),
-  description: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
-  acceptanceCriteria: z.string().max(STORY_TEXT_MAX_LENGTH).nullish(),
-  status: z.enum(["todo", "in_progress", "review", "done"]).optional(),
-  position: z.number().int().min(0).optional(),
-});
+
 
 // --- Agent config schemas ---
 
@@ -244,21 +284,6 @@ export const updateNamedAgentSchema = z.object({
 /** `null` clears the designation; there is at most one at a time. */
 export const setDefaultCompositeAgentSchema = z.object({
   compositeAgentId: z.string().min(1).nullable(),
-});
-
-export const createReviewAgentSchema = z.object({
-  name: z
-    .string("name is required")
-    .refine((v) => v.trim().length > 0, "name is required"),
-  systemPrompt: z
-    .string("systemPrompt is required")
-    .min(1, "systemPrompt is required"),
-});
-
-export const updateReviewAgentSchema = z.object({
-  name: z.string().optional(),
-  systemPrompt: z.string().optional(),
-  isEnabled: z.boolean().optional(),
 });
 
 export const updateAgentPromptSchema = z.object({

@@ -76,8 +76,6 @@ function detail(overrides: Partial<NightRunDetail> = {}): NightRunDetail {
     costIsPartial: false,
     abortReason: null,
     abortedAtWave: null,
-    breakerThreshold: 3,
-    costCapUsd: null,
     ...overrides,
   };
 }
@@ -198,7 +196,6 @@ describe("NightRunSummaryDialog", () => {
         abortedAtWave: 1,
         totalCostUsd: 20.1,
         costIsPartial: true,
-        costCapUsd: 20,
       })
     );
     renderSummary();
@@ -221,7 +218,6 @@ describe("NightRunSummaryDialog", () => {
         failurePolicy: null,
         totalWaves: null,
         currentWave: null,
-        breakerThreshold: null,
         counts: counts({ done: 2, failed: 1 }),
       })
     );
@@ -246,8 +242,6 @@ describe("NightRunSummaryDialog", () => {
             title: "Landing page",
             status: "done",
             reason: null,
-            pipelineRunId: "pipe-1",
-            sessionIds: ["s1", "s2"],
             costUsd: 1.5,
           },
           {
@@ -256,8 +250,6 @@ describe("NightRunSummaryDialog", () => {
             title: "Payments",
             status: "failed",
             reason: "pipeline failed",
-            pipelineRunId: "pipe-2",
-            sessionIds: ["s3"],
             costUsd: 2.7,
           },
           {
@@ -266,8 +258,6 @@ describe("NightRunSummaryDialog", () => {
             title: "Checkout",
             status: "asked",
             reason: null,
-            pipelineRunId: "pipe-3",
-            sessionIds: ["s4"],
             costUsd: null,
           },
           {
@@ -276,8 +266,6 @@ describe("NightRunSummaryDialog", () => {
             title: "Receipts",
             status: "skipped",
             reason: "skipped: dependency ARJ-2 failed",
-            pipelineRunId: null,
-            sessionIds: [],
             costUsd: null,
           },
         ],

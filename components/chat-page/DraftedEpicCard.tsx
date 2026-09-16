@@ -45,6 +45,7 @@ export type EpicCreateStatus = "todo" | "backlog";
 
 export interface DraftedEpicCardProps {
   projectId: string;
+  conversationId: string;
   epic: ParsedEpic;
   /** Project identity colour for the id chip. Never state. */
   tone: ProjectTone;
@@ -59,7 +60,7 @@ export interface DraftedEpicCardProps {
   onCreated: (created: {
     epicId: string;
     readableId: string | null;
-    status: EpicCreateStatus;
+    status: string;
   }) => void;
   onOpenTicket: (epicId: string) => void;
   onToast: (tone: "success" | "error", message: string) => void;
@@ -69,6 +70,7 @@ type PendingAction = "dev" | "backlog" | "edit" | null;
 
 export function DraftedEpicCard({
   projectId,
+  conversationId,
   epic,
   tone,
   epicId,
@@ -99,6 +101,7 @@ export function DraftedEpicCard({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             title: epic.title,
+            sourceConversationId: conversationId,
             description: epic.description,
             status,
             type: "feature",
@@ -114,7 +117,7 @@ export function DraftedEpicCard({
           epicId: body.data.id as string,
           readableId:
             typeof body.data.readableId === "string" ? body.data.readableId : null,
-          status,
+          status: typeof body.data.status === "string" ? body.data.status : status,
         });
         return body.data.id as string;
       } catch {
@@ -122,7 +125,7 @@ export function DraftedEpicCard({
         return null;
       }
     },
-    [projectId, epic, onCreated, onToast, t],
+    [projectId, conversationId, epic, onCreated, onToast, t],
   );
 
   /** Create-then-dispatch, in that order: the builder's prompt must see it. */

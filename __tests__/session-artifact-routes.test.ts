@@ -14,16 +14,9 @@ const testDb = vi.hoisted(() => ({
   instance: null as ReturnType<typeof createTestDb> | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
 import { GET as getArtifact } from "@/app/api/projects/[projectId]/artifacts/[artifactId]/route";
 import { GET as listArtifacts } from "@/app/api/projects/[projectId]/epics/[epicId]/artifacts/route";

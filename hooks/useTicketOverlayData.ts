@@ -1,4 +1,5 @@
 "use client";
+import { markRead as markTicketRead } from "@/lib/inbox/client";
 
 /**
  * Everything the frame-6a ticket overlay reads, in one view model.
@@ -53,7 +54,7 @@ import { findUnifiedSession } from "@/lib/agent-sessions/session-list";
 import { aggregateGradingStatus, type GradingStatus } from "@/lib/grading/report";
 import { isVerificationReport } from "@/lib/verify/verify-constants";
 import { buildActivityFeed } from "@/lib/kanban/activity-feed";
-import { projectTone, type ProjectTone } from "@/lib/piscine/tokens";
+import { projectTone, projectToneIndex, type ProjectTone } from "@/lib/piscine/tokens";
 import {
   activeAgentType,
   activityTimelineLines,
@@ -61,7 +62,6 @@ import {
   dependencyRowItems,
   diffTotals,
   mergeTimelineLines,
-  projectToneIndex,
   shortId,
   timelineKindForAction,
   toggledWaitsOn,
@@ -85,13 +85,6 @@ export interface UseTicketOverlayDataOptions {
   refreshTrigger?: number;
   onMergeSuccess?: () => void;
   onDeleteSuccess?: () => void;
-}
-
-/** Row shape the epics route actually returns — wider than ProjectEpicSummary. */
-interface ProjectEpicRow {
-  id: string;
-  title?: string | null;
-  readableId?: string | null;
 }
 
 interface UnifiedSessionRow {
@@ -166,11 +159,14 @@ export function useTicketOverlayData(
     predecessors,
     successors,
     saving: dependencySaving,
+    loading: dependencyLoading,
+    ready: dependencyReady,
     error: dependencyError,
     saveDependencies,
+    refresh: refreshDependencies,
   } = useEpicDependencies(projectId, activeEpicId);
 
-  const { pr, loading: prLoading, error: prError, createPr, syncPr } =
+  const { pr, loading: prLoading, ready: prReady, error: prError, createPr, syncPr, refresh: refreshPr } =
     useEpicPr(projectId, activeEpicId);
 
   const { isConfigured: githubConfigured } = useGitHubConfig(
@@ -206,11 +202,7 @@ export function useTicketOverlayData(
     if (!open || !epicId) return;
     const markRead = async () => {
       try {
-        await fetch("/api/inbox/read", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ epicId }),
-        });
+        await markTicketRead(epicId, "Failed to mark ticket read");
       } catch {
         // Best-effort — the unread dot simply survives until the next open.
       }
@@ -381,16 +373,9 @@ export function useTicketOverlayData(
     return () => controller.abort();
   }, [projectId, activeEpicId, open, sessionRefreshToken]);
 
-  const agentType = activeAgentType(
-    activeSession as {
-      type?: string | null;
-      agentType?: string | null;
-      mode?: string | null;
-    } | null,
-  );
+  const agentType = activeAgentType(activeSession);
 
-  const liveLabel =
-    (activeSession as { label?: string | null } | null)?.label ?? null;
+  const liveLabel = activeSession?.label ?? null;
 
   /**
    * The ticket's status history, as timeline lines.
@@ -435,9 +420,7 @@ export function useTicketOverlayData(
     ? `/projects/${projectId}/sessions/${displaySessionId}`
     : null;
 
-  const agentName =
-    (activeSession as { namedAgentName?: string | null } | null)
-      ?.namedAgentName ?? null;
+  const agentName = activeSession?.namedAgentName ?? null;
 
   const sessionMeta = displaySessionId
     ? [agentName, `session #${shortId(displaySessionId)}`]
@@ -449,10 +432,9 @@ export function useTicketOverlayData(
 
   const epicIndex = useMemo(() => {
     const index = new Map<string, EpicIndexEntry>();
-    // The route returns the full epic row; ProjectEpicSummary only types the
-    // three fields its own callers use, so the index is built here rather
-    // than by widening someone else's exported type.
-    for (const row of projectEpics as unknown as ProjectEpicRow[]) {
+    // `?view=index` returns exactly the three fields this index needs, so
+    // there is no cast: the hook's type IS the payload's shape.
+    for (const row of projectEpics) {
       index.set(row.id, { readableId: row.readableId, title: row.title });
     }
     return index;
@@ -482,18 +464,14 @@ export function useTicketOverlayData(
 
   const waitsOnOptions: DependencyOption[] = useMemo(
     () =>
-      dependencyOptions(
-        projectEpics as unknown as ProjectEpicRow[],
-        activeEpicId,
-        waitsOnIds,
-      ),
+      dependencyOptions(projectEpics, activeEpicId, waitsOnIds),
     [projectEpics, activeEpicId, waitsOnIds],
   );
 
   const toggleWaitsOn = useCallback(
     (epicId: string) => {
-      // `saveDependencies` clears the previous error itself and refetches on
-      // success, so the chips below follow the server, never the click.
+      // `saveDependencies` clears the previous error and applies the server's
+      // confirmed records, so the chips follow the server, never the click.
       void saveDependencies(toggledWaitsOn(waitsOnIds, epicId));
     },
     [waitsOnIds, saveDependencies],
@@ -625,6 +603,8 @@ export function useTicketOverlayData(
 
     pr,
     prLoading,
+    prReady,
+    refreshPr,
     prError,
     createPr,
     syncPr,
@@ -635,6 +615,9 @@ export function useTicketOverlayData(
     waitsOnOptions,
     toggleWaitsOn,
     dependencySaving,
+    dependencyLoading,
+    dependencyReady,
+    refreshDependencies,
     dependencyError,
     namedAgents,
 

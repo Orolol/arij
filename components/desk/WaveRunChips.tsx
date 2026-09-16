@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { Layers, Moon, Square } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { Mono, PillButton } from "@/components/piscine";
-import { usePolling } from "@/hooks/usePolling";
+import { usePolledResource } from "@/hooks/usePolledResource";
+const loadError = () => "Unable to load wave runs";
+const isBatches = (value: unknown): value is WaveBatch[] => Array.isArray(value);
 import { stopNightRun } from "@/hooks/useNightRuns";
 import { isNightRunId } from "@/lib/night/constants";
 
@@ -52,23 +54,10 @@ export interface WaveRunChipsProps {
 
 export function WaveRunChips({ projectId }: WaveRunChipsProps) {
   const t = useTranslations("Desk");
-  const [batches, setBatches] = useState<WaveBatch[]>([]);
+  const { data } = usePolledResource<WaveBatch[]>(projectId ? `/api/projects/${projectId}/build/waves` : null, 3000, loadError, { validateData: isBatches });
+  const batches = data ?? [];
   /** Night run ids the user already asked to stop (local echo). */
   const [stopped, setStopped] = useState<string[]>([]);
-
-  const poll = useCallback(async () => {
-    if (!projectId) return;
-    try {
-      const res = await fetch(`/api/projects/${projectId}/build/waves`);
-      const json = await res.json();
-      setBatches(Array.isArray(json.data) ? json.data : []);
-    } catch {
-      // Best-effort: the registry is in-process and an empty list simply
-      // hides the chips.
-    }
-  }, [projectId]);
-
-  usePolling(poll, 3000, Boolean(projectId));
 
   if (!projectId || batches.length === 0) return null;
 

@@ -271,7 +271,12 @@ describe("bin/arij.mjs is the launcher these rules describe", () => {
   });
 
   it("ships the plan module in the published package", () => {
-    expect(readPackageJson().files).toContain("bin");
+    const pkg = readPackageJson() as { files?: string[]; private?: boolean };
+    if (pkg.private) {
+      expect(pkg.files).toBeUndefined();
+    } else {
+      expect(pkg.files).toContain("bin");
+    }
     expect(
       fs.existsSync(path.join(projectRoot, "bin", "launch-plan.mjs")),
     ).toBe(true);

@@ -54,7 +54,7 @@ describe("logSyncOperation", () => {
     logSyncOperation({
       projectId: "proj_2",
       operation: "fetch",
-      status: "failure",
+      status: "failed",
     });
 
     expect(dbMockState.insertCalls).toHaveLength(1);
@@ -63,24 +63,16 @@ describe("logSyncOperation", () => {
         projectId: "proj_2",
         operation: "fetch",
         branch: null,
-        status: "failure",
+        status: "failed",
         detail: null,
       })
     );
   });
 
-  it("exposes writeGitSyncLog as an identity alias of logSyncOperation", async () => {
-    const { writeGitSyncLog, logSyncOperation } = await import(
-      "@/lib/github/sync-log"
-    );
+  it("writes machine-readable JSON detail payloads via logSyncOperation", async () => {
+    const { logSyncOperation } = await import("@/lib/github/sync-log");
 
-    expect(writeGitSyncLog).toBe(logSyncOperation);
-  });
-
-  it("writes machine-readable JSON detail payloads via writeGitSyncLog", async () => {
-    const { writeGitSyncLog } = await import("@/lib/github/sync-log");
-
-    writeGitSyncLog({
+    logSyncOperation({
       projectId: "proj-1",
       operation: "pull",
       status: "failed",
@@ -156,7 +148,7 @@ describe("getRecentSyncLogs", () => {
         projectId: "proj_1",
         operation: "pull",
         branch: "dev",
-        status: "failure",
+        status: "failed",
         detail: "non-fast-forward",
         createdAt: "2025-01-01T01:00:00Z",
       },
@@ -169,7 +161,7 @@ describe("getRecentSyncLogs", () => {
 
     expect(result).toHaveLength(2);
     expect(result[0].operation).toBe("push");
-    expect(result[1].status).toBe("failure");
+    expect(result[1].status).toBe("failed");
   });
 
   it("returns empty array when no logs exist", async () => {

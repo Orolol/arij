@@ -1,0 +1,11 @@
+{
+  "tokenBudget": {
+    "loadFailed": "Impossible de charger les réglages du projet."
+  },
+  "delete": {
+    "action": "Supprimer le projet",
+    "description": "Supprimer « {name} » et ses données Arij ?",
+    "removeDirectory": "Supprimer aussi le clone géré par Arij",
+    "failed": "Échec de la suppression du projet."
+  }
+}

@@ -18,26 +18,10 @@ import {
   PROJECT_MEMORY_MAX_TOKENS,
 } from "@/lib/documents/memory-constants";
 import { estimateTokens } from "@/lib/tokens/estimator";
+import { MockEventSource, installMockEventSource } from "./helpers/event-source-mock";
 
-let activeMockEventSources: MockEventSource[] = [];
 
-class MockEventSource {
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  constructor() {
-    activeMockEventSources.push(this);
-  }
-  close() {
-    activeMockEventSources = activeMockEventSources.filter((es) => es !== this);
-  }
-  emit(type: string, data: Record<string, unknown> = {}) {
-    this.onmessage?.({
-      data: JSON.stringify({ type, projectId: "proj-1", data, timestamp: new Date().toISOString() }),
-    });
-  }
-}
-(globalThis as Record<string, unknown>).EventSource = MockEventSource;
+installMockEventSource();
 
 const mockRouterPush = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -92,7 +76,7 @@ describe("spec page — paired memory card structure (Story 1 & 2)", () => {
   });
 
   it("renders the memory card next to the spec editor as equal peers", async () => {
-    render(<SpecPage params={Promise.resolve({ projectId: "project-mem-1" })} />);
+    render(<SpecPage />);
 
     await waitFor(() => {
       expect(screen.getByText("Specification")).toBeDefined();
@@ -105,7 +89,7 @@ describe("spec page — paired memory card structure (Story 1 & 2)", () => {
   });
 
   it("shows the empty state and cap indicator before learned memory exists", async () => {
-    render(<SpecPage params={Promise.resolve({ projectId: "project-mem-1" })} />);
+    render(<SpecPage />);
 
     await waitFor(() => {
       expect(screen.getByTestId("memory-cap-indicator")).toHaveTextContent(
@@ -444,7 +428,7 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
 
     // Emit memory:changed SSE event
     act(() => {
-      activeMockEventSources.forEach((es) => es.emit("memory:changed"));
+      MockEventSource.instances.forEach((es) => es.emitEvent("memory:changed"));
     });
 
     // 4. Verify local draft is preserved and conflict notice is displayed
@@ -508,10 +492,9 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
     });
 
     act(() => {
-      activeMockEventSources.forEach((es) =>
-        es.emit("session:started", {
-          sessionId: "sess-dreaming-live",
-          agentType: "dreaming",
+      MockEventSource.instances.forEach((es) =>
+        es.emitEvent("session:started", {
+          data: { sessionId: "sess-dreaming-live", agentType: "dreaming" },
         })
       );
     });
@@ -540,7 +523,7 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
     });
 
     act(() => {
-      activeMockEventSources.forEach((es) => es.emit("memory:changed"));
+      MockEventSource.instances.forEach((es) => es.emitEvent("memory:changed"));
     });
 
     // Banner clears, editor re-enables and displays new content
@@ -670,7 +653,7 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
     });
 
     act(() => {
-      activeMockEventSources.forEach((es) => es.emit("memory:changed"));
+      MockEventSource.instances.forEach((es) => es.emitEvent("memory:changed"));
     });
 
     // Local draft is preserved, but NO conflict notice is shown
@@ -726,10 +709,9 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
     });
 
     act(() => {
-      activeMockEventSources.forEach((es) =>
-        es.emit("session:completed", {
-          sessionId: "sess-dream-discarded",
-          agentType: "dreaming",
+      MockEventSource.instances.forEach((es) =>
+        es.emitEvent("session:completed", {
+          data: { sessionId: "sess-dream-discarded", agentType: "dreaming" },
         })
       );
     });
@@ -785,10 +767,9 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
     });
 
     act(() => {
-      activeMockEventSources.forEach((es) =>
-        es.emit("session:failed", {
-          sessionId: "sess-distill-failed",
-          agentType: "memory_distill",
+      MockEventSource.instances.forEach((es) =>
+        es.emitEvent("session:failed", {
+          data: { sessionId: "sess-distill-failed", agentType: "memory_distill" },
         })
       );
     });
@@ -826,10 +807,9 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
 
     // Unrelated build session starts
     act(() => {
-      activeMockEventSources.forEach((es) =>
-        es.emit("session:started", {
-          sessionId: "sess-build-123",
-          agentType: "build",
+      MockEventSource.instances.forEach((es) =>
+        es.emitEvent("session:started", {
+          data: { sessionId: "sess-build-123", agentType: "build" },
         })
       );
     });
@@ -931,5 +911,41 @@ describe("MemoryPanel component (Story 2, 3 & 4)", () => {
       "title",
       expect.stringMatching(/save or discard your edits first/i)
     );
+  });
+});
+
+describe("memory read/write ordering", () => {
+  it("does not let an old SSE read replace a successfully saved memory", async () => {
+    let lateRead!: (value: unknown) => void;
+    let reads = 0;
+    mockFetch.mockImplementation(async (_url: string, init?: RequestInit) => {
+      if (init?.method === "PUT") {
+        return { ok: true, json: async () => ({ data: { content: "saved edit" } }) };
+      }
+      reads += 1;
+      if (reads === 1) return { ok: true, json: async () => ({ data: { content: "initial" } }) };
+      return new Promise((resolve) => { lateRead = resolve; });
+    });
+    render(<MemoryPanel projectId="proj-1" mode="edit" />);
+    const editor = await screen.findByTestId("memory-editor");
+    fireEvent.change(editor, { target: { value: "saved edit" } });
+    act(() => { MockEventSource.instances.forEach((source) => source.emitEvent("memory:changed")); });
+    await waitFor(() => expect(reads).toBe(2));
+    fireEvent.click(screen.getByRole("button", { name: "Save memory" }));
+    await screen.findByText("Project memory saved.");
+    await act(async () => lateRead({ ok: true, json: async () => ({ data: { content: "initial" } }) }));
+    expect(editor).toHaveValue("saved edit");
+    expect(screen.getByRole("button", { name: "Save memory" })).toBeDisabled();
+  });
+
+  it("disables snapshot confirmation if a writer starts after it was opened", async () => {
+    const envelope = { content: "initial", archive: { content: "snapshot" }, pendingWriter: null as unknown };
+    mockFetch.mockImplementation(async () => ({ ok: true, json: async () => ({ data: { ...envelope } }) }));
+    render(<MemoryPanel projectId="proj-1" mode="edit" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Restore snapshot" }));
+    expect(screen.getByRole("button", { name: "Confirm" })).toBeEnabled();
+    envelope.pendingWriter = { sessionId: "writer", agentType: "dreaming" };
+    act(() => { MockEventSource.instances.forEach((source) => source.emitEvent("memory:changed")); });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Confirm" })).toBeDisabled());
   });
 });

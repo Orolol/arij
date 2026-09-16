@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { ChevronDown, ChevronRight, Loader2, Plus, Trash2 } from "lucide-react";
+import { requestJson } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 import { createId } from "@/lib/utils/nanoid";
 import {
@@ -49,7 +50,11 @@ interface EpicCreateDialogProps {
  * No agent is involved — this is the fast path for someone who already knows
  * what the ticket says. Brainstorming still lives in the unified chat panel.
  */
-export function EpicCreateDialog({
+export function EpicCreateDialog(props: EpicCreateDialogProps) {
+  return props.open ? <EpicCreateForm key={JSON.stringify([props.projectId, props.frictionId])} {...props} /> : null;
+}
+
+function EpicCreateForm({
   projectId,
   open,
   onOpenChange,
@@ -62,14 +67,22 @@ export function EpicCreateDialog({
 }: EpicCreateDialogProps) {
   const tKey = useTranslations();
   const t = useTranslations("Kanban");
-  const [draft, setDraft] = useState<ManualEpicDraft>(createEmptyEpicDraft);
+  const [draft, setDraft] = useState<ManualEpicDraft>(() => initialDraft ? {
+    ...initialDraft, userStories: initialDraft.userStories.map((story) => ({ ...story })),
+  } : createEmptyEpicDraft());
   const [collapsedStories, setCollapsedStories] = useState<Record<string, boolean>>({});
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   /** Field errors stay hidden until the first submit attempt. */
   const [showErrors, setShowErrors] = useState(false);
   /** Story whose title input should take focus once it has been rendered. */
-  const [pendingFocusKey, setPendingFocusKey] = useState<string | null>(null);
+  const pendingFocusKey = useRef<string | null>(null);
+  const inFlight = useRef(false);
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
 
   const titleRef = useRef<HTMLInputElement>(null);
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
@@ -77,48 +90,17 @@ export function EpicCreateDialog({
 
   const validation = validateManualEpicDraft(draft);
 
-  useEffect(() => {
-    if (!open) return;
-    setDraft(
-      initialDraft
-        ? {
-            ...initialDraft,
-            userStories: initialDraft.userStories.map((story) => ({ ...story })),
-          }
-        : createEmptyEpicDraft(),
-    );
-    setCollapsedStories({});
-    setError(null);
-    setShowErrors(false);
-  }, [initialDraft, open]);
-
-  /**
-   * Sends the caret into a freshly added story block.
-   *
-   * New blocks append to the bottom of the same scrolling body that made a
-   * blocked submit invisible: past a few stories, "Add user story" pushes the
-   * block below the fold and the only visible change is the counter, so the
-   * button reads as dead. Focus scrolls the block into view and puts the caret
-   * where the user was going to type anyway. Deferred to an effect because the
-   * input does not exist until the render that adds it has committed.
-   */
-  useEffect(() => {
-    if (!pendingFocusKey) return;
-    storyTitleRefs.current.get(pendingFocusKey)?.focus();
-    setPendingFocusKey(null);
-  }, [pendingFocusKey]);
-
   function resetForm() {
     setDraft(createEmptyEpicDraft());
     setCollapsedStories({});
     setError(null);
     setShowErrors(false);
-    setPendingFocusKey(null);
+    pendingFocusKey.current = null;
     storyTitleRefs.current.clear();
   }
 
   function handleOpenChange(next: boolean) {
-    if (submitting) return;
+    if (inFlight.current) return;
     if (!next) resetForm();
     onOpenChange(next);
   }
@@ -126,7 +108,7 @@ export function EpicCreateDialog({
   function addUserStory() {
     const story = createEmptyUserStory(createId());
     setDraft((prev) => ({ ...prev, userStories: [...prev.userStories, story] }));
-    setPendingFocusKey(story.key);
+    pendingFocusKey.current = story.key;
   }
 
   function removeUserStory(key: string) {
@@ -183,42 +165,31 @@ export function EpicCreateDialog({
   }
 
   async function handleSubmit() {
-    if (submitting) return;
+    if (inFlight.current) return;
     if (!validation.valid) {
       setShowErrors(true);
       focusFirstInvalidField();
       return;
     }
 
+    inFlight.current = true;
     setSubmitting(true);
     setError(null);
-
-    try {
-      const res = await fetch(`/api/projects/${projectId}/epics`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          buildManualEpicPayload(draft, frictionId ? { frictionId } : {}),
-        ),
-      });
-
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok || json.error) {
-        // The dialog stays open with the draft intact so a failed request
-        // never costs the user what they typed.
-        setError(formatEpicCreateError(json, t("epicCreate.errors.create")));
-        return;
-      }
-
-      const epicId = json.data?.id as string | undefined;
-      resetForm();
-      onOpenChange(false);
-      onCreated?.(epicId ?? "");
-    } catch {
-      setError(t("epicCreate.errors.create"));
-    } finally {
-      setSubmitting(false);
+    const result = await requestJson<{ id: string }>(`/api/projects/${projectId}/epics`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(buildManualEpicPayload(draft, frictionId ? { frictionId } : {})),
+      errorMessage: t("epicCreate.errors.create"),
+    });
+    inFlight.current = false;
+    if (!active.current) return;
+    setSubmitting(false);
+    if (result.error !== null) {
+      setError(formatEpicCreateError(result, t("epicCreate.errors.create")));
+      return;
     }
+    resetForm();
+    onOpenChange(false);
+    onCreated?.(result.data.id);
   }
 
   return (
@@ -236,8 +207,9 @@ export function EpicCreateDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div
-          className="max-h-[60vh] space-y-4 overflow-y-auto py-2 pr-1"
+        <fieldset
+          disabled={submitting}
+          className="max-h-[60vh] min-w-0 space-y-4 overflow-y-auto py-2 pr-1"
           data-testid="epic-create-body"
         >
           <div>
@@ -378,6 +350,10 @@ export function EpicCreateDialog({
                       value={story.title}
                       ref={(node) => {
                         storyTitleRefs.current.set(story.key, node);
+                        if (node && pendingFocusKey.current === story.key) {
+                          pendingFocusKey.current = null;
+                          node.focus();
+                        }
                       }}
                       onChange={(e) => updateUserStory(story.key, "title", e.target.value)}
                       placeholder={t("epicCreate.storyTitlePlaceholder")}
@@ -449,7 +425,7 @@ export function EpicCreateDialog({
             })}
           </div>
 
-        </div>
+        </fieldset>
 
         {/*
           Outside the scrolling body on purpose: a rejection concerns the whole

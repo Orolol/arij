@@ -134,6 +134,16 @@ describe("ASKS YOU", () => {
     expect(onReply.mock.calls[0][1]).toBe("Supprime-le");
   });
 
+  it("keeps the draft when saving the reply fails", async () => {
+    const onReply = vi.fn().mockResolvedValue(false);
+    renderBand({ awaitingReply: [asks()], onReply });
+    const field = screen.getByPlaceholderText("Reply to the agent…");
+    fireEvent.change(field, { target: { value: "Keep this answer" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(onReply).toHaveBeenCalledOnce());
+    expect(field).toHaveValue("Keep this answer");
+  });
+
   it("submits on Enter from the reply field", async () => {
     const { onReply } = renderBand({ awaitingReply: [asks()] });
     const field = screen.getByPlaceholderText("Reply to the agent…");
@@ -494,4 +504,10 @@ describe("YourTurnBand overflow marker", () => {
     const marker = screen.getByTestId("desk-your-turn-overflow");
     expect(screen.getByTestId("desk-your-turn-rows").contains(marker)).toBe(false);
   });
+});
+
+it("shows parked tickets and their reason with a link to the ticket", () => {
+  renderBand({ parked: [{ ticketId: "e4", epicId: "e4", projectId: "p1", title: "Paused", readableId: "E-4", reason: "Repeated verification failures", at: "2026-09-11T10:00:00Z" }] });
+  expect(screen.getByText("PARKED")).toBeInTheDocument();
+  expect(screen.getByRole("link", { name: /Repeated verification failures/ })).toHaveAttribute("href", "/projects/p1?ticket=e4");
 });

@@ -58,7 +58,7 @@ avec Claude         (épics + US auto)        par épic                releases
 
 1. **Local-first** — Tout tourne en localhost. Pas de cloud, pas de compte, pas de télémétrie. Les données restent sur la machine de l'utilisateur.
 2. **Claude Code natif** — L'app n'utilise pas l'API Anthropic directement. Tout passe par le CLI `claude` pour exploiter la souscription de l'utilisateur.
-3. **Convention over configuration** — Des choix par défaut sensés, un setup minimal. `npx arij` et c'est parti.
+3. **Convention over configuration** — Des choix par défaut sensés, un setup minimal. Git clone + `./install.sh` et c'est parti.
 4. **Spec-driven** — Chaque ligne de code produite est traçable jusqu'à une spec. L'épic est l'unité de travail de Claude Code.
 5. **Progressive disclosure** — L'écran d'accueil ne montre que ce qui demande quelque chose à l'utilisateur ; la profondeur (registre exhaustif des tickets, logs, git, settings) est à un clic. Voir §11.
 6. **L'écran s'organise par urgence, pas par état de workflow** — Ce sont les agents qui font les transitions de statut. L'utilisateur n'a donc pas besoin d'une vue « où en est chaque ticket » en permanence : il a besoin de savoir ce qui tourne, ce qui l'attend, et ce qui peut atterrir. C'est le principe qui a remplacé le board kanban par le poste de pilotage (§11.2). Les statuts n'ont pas disparu pour autant — ils restent le modèle de données (§7.3, §11.5).
@@ -81,9 +81,9 @@ avec Claude         (épics + US auto)        par épic                releases
 | **Conversion docs** | mammoth (docx→md), pdf-parse (pdf→text) | Léger, sans dépendance lourde |
 | **Markdown** | unified / remark / rehype | Parsing et rendu markdown |
 | **Tests** | Vitest + Playwright | Unit + E2E |
-| **Package** | npm (publié comme CLI) | `npx arij` pour lancer |
+| **Distribution** | Git clone + `./install.sh` | Démarrage local |
 
-**Drag & drop :** retiré de toutes les surfaces produit (voir §11). `@dnd-kit/*` figure encore dans les dépendances de `package.json`, mais plus aucun écran ne l'importe : la seule mention restante est un commentaire de `components/spec/DocsCard.tsx` précisant que sa zone de dépôt est une cible fichier HTML5 et non un sortable dnd-kit.
+**Drag & drop :** retiré de l’ordonnancement des tickets (voir §11), avec suppression des dépendances `@dnd-kit/*`. La zone de dépôt de `components/spec/DocsCard.tsx` reste une cible fichier HTML5 native.
 
 ---
 
@@ -536,7 +536,6 @@ app/
 │   ├── pipeline/page.tsx
 │   ├── integrations/page.tsx
 │   └── appearance/page.tsx
-├── piscine-preview/
 │   └── page.tsx                  # Harnais de dev (toutes les primitives) — pas un écran produit
 ├── projects/
 │   ├── new/page.tsx              # Création de projet
@@ -629,7 +628,7 @@ arij/
 │   │   review/, dependencies/, session-live/, shared/…
 │   ├── kanban/                   # PLUS DE BOARD : ce qui reste sont des dialogues et des
 │   │                             #   contrôles réutilisés (EpicCreateDialog, BugCreateDialog,
-│   │                             #   QuickCapture, InlineEdit, RefinementButton, GitSyncBadge)
+│   │                             #   InlineEdit, RefinementButton, RefinementDialog)
 │   ├── import/
 │   │   ├── FolderSelector.tsx     # Sélection du dossier projet
 │   │   ├── ImportPreview.tsx      # Preview des épics/US détectées (éditable)
@@ -795,7 +794,6 @@ chose est le diff complet, qui remplace le corps en place.
 | `/projects/:id/spec` | Spec & Memory : la spec, la mémoire, les suggestions d'agent, les docs, l'anatomie du prompt. |
 | `/projects/:id/releases` | Prochaine release, chiffres, historique (§F4.3). |
 | `/projects/:id/sessions` | L'historique des sessions d'agents, night runs compris. |
-| `/piscine-preview` | Harnais de développement : toutes les primitives du design system. Pas un écran produit. |
 
 ### 11.5 Les statuts existent toujours — ils ne sont simplement plus des colonnes
 
@@ -846,7 +844,7 @@ clairement :
 
 | Risque | Impact | Mitigation |
 |--------|--------|------------|
-| Claude Code CLI change son format de sortie | 🔴 Élevé | Abstraire le parsing dans un module isolé (`stream-parser.ts`), versionner la compatibilité |
+| Claude Code CLI change son format de sortie | 🔴 Élevé | Abstraire le parsing dans un module isolé (`lib/claude/json-parser.ts`), versionner la compatibilité |
 | Rate limiting souscription trop restrictif pour le multi-agent | 🟡 Moyen | Permettre le lancement séquentiel, ajouter un système de file d'attente |
 | Anthropic interdit l'usage du CLI par des apps tierces | 🔴 Élevé | Suivre les ToS, prévoir un fallback vers l'Agent SDK + API key |
 | Conflits git entre worktrees | 🟡 Moyen | Stratégie de branches isolées par épic, merge conflict detection |

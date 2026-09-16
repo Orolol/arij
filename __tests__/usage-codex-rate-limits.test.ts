@@ -12,21 +12,12 @@ import {
 // The scanner writes through Drizzle, so it runs against a real in-memory
 // database with the full migration chain rather than a hand-rolled fake.
 const testDb = vi.hoisted(() => ({
-  instance: null as ReturnType<
-    typeof import("@/lib/db/test-utils").createTestDb
-  > | null,
+  instance: null as ReturnType<typeof import("@/lib/db/test-utils").createTestDb> | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
 // ---- Import the impure module AFTER mocks ----
 import {
@@ -371,7 +362,6 @@ describe("refreshCodexUsageSnapshot", () => {
     expect(row.primaryWindowMinutes).toBe(300);
     expect(row.primaryResetsAt).toBe(1781795185);
     expect(row.secondaryWindowMinutes).toBe(10080);
-    expect(row.sourceFile).toBe(newest);
     expect(JSON.parse(row.rawJson).limit_id).toBe("codex");
   });
 

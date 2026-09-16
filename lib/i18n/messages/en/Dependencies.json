@@ -1,9 +1,0 @@
-{
-  "heading": "Dependencies",
-  "loading": "Loading dependencies...",
-  "dependsOn": "Depends on ({count})",
-  "noPredecessors": "No predecessors — this epic can start independently.",
-  "addPlaceholder": "Add predecessor...",
-  "dependedOnBy": "Depended on by ({count})",
-  "unknownStatus": "unknown"
-}

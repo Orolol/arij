@@ -41,6 +41,7 @@ export function partitionUnanchoredComments(
 }
 
 interface UnanchoredFindingsProps {
+  disabled?: boolean;
   comments: ReviewComment[];
   onUpdateComment: (
     id: string,
@@ -57,6 +58,7 @@ export function UnanchoredFindings({
   comments,
   onUpdateComment,
   onDeleteComment,
+  disabled,
 }: UnanchoredFindingsProps) {
   const t = useTranslations("Review");
   if (comments.length === 0) return null;
@@ -74,11 +76,11 @@ export function UnanchoredFindings({
 
   return (
     <div
-      className="border border-border rounded-lg p-3 space-y-3"
+      className="border border-border/40 rounded-[10px] p-3 space-y-3 bg-card"
       data-testid="unanchored-findings"
     >
       <div className="flex items-center gap-2 text-sm font-medium">
-        <FileQuestion className="h-4 w-4 text-amber-500" />
+        <FileQuestion className="h-4 w-4 text-muted-foreground" />
         {t("unanchored.title")}
         <span className="text-xs text-muted-foreground font-normal">
           {t("unanchored.note")}
@@ -91,6 +93,7 @@ export function UnanchoredFindings({
             comments={group}
             onUpdate={onUpdateComment}
             onDelete={onDeleteComment}
+            disabled={disabled}
           />
         </div>
       ))}

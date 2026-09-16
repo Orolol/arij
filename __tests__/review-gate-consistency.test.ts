@@ -27,17 +27,11 @@ const testDb = vi.hoisted(() => ({
   > | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-  ensureDbReady: vi.fn(),
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb, {
+    ensureDbReady: vi.fn(),
+  }),
+);
 
 import { createTestDb } from "@/lib/db/test-utils";
 import {

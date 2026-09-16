@@ -17,18 +17,18 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
-import { execSync } from "child_process";
 import { CODEX_SUBAGENT_DEVELOPER_INSTRUCTIONS } from "@/lib/codex/constants";
-import type { StreamLogContext } from "@/lib/claude/logger";
 import {
   BaseCliProvider,
   STDIN_PAYLOAD_KEY,
+  runProbe,
   type BaseProviderChunkCallbacks,
   type ProviderExitInfo,
   type ProviderSpawnContext,
 } from "./base-provider";
 import { promptExceedsArgv } from "./prompt-transport";
 import { buildProviderOptionArgs } from "./options-registry";
+import { unsandboxedSpawnBlockReason } from "./spawn-containment";
 import type {
   McpSpawnConfig,
   ProviderResult,
@@ -65,9 +65,8 @@ interface CodexSpawnContext extends ProviderSpawnContext {
  * /proc/<pid>/cmdline for the lifetime of the process. That is a LOCAL-ONLY
  * exposure on a single-user machine, bounded by the token's per-session scope
  * and by revocation at process exit. Everything downstream of the spawn is
- * masked: the persisted cliCommand (buildDisplayCommand), the console spawn
- * log (beforeSpawn), and the NDJSON log header (redactMcpToken in
- * lib/claude/logger.ts). Revisit if codex gains a config-file override.
+ * masked: the persisted cliCommand (buildDisplayCommand) and the console spawn
+ * log (beforeSpawn). Revisit if codex gains a config-file override.
  */
 /**
  * Approval/sandbox flags for `codex exec`. One answer for every mode, on
@@ -97,8 +96,13 @@ interface CodexSpawnContext extends ProviderSpawnContext {
  *
  * What actually contains these agents is the same thing that contains the
  * claude-code ones, which have run `--permission-mode bypassPermissions` all
- * along: a disposable per-ticket git worktree. Narrow this the moment codex
- * grows a real non-interactive approval setting.
+ * along: a disposable per-ticket git worktree. That containment is ENFORCED,
+ * not assumed: `preflight` refuses a plan/chat/analyze spawn whose cwd is not
+ * an Arij worktree (see lib/providers/spawn-containment.ts) — before this
+ * gate, chat turns, spec generation, QA epic extraction, titling and the
+ * memory writers all ran codex with full write access to the main checkout,
+ * or to Arij's own repository. Narrow the flag itself the moment codex grows
+ * a real non-interactive approval setting.
  */
 function codexApprovalArgs(): string[] {
   return ["--dangerously-bypass-approvals-and-sandbox"];
@@ -200,6 +204,16 @@ export class CodexProvider extends BaseCliProvider {
     return CODEX_SUBAGENT_DEVELOPER_INSTRUCTIONS;
   }
 
+  /**
+   * A restricted mode with no sandbox behind it is only acceptable inside a
+   * disposable worktree. Refusing here is the loud half of the trade: the
+   * session fails with the reason instead of quietly running an agent with
+   * write access on the user's repository.
+   */
+  protected preflight(options: ProviderSpawnOptions): string | undefined {
+    return unsandboxedSpawnBlockReason("Codex", options) ?? undefined;
+  }
+
   protected prepareSpawn(options: ProviderSpawnOptions): CodexSpawnContext {
     // Temp file for -o (reliable output capture)
     return {
@@ -219,10 +233,8 @@ export class CodexProvider extends BaseCliProvider {
   ): string[] {
     // No `mode` here: unlike the other providers, every codex exec gets the
     // same approval/sandbox posture — see codexApprovalArgs().
-    const { prompt, cwd, model, cliSessionId, resumeSession, mcp, cliOptions } =
-      options;
+    const { prompt, cwd, model, mcp, cliOptions } = options;
     const effectiveCwd = cwd || process.cwd();
-    const isResume = !!(cliSessionId && resumeSession);
     const developerInstructions = this.developerInstructions;
     // `-` tells codex to read the prompt from stdin, where BaseCliProvider
     // pipes it — the prompt is too long for a single argv element.
@@ -232,69 +244,41 @@ export class CodexProvider extends BaseCliProvider {
       ? "-"
       : prompt;
 
-    // `codex exec resume <ID> <PROMPT>` is a separate subcommand with its own
-    // flag set (no -C, -o, --color, -s).  Build args accordingly.
+    // `codex exec resume <ID>` used to be built here. It is unreachable by
+    // construction and is gone: codex never reports the thread id it created
+    // (parseSessionId above), so the only id Arij could store is one it
+    // invented — `isResumableProvider` therefore excludes codex, and every
+    // resume entry point filters on it. The profile option's
+    // `resumeSupported: false` flag is gone with it.
     const args: string[] = ["exec"];
 
-    if (isResume) {
-      args.push("resume", cliSessionId!);
+    args.push(...codexApprovalArgs());
 
-      // resume only supports a subset of flags
-      args.push(...codexApprovalArgs());
-      args.push("--skip-git-repo-check");
+    args.push("-C", effectiveCwd);
+    args.push("--skip-git-repo-check");
 
-      if (model) {
-        args.push("-m", model);
-      }
+    // Capture final message to file (avoids mixing with banners/logs)
+    args.push("-o", (spawnContext as CodexSpawnContext).outputFile);
 
-      if (developerInstructions && developerInstructions.trim()) {
-        args.push("-c", `developer_instructions=${JSON.stringify(developerInstructions)}`);
-      }
+    // No ANSI escape codes
+    args.push("--color", "never");
 
-      if (mcp) {
-        args.push(...buildCodexMcpOverrideArgs(mcp));
-      }
-
-      // `codex exec resume` takes a strict SUBSET of `codex exec`'s flags
-      // (no -C, -o, --color, -p/--profile), and an unknown flag there is a
-      // fatal argv error. The registry marks which options survive a resume.
-      args.push(
-        ...buildProviderOptionArgs("codex", cliOptions, { resume: true }),
-      );
-
-      // Prompt as positional argument (after session ID)
-      args.push(promptArg);
-    } else {
-      // --- normal (non-resume) exec ---
-
-      args.push(...codexApprovalArgs());
-
-      args.push("-C", effectiveCwd);
-      args.push("--skip-git-repo-check");
-
-      // Capture final message to file (avoids mixing with banners/logs)
-      args.push("-o", (spawnContext as CodexSpawnContext).outputFile);
-
-      // No ANSI escape codes
-      args.push("--color", "never");
-
-      if (model) {
-        args.push("-m", model);
-      }
-
-      if (developerInstructions && developerInstructions.trim()) {
-        args.push("-c", `developer_instructions=${JSON.stringify(developerInstructions)}`);
-      }
-
-      if (mcp) {
-        args.push(...buildCodexMcpOverrideArgs(mcp));
-      }
-
-      args.push(...buildProviderOptionArgs("codex", cliOptions));
-
-      // Prompt as positional argument
-      args.push(promptArg);
+    if (model) {
+      args.push("-m", model);
     }
+
+    if (developerInstructions && developerInstructions.trim()) {
+      args.push("-c", `developer_instructions=${JSON.stringify(developerInstructions)}`);
+    }
+
+    if (mcp) {
+      args.push(...buildCodexMcpOverrideArgs(mcp));
+    }
+
+    args.push(...buildProviderOptionArgs("codex", cliOptions));
+
+    // Prompt as positional argument
+    args.push(promptArg);
 
     return args;
   }
@@ -404,9 +388,8 @@ export class CodexProvider extends BaseCliProvider {
   protected handleExit(
     info: ProviderExitInfo,
     callbacks: BaseProviderChunkCallbacks,
-    logCtx: StreamLogContext | null,
   ): ProviderResult {
-    const providerResult = super.handleExit(info, callbacks, logCtx);
+    const providerResult = super.handleExit(info, callbacks);
 
     const { code, stdout, stderr, duration } = info;
     const fileOutput =
@@ -448,21 +431,18 @@ export class CodexProvider extends BaseCliProvider {
     }
   }
 
+  /**
+   * Installed AND logged in. Both probes are asynchronous: this runs inside
+   * request handlers (GET /api/providers/available, the default chat mode,
+   * reviewer segregation), and a synchronous `codex login status` used to
+   * hold the whole event loop — every SSE stream included — for its duration.
+   */
   async isAvailable(): Promise<boolean> {
-    try {
-      execSync("which codex", { stdio: "ignore" });
-    } catch {
-      return false;
-    }
-    // Also check login status (codex writes to stderr)
-    try {
-      const output = execSync("codex login status 2>&1", {
-        encoding: "utf-8",
-        timeout: 5000,
-      });
-      return /logged in/i.test(output);
-    } catch {
-      return false;
-    }
+    if (!(await super.isAvailable())) return false;
+    // codex writes the login status to stderr; the probe merges both streams.
+    // "Not logged in" contains "logged in" — test the negative form first.
+    const login = await runProbe("codex", ["login", "status"]);
+    if (login === null || /not logged in/i.test(login)) return false;
+    return /logged in/i.test(login);
   }
 }

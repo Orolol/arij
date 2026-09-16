@@ -6,7 +6,7 @@
  * PATCH keeps the user's values on screen with the server's own words.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import SettingsPage from "@/app/settings/page";
 import PipelineSettingsPage from "@/app/settings/pipeline/page";
@@ -217,5 +217,57 @@ describe("Settings — draft and commit", () => {
     await waitFor(() =>
       expect(screen.getByTestId("settings-message")).toHaveAttribute("role", "alert")
     );
+  });
+
+  it.each(["/srv/newer", "/srv/original"])(
+    "preserves a change to %s made while Save is in flight",
+    async (nextValue) => {
+      stored = { [PROJECTS_ROOT_SETTING_KEY]: "/srv/original" };
+      const fetchMock = mockFetch();
+      await renderWorkspace();
+      const input = screen.getByTestId("projects-root-setting");
+      await waitFor(() => expect(input).toHaveValue("/srv/original"));
+      let finish!: (response: any) => void;
+      fetchMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+
+      fireEvent.change(input, { target: { value: "/srv/submitted" } });
+      fireEvent.click(screen.getByTestId("settings-save"));
+      fireEvent.change(input, { target: { value: nextValue } });
+      fireEvent.change(screen.getByTestId("night-cost-cap-setting"), {
+        target: { value: "17" },
+      });
+
+      await act(async () => {
+        finish({ ok: true, json: async () => ({ data: { updated: true } }) });
+      });
+
+      expect(input).toHaveValue(nextValue);
+      expect(screen.getByTestId("night-cost-cap-setting")).toHaveValue(17);
+      expect(screen.getByTestId("settings-save")).not.toBeDisabled();
+      fireEvent.click(screen.getByTestId("settings-save"));
+      await waitFor(() => expect(patchBodies).toEqual([{
+        [PROJECTS_ROOT_SETTING_KEY]: nextValue,
+        [NIGHT_COST_CAP_SETTING_KEY]: 17,
+      }]));
+    },
+  );
+
+  it("un-dirties a reverted field when the pending save fails", async () => {
+    stored = { [PROJECTS_ROOT_SETTING_KEY]: "/srv/original" };
+    const fetchMock = mockFetch();
+    await renderWorkspace();
+    const input = screen.getByTestId("projects-root-setting");
+    await waitFor(() => expect(input).toHaveValue("/srv/original"));
+    let finish!: (response: any) => void;
+    fetchMock.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    fireEvent.change(input, { target: { value: "/srv/submitted" } });
+    fireEvent.click(screen.getByTestId("settings-save"));
+    fireEvent.change(input, { target: { value: "/srv/original" } });
+    await act(async () => {
+      finish({ ok: false, json: async () => ({ error: "Refused" }) });
+    });
+    expect(input).toHaveValue("/srv/original");
+    expect(screen.getByTestId("settings-save")).toBeDisabled();
+    expect(screen.getByTestId("settings-message")).toHaveTextContent("Refused");
   });
 });

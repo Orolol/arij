@@ -22,7 +22,6 @@ function makeItem(overrides: Partial<InboxItem> = {}): InboxItem {
 }
 
 describe("useInbox", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let fetchSpy: any;
 
   beforeEach(() => {
@@ -57,6 +56,38 @@ describe("useInbox", () => {
       );
     });
   }
+
+  it("adopts a clamped page so new messages cannot send the reader back to a removed page", async () => {
+    let totalPages = 2;
+    fetchSpy.mockImplementation((url: string) => {
+      const requested = Number(new URL(url, "http://localhost").searchParams.get("page") ?? 1);
+      const page = Math.min(requested, totalPages);
+      return Promise.resolve(new Response(JSON.stringify({ data: {
+        items: [makeItem({ epicId: `page-${page}` })], unreadCount: totalPages,
+        unreadMessageCount: totalPages, awaitingReplyCount: 0,
+        pagination: { page, pageSize: 1, totalPages },
+      } })));
+    });
+    const { result } = renderHook(() => useInbox());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    act(() => result.current.setPage(2));
+    await waitFor(() => expect(result.current.items[0]?.epicId).toBe("page-2"));
+
+    totalPages = 1;
+    await act(async () => { await result.current.refresh(); });
+    await waitFor(() => {
+      expect(result.current.loading).toBe(false);
+      expect(result.current.page).toBe(1);
+      expect(fetchSpy).toHaveBeenLastCalledWith("/api/inbox");
+    });
+
+    totalPages = 2;
+    await act(async () => { await result.current.refresh(); });
+    expect(result.current.page).toBe(1);
+    expect(result.current.totalPages).toBe(2);
+    expect(result.current.items[0].epicId).toBe("page-1");
+    expect(fetchSpy).toHaveBeenLastCalledWith("/api/inbox");
+  });
 
   it("fetches the inbox on mount", async () => {
     mockInboxResponse([makeItem()]);
@@ -185,4 +216,76 @@ describe("useInbox", () => {
     expect(result.current.items).toEqual([]);
     expect(result.current.unreadCount).toBe(0);
   });
+  it("settles initial loading and exposes HTTP failures", async () => {
+    fetchSpy.mockResolvedValue(new Response("unavailable", { status: 503 }));
+    const { result } = renderHook(() => useInbox());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error).toBe("Failed to load the inbox.");
+  });
+
+  it("rejects a failed read cursor without claiming a successful refresh", async () => {
+    mockInboxResponse([makeItem()]);
+    const { result } = renderHook(() => useInbox());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ error: "Cursor refused" }), { status: 500 }));
+    await act(async () => {
+      await expect(result.current.markRead("e1")).rejects.toThrow("Cursor refused");
+    });
+    expect(result.current.items).toHaveLength(1);
+  });
+
+  it("keeps a confirmed reply successful if only the read cursor fails", async () => {
+    mockInboxResponse([makeItem()]);
+    const { result } = renderHook(() => useInbox());
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ data: { id: "reply" } })))
+      .mockRejectedValueOnce(new Error("offline"));
+    await act(async () => { await result.current.reply(makeItem(), "My answer"); });
+    expect(result.current.error).toBe("Failed to mark as read");
+    expect(fetchSpy.mock.calls.filter(([url]: [string]) => url.endsWith("/comments"))).toHaveLength(1);
+  });
+
+  it("does not resurrect a read item when a stale polling request completes", async () => {
+    let finishOld!: (response: Response) => void;
+    fetchSpy.mockReturnValueOnce(new Promise<Response>((resolve) => { finishOld = resolve; }));
+    const { result } = renderHook(() => useInbox());
+    mockInboxResponse([]);
+    await act(async () => { await result.current.markRead("e1"); });
+    await act(async () => {
+      finishOld(new Response(JSON.stringify({ data: { items: [makeItem()], unreadCount: 1 } })));
+    });
+    expect(result.current.items).toEqual([]);
+    expect(result.current.unreadCount).toBe(0);
+  });
+
+  it("ignores an older page and refreshes the visible page after a late mark-read", async () => {
+    let finishFirst!: (response: Response) => void;
+    let finishRead!: (response: Response) => void;
+    fetchSpy.mockImplementation((url: string) => {
+      if (url === "/api/inbox") return new Promise<Response>((resolve) => { finishFirst = resolve; });
+      if (url === "/api/inbox/read") return new Promise<Response>((resolve) => { finishRead = resolve; });
+      return Promise.resolve(new Response(JSON.stringify({ data: { items: [makeItem({ epicId: "second-page" })], unreadCount: 51,
+        pagination: { page: 2, pageSize: 50, totalPages: 2 } } })));
+    });
+    const { result } = renderHook(() => useInbox());
+    let markRead!: Promise<void>;
+    act(() => { markRead = result.current.markRead("e1"); result.current.setPage(2); });
+    await waitFor(() => expect(result.current.items[0]?.epicId).toBe("second-page"));
+    await act(async () => {
+      finishFirst(new Response(JSON.stringify({ data: { items: [makeItem()], unreadCount: 51 } })));
+      finishRead(new Response(JSON.stringify({ data: { ok: true } })));
+      await markRead;
+    });
+    expect(result.current.page).toBe(2);
+    expect(result.current.items[0].epicId).toBe("second-page");
+    expect(fetchSpy).toHaveBeenLastCalledWith("/api/inbox?page=2");
+  });
+
+  it("asks only for summary metadata when used by the global badge", async () => {
+    fetchSpy.mockResolvedValue(new Response(JSON.stringify({ data: { items: [], unreadCount: 500 } })));
+    const { result } = renderHook(() => useInbox({ summaryOnly: true }));
+    await waitFor(() => expect(result.current.unreadCount).toBe(500));
+    expect(fetchSpy).toHaveBeenCalledWith("/api/inbox?summary=1");
+  });
+
 });

@@ -316,8 +316,6 @@ export function importGitHubIssuesAsTickets(
         linkedEpicId,
         readableId,
         githubIssueNumber: issue.issueNumber,
-        githubIssueUrl: issue.githubUrl,
-        githubIssueState: "open",
         evidence: JSON.stringify({
           githubUrl: issue.githubUrl,
           mappedNamedAgentIds,
@@ -328,7 +326,7 @@ export function importGitHubIssuesAsTickets(
       .run();
 
     db.update(githubIssues)
-      .set({ importedEpicId: epicId, importedAt: now })
+      .set({ importedEpicId: epicId })
       .where(eq(githubIssues.id, issue.id))
       .run();
 

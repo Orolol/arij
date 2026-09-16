@@ -1,6 +1,8 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useMemo } from "react";
+
+import { usePolledResource } from "@/hooks/usePolledResource";
 
 import {
   AUTO_MODE_ENABLED_SETTING_KEY,
@@ -36,38 +38,21 @@ export interface AutoModeArmedState {
   refresh: () => Promise<void>;
 }
 
+const statusError = () => "Unable to load Full Auto configuration";
+
 export function useAutoModeArmed(): AutoModeArmedState {
-  const [armed, setArmed] = useState<ReadonlyMap<string, boolean>>(new Map());
-  const [globalDefault, setGlobalDefault] = useState(false);
-  const [loaded, setLoaded] = useState(false);
-
-  const refresh = useCallback(async () => {
-    try {
-      const res = await fetch("/api/settings");
-      if (!res.ok) return;
-      const body = await res.json();
-      const data = (body?.data ?? {}) as Record<string, unknown>;
-
-      const next = new Map<string, boolean>();
-      const prefix = `${AUTO_MODE_ENABLED_SETTING_KEY}:`;
-      for (const [key, value] of Object.entries(data)) {
-        if (!key.startsWith(prefix)) continue;
-        const parsed = parseAutoModeEnabled(value);
-        if (parsed === null) continue;
-        next.set(key.slice(prefix.length), parsed);
-      }
-
-      setArmed(next);
-      setGlobalDefault(
-        parseAutoModeEnabled(data[AUTO_MODE_ENABLED_SETTING_KEY]) ?? false,
-      );
-      setLoaded(true);
-    } catch {
-      // Best effort: the pill stays on whatever it last knew.
+  const { data, refresh } = usePolledResource<Record<string, unknown>>("/api/settings", null, statusError);
+  const armed = useMemo(() => {
+    const next = new Map<string, boolean>();
+    const prefix = `${AUTO_MODE_ENABLED_SETTING_KEY}:`;
+    for (const [key, value] of Object.entries(data ?? {})) {
+      if (!key.startsWith(prefix)) continue;
+      const parsed = parseAutoModeEnabled(value);
+      if (parsed !== null) next.set(key.slice(prefix.length), parsed);
     }
-  }, []);
-
-  return { armed, globalDefault, loaded, refresh };
+    return next;
+  }, [data]);
+  return { armed, globalDefault: parseAutoModeEnabled(data?.[AUTO_MODE_ENABLED_SETTING_KEY]) ?? false, loaded: data !== null, refresh };
 }
 
 /** The resolved switch for one project: override, else the global default. */

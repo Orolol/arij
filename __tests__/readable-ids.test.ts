@@ -1,14 +1,11 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { createTestDb } from "@/lib/db/test-utils";
 import type Database from "better-sqlite3";
-import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
-import * as schema from "@/lib/db/schema";
 
-let db: BetterSQLite3Database<typeof schema>;
 let sqlite: Database.Database;
 
 beforeEach(() => {
-  ({ db, sqlite } = createTestDb());
+  ({ sqlite } = createTestDb());
 });
 
 describe("Readable ID generation", () => {

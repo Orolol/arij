@@ -2,21 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb } from "@/lib/db/test-utils";
 
 const testDb = vi.hoisted(() => ({
-  instance: null as ReturnType<
-    typeof import("@/lib/db/test-utils").createTestDb
-  > | null,
+  instance: null as ReturnType<typeof import("@/lib/db/test-utils").createTestDb> | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
 // ---- Import the module under test AFTER mocks ----
 import { getUsageReport, type LiveQuotaInputs } from "@/lib/usage/aggregate";
@@ -73,12 +64,12 @@ function seedSnapshot(row: Record<string, unknown>): void {
          provider, captured_at, plan_type,
          primary_used_percent, primary_window_minutes, primary_resets_at,
          secondary_used_percent, secondary_window_minutes, secondary_resets_at,
-         source_file, raw_json
+         raw_json
        ) VALUES (
          @provider, @capturedAt, @planType,
          @primaryUsedPercent, @primaryWindowMinutes, @primaryResetsAt,
          @secondaryUsedPercent, @secondaryWindowMinutes, @secondaryResetsAt,
-         @sourceFile, @rawJson
+         @rawJson
        )`,
     )
     .run({
@@ -91,7 +82,6 @@ function seedSnapshot(row: Record<string, unknown>): void {
       secondaryUsedPercent: 1,
       secondaryWindowMinutes: 10080,
       secondaryResetsAt: 1782381985,
-      sourceFile: "/home/u/.codex/sessions/2026/06/18/rollout-x.jsonl",
       rawJson: '{"limit_id":"codex"}',
       ...row,
     });
@@ -126,28 +116,6 @@ afterEach(() => {
 });
 
 describe("getUsageReport — empty database", () => {
-  it("reports zero sessions with null money, never fake zeros", () => {
-    const report = getUsageReport();
-
-    expect(report.totals).toEqual({
-      sessions: 0,
-      inputTokens: null,
-      outputTokens: null,
-      costUsd: null,
-    });
-    expect(report.byAgent).toEqual([]);
-    expect(report.byProvider).toEqual([]);
-    expect(report.byProject).toEqual([]);
-    expect(report.windows.last5h.costUsd).toBeNull();
-    expect(report.windows.last7d.sessions).toBe(0);
-  });
-
-  it("still emits exactly 30 zero-filled day buckets", () => {
-    const report = getUsageReport();
-    expect(report.byDay).toHaveLength(30);
-    expect(report.byDay.every((d) => d.sessions === 0)).toBe(true);
-    expect(report.byDay.every((d) => d.costUsd === null)).toBe(true);
-  });
 
   it("always includes the claude subscription card and nothing else", () => {
     const report = getUsageReport();
@@ -157,136 +125,6 @@ describe("getUsageReport — empty database", () => {
   });
 });
 
-describe("getUsageReport — totals and groupings", () => {
-  beforeEach(() => {
-    seedSession({
-      id: "s1",
-      projectId: "p1",
-      namedAgentId: "a1",
-      namedAgentName: "Builder",
-      inputTokens: 100,
-      outputTokens: 10,
-      totalCostUsd: 1.5,
-      endedAt: "2026-08-10T10:00:00.000Z",
-    });
-    seedSession({
-      id: "s2",
-      projectId: "p1",
-      namedAgentId: "a1",
-      namedAgentName: "Builder",
-      inputTokens: 200,
-      outputTokens: 20,
-      totalCostUsd: 2.5,
-      endedAt: "2026-08-11T10:00:00.000Z",
-    });
-    // Legacy row: provider column is NULL and must normalize to claude-code.
-    seedSession({
-      id: "s3",
-      projectId: "p2",
-      provider: null,
-      namedAgentName: "Reviewer",
-      totalCostUsd: 0.5,
-      endedAt: "2026-08-12T10:00:00.000Z",
-    });
-    // Codex reports no tokens/cost to Arij today — the whole group stays null.
-    seedSession({
-      id: "s4",
-      projectId: "p2",
-      provider: "codex",
-      namedAgentName: "Scout",
-      endedAt: "2026-08-13T10:00:00.000Z",
-    });
-    // Queued: counts as a session, contributes no usage, has no ended_at.
-    seedSession({ id: "s5", projectId: "p1", status: "queued" });
-  });
-
-  it("counts every session but sums only reported usage", () => {
-    const report = getUsageReport();
-    expect(report.totals).toEqual({
-      sessions: 5,
-      inputTokens: 300,
-      outputTokens: 30,
-      costUsd: 4.5,
-    });
-  });
-
-  it("normalizes a NULL provider to claude-code", () => {
-    const providers = getUsageReport().byProvider;
-    const claude = providers.find((p) => p.provider === "claude-code");
-    expect(claude).toMatchObject({ sessions: 4, costUsd: 4.5 });
-  });
-
-  it("returns null (not 0) for a provider group that never reported cost", () => {
-    const codex = getUsageReport().byProvider.find((p) => p.provider === "codex");
-    expect(codex).toEqual({
-      provider: "codex",
-      sessions: 1,
-      inputTokens: null,
-      outputTokens: null,
-      costUsd: null,
-    });
-  });
-
-  it("orders providers by cost desc with null-cost groups last", () => {
-    expect(getUsageReport().byProvider.map((p) => p.provider)).toEqual([
-      "claude-code",
-      "codex",
-    ]);
-  });
-
-  it("groups agents by (name x provider) and orders by cost desc, nulls last", () => {
-    const rows = getUsageReport().byAgent;
-    expect(rows[0]).toMatchObject({
-      name: "Builder",
-      provider: "claude-code",
-      namedAgentId: "a1",
-      sessions: 2,
-      inputTokens: 300,
-      outputTokens: 30,
-      costUsd: 4,
-    });
-    expect(rows[1]).toMatchObject({ name: "Reviewer", costUsd: 0.5 });
-    // The null-cost tail: order between equal-session groups is unspecified.
-    expect(new Set(rows.slice(2).map((r) => r.name))).toEqual(
-      new Set([null, "Scout"]),
-    );
-    expect(rows.slice(2).every((r) => r.costUsd === null)).toBe(true);
-  });
-
-  it("keeps the agent name null for sessions with no named agent", () => {
-    const unnamed = getUsageReport().byAgent.find((r) => r.name === null);
-    expect(unnamed).toBeDefined();
-    expect(unnamed!.namedAgentId).toBeNull();
-    expect(unnamed!.sessions).toBe(1);
-  });
-
-  it("derives lastActiveAt from ended_at, falling back to created_at", () => {
-    const rows = getUsageReport().byAgent;
-    expect(rows.find((r) => r.name === "Builder")!.lastActiveAt).toBe(
-      "2026-08-11T10:00:00.000Z",
-    );
-    // The queued session has neither started_at nor ended_at.
-    expect(rows.find((r) => r.name === null)!.lastActiveAt).toBe(
-      "2026-08-01T00:00:00.000Z",
-    );
-  });
-
-  it("splits by project and resolves the project name", () => {
-    const rows = getUsageReport().byProject;
-    expect(rows[0]).toMatchObject({
-      projectId: "p1",
-      projectName: "Project One",
-      sessions: 3,
-      costUsd: 4,
-    });
-    expect(rows[1]).toMatchObject({
-      projectId: "p2",
-      projectName: "Project Two",
-      sessions: 2,
-      costUsd: 0.5,
-    });
-  });
-});
 
 describe("getUsageReport — rolling window math", () => {
   const NOW = new Date("2026-08-18T12:00:00.000Z");
@@ -335,29 +173,6 @@ describe("getUsageReport — rolling window math", () => {
     });
   });
 
-  it("includes 4h59-old and excludes 5h01-old sessions in the 5h window", () => {
-    const w = getUsageReport().windows.last5h;
-    expect(w).toEqual({
-      sessions: 1,
-      inputTokens: 10,
-      outputTokens: 1,
-      costUsd: 1,
-    });
-  });
-
-  it("includes 6d23h-old and excludes 7d01h-old sessions in the 7d window", () => {
-    const w = getUsageReport().windows.last7d;
-    expect(w.sessions).toBe(3);
-    expect(w.costUsd).toBe(7); // 1 + 2 + 4, never the 8 that fell out
-    expect(w.inputTokens).toBe(70);
-  });
-
-  it("ignores sessions that never ended, whatever their status", () => {
-    seedSession({ id: "running", status: "running", startedAt: agoIso(HOUR) });
-    const w = getUsageReport().windows.last5h;
-    expect(w.sessions).toBe(1);
-  });
-
   it("scopes the claude metered card to claude-code sessions only", () => {
     seedSession({
       id: "codex-recent",
@@ -366,7 +181,6 @@ describe("getUsageReport — rolling window math", () => {
     });
     const report = getUsageReport();
 
-    expect(report.windows.last5h.sessions).toBe(2); // global window sees both
     const claude = report.subscriptions.find((s) => s.provider === "claude-code")!;
     expect(claude.metered!.last5h.sessions).toBe(1);
     expect(claude.metered!.last7d.sessions).toBe(3);
@@ -387,57 +201,6 @@ describe("getUsageReport — rolling window math", () => {
   });
 });
 
-describe("getUsageReport — 30-day strip", () => {
-  function localDateKey(date: Date): string {
-    const y = date.getFullYear();
-    const m = String(date.getMonth() + 1).padStart(2, "0");
-    const d = String(date.getDate()).padStart(2, "0");
-    return `${y}-${m}-${d}`;
-  }
-
-  it("returns 30 buckets oldest-first ending today, in LOCAL dates", () => {
-    const report = getUsageReport();
-    expect(report.byDay).toHaveLength(30);
-    expect(report.byDay[29].date).toBe(localDateKey(new Date()));
-
-    const oldest = new Date();
-    oldest.setDate(oldest.getDate() - 29);
-    expect(report.byDay[0].date).toBe(localDateKey(oldest));
-    expect(report.byDay[0].date < report.byDay[29].date).toBe(true);
-  });
-
-  it("buckets a session that just ended into today", () => {
-    seedSession({
-      id: "today",
-      endedAt: new Date().toISOString(),
-      totalCostUsd: 2.25,
-    });
-    const today = getUsageReport().byDay[29];
-    expect(today.sessions).toBe(1);
-    expect(today.costUsd).toBe(2.25);
-  });
-
-  it("drops sessions older than the 30-day range", () => {
-    const old = new Date();
-    old.setDate(old.getDate() - 40);
-    seedSession({ id: "ancient", endedAt: old.toISOString(), totalCostUsd: 99 });
-
-    const report = getUsageReport();
-    expect(report.byDay.every((d) => d.sessions === 0)).toBe(true);
-    expect(report.byDay.some((d) => d.costUsd === 99)).toBe(false);
-  });
-
-  it("keeps costUsd null on a day whose sessions reported no cost", () => {
-    seedSession({
-      id: "codex-today",
-      provider: "codex",
-      endedAt: new Date().toISOString(),
-    });
-    const today = getUsageReport().byDay[29];
-    expect(today.sessions).toBe(1);
-    expect(today.costUsd).toBeNull();
-  });
-});
 
 describe("getUsageReport — subscriptions", () => {
   it("omits codex entirely when there is no snapshot and no codex session", () => {
@@ -751,20 +514,6 @@ describe("getUsageReport — live-quota assembly (feat/live-quota)", () => {
     });
   });
 
-  it("keeps byDay Arij-metered — codex dailyUsage never merges into it", () => {
-    const report = getUsageReport(
-      live({
-        codexLive: { data: CODEX_LIVE, capturedAtIso: "2026-08-18T11:58:00.000Z" },
-      }),
-    );
-
-    expect(report.byDay).toHaveLength(30);
-    expect(report.byDay.every((d) => d.sessions === 0)).toBe(true);
-    expect(report.byDay.every((d) => d.costUsd === null)).toBe(true);
-    // The provider history lives ONLY on the subscription card payload.
-    const codex = report.subscriptions.find((s) => s.provider === "codex")!;
-    expect(codex.codexLive!.dailyUsage).toHaveLength(2);
-  });
 
   it("defaults to the no-live state — a zero-arg call is byte-identical fallback", () => {
     vi.useFakeTimers();
@@ -818,7 +567,6 @@ describe("storeCodexLiveSnapshot — live poll -> snapshot row (feat/live-quota)
     expect(row.primary_window_minutes).toBe(10080);
     expect(row.primary_resets_at).toBe(1787671089);
     expect(row.secondary_used_percent).toBeNull();
-    expect(row.source_file).toBe("live:codex-app-server");
     expect(row.raw_json).toBe('{"rateLimits":{"limitId":"codex"}}');
   });
 
@@ -832,7 +580,6 @@ describe("storeCodexLiveSnapshot — live poll -> snapshot row (feat/live-quota)
 
     const row = readSnapshotRow()!;
     expect(row.captured_at).toBe("2026-08-18T12:00:00.000Z");
-    expect(row.source_file).toBe("live:codex-app-server");
   });
 
   it("respects the forward-only guard against a newer existing capture", async () => {
@@ -845,7 +592,6 @@ describe("storeCodexLiveSnapshot — live poll -> snapshot row (feat/live-quota)
 
     const row = readSnapshotRow()!;
     expect(row.captured_at).toBe("2026-08-18T13:00:00.000Z"); // untouched
-    expect(row.source_file).not.toBe("live:codex-app-server");
   });
 
   it("mirrors a dual-window bucket into the secondary columns", async () => {

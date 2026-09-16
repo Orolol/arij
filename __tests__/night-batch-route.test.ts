@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { mockJsonRequest, mockRouteContext } from "@/__tests__/helpers/db-mock";
+import { waitForBackground } from "./helpers/background";
 
 const processManagerState = vi.hoisted(() => ({
   result: undefined as Record<string, unknown> | undefined,
@@ -93,12 +94,6 @@ const { POST: batchBuildPost } = await import(
 import type { TicketExecutionStatus } from "@/lib/dependencies/scheduler";
 
 let counter = 0;
-
-async function flushBackground() {
-  for (let i = 0; i < 4; i++) {
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
 
 function seed(epicCount = 1) {
   counter += 1;
@@ -242,18 +237,19 @@ describe("night dispatch guards", () => {
     expect(done.status).toBe(200);
   });
 
-  it("plain dag keeps today's behavior: no night guards consulted", async () => {
+  it("plain dag refuses an active night run before creating a session", async () => {
     const { projectId, epicIds } = seed();
-    // An active night run elsewhere does NOT block a plain dag batch.
+    // Night-run ownership applies to every batch mode.
     registerNightRun(projectId, `night_plain_${counter}`);
 
     const res = await batchBuildPost(
       mockJsonRequest({ epicIds, mode: "dag" }),
       mockRouteContext({ projectId })
     );
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("NIGHT_RUN_ACTIVE");
     expect(nightMocks.startNightRun).not.toHaveBeenCalled();
-    await flushBackground();
+    // Nothing was launched, so there is nothing to drain.
 
     nightRunRegistry.finish(`night_plain_${counter}`);
   });
@@ -313,14 +309,19 @@ describe("batch_run_id tagging", () => {
     );
     expect(res.status).toBe(200);
     const json = await res.json();
-    await flushBackground();
 
-    const rows = db
-      .select()
-      .from(agentSessions)
-      .where(eq(agentSessions.projectId, projectId))
-      .all();
-    expect(rows).toHaveLength(2);
+    const rows = await waitForBackground(
+      () => {
+        const found = db
+          .select()
+          .from(agentSessions)
+          .where(eq(agentSessions.projectId, projectId))
+          .all();
+        expect(found).toHaveLength(2);
+        return found;
+      },
+      "both wave-1 sessions being persisted with their batch tag",
+    );
     for (const row of rows) {
       expect(row.batchRunId).toBe(json.data.batchId);
       expect(row.estimatedPromptTokens).toBeGreaterThan(0);
@@ -336,21 +337,26 @@ describe("batch_run_id tagging", () => {
     expect(json.data.batchId).not.toMatch(/^night_/);
   });
 
-  it("sequential and parallel dispatches leave batch_run_id NULL", async () => {
+  it("sequential dispatch stamps its wave batch id", async () => {
     const { projectId, epicIds } = seed();
     const res = await batchBuildPost(
       mockJsonRequest({ epicIds, mode: "sequential" }),
       mockRouteContext({ projectId })
     );
     expect(res.status).toBe(200);
-    await flushBackground();
 
-    const rows = db
-      .select()
-      .from(agentSessions)
-      .where(eq(agentSessions.projectId, projectId))
-      .all();
-    expect(rows).toHaveLength(1);
-    expect(rows[0].batchRunId).toBeNull();
+    const rows = await waitForBackground(
+      () => {
+        const found = db
+          .select()
+          .from(agentSessions)
+          .where(eq(agentSessions.projectId, projectId))
+          .all();
+        expect(found).toHaveLength(1);
+        return found;
+      },
+      "the queued session being persisted",
+    );
+    expect(rows[0].batchRunId).toEqual(expect.any(String));
   });
 });

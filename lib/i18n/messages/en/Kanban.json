@@ -46,25 +46,6 @@
       "create": "Failed to create epic"
     }
   },
-  "gitSync": {
-    "checking": "Checking sync...",
-    "ahead": "{count, plural, one {{value} commit} other {{value} commits}} ahead of remote",
-    "behind": "{count, plural, one {{value} commit} other {{value} commits}} behind remote",
-    "inSync": "in sync",
-    "pushing": "Pushing...",
-    "nothingToPush": "Nothing to push",
-    "push": "Push {count, plural, one {{value} commit} other {{value} commits}} to remote",
-    "refresh": "Refresh sync status",
-    "pushFailed": "Push failed"
-  },
-  "inlineEdit": {
-    "empty": "Click to edit"
-  },
-  "quickCapture": {
-    "placeholder": "Quick capture — Enter adds to Backlog",
-    "label": "Quick capture idea",
-    "error": "Failed to capture idea"
-  },
   "refinement": {
     "button": "Agent Refinement",
     "runningBadge": "running",
@@ -82,6 +63,40 @@
     "agentClearLabel": "Use refinement default",
     "agentHint": "Uses the project or workspace refinement default unless you select an agent. Claude Code or Codex is required.",
     "actionsLegend": "Actions",
+    "actions": {
+      "grooming": {
+        "label": "Ticket grooming",
+        "description": "Identify unclear scope, missing criteria and unanswered questions in comments."
+      },
+      "dependencies": {
+        "label": "Dependencies",
+        "description": "Add missing dependencies and remove obsolete ones."
+      },
+      "ordering": {
+        "label": "Execution order",
+        "description": "Reorder tickets within their planning column."
+      },
+      "priorities": {
+        "label": "Priorities and deprioritization",
+        "description": "Raise or lower ticket priorities."
+      },
+      "readiness": {
+        "label": "Readiness and column moves",
+        "description": "Promote ready tickets to To do; return unclear tickets to Backlog with a question."
+      },
+      "merge": {
+        "label": "Merge tickets",
+        "description": "Combine related tickets; absorbed tickets are permanently deleted."
+      },
+      "discard": {
+        "label": "Discard obsolete tickets",
+        "description": "Permanently delete obsolete tickets. There is no undo."
+      },
+      "create": {
+        "label": "Create missing tickets",
+        "description": "Create planning tickets with acceptance criteria, or file adjacent bugs."
+      }
+    },
     "instructionsLabel": "Additional instructions (optional)",
     "instructionsPlaceholder": "For example: prioritize onboarding and combine duplicate search tickets.",
     "instructionsHint": "{used} / {max} characters. Instructions apply only to checked actions.",

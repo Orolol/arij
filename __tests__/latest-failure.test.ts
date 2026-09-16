@@ -16,6 +16,32 @@ function session(overrides: Partial<FailureCandidateSession>): FailureCandidateS
 }
 
 describe("selectLatestFailures", () => {
+  it("clears an ISO failure after a newer SQLite retry on the same day", () => {
+    expect(selectLatestFailures([
+      session({ id: "failed", status: "failed", createdAt: "2026-08-21T10:00:00.000Z" }),
+      session({ id: "retry", status: "completed", createdAt: "2026-08-21 11:00:00" }),
+    ], new Set())).toEqual({});
+  });
+
+  it("groups equal instants independently of separators, fractions and offsets", () => {
+    for (const createdAt of ["2026-08-21 10:00:00", "2026-08-21T10:00:00Z", "2026-08-21T12:00:00.000+02:00"]) {
+      expect(selectLatestFailures([
+        session({ id: "failed", status: "failed", createdAt }),
+        session({ id: "retry", status: "completed", createdAt: "2026-08-21T10:00:00.000Z" }),
+      ], new Set())).toEqual({});
+    }
+  });
+
+  it("uses the newest failure's end instant with stable id ties", () => {
+    const rows = [
+      session({ id: "old", status: "failed", endedAt: "2026-08-21T10:30:00Z" }),
+      session({ id: "newer", status: "failed", endedAt: "2026-08-21 11:00:00" }),
+      session({ id: "z-tie", status: "failed", endedAt: "2026-08-21T13:00:00+02:00" }),
+    ];
+    expect(selectLatestFailures(rows, new Set()).e1.sessionId).toBe("z-tie");
+    expect(selectLatestFailures([...rows].reverse(), new Set()).e1.sessionId).toBe("z-tie");
+  });
+
   it("badges an epic whose latest session is failed", () => {
     const failed = selectLatestFailures(
       [

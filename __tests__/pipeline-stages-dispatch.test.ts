@@ -27,6 +27,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { claudeEnvelope } from "./helpers/provider-fixtures";
 
 const processManagerState = vi.hoisted(() => ({
   result: undefined as Record<string, unknown> | undefined,
@@ -150,10 +151,6 @@ const { PIPELINE_FIX_INSTRUCTIONS_SECTION } = await import(
   "@/lib/pipeline/stages"
 );
 let counter = 0;
-
-function claudeEnvelope(text: string): string {
-  return JSON.stringify({ type: "result", subtype: "success", result: text });
-}
 
 function seed(epicStatus = "review") {
   counter += 1;
@@ -494,13 +491,13 @@ describe("fix stage dispatch (epic scope)", () => {
       fixCycle: 1,
       previousAttemptSessionId: null,
       lastCodeSessionId: null,
-      verificationFailure: {
+      verificationFailure: { kind: "command", command: {
         name: "unit tests",
         command: "npm test",
         exitCode: 1,
         durationMs: 432,
         tail: "AssertionError: expected 2 to equal 3\nfinal diagnostic line",
-      },
+      } },
     });
 
     const row = db
@@ -1152,8 +1149,6 @@ describe("review stage dispatch", () => {
     });
     expect(assessment).toMatchObject({
       blocking: true,
-      usedProseFallback: true,
-      agentCommentCount: 0,
       verdictSource: "prose",
       structuredVerdict: null,
     });
@@ -1222,7 +1217,6 @@ describe("review stage dispatch", () => {
       blocking: true,
       verdictSource: "structured",
       structuredVerdict: "changes_requested",
-      usedProseFallback: false,
     });
   });
 

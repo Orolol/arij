@@ -1,6 +1,15 @@
-import fs from "fs";
-import path from "path";
-import { and, eq } from "drizzle-orm";
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import { dispatchMergeResolution } from "@/lib/agent-sessions/dispatch-ticket-session";
+import {
+  isResumableProvider,
+  providerReportsOwnSessionId,
+} from "@/lib/agent-sessions/resume-capability";
+import { createSessionLogsPath } from "@/lib/agent-sessions/session-paths";
+import { getRunningSessionForTarget } from "@/lib/agents/concurrency";
+import {
+  resolveSessionOutput
+} from "@/lib/claude/resolve-session-output";
 import { db } from "@/lib/db";
 import {
   agentSessions,
@@ -8,54 +17,30 @@ import {
   projects,
   ticketComments,
 } from "@/lib/db/schema";
-import { createId } from "@/lib/utils/nanoid";
-import { agentScheduler } from "@/lib/agents/scheduler";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
-import {
-  isResumableProvider,
-  providerReportsOwnSessionId,
-} from "@/lib/agent-sessions/resume-capability";
-import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import {
   attachWorktree,
   captureMergeCheckpoint,
   mergeWorktree,
+  resolveDefaultBranch,
   rollbackMerge,
   type MergeCheckpoint,
   type MergeWorktreeResult,
 } from "@/lib/git/manager";
-import { tryExportArjiJson } from "@/lib/sync/export";
-import { applyTransition } from "@/lib/workflow/transition-service";
-import { resolveOpenReviewComments } from "@/lib/workflow/merge-approval";
-import { resolveVerifyConfigForProject } from "@/lib/verify/config";
-import { logTransition } from "@/lib/workflow/log";
-import {
-  createAutoModeMergeBlockedNotification,
-  createAutoModeMergeParkedNotification,
-} from "@/lib/notifications/create";
 import { createPipelineStageDriver } from "@/lib/pipeline/stages";
-import { getRunningSessionForTarget } from "@/lib/agents/concurrency";
-import { assessEpicVerification } from "@/lib/verify/freshness";
+import { tryExportArjiJson } from "@/lib/sync/export";
 import type { KanbanStatus } from "@/lib/types/kanban";
+import { createId } from "@/lib/utils/nanoid";
+import { resolveVerifyConfigForProject } from "@/lib/verify/config";
+import { assessEpicVerification } from "@/lib/verify/freshness";
+import { logTransition } from "@/lib/workflow/log";
+import { resolveOpenReviewComments } from "@/lib/workflow/merge-approval";
+import { applyTransition } from "@/lib/workflow/transition-service";
+import { and, eq } from "drizzle-orm";
 import {
   AUTO_MERGE_CONFLICT_BACKOFF_MS,
   AUTO_MERGE_VERIFICATION_BACKOFF_MS,
-  AUTO_MERGE_VERIFICATION_NOTIFY_AFTER,
   AUTO_MODE_REASONS,
-  autoRunId,
+  autoRunId
 } from "./constants";
 import { autoModeRegistry } from "./registry";
 
@@ -130,7 +115,6 @@ export interface TryAutoMergeOptions {
   verifyIfMissing?: boolean;
 }
 
-const MERGE_ALLOWED_TOOLS = ["Edit", "Write", "Bash", "Read", "Glob", "Grep"];
 
 /** Worktree of the epic's most recent session — the merge route's lookup. */
 function findWorktreePath(
@@ -416,17 +400,6 @@ function refuseUnverifiedMerge(input: {
   // Exactly once, on the Nth consecutive refusal: an epic that can never
   // satisfy the gate is the state a standing loop must surface, and a skip
   // raises nothing on its own.
-  const refusals = autoModeRegistry.recordMergeGateRefusal(projectId, epicId);
-  if (refusals === AUTO_MERGE_VERIFICATION_NOTIFY_AFTER) {
-    try {
-      createAutoModeMergeBlockedNotification({ projectId, epicId, error: reason });
-    } catch (notifyError) {
-      console.warn(
-        "[auto-mode/merge] Failed to create the blocked-merge notification:",
-        (notifyError as Error).message
-      );
-    }
-  }
 
   return { status: "skipped", reason, sessionId: null };
 }
@@ -523,14 +496,6 @@ async function runAutoMerge(
 
   const worktreePath = findWorktreePath(projectId, epicId);
 
-  // Where `main` and the branch point RIGHT NOW, so an unwanted merge can be
-  // undone. Unattended, "we changed main and then discovered we should not
-  // have" has to be recoverable — there is no human to notice.
-  const checkpoint = await captureMergeCheckpoint(
-    project.gitRepoPath,
-    epic.branchName
-  );
-
   if (!autoModeRegistry.tryLockProjectMerge(projectId)) {
     return {
       status: "skipped",
@@ -538,52 +503,61 @@ async function runAutoMerge(
       sessionId: null,
     };
   }
+  let checkpoint: MergeCheckpoint | null = null;
   let result: MergeWorktreeResult;
   try {
+    // Keep the repository locked from its snapshot until any rollback has
+    // finished. A second merge must never land inside that recovery window.
+    checkpoint = await captureMergeCheckpoint(
+      project.gitRepoPath,
+      epic.branchName,
+      { defaultBranch: project.defaultBranch }
+    );
     result = await mergeWorktree(
       project.gitRepoPath,
       epic.branchName,
-      worktreePath
+      worktreePath,
+      { defaultBranch: checkpoint?.mainBranch ?? project.defaultBranch }
     );
+
+    if (result.merged) {
+      const finalized = finalizeMergedEpic({
+        projectId,
+        epicId,
+        reason: AUTO_MODE_REASONS.merged,
+      });
+      if (finalized.ok) {
+        autoModeRegistry.clearFailures(projectId, epicId);
+        autoModeRegistry.clearMergeDeferral(projectId, epicId);
+        autoModeRegistry.clearMergeGateRefusals(projectId, epicId);
+        autoModeRegistry.recordDispatch(projectId, {
+          kind: "merge",
+          epicId,
+          userStoryId: null,
+          sessionId: null,
+          detail: result.commitHash ?? null,
+        });
+        return {
+          status: "merged",
+          commitHash: result.commitHash ?? null,
+          sessionId: null,
+        };
+      }
+
+      // The guards passed pre-flight and refused post-merge: a review comment
+      // landed, or the epic moved, while git was running. `main` has already
+      // changed, so put it back and restore the branch rather than leaving an
+      // unapproved merge behind.
+      return await rollbackRefusedMerge({
+        projectId,
+        epicId,
+        gitRepoPath: project.gitRepoPath,
+        checkpoint,
+        reason: finalized.error,
+      });
+    }
   } finally {
     autoModeRegistry.unlockProjectMerge(projectId);
-  }
-
-  if (result.merged) {
-    const finalized = finalizeMergedEpic({
-      projectId,
-      epicId,
-      reason: AUTO_MODE_REASONS.merged,
-    });
-    if (finalized.ok) {
-      autoModeRegistry.clearFailures(projectId, epicId);
-      autoModeRegistry.clearMergeDeferral(projectId, epicId);
-      autoModeRegistry.clearMergeGateRefusals(projectId, epicId);
-      autoModeRegistry.recordDispatch(projectId, {
-        kind: "merge",
-        epicId,
-        userStoryId: null,
-        sessionId: null,
-        detail: result.commitHash ?? null,
-      });
-      return {
-        status: "merged",
-        commitHash: result.commitHash ?? null,
-        sessionId: null,
-      };
-    }
-
-    // The guards passed pre-flight and refused post-merge: a review comment
-    // landed, or the epic moved, while git was running. `main` has already
-    // changed, so put it back and restore the branch rather than leaving an
-    // unapproved merge behind.
-    return rollbackRefusedMerge({
-      projectId,
-      epicId,
-      gitRepoPath: project.gitRepoPath,
-      checkpoint,
-      reason: finalized.error,
-    });
   }
 
   const error = result.error || "Merge failed";
@@ -605,11 +579,10 @@ async function runAutoMerge(
     return { status: "failed", error, sessionId: null };
   }
 
-  // `mergeWorktree` removes the epic's worktree BEFORE it attempts the merge
-  // (lib/git/manager.ts), and the conflict path aborts without putting it
-  // back. The branch survives (it is only deleted after a successful merge),
-  // so re-attach a worktree to THAT EXACT branch — `createWorktree` would
-  // re-derive the name from the epic title, which may have been edited since.
+  // Content conflicts are detected before worktree removal. Reuse that
+  // worktree, or restore it if absent, on the exact persisted branch.
+  // `createWorktree` would re-derive the name from the epic title, which may
+  // have been edited since.
   const gitRepoPath = project.gitRepoPath;
   const branchName = epic.branchName;
   const restoreWorktree = async (): Promise<string | null> => {
@@ -667,6 +640,10 @@ async function runAutoMerge(
 
   const sessionId = await dispatchMergeFixAgent({
     project: { id: projectId, gitRepoPath: project.gitRepoPath },
+    defaultBranch: checkpoint?.mainBranch ?? await resolveDefaultBranch(
+      project.gitRepoPath,
+      project.defaultBranch
+    ),
     epic: { id: epicId, branchName: epic.branchName, status: fromStatus },
     worktreePath: conflictWorktreePath,
     error,
@@ -718,6 +695,7 @@ async function runAutoMerge(
  */
 async function dispatchMergeFixAgent(input: {
   project: { id: string; gitRepoPath: string };
+  defaultBranch: string;
   epic: { id: string; branchName: string; status: KanbanStatus };
   worktreePath: string;
   error: string;
@@ -735,11 +713,11 @@ async function dispatchMergeFixAgent(input: {
     const mergeSystemPrompt = await resolveAgentPrompt("merge", project.id);
     const prompt = [
       mergeSystemPrompt,
-      `The branch "${epic.branchName}" failed to merge into main.`,
+      `The branch "${epic.branchName}" failed to merge into ${input.defaultBranch}.`,
       `Error: ${error}`,
       "",
       "Resolve the merge conflicts and complete the merge. Steps:",
-      `1. In the worktree at ${worktreePath}, run: git merge main`,
+      `1. In the worktree at ${worktreePath}, run: git merge ${input.defaultBranch}`,
       "2. Resolve all conflicts in the affected files",
       "3. Stage and commit the resolution",
       "4. Verify the build still passes",
@@ -749,9 +727,7 @@ async function dispatchMergeFixAgent(input: {
 
     const sessionId = createId();
     const now = new Date().toISOString();
-    const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-    fs.mkdirSync(logsDir, { recursive: true });
-    const logsPath = path.join(logsDir, "logs.json");
+    const logsPath = createSessionLogsPath(sessionId);
 
     const cliSessionId =
       isResumableProvider(resolved.provider) &&
@@ -759,11 +735,11 @@ async function dispatchMergeFixAgent(input: {
         ? crypto.randomUUID()
         : undefined;
 
-    createQueuedSession({
+    const row = {
       id: sessionId,
       projectId: project.id,
       epicId: epic.id,
-      mode: "code",
+      mode: "code" as const,
       orchestrationMode: "solo",
       provider: resolved.provider,
       prompt,
@@ -778,53 +754,10 @@ async function dispatchMergeFixAgent(input: {
       model: resolved.model || null,
       batchRunId: autoRunId(project.id),
       createdAt: now,
-    });
+    };
 
-    agentScheduler.submit(project.id, sessionId, async () => {
-      markSessionRunning(sessionId);
-      processManager.start(
-        sessionId,
-        {
-          mode: "code",
-          prompt,
-          cwd: worktreePath,
-          allowedTools: MERGE_ALLOWED_TOOLS,
-          model: resolved.model,
-          cliSessionId,
-        },
-        resolved.provider
-      );
-
-      const info = await waitForProcessCompletion(sessionId);
-      const completedAt = new Date().toISOString();
-      const agentResult = info?.result;
-
-      try {
-        fs.writeFileSync(logsPath, JSON.stringify(agentResult, null, 2));
-      } catch {
-        // ignore
-      }
-
-      try {
-        markSessionTerminal(
-          sessionId,
-          {
-            success: !!agentResult?.success,
-            error: agentResult?.error || null,
-            outcome: classifySessionOutcome(agentResult, sessionId),
-            usage: extractSessionUsage(agentResult),
-          },
-          completedAt
-        );
-      } catch (finalizeError) {
-        if (!isSessionLifecycleConflictError(finalizeError)) {
-          console.error(
-            "[auto-mode/merge] Failed to finalize merge-fix session",
-            finalizeError
-          );
-        }
-      }
-
+    const dispatched = dispatchMergeResolution({ row, resolvedAgent: resolved,
+      onTerminal: async ({ result: agentResult, completedAt, outcome }) => {
       db.insert(ticketComments)
         .values({
           id: createId(),
@@ -840,11 +773,12 @@ async function dispatchMergeFixAgent(input: {
         await retryMergeAfterFix({
           projectId: project.id,
           gitRepoPath: project.gitRepoPath,
+          defaultBranch: input.defaultBranch,
           epicId: epic.id,
           branchName: epic.branchName,
           worktreePath,
           sessionId,
-          agentSucceeded: !!agentResult?.success,
+          agentSucceeded: !!agentResult?.success && outcome !== "asked_question",
           originalError: error,
         });
       } finally {
@@ -853,7 +787,8 @@ async function dispatchMergeFixAgent(input: {
         // sweep could start a second merge on the same branch mid-retry.
         autoModeRegistry.endMergeWork(project.id, epic.id);
       }
-    });
+    }});
+    void dispatched.settled.then(() => autoModeRegistry.endMergeWork(project.id, epic.id));
 
     return sessionId;
   } catch (dispatchError) {
@@ -890,6 +825,7 @@ async function verifyResolvedConflict(input: {
 async function retryMergeAfterFix(input: {
   projectId: string;
   gitRepoPath: string;
+  defaultBranch: string;
   epicId: string;
   branchName: string;
   worktreePath: string;
@@ -925,19 +861,6 @@ async function retryMergeAfterFix(input: {
       reason: AUTO_MODE_REASONS.parked(3),
       sessionId: input.sessionId,
     });
-    try {
-      createAutoModeMergeParkedNotification({
-        projectId: input.projectId,
-        epicId: input.epicId,
-        sessionId: input.sessionId,
-        error,
-      });
-    } catch (notifyError) {
-      console.warn(
-        "[auto-mode/merge] Failed to create parked notification:",
-        (notifyError as Error).message
-      );
-    }
   };
 
   if (!input.agentSucceeded) {
@@ -969,7 +892,8 @@ async function retryMergeAfterFix(input: {
     retry = await mergeWorktree(
       input.gitRepoPath,
       input.branchName,
-      input.worktreePath
+      input.worktreePath,
+      { defaultBranch: input.defaultBranch }
     );
   } catch (mergeError) {
     park(mergeError instanceof Error ? mergeError.message : "Merge failed");

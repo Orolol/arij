@@ -1,3 +1,5 @@
+import { manualReviewEvidence } from "@/lib/review/prompt-context";
+import { buildReviewFeedbackSection } from "@/lib/review/prompt-feedback";
 /** Shared build/review/grading prompt assembly and exact section capture. */
 
 import { and, eq } from "drizzle-orm";
@@ -95,51 +97,6 @@ export function finalizeCapturedPrompt(
   };
 }
 
-/** Append pipeline-only evidence while preserving exact section attribution. */
-export function appendPromptSections(
-  assembled: AssembledDispatchPrompt,
-  additions: AdditionalPromptSection[],
-): AssembledDispatchPrompt {
-  const usable = additions.filter((item) => item.text);
-  if (usable.length === 0) return assembled;
-
-  const sections: PromptSectionTexts = { ...assembled.sections };
-  let prompt = assembled.prompt;
-  for (const { key, text } of usable) {
-    prompt += `\n\n${text}`;
-    sections[key] = [sections[key], text].filter(Boolean).join("\n");
-  }
-  return {
-    ...assembled,
-    prompt,
-    sections,
-    tokens: estimatePromptTokensBySections(sections, prompt),
-  };
-}
-
-function buildReviewFeedback(
-  comments: Array<{ filePath: string; lineNumber: number; body: string }>,
-): string {
-  if (comments.length === 0) return "";
-  const byFile = new Map<string, typeof comments>();
-  for (const comment of comments) {
-    const group = byFile.get(comment.filePath) ?? [];
-    group.push(comment);
-    byFile.set(comment.filePath, group);
-  }
-  const parts = [
-    "## Code Review Feedback\n\nThe following review comments were left on your previous changes. Address each one:\n",
-  ];
-  for (const [filePath, fileComments] of byFile) {
-    parts.push(`### ${filePath}`);
-    for (const comment of fileComments) {
-      parts.push(`- **Line ${comment.lineNumber}**: ${comment.body}`);
-    }
-    parts.push("");
-  }
-  return parts.join("\n");
-}
-
 export interface AssembleEpicBuildPromptOptions {
   projectId: string;
   epicId: string;
@@ -235,7 +192,7 @@ export async function assembleEpicBuildPrompt(
   );
 
   if (options.includeOpenReviewFeedback !== false) {
-    const feedback = buildReviewFeedback(
+    const feedback = buildReviewFeedbackSection(
       db
         .select()
         .from(reviewComments)
@@ -359,7 +316,7 @@ export async function assembleEpicReviewPrompt(
         )
       : options.systemPrompt;
   const capture = createPromptSectionCapture();
-  const prompt = buildEpicReviewPrompt(
+  let prompt = buildEpicReviewPrompt(
     project,
     [],
     epic,
@@ -369,6 +326,8 @@ export async function assembleEpicReviewPrompt(
     comments,
     capture.collect,
   );
+  const evidence = manualReviewEvidence(options.projectId, options.epicId);
+  if (evidence) { prompt += "\n\n" + evidence; capture.append("findings", evidence); }
   const enrichment = enrichPromptWithDocumentMentions({
     projectId,
     prompt,
@@ -407,7 +366,7 @@ export async function assembleStoryReviewPrompt(
         )
       : options.systemPrompt;
   const capture = createPromptSectionCapture();
-  const prompt = buildReviewPrompt(
+  let prompt = buildReviewPrompt(
     project,
     [],
     epic,
@@ -418,6 +377,8 @@ export async function assembleStoryReviewPrompt(
   );
   // Story-review prompts intentionally do not render Comment History. The
   // comments remain mention sources so existing @document behaviour is kept.
+  const evidence = manualReviewEvidence(options.projectId, options.epicId);
+  if (evidence) { prompt += "\n\n" + evidence; capture.append("findings", evidence); }
   const enrichment = enrichPromptWithDocumentMentions({
     projectId,
     prompt,

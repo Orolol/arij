@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { act, render, screen, waitFor, fireEvent } from "@testing-library/react";
 import React from "react";
 import SettingsPage from "@/app/settings/page";
 import ProjectSettingsPage from "@/app/projects/[projectId]/settings/page";
@@ -12,6 +12,11 @@ import {
 vi.mock("next/navigation", () => ({
   useParams: () => ({
     projectId: "proj-123",
+  }),
+  useRouter: () => ({
+    push: vi.fn(),
+    replace: vi.fn(),
+    refresh: vi.fn(),
   }),
 }));
 
@@ -144,5 +149,36 @@ describe("Project Token Budget in ProjectSettingsPage", () => {
         }),
       })
     );
+  });
+  it("cannot clear a project override before its initial settings read completes", async () => {
+    let finish!: (response: Response) => void;
+    const defaultFetch = global.fetch;
+    global.fetch = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      if (url.startsWith("/api/settings") && (!opts || !opts.method || opts.method === "GET")) {
+        return new Promise<Response>((resolve) => { finish = resolve; });
+      }
+      return defaultFetch(url, opts);
+    });
+    render(<ProjectSettingsPage />);
+    expect(screen.getByTestId("project-prompt-token-budget-setting")).toBeDisabled();
+    expect(screen.getByTestId("project-prompt-token-budget-save")).toBeDisabled();
+    await act(async () => {
+      finish({ ok: true, json: async () => ({ data: { "prompt_token_budget:proj-123": 25000 } }) } as Response);
+    });
+    expect(screen.getByTestId("project-prompt-token-budget-setting")).toHaveValue("25000");
+    expect(screen.getByTestId("project-prompt-token-budget-save")).toBeEnabled();
+  });
+
+  it("reports settings load failure without enabling an empty override save", async () => {
+    const defaultFetch = global.fetch;
+    global.fetch = vi.fn().mockImplementation((url: string, opts?: RequestInit) => {
+      if (url.startsWith("/api/settings") && (!opts || !opts.method || opts.method === "GET")) {
+        return Promise.reject(new Error("offline"));
+      }
+      return defaultFetch(url, opts);
+    });
+    render(<ProjectSettingsPage />);
+    expect(await screen.findByTestId("project-prompt-token-budget-message")).toHaveTextContent("Failed to load project settings.");
+    expect(screen.getByTestId("project-prompt-token-budget-save")).toBeDisabled();
   });
 });

@@ -14,8 +14,8 @@
     "sessions": "Sessions",
     "usage": "Usage",
     "workspace": "Workspace & Full Auto",
-    "nightRuns": "Night runs",
-    "notifications": "Notifications",
+    "pipeline": "Pipeline & Verification",
+    "appearance": "Appearance",
     "integrations": "Integrations"
   }
 }

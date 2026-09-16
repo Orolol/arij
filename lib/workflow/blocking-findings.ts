@@ -78,7 +78,7 @@ import {
  * it — SQLite does not enforce retroactively) matching nothing, so it reads as
  * unclassified and blocks rather than evaluating to NULL and slipping through.
  */
-function bodyStartsWithAnySql(
+export function bodyStartsWithAnySql(
   prefixes: ReadonlyArray<{ prefix: string }>
 ): SQL {
   const [first, ...rest] = prefixes.map(
@@ -105,8 +105,7 @@ export function blocksMergeSql(cutoffAt: SQLWrapper | string): SQL {
     OR NOT (${bodyStartsWithAnySql(FINDING_SEVERITY_PREFIXES)})
     OR (
       (${bodyStartsWithAnySql(BLOCKING_FINDING_PREFIXES)})
-      AND REPLACE(COALESCE(${reviewComments.createdAt}, ''), ' ', 'T')
-          >= COALESCE(${cutoffAt}, '')
+      AND COALESCE(julianday(${reviewComments.createdAt}) >= julianday(${cutoffAt}), 1)
     )
   )`;
 }

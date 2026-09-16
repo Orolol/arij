@@ -116,7 +116,7 @@ export default function SettingsPage() {
         onDiscard={draft.discard}
         message={draft.message}
         messageTone={draft.messageTone}
-        disabled={draft.loadFailed}
+        disabled={!draft.loaded || draft.loadFailed}
       />
     </div>
   );

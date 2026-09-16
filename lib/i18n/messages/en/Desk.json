@@ -50,7 +50,19 @@
   "yourTurn": {
     "label": "Your turn",
     "hint": "↹ browse · ⏎ reply",
-    "overflow": "+{count} more"
+    "overflow": "+{count} more",
+    "parked": "PARKED"
+  },
+  "sessionTitle": {
+    "release": "Generating release notes",
+    "memory": "Distilling project memory",
+    "refinement": "Refining the board",
+    "grading": "Grading acceptance criteria",
+    "qa": "Running checks",
+    "merge": "Merging",
+    "review": "Reviewing",
+    "build": "Building",
+    "chat": "Chatting"
   },
   "rows": {
     "asksYou": "ASKS YOU",
@@ -86,11 +98,20 @@
   },
   "upNext": {
     "label": "Up next",
-    "hint": "the order Full Auto picks from",
+    "hint": "execution queue order",
     "chipBlocked": "{id} blocked",
     "chipAwaiting": "{id} waiting",
     "chipSpec": "{label} · spec",
-    "blockedBy": "Blocked by {ids}"
+    "blockedBy": "Blocked by {ids}",
+    "chipNoBuildable": "{label} · no build queued",
+    "noBuildableStories": "No story is currently in To Do or In Progress",
+    "holds": {
+      "owned": "Managed by another run",
+      "busy": "Agent already active",
+      "parked": "Paused after repeated failures",
+      "reviewRejections": "Review rejection limit reached"
+    },
+    "chipHeld": "{label} · {reason}"
   },
   "composer": {
     "label": "Describe a feature",
@@ -157,9 +178,6 @@
     "buildLaunched": "{count, plural, one {Launched # build session} other {Launched # build sessions}}",
     "reviewLaunched": "{count, plural, one {Launched review for # epic} other {Launched review for # epics}}",
     "reviewLaunchFailed": "Failed to launch any reviews",
-    "mergedCount": "{count, plural, one {Merged # epic} other {Merged # epics}}",
-    "mergeFixAgentCount": "{count, plural, one {Launched merge-fix agent for # epic} other {Launched merge-fix agent for # epics}}",
-    "mergesFailed": "{count, plural, one {# merge failed} other {# merges failed}}",
     "selectedCount": "{count, plural, one {# epic selected} other {# epics selected}}",
     "autoIncluded": "+{count} required",
     "modeParallel": "Parallel",

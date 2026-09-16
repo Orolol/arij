@@ -22,9 +22,10 @@ vi.mock("@/lib/db", async () => {
 });
 
 vi.mock("@/lib/planning/permanent-delete", () => ({
-  deleteEpicPermanently: mockDeleteEpicPermanently,
   ScopedDeleteNotFoundError,
 }));
+
+vi.mock("@/lib/planning/delete-ticket", () => ({ deleteTicket: mockDeleteEpicPermanently }));
 
 vi.mock("@/lib/sync/export", () => ({
   tryExportArjiJson: mockTryExportArjiJson,

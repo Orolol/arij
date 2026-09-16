@@ -9,6 +9,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { waitForBackground } from "./helpers/background";
 
 // Track call counts to return different values for sequential .get() calls
 let getCallCount = 0;
@@ -46,7 +47,6 @@ const mockState = vi.hoisted(() => ({
 
 const mockCreateQueuedSession = vi.hoisted(() => vi.fn());
 const mockLogTransition = vi.hoisted(() => vi.fn());
-const mockCreateDagWaveOutcomeNotification = vi.hoisted(() => vi.fn());
 const mockHandleAskedQuestionOutcome = vi.hoisted(() => vi.fn());
 const mockMarkSessionTerminal = vi.hoisted(() => vi.fn());
 
@@ -159,10 +159,6 @@ vi.mock("@/lib/workflow/log", () => ({
   logTransition: mockLogTransition,
 }));
 
-vi.mock("@/lib/notifications/create", () => ({
-  createDagWaveOutcomeNotification: mockCreateDagWaveOutcomeNotification,
-}));
-
 vi.mock("@/lib/dependencies/scheduler", () => ({
   buildExecutionPlan: vi.fn((_projectId: string, ticketIds: string[]) => {
     mockState.planCalls.push([...ticketIds]);
@@ -222,12 +218,6 @@ function mockRequest(body: Record<string, unknown>) {
   } as unknown as import("next/server").NextRequest;
 }
 
-async function flushBackground() {
-  for (let i = 0; i < 5; i++) {
-    await new Promise((r) => setTimeout(r, 20));
-  }
-}
-
 /** Sessions created, as `[epicId, sessionId]` in creation order. */
 function createdSessions(): Array<[string, string]> {
   return mockCreateQueuedSession.mock.calls.map((call) => [
@@ -263,7 +253,6 @@ describe("Build Route — dag mode", () => {
     mockState.buildableCalls = [];
     mockCreateQueuedSession.mockClear();
     mockLogTransition.mockClear();
-    mockCreateDagWaveOutcomeNotification.mockClear();
     mockHandleAskedQuestionOutcome.mockClear();
     mockMarkSessionTerminal.mockClear();
   });
@@ -289,15 +278,19 @@ describe("Build Route — dag mode", () => {
     expect(json.data.count).toBe(1);
     expect(json.data.sessions).toHaveLength(1);
 
-    await flushBackground();
-
-    // Both epics got sessions, dependency first.
+    // Both epics got sessions, dependency first. Wave 2 runs in a background
+    // closure the response cannot see, so the wait is on the effect itself.
     const sessions = createdSessions();
-    expect(sessions.map(([epicId]) => epicId)).toEqual(["e1", "e2"]);
+    await waitForBackground(
+      () => {
+        const rows = createdSessions();
+        expect(rows.map(([epicId]) => epicId)).toEqual(["e1", "e2"]);
+        expect(mockState.startedSessions).toEqual([rows[0][1], rows[1][1]]);
+        expect(systemActivity()).toEqual([]);
+      },
+      "the second wave launching after the response returned",
+    );
     expect(json.data.sessions[0]).toBe(sessions[0][1]);
-    expect(mockState.startedSessions).toEqual([sessions[0][1], sessions[1][1]]);
-    expect(systemActivity()).toEqual([]);
-    expect(mockCreateDagWaveOutcomeNotification).not.toHaveBeenCalled();
   });
 
   it("expands the selection to its transitive dependency closure", async () => {
@@ -311,11 +304,14 @@ describe("Build Route — dag mode", () => {
     });
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    expect(mockState.transitiveCalls[0]).toEqual(["e2"]);
-    expect(mockState.planCalls[0]).toEqual(["e1", "e2"]);
-    expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1", "e2"]);
+    await waitForBackground(
+      () => {
+        expect(mockState.transitiveCalls[0]).toEqual(["e2"]);
+        expect(mockState.planCalls[0]).toEqual(["e1", "e2"]);
+        expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1", "e2"]);
+      },
+      "the transitive closure being expanded and both waves launching",
+    );
   });
 
   it("drops already-delivered epics from the plan: no wave, no session, wave 1 for the dependent", async () => {
@@ -337,16 +333,18 @@ describe("Build Route — dag mode", () => {
     expect(res.status).toBe(200);
     expect(json.data.waves).toBe(1);
     expect(json.data.totalEpics).toBe(1);
-    await flushBackground();
-
     // The guard saw the whole closure and the plan only the buildable rest.
-    expect(mockState.buildableCalls[0]).toEqual(["e1", "e2"]);
-    expect(mockState.planCalls[0]).toEqual(["e2"]);
+    await waitForBackground(
+      () => {
+        expect(mockState.buildableCalls[0]).toEqual(["e1", "e2"]);
+        expect(mockState.planCalls[0]).toEqual(["e2"]);
+      },
+      "the buildable guard narrowing the plan",
+    );
 
     // The done epic is never rebuilt, and never blocks its dependent.
     expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e2"]);
     expect(systemActivity()).toEqual([]);
-    expect(mockCreateDagWaveOutcomeNotification).not.toHaveBeenCalled();
   });
 
   it("rejects a selection with no buildable epic left", async () => {
@@ -365,7 +363,7 @@ describe("Build Route — dag mode", () => {
     expect(mockState.planCalls).toHaveLength(0);
   });
 
-  it("a failed dependency skips transitive dependents: no sessions, system activity entries, one wave notification", async () => {
+  it("a failed dependency skips its transitive dependents and logs why", async () => {
     mockState.layers = [["e1"], ["e2"], ["e3"]];
     mockState.graphEdges = [
       ["e2", "e1"],
@@ -382,13 +380,15 @@ describe("Build Route — dag mode", () => {
     );
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    // Only the failed dependency ever got a session.
-    expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1"]);
-
-    // Skips are logged as system activity, blaming the failed dependency.
-    expect(systemActivity()).toHaveLength(2);
+    // Only the failed dependency ever got a session; the skips are logged as
+    // system activity, blaming the failed dependency.
+    await waitForBackground(
+      () => {
+        expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1"]);
+        expect(systemActivity()).toHaveLength(2);
+      },
+      "the failed dependency skipping its dependents",
+    );
     const loggedEpicIds = systemActivity().map((entry) => entry.epicId);
     expect(new Set(loggedEpicIds)).toEqual(new Set(["e2", "e3"]));
     for (const entry of systemActivity()) {
@@ -398,18 +398,6 @@ describe("Build Route — dag mode", () => {
       expect(entry.fromStatus).toBe(entry.toStatus);
     }
 
-    // One notification summarizing the blocked wave.
-    expect(mockCreateDagWaveOutcomeNotification).toHaveBeenCalledTimes(1);
-    expect(mockCreateDagWaveOutcomeNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "proj-1",
-        wave: 1,
-        totalWaves: 3,
-        blocked: [{ epicId: "e1", kind: "failed" }],
-        skippedCount: 2,
-        stopped: false,
-      })
-    );
   });
 
   it("asked_question blocks dependents too, with the question-flavored reason", async () => {
@@ -431,9 +419,10 @@ describe("Build Route — dag mode", () => {
     );
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1"]);
+    await waitForBackground(
+      () => expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1"]),
+      "the asked-question blocker stopping its dependent",
+    );
 
     // The per-session asked-question workflow still runs for the blocker...
     expect(mockHandleAskedQuestionOutcome).toHaveBeenCalledWith(
@@ -450,18 +439,11 @@ describe("Build Route — dag mode", () => {
       })
     );
 
-    expect(mockCreateDagWaveOutcomeNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        blocked: [{ epicId: "e1", kind: "asked_question" }],
-        skippedCount: 1,
-      })
-    );
   });
 
-  it("skips the wave notification when a question blocked nothing", async () => {
-    // e1 asks a question but has zero dependents: the per-session
-    // "Agent asked a question" notification already says everything, so the
-    // wave summary would be a duplicate.
+  it("keeps building independent branches when a question blocked nothing", async () => {
+    // e1 asks a question but has zero dependents, so nothing is skipped: the
+    // per-session asked-question handling is the whole signal.
     mockState.layers = [["e1"], ["e2"]];
     mockState.graphEdges = []; // e2 does NOT depend on e1
     mockState.resultsByStartOrder = [
@@ -480,37 +462,16 @@ describe("Build Route — dag mode", () => {
     );
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
     // The per-session workflow still fires, and the independent branch runs.
-    expect(mockHandleAskedQuestionOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({ epicIds: ["e1"] })
-    );
-    expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1", "e2"]);
-    expect(systemActivity()).toEqual([]);
-    expect(mockCreateDagWaveOutcomeNotification).not.toHaveBeenCalled();
-  });
-
-  it("still notifies when a failure blocked nothing", async () => {
-    // Same shape, but a failure is news even with zero dependents.
-    mockState.layers = [["e1"], ["e2"]];
-    mockState.graphEdges = [];
-    mockState.resultsByStartOrder = [
-      { success: false, duration: 500, error: "boom" },
-    ];
-
-    const { POST } = await import("@/app/api/projects/[projectId]/build/route");
-    await POST(mockRequest({ epicIds: ["e1", "e2"], mode: "dag" }), {
-      params: Promise.resolve({ projectId: "proj-1" }),
-    });
-    await flushBackground();
-
-    expect(mockCreateDagWaveOutcomeNotification).toHaveBeenCalledTimes(1);
-    expect(mockCreateDagWaveOutcomeNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        blocked: [{ epicId: "e1", kind: "failed" }],
-        skippedCount: 0,
-      })
+    await waitForBackground(
+      () => {
+        expect(mockHandleAskedQuestionOutcome).toHaveBeenCalledWith(
+          expect.objectContaining({ epicIds: ["e1"] })
+        );
+        expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1", "e2"]);
+        expect(systemActivity()).toEqual([]);
+      },
+      "the asked-question hold and the independent branch",
     );
   });
 
@@ -528,13 +489,13 @@ describe("Build Route — dag mode", () => {
     );
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
     // Independent e2 still got its session; nothing was skipped.
-    expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1", "e2"]);
-    expect(systemActivity()).toEqual([]);
-    expect(mockCreateDagWaveOutcomeNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ skippedCount: 0, stopped: false })
+    await waitForBackground(
+      () => {
+        expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1", "e2"]);
+        expect(systemActivity()).toEqual([]);
+      },
+      "the halt policy building the independent branch",
     );
   });
 
@@ -558,19 +519,19 @@ describe("Build Route — dag mode", () => {
 
     expect(res.status).toBe(200);
     expect(json.data.failurePolicy).toBe("stop");
-    await flushBackground();
-
-    expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1"]);
-    expect(systemActivity()).toHaveLength(1);
+    await waitForBackground(
+      () => {
+        expect(createdSessions().map(([epicId]) => epicId)).toEqual(["e1"]);
+        expect(systemActivity()).toHaveLength(1);
+      },
+      "the stop policy abandoning the remaining waves",
+    );
     expect(systemActivity()).toContainEqual(
       expect.objectContaining({
         epicId: "e2",
         actor: "system",
         reason: "skipped: batch stopped after wave 1 failure",
       })
-    );
-    expect(mockCreateDagWaveOutcomeNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ stopped: true, skippedCount: 1 })
     );
   });
 

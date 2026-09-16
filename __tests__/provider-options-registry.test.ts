@@ -185,19 +185,16 @@ describe("codex", () => {
     expect(effort?.choices?.map((c) => c.value)).not.toContain("minimal");
   });
 
-  it("drops --profile on the resume path but keeps -c", () => {
-    // `codex exec resume` accepts a strict subset of `codex exec`'s flags and
-    // an unknown flag there is a fatal argv error.
+  it("translates --profile and the reasoning effort, in registry order", () => {
+    // There is no resume-specific argv shape left to drop `--profile` for:
+    // `codex exec resume` is unreachable (codex never reports its thread id),
+    // so the registry no longer carries a per-flag resume exclusion.
     const options = { reasoning_effort: "low", profile: "fast" };
     expect(buildProviderOptionArgs("codex", options)).toEqual([
       "-c",
       "model_reasoning_effort=low",
       "-p",
       "fast",
-    ]);
-    expect(buildProviderOptionArgs("codex", options, { resume: true })).toEqual([
-      "-c",
-      "model_reasoning_effort=low",
     ]);
   });
 

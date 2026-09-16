@@ -162,11 +162,12 @@ const mcpServerFields = z.object({
 });
 
 /**
- * Shape rules that hold on the EFFECTIVE (merged) state of a server.
- * Exported so the update path can re-validate after merging the patch over
- * the stored row — the patch alone may legally be transport-incomplete.
+ * Shape rules that hold on the EFFECTIVE (merged) state of a server. The
+ * update path re-validates after merging the patch over the stored row — the
+ * patch alone may legally be transport-incomplete — and that path is in this
+ * file, so neither this type nor the check is exported.
  */
-export interface McpServerShape {
+interface McpServerShape {
   name?: string;
   transport?: McpServerTransport;
   command?: string | null;
@@ -177,7 +178,7 @@ export interface McpServerShape {
   usageHint?: string | null;
 }
 
-export function validateMcpServerShape(
+function validateMcpServerShape(
   value: McpServerShape,
   issue: (message: string, path?: PropertyKey) => void
 ): void {

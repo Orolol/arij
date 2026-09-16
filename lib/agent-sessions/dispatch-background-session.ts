@@ -32,7 +32,6 @@
  */
 
 import fs from "fs";
-import path from "path";
 
 import { createId } from "@/lib/utils/nanoid";
 import { processManager } from "@/lib/claude/process-manager";
@@ -53,7 +52,7 @@ import {
   type SessionOutcome,
 } from "@/lib/agent-sessions/lifecycle";
 import { providerAcceptsAssignedSessionId } from "@/lib/agent-sessions/resume-capability";
-import { resolveSessionsRoot } from "@/lib/agent-sessions/session-paths";
+import { createSessionLogsPath } from "@/lib/agent-sessions/session-paths";
 import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
 
 /**
@@ -76,21 +75,6 @@ export function mintAssignedCliSessionId(
   return providerAcceptsAssignedSessionId(provider)
     ? crypto.randomUUID()
     : undefined;
-}
-
-/** Absolute path of a session's own artifact directory. */
-export function sessionLogsDir(sessionId: string): string {
-  return path.join(resolveSessionsRoot(), sessionId);
-}
-
-/**
- * Creates `data/sessions/<id>/` and returns the convenience log file path.
- * The session row and its chunks stay authoritative; this file is a dump.
- */
-export function createSessionLogsPath(sessionId: string): string {
-  const logsDir = sessionLogsDir(sessionId);
-  fs.mkdirSync(logsDir, { recursive: true });
-  return path.join(logsDir, "logs.json");
 }
 
 /** What the run produced, handed to every hook and to the settled promise. */
@@ -137,6 +121,9 @@ export interface BackgroundSessionSettled extends BackgroundSessionTerminal {
 }
 
 export interface DispatchBackgroundSessionInput {
+  sessionId?: string;
+  /** null explicitly starts without an assigned CLI id; undefined uses the provider default. */
+  cliSessionId?: string | null;
   /** `agent_sessions.agent_type` — the row's identity, and the persona key. */
   agentType: string;
   projectId: string;
@@ -263,10 +250,10 @@ export function dispatchBackgroundSession(
   const provider = resolvedAgent.provider;
   const model = resolvedAgent.model || undefined;
 
-  const sessionId = createId();
+  const sessionId = input.sessionId ?? createId();
   const createdAt = new Date().toISOString();
   const logsPath = createSessionLogsPath(sessionId);
-  const cliSessionId = mintAssignedCliSessionId(provider);
+  const cliSessionId = input.cliSessionId === null ? undefined : input.cliSessionId ?? mintAssignedCliSessionId(provider);
 
   // The type already forbids the owned keys on `session`; the two anchors are
   // stripped at runtime as well, because every other owned key is overwritten

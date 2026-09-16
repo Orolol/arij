@@ -126,50 +126,6 @@ export function estimatePromptTokensBySections(
 }
 
 /**
- * Calculates a total for arbitrary text. A breakdown is emitted only when
- * exact builder sections are supplied; guessing from untrusted Markdown
- * headings would produce confidently wrong persisted data.
- */
-export function estimatePromptTokens(
-  prompt: string | null | undefined,
-  sections?: PromptSectionTexts
-): EstimatedPromptTokens {
-  if (!prompt || prompt.length === 0) {
-    return {
-      total: 0,
-      breakdown: {
-        spec: 0,
-        memory: 0,
-        ticket: 0,
-        comments: 0,
-        findings: 0,
-        documents: 0,
-        system: 0,
-        other: 0,
-      },
-    };
-  }
-
-  if (sections) {
-    return estimatePromptTokensBySections(sections, prompt);
-  }
-
-  return {
-    total: estimateTokens(prompt),
-    breakdown: {
-      spec: 0,
-      memory: 0,
-      ticket: 0,
-      comments: 0,
-      findings: 0,
-      documents: 0,
-      system: 0,
-      other: 0,
-    },
-  };
-}
-
-/**
  * Identifies the largest context section in the breakdown.
  */
 export function findLargestContextSection(

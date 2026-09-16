@@ -53,21 +53,11 @@ export const NIGHT_STOPPED_ABORT_REASON = "stopped by user";
  */
 export const NIGHT_CIRCUIT_BREAKER_SETTING_KEY = "night_circuit_breaker";
 
-/** Per-project override (`night_circuit_breaker:<projectId>`). */
-export function nightCircuitBreakerSettingKey(projectId: string): string {
-  return `${NIGHT_CIRCUIT_BREAKER_SETTING_KEY}:${projectId}`;
-}
-
 /**
  * Global settings key: total Claude-reported USD a night run may spend before
  * the cost cap aborts the remaining waves. Absent/invalid = unlimited.
  */
 export const NIGHT_COST_CAP_SETTING_KEY = "night_cost_cap_usd";
-
-/** Per-project override (`night_cost_cap_usd:<projectId>`). */
-export function nightCostCapSettingKey(projectId: string): string {
-  return `${NIGHT_COST_CAP_SETTING_KEY}:${projectId}`;
-}
 
 /* ------------------------------------------------------------------ */
 /* Defaults, clamps, parsing                                           */
@@ -132,10 +122,6 @@ export interface NightRunEpicEntry {
   status: TicketExecutionStatus;
   /** Failure/skip reason (skip reasons verbatim, incl. abort reasons). */
   reason: string | null;
-  /** Pipeline run driving this epic; null pre-launch or after a restart. */
-  pipelineRunId: string | null;
-  /** Sessions tagged with the run that belong to this epic, dispatch order. */
-  sessionIds: string[];
   /** Claude-reported cost of those sessions; null when none reported. */
   costUsd: number | null;
 }
@@ -168,8 +154,6 @@ export interface NightRunDetail {
   costIsPartial: boolean;
   abortReason: string | null;
   abortedAtWave: number | null;
-  breakerThreshold: number | null;
-  costCapUsd: number | null;
 }
 
 /** Compact list entry, served by GET /build/night-runs. */

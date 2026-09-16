@@ -2,7 +2,8 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { ESLint } from "eslint";
+import type { ESLint } from "eslint";
+import { createEslint } from "@/__tests__/helpers/react-compiler-probe";
 
 /**
  * `TopBar` is mounted once by `app/layout.tsx`, so it renders on every route.
@@ -48,6 +49,17 @@ import { ESLint } from "eslint";
  * suppressions baseline is applied in ESLint's CLI layer (`lib/cli.js`) and not
  * by the `ESLint` class used here, so baselining the violation would keep
  * `npm run lint` green while leaving every assertion below untouched.
+ *
+ * WHY THIS FILE IS NOT FOLDED INTO `react-compiler-namespaced-hooks.test.ts`:
+ * that suite already probes TopBar as part of its 26-file sweep, and the sweep
+ * is what catches a file drifting back to the namespaced form. What is unique
+ * here is the pair of SOURCE assertions no probe can make — the `"use no memo"`
+ * directive and a blanket `eslint-disable` are both invisible to every rule,
+ * measured on 7.0.1 — plus the two mutation controls that name TopBar's own
+ * remediation. Folding them in would put a repository-wide sweep and one
+ * component's remediation in the same file, and the sweep is regenerated while
+ * this is not. What the two DO share is the ESLint construction (`createEslint`)
+ * and the probe machinery, which is now imported rather than copied.
  */
 
 const TOP_BAR_PATH = path.join(process.cwd(), "components/piscine/TopBar.tsx");
@@ -82,7 +94,9 @@ function errorsFrom(messages: Awaited<ReturnType<typeof lint>>, ruleId: string) 
 
 beforeAll(() => {
   source = readFileSync(TOP_BAR_PATH, "utf8");
-  eslint = new ESLint({ cwd: process.cwd() });
+  // The same construction the probe helper uses, so the two families of
+  // React Compiler tests cannot drift into different ESLint configurations.
+  eslint = createEslint();
 });
 
 describe("TopBar and the React Compiler", () => {

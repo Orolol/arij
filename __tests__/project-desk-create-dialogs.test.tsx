@@ -7,6 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { installMockEventSource } from "./helpers/event-source-mock";
 
 /**
  * The two creation dialogs on `/projects/:id` share the desk composer's
@@ -17,13 +18,7 @@ import {
  * fails this file, not only its own.
  */
 
-class MockEventSource {
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  close() {}
-}
-(globalThis as Record<string, unknown>).EventSource = MockEventSource;
+installMockEventSource();
 
 /** The query string the page reads; each test sets it before rendering. */
 const nav = vi.hoisted(() => ({ search: new URLSearchParams() }));

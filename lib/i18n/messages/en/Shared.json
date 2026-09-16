@@ -97,6 +97,16 @@
       "system": "System:",
       "other": "Other / Instr:"
     },
+    "sections": {
+      "spec": "Project Specification",
+      "memory": "Learned Memory",
+      "ticket": "Ticket & Stories",
+      "comments": "Comment History",
+      "findings": "Review Findings & Checklists",
+      "documents": "Reference Documents",
+      "system": "System Instructions",
+      "other": "General Instructions"
+    },
     "budgetWarning": {
       "title": "Prompt token budget warning",
       "body": "Estimated prompt (~{total} tokens) exceeds the configured budget ({budget} tokens).",
@@ -128,11 +138,5 @@
     "startFreshItem": "Start fresh (no resume)",
     "session": "Session {id}"
   },
-  "ticketType": {
-    "badge": "Bug",
-    "meta": "BUG"
-  },
-  "close": "Close",
-  "switchToLight": "Switch to light mode",
-  "switchToDark": "Switch to dark mode"
+  "close": "Close"
 }

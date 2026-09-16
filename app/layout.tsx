@@ -1,3 +1,5 @@
+import { ControlDeskProvider } from "@/components/ControlDeskProvider";
+import { ProjectsProvider } from "@/components/ProjectsProvider";
 import type { Metadata } from "next";
 import { Bricolage_Grotesque, Instrument_Sans, Space_Mono } from "next/font/google";
 import "./globals.css";
@@ -92,8 +94,12 @@ export default async function RootLayout({
                 growing the column past the viewport.
               */}
               <div className="flex h-screen flex-col">
+                <ProjectsProvider>
+                <ControlDeskProvider>
                 <TopBar />
                 <main className="flex-1 min-h-0 min-w-0 overflow-auto">{children}</main>
+                </ControlDeskProvider>
+                </ProjectsProvider>
               </div>
             </TooltipProvider>
           </ThemeProvider>

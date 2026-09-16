@@ -45,7 +45,6 @@ import {
   selectSmartDispatchAgent,
   type SmartDispatchPick,
 } from "@/lib/agent-config/smart-dispatch";
-import { createAutoModeSecondOpinionParkedNotification } from "@/lib/notifications/create";
 import {
   dispatchSecondOpinion,
   readSecondOpinionState,
@@ -113,6 +112,14 @@ export interface AutoModeDispatchInput {
   reviewNamedAgentId: string | null;
   /** Sessions the mode already owns — the driver's race check. */
   ownSessionIds: string[];
+  /**
+   * Consecutive failures already charged to this ticket. The attempt ordinal
+   * is `consecutiveFailures + 1`: a COMPOSITE runs its member N-1 on attempt
+   * N, so the ticket's own streak is what makes the ordered fallback list
+   * fall back. A simple agent ignores it — it is retried as itself, and the
+   * parking ladder is its only cap.
+   */
+  consecutiveFailures: number;
 }
 
 export interface AutoModeDispatchResult {
@@ -131,6 +138,17 @@ export interface AutoModeDispatchResult {
    * user cannot otherwise explain.
    */
   skipReason?: string | null;
+  /**
+   * Consecutive failures the dispatched agent affords before its ticket
+   * parks: a composite's member count, null for a simple agent (the mode's
+   * own cap). Absent when nothing was dispatched.
+   */
+  attemptBudget?: number | null;
+  /**
+   * Set when this dispatch moved DOWN one rank of a composite, carrying both
+   * ends so `dispatchKind` can explain the new agent in the ticket feed.
+   */
+  compositeDescent?: { from: string; to: string } | null;
 }
 
 export interface AutoModeEngineDeps {
@@ -155,12 +173,6 @@ export interface AutoModeEngineDeps {
     projectId: string,
     epicId: string
   ): SecondOpinionState;
-  notifySecondOpinionRejected(input: {
-    projectId: string;
-    epicId: string;
-    sessionId: string;
-    reason: string;
-  }): void;
   merge(
     projectId: string,
     epicId: string,
@@ -322,9 +334,29 @@ async function defaultDispatch(
       : null;
   const verificationReport = evidence?.problem === null ? evidence.report : null;
 
+  // Full Auto's retry ladder. The ticket's consecutive failures ARE the
+  // attempt ordinal, so attempt N of a COMPOSITE runs the member at rank
+  // N-1 — exactly the mapping the pipeline's runner uses, driven by the
+  // ticket's streak instead of a run's counter. A simple agent stays on
+  // attempt 1: it is retried as itself, and the parking ladder is its cap.
+  const memberCount = await driver.compositeMemberCount(input.stage);
+  const attempt = memberCount === null ? 1 : input.consecutiveFailures + 1;
+  const budget = memberCount ?? null;
+  if (budget !== null && attempt > budget) {
+    // The list is spent. Re-running its last member would be a silent
+    // fallback to an agent that just failed; the failure below charges the
+    // ticket and the parking ladder (whose cap IS the member count) ends it.
+    return {
+      sessionId: null,
+      conflictSessionId: null,
+      error: `its fallback list has no member for attempt ${attempt} (${budget} member${budget === 1 ? "" : "s"})`,
+      attemptBudget: budget,
+    };
+  }
+
   const handle = await driver.launchStage({
     stage: input.stage,
-    attempt: 1,
+    attempt,
     fixCycle: 0,
     previousAttemptSessionId: null,
     lastCodeSessionId: null,
@@ -342,7 +374,13 @@ async function defaultDispatch(
     };
   }
 
-  return { sessionId: handle.sessionId, error: null, conflictSessionId: null };
+  return {
+    sessionId: handle.sessionId,
+    error: null,
+    conflictSessionId: null,
+    attemptBudget: budget,
+    compositeDescent: handle.compositeDescent ?? null,
+  };
 }
 
 export const defaultAutoModeDeps: AutoModeEngineDeps = {
@@ -362,7 +400,6 @@ export const defaultAutoModeDeps: AutoModeEngineDeps = {
     }),
   dispatchSecondOpinion,
   readSecondOpinionState,
-  notifySecondOpinionRejected: createAutoModeSecondOpinionParkedNotification,
   merge: (projectId, epicId, options) =>
     tryAutoMerge(projectId, epicId, options),
   readSessionStatus: (sessionId) =>
@@ -626,19 +663,6 @@ async function reconcileInFlight(
             AUTO_MODE_REASONS.parked(failures),
             sessionId
           );
-          try {
-            deps.notifySecondOpinionRejected({
-              projectId,
-              epicId: entry.epicId,
-              sessionId,
-              reason: `gate failed to return usable evidence after ${failures} attempts: ${gate.reason}`,
-            });
-          } catch (error) {
-            console.warn(
-              "[auto-mode] Failed to create second-opinion failure notification:",
-              error instanceof Error ? error.message : error
-            );
-          }
         }
         continue;
       }
@@ -687,9 +711,10 @@ async function reconcileInFlight(
         ? "build completed without producing any output"
         : unusableReview
         ? "review completed with no usable verdict"
-        : `${entry.kind} session failed`
+        : `${entry.kind} session failed`,
+      { cap: parkingThreshold(entry.attemptBudget) }
     );
-    if (failures >= AUTO_MODE_MAX_CONSECUTIVE_FAILURES) {
+    if (failures >= parkingThreshold(entry.attemptBudget)) {
       result.parked.push(entry.ticketId);
       trace(
         deps,
@@ -702,6 +727,26 @@ async function reconcileInFlight(
   }
 
   return { deferredEpicIds, verificationRan };
+}
+
+/**
+ * Consecutive failures a ticket may accumulate before the supervisor parks it,
+ * for a dispatch whose agent affords `attemptBudget` attempts.
+ *
+ * A COMPOSITE's member count IS its ladder, so it is also its cap: a
+ * two-member list parks at two, not at the default three — parking at the
+ * constant would end the ticket before its second member could ever run, and
+ * reaching past the last member would re-run an agent that just failed.
+ *
+ * Three charge sites ask this one question (the reconcile failure path, the
+ * post-build verification failure, and a dispatch that failed outright), and
+ * the answer is `entry.attemptBudget` in one, `dispatched.attemptBudget` in
+ * another — the shapes do not unify, the rule does, so it lives here once.
+ * A simple agent, and the second-opinion gate (no ladder of its own), pass no
+ * budget and keep the constant.
+ */
+function parkingThreshold(attemptBudget?: number | null): number {
+  return attemptBudget ?? AUTO_MODE_MAX_CONSECUTIVE_FAILURES;
 }
 
 /**
@@ -877,9 +922,10 @@ async function verifyDeliveredCode(
     projectId,
     entry.ticketId,
     entry.epicId,
-    `deterministic verification failed at "${label}"`
+    `deterministic verification failed at "${label}"`,
+    { cap: parkingThreshold(entry.attemptBudget) }
   );
-  if (failures >= AUTO_MODE_MAX_CONSECUTIVE_FAILURES) {
+  if (failures >= parkingThreshold(entry.attemptBudget)) {
     parked.push(entry.ticketId);
     trace(
       deps,
@@ -1047,19 +1093,6 @@ function parkRejectedSecondOpinion(
     AUTO_MODE_REASONS.secondOpinionRejected(state.reason),
     state.sessionId
   );
-  try {
-    deps.notifySecondOpinionRejected({
-      projectId,
-      epicId,
-      sessionId: state.sessionId,
-      reason: state.reason,
-    });
-  } catch (error) {
-    console.warn(
-      "[auto-mode] Failed to create second-opinion notification:",
-      error instanceof Error ? error.message : error
-    );
-  }
 }
 
 /**
@@ -1512,6 +1545,10 @@ async function dispatchKind(input: DispatchKindInput): Promise<void> {
       return;
     }
 
+    const streak = autoModeRegistry.failureStreak(
+      projectId,
+      candidate.ticketId
+    );
     const dispatched = await deps.dispatch({
       projectId,
       stage: kind,
@@ -1529,6 +1566,8 @@ async function dispatchKind(input: DispatchKindInput): Promise<void> {
           ? config.reviewAgent ?? smartPick?.namedAgentId ?? null
           : config.reviewAgent,
       ownSessionIds: autoModeRegistry.ownSessionIds(projectId),
+      // A composite descends one rank per failure; the streak is the ordinal.
+      consecutiveFailures: streak.failures,
     });
 
     if (dispatched.conflictSessionId) {
@@ -1562,7 +1601,8 @@ async function dispatchKind(input: DispatchKindInput): Promise<void> {
         projectId,
         candidate.ticketId,
         candidate.epicId,
-        dispatched.error
+        dispatched.error,
+        { cap: parkingThreshold(dispatched.attemptBudget) }
       );
       trace(
         deps,
@@ -1570,7 +1610,7 @@ async function dispatchKind(input: DispatchKindInput): Promise<void> {
         candidate.epicId,
         AUTO_MODE_REASONS.dispatchFailed(kind, dispatched.error)
       );
-      if (failures >= AUTO_MODE_MAX_CONSECUTIVE_FAILURES) {
+      if (failures >= parkingThreshold(dispatched.attemptBudget)) {
         result.parked.push(candidate.ticketId);
         trace(
           deps,
@@ -1586,6 +1626,12 @@ async function dispatchKind(input: DispatchKindInput): Promise<void> {
       kind,
       ticketId: candidate.ticketId,
       epicId: candidate.epicId,
+      // The ladder this dispatch's agent affords. A composite parks at its
+      // member count instead of the default cap, or its later members would
+      // never be reached.
+      ...(dispatched.attemptBudget
+        ? { attemptBudget: dispatched.attemptBudget }
+        : {}),
     });
     autoModeRegistry.recordDispatch(projectId, {
       kind,
@@ -1603,6 +1649,26 @@ async function dispatchKind(input: DispatchKindInput): Promise<void> {
         : AUTO_MODE_REASONS.buildDispatched(candidate.scope),
       dispatched.sessionId
     );
+
+    // A composite's descent: the dispatch entry above names WHICH agent ran,
+    // this one says why it is not the previous one — matching the pipeline's
+    // rank-down trace, which Full Auto does not inherit.
+    if (dispatched.compositeDescent && dispatched.attemptBudget) {
+      trace(
+        deps,
+        projectId,
+        candidate.epicId,
+        AUTO_MODE_REASONS.compositeRankDown(
+          kind,
+          dispatched.compositeDescent.from,
+          dispatched.compositeDescent.to,
+          streak.failures + 1,
+          dispatched.attemptBudget,
+          streak.reason ?? "the previous attempt failed"
+        ),
+        dispatched.sessionId
+      );
+    }
 
     // The session row already carries the chosen named_agent_id; this second
     // entry carries the WHY, which the session row cannot express.

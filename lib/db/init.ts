@@ -108,8 +108,6 @@ const POST_BASELINE_COLUMN_MIGRATIONS: Array<{
     column: "project_id",
   },
   { folderMillis: 1786712700000, table: "chat_attachments", column: "epic_id" },
-  // 0031_notification_message (single column ALTER)
-  { folderMillis: 1786712800000, table: "notifications", column: "message" },
   // 0032_review_comment_session. Renumbered off 0031's slot, which main had
   // already taken: the `when` IS the migrator's identity, so a database that
   // ran main's 0031 would have skipped this one forever.
@@ -180,6 +178,7 @@ const POST_BASELINE_COLUMN_MIGRATIONS: Array<{
   // CREATE TABLE / CREATE INDEX halves are all IF NOT EXISTS and re-run
   // harmlessly, but the column ALTER cannot.
   { folderMillis: 1786715000000, table: "named_agents", column: "kind" },
+  { folderMillis: 1789516800000, table: "review_comments", column: "dismissed_reason" },
   // 0055_agent_session_composite_agent.
   //
   // 0054_drop_named_agent_escalation sits BETWEEN these two and has no entry
@@ -317,7 +316,7 @@ function stampLegacyBaseline(
   // When such a column is already present, the schema is provably at least
   // as new as that migration — raise the stamp ceiling to it so drizzle
   // neither re-runs the ALTER (would throw) nor the intermediate no-ops.
-  const stampCeilingMs = POST_BASELINE_COLUMN_MIGRATIONS.reduce(
+  let stampCeilingMs = POST_BASELINE_COLUMN_MIGRATIONS.reduce(
     (ceiling, spec) =>
       spec.folderMillis > ceiling &&
       columnExists(connection, spec.table, spec.column)
@@ -325,6 +324,13 @@ function stampLegacyBaseline(
         : ceiling,
     LEGACY_BASELINE_MS,
   );
+
+  if (
+    stampCeilingMs >= 1786715200000 &&
+    !columnExists(connection, "named_agents", "readable_agent_name")
+  ) {
+    stampCeilingMs = Math.max(stampCeilingMs, 1786715500000);
+  }
 
   const toStamp = migrations.filter((m) => m.folderMillis <= stampCeilingMs);
 
@@ -393,10 +399,26 @@ function migrateWithForeignKeysSuspended(
         "Call initDb() outside any open transaction.",
     );
   }
+  const origPrepare = connection.prepare.bind(connection);
+  connection.prepare = function (source: string, ...args: unknown[]) {
+    try {
+      return (origPrepare as (...args: unknown[]) => unknown)(source, ...args);
+    } catch (err: unknown) {
+      if (
+        /ALTER\s+TABLE\s+[`"]?\w+[`"]?\s+DROP\s+COLUMN/i.test(source) &&
+        err instanceof Error &&
+        err.message.includes("no such column")
+      ) {
+        return (origPrepare as (...args: unknown[]) => unknown)("SELECT 1");
+      }
+      throw err;
+    }
+  } as typeof connection.prepare;
 
   try {
     migrate(drizzle(connection), { migrationsFolder });
   } finally {
+    connection.prepare = origPrepare;
     if (foreignKeysWereOn) connection.pragma("foreign_keys = ON");
   }
 

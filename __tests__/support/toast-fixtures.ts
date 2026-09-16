@@ -39,7 +39,7 @@ export function qaPayload(): QaPayload {
       },
     ],
     verdicts: [],
-    rubric: { items: ["Tests"], projectRuleCount: 0 },
+    rubric: { items: ["Tests"] },
     reviewable: [],
     checks: [],
     checkTotals: {},

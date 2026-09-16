@@ -68,6 +68,26 @@ async function renderBand(
 }
 
 describe("RepoStrataBand", () => {
+  it("hides PRs immediately when switching projects or losing GitHub configuration", async () => {
+    prs.rows = [];
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/worktrees")) return Promise.resolve({ ok: true, json: async () => ({ data: worktrees.payload }) });
+      return url.includes("/p1/")
+        ? Promise.resolve({ ok: true, json: async () => ({ data: [{ id: "pr1", number: 42, url: "https://github.com/owner/repo/pull/42", status: "open" }] }) })
+        : new Promise(() => {});
+    });
+    global.fetch = fetchMock as typeof fetch;
+    const { rerender } = await renderBand("owner/repo");
+    expect(await screen.findByRole("link", { name: /42/ })).toBeInTheDocument();
+    rerender(<RepoStrataBand projectId="p2" ownerRepo="owner/other" gitRepoPath="/repo2" />);
+    expect(screen.queryByRole("link", { name: /42/ })).not.toBeInTheDocument();
+    rerender(<RepoStrataBand projectId="p1" ownerRepo="owner/repo" gitRepoPath="/repo1" />);
+    expect(await screen.findByRole("link", { name: /42/ })).toBeInTheDocument();
+    config.isConfigured = false;
+    rerender(<RepoStrataBand projectId="p1" ownerRepo="owner/repo" gitRepoPath="/repo1" />);
+    expect(screen.queryByRole("link", { name: /42/ })).not.toBeInTheDocument();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     config.isConfigured = true;

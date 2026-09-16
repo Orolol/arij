@@ -36,15 +36,12 @@ export type { SettingsSectionProps } from "./SettingsSection";
 export { SettingsFooter } from "./SettingsFooter";
 export type { SettingsFooterProps } from "./SettingsFooter";
 
-export { SettingsTabSync } from "./SettingsTabSync";
 
 export { useSettingsDraft } from "./useSettingsDraft";
 export type { SettingsDraft } from "./useSettingsDraft";
 
 export {
   SETTING_FIELDS,
-  SETTING_FIELD_KEYS,
-  SETTINGS_INVENTORY,
   readEditors,
   GITHUB_PAT_SETTING_KEY,
   GLOBAL_PROMPT_SETTING_KEY,
@@ -57,8 +54,6 @@ export type {
   ParseResult,
   SettingFieldSpec,
   SettingsData,
-  SettingsInventoryEntry,
-  SettingsTab,
 } from "./settings-fields";
 
 /* Bands — Workspace tab */

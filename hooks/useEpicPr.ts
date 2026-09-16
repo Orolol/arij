@@ -1,8 +1,10 @@
 "use client";
 
+import { useCallback } from "react";
 import { useTranslations } from "next-intl";
-
-import { useState, useEffect, useCallback } from "react";
+import { requestJson } from "@/lib/api/client";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { useScopedMutation } from "@/hooks/useScopedMutation";
 
 interface PrData {
   id: string;
@@ -18,89 +20,51 @@ interface PrData {
   updatedAt: string | null;
 }
 
+function isPr(value: unknown): value is PrData {
+  return Boolean(value && typeof value === "object" && "id" in value
+    && typeof value.id === "string" && "number" in value && typeof value.number === "number");
+}
+const isOptionalPr = (value: unknown): value is PrData | null => value === null || isPr(value);
+const isCreatedPr = (value: unknown): value is { pr: PrData } =>
+  Boolean(value && typeof value === "object" && "pr" in value && isPr(value.pr));
+
 export function useEpicPr(projectId: string, epicId: string | null) {
   const tErrors = useTranslations("ClientErrors");
-  const [pr, setPr] = useState<PrData | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchPr = useCallback(async () => {
-    if (!epicId) return;
-    try {
-      const res = await fetch(
-        `/api/projects/${projectId}/epics/${epicId}/pr`
-      );
-      const data = await res.json();
-      setPr(data.data ?? null);
-    } catch {
-      // Silently fail on fetch
-    }
-  }, [projectId, epicId]);
-
-  useEffect(() => {
-    fetchPr();
-  }, [fetchPr]);
-
-  const createPr = useCallback(
-    async (opts?: { baseBranch?: string; draft?: boolean }) => {
-      if (!epicId) return;
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await fetch(
-          `/api/projects/${projectId}/epics/${epicId}/pr`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            // baseBranch is omitted when not explicitly chosen: the route
-            // decides from the project's stored default branch, which is
-            // authoritative for Arij-cloned projects.
-            body: JSON.stringify({
-              baseBranch: opts?.baseBranch,
-              draft: opts?.draft ?? false,
-            }),
-          }
-        );
-        const data = await res.json();
-        if (!res.ok) {
-          setError(data.error || tErrors("failedToCreatePR"));
-        } else {
-          setPr(data.data?.pr ?? null);
-        }
-      } catch (e) {
-        setError(e instanceof Error ? e.message : tErrors("failedToCreatePR"));
-      } finally {
-        setLoading(false);
-      }
-    },
-    [projectId, epicId, tErrors]
+  const url = epicId ? `/api/projects/${projectId}/epics/${epicId}/pr` : null;
+  const errorMessage = useCallback(() => tErrors("failedToLoadPR"), [tErrors]);
+  const { data: pr, loading, error, refresh: reload, updateData } = usePolledResource<PrData | null>(
+    url, null, errorMessage, { validateData: isOptionalPr },
   );
+  const { run, pending, error: mutationError, clearError } = useScopedMutation(url);
+  const ready = Boolean(url) && !loading && !error;
+
+  const createPr = useCallback(async (opts?: { baseBranch?: string; draft?: boolean }) => {
+    if (!url || !ready || pr) return false;
+    return Boolean(await run(async () => {
+      const response = await requestJson<{ pr: PrData }>(url, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        // Omit an unspecified base: the server resolves the project's default.
+        body: JSON.stringify({ baseBranch: opts?.baseBranch, draft: opts?.draft ?? false }),
+        errorMessage: tErrors("failedToCreatePR"), validateData: isCreatedPr,
+      });
+      if (response.error !== null) throw new Error(response.error);
+      updateData(response.data.pr);
+      return true;
+    }, tErrors("failedToCreatePR")));
+  }, [url, ready, pr, run, updateData, tErrors]);
 
   const syncPr = useCallback(async () => {
-    if (!epicId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(
-        `/api/projects/${projectId}/epics/${epicId}/pr/sync`,
-        { method: "POST" }
-      );
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || tErrors("failedToSyncPR"));
-      } else {
-        setPr(data.data ?? null);
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : tErrors("failedToSyncPR"));
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId, epicId, tErrors]);
+    if (!url || !ready || !pr) return false;
+    return Boolean(await run(async () => {
+      const response = await requestJson<PrData>(`${url}/sync`, {
+        method: "POST", errorMessage: tErrors("failedToSyncPR"), validateData: isPr,
+      });
+      if (response.error !== null) throw new Error(response.error);
+      updateData(response.data);
+      return true;
+    }, tErrors("failedToSyncPR")));
+  }, [url, ready, pr, run, updateData, tErrors]);
 
-  const refresh = useCallback(async () => {
-    await fetchPr();
-  }, [fetchPr]);
-
-  return { pr, loading, error, createPr, syncPr, refresh };
+  const refresh = useCallback(async () => { clearError(); await reload(); }, [clearError, reload]);
+  return { pr, loading: loading || pending, ready, error: mutationError ?? error, createPr, syncPr, refresh };
 }

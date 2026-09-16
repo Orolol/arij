@@ -1,10 +1,12 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
+import { formatDateTime } from "@/lib/i18n/format";
 
 import { FieldKicker, Mono, PROMPT_SEGMENT } from "@/components/piscine";
 import { PROMPT_ANATOMY_ORDER } from "@/lib/tokens/estimator";
-import { formatTokens, type PromptAnatomyRow } from "@/components/spec/spec-format";
+import { EM_DASH, type PromptAnatomyRow } from "@/components/spec/spec-format";
+import { formatTokens } from "@/lib/utils/format-usage";
 
 interface PromptBarRowProps {
   row: PromptAnatomyRow;
@@ -21,6 +23,7 @@ const LABEL_MIN_PERCENT = 7.5;
 
 export function PromptBarRow({ row, max }: PromptBarRowProps) {
   const t = useTranslations("Spec");
+  const locale = useLocale();
   const denominator = max > 0 ? max : row.total;
   const segments = PROMPT_ANATOMY_ORDER.map((key) => ({
     key,
@@ -38,7 +41,7 @@ export function PromptBarRow({ row, max }: PromptBarRowProps) {
         row.sampledAt
           ? t("anatomy.rowTitle", {
               agent: row.agentName,
-              sampledAt: row.sampledAt,
+              sampledAt: formatDateTime(row.sampledAt, locale, "short"),
             })
           : undefined
       }
@@ -77,10 +80,10 @@ export function PromptBarRow({ row, max }: PromptBarRowProps) {
                 <Mono size={9.5} tone="ink" className="max-[899px]:hidden">
                   {annotation
                     ? t("anatomy.segment", {
-                        tokens: formatTokens(segment.tokens),
+                        tokens: (formatTokens(segment.tokens) ?? EM_DASH),
                         annotation,
                       })
-                    : formatTokens(segment.tokens)}
+                    : (formatTokens(segment.tokens) ?? EM_DASH)}
                 </Mono>
               ) : null}
             </span>
@@ -101,7 +104,7 @@ export function PromptBarRow({ row, max }: PromptBarRowProps) {
         tone="ink"
         className="w-[52px] shrink-0 text-right"
       >
-        {formatTokens(row.total)}
+        {(formatTokens(row.total) ?? EM_DASH)}
       </Mono>
     </div>
   );

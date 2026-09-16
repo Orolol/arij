@@ -101,8 +101,6 @@ function runHarness(options: HarnessOptions = {}) {
     assessReview: async () => ({
       blocking: false,
       blockingCount: 0,
-      agentCommentCount: 1,
-      usedProseFallback: false,
     }),
     readSessionStatus: () => "completed",
     checkGuards: () => OPEN_GUARD,
@@ -175,7 +173,7 @@ describe("runPipeline — deterministic verification stage", () => {
     ]);
     expect(harness.requests[0]).toMatchObject({
       fixCycle: 1,
-      verificationFailure: failed.commands[0],
+      verificationFailure: { kind: "command", command: failed.commands[0] },
     });
     expect(harness.requests[1]).toMatchObject({
       verificationReport: passed,

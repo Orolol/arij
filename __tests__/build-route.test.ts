@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { waitForBackground } from "./helpers/background";
 
 // Track call counts to return different values for sequential .get() calls
 let getCallCount = 0;
@@ -192,11 +193,6 @@ function mockRequest(body: Record<string, unknown>) {
   } as unknown as import("next/server").NextRequest;
 }
 
-async function flushBackground() {
-  await new Promise((r) => setTimeout(r, 50));
-  await new Promise((r) => setTimeout(r, 50));
-}
-
 describe("Build Route", () => {
   beforeEach(() => {
     getCallCount = 0;
@@ -266,6 +262,17 @@ describe("Build Route", () => {
     expect(json.data.orchestrationMode).toBe("team");
   });
 
+  it("returns launched sessions alongside a parallel ticket's preparation failure", async () => {
+    const { createWorktree } = await import("@/lib/git/manager");
+    vi.mocked(createWorktree).mockRejectedValueOnce(new Error("Worktree busy")).mockResolvedValueOnce({ worktreePath: "/tmp/other", branchName: "feature/epic-other" });
+    const { POST } = await import("@/app/api/projects/[projectId]/build/route");
+    const response = await POST(mockRequest({ epicIds: ["e1", "e2"], mode: "parallel" }), { params: Promise.resolve({ projectId: "proj-1" }) });
+    const payload = await response.json();
+    expect(response.status).toBe(200);
+    expect(payload.data.sessions).toHaveLength(1);
+    expect(payload.data.rejected).toEqual([{ epicId: "e1", error: "Worktree busy" }]);
+  });
+
   it("defaults to solo mode when team is not specified", async () => {
     const { POST } = await import(
       "@/app/api/projects/[projectId]/build/route"
@@ -330,12 +337,13 @@ describe("Build Route", () => {
     });
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    const reviewUpdates = mockState.updateCalls.filter(
-      (u) => u.values.status === "review"
+    await waitForBackground(
+      () =>
+        expect(
+          mockState.updateCalls.filter((u) => u.values.status === "review")
+        ).toHaveLength(0),
+      "the run leaving no ticket in review",
     );
-    expect(reviewUpdates).toHaveLength(0);
   });
 
   it("holds a team build's coordinated epic at the status its pullback really left", async () => {
@@ -359,17 +367,20 @@ describe("Build Route", () => {
     );
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    expect(mockPullTicketBackIfPromoted).toHaveBeenCalledWith(
-      expect.objectContaining({ epicId: "epic-1", scope: "epic" })
-    );
-    expect(mockHandleAskedQuestionOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "proj-1",
-        sessionId: "test-session-id",
-        ticketStatusByEpicId: { "epic-1": "review" },
-      })
+    await waitForBackground(
+      () => {
+        expect(mockPullTicketBackIfPromoted).toHaveBeenCalledWith(
+          expect.objectContaining({ epicId: "epic-1", scope: "epic" })
+        );
+        expect(mockHandleAskedQuestionOutcome).toHaveBeenCalledWith(
+          expect.objectContaining({
+            projectId: "proj-1",
+            sessionId: "test-session-id",
+            ticketStatusByEpicId: { "epic-1": "review" },
+          })
+        );
+      },
+      "the team build holding each epic at the status its pullback left",
     );
     // The old hardcoded hold status is gone, not merely shadowed.
     const call = mockHandleAskedQuestionOutcome.mock.calls[0][0] as Record<
@@ -396,23 +407,26 @@ describe("Build Route", () => {
     });
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    // The verdict is threaded through markSessionTerminal...
-    expect(mockMarkSessionTerminal).toHaveBeenCalledWith(
-      "test-session-id",
-      expect.objectContaining({ success: true, outcome: "asked_question" }),
-      expect.any(String)
-    );
-
-    // ...and the shared asked-question effects run for the held epic.
-    expect(mockHandleAskedQuestionOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "proj-1",
-        epicIds: ["epic-1"],
-        sessionId: "test-session-id",
-        ticketStatus: "in_progress",
-      })
+    // The verdict is threaded through markSessionTerminal, and the shared
+    // asked-question effects run for the held epic — both from the route's
+    // background closure, so both are waited on.
+    await waitForBackground(
+      () => {
+        expect(mockMarkSessionTerminal).toHaveBeenCalledWith(
+          "test-session-id",
+          expect.objectContaining({ success: true, outcome: "asked_question" }),
+          expect.any(String)
+        );
+        expect(mockHandleAskedQuestionOutcome).toHaveBeenCalledWith(
+          expect.objectContaining({
+            projectId: "proj-1",
+            epicIds: ["epic-1"],
+            sessionId: "test-session-id",
+            ticketStatus: "in_progress",
+          })
+        );
+      },
+      "the asked-question verdict and its shared effects",
     );
   });
 
@@ -432,18 +446,19 @@ describe("Build Route", () => {
     });
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    expect(mockMarkSessionTerminal).toHaveBeenCalledWith(
-      "test-session-id",
-      expect.objectContaining({ success: true, outcome: "answered" }),
-      expect.any(String)
+    await waitForBackground(
+      () => {
+        expect(mockMarkSessionTerminal).toHaveBeenCalledWith(
+          "test-session-id",
+          expect.objectContaining({ success: true, outcome: "answered" }),
+          expect.any(String)
+        );
+        expect(mockHandleAskedQuestionOutcome).not.toHaveBeenCalled();
+        expect(
+          mockState.updateCalls.filter((u) => u.values.status === "review").length
+        ).toBeGreaterThan(0);
+      },
+      "the answered build advancing the ticket to review",
     );
-    expect(mockHandleAskedQuestionOutcome).not.toHaveBeenCalled();
-
-    const reviewUpdates = mockState.updateCalls.filter(
-      (u) => u.values.status === "review"
-    );
-    expect(reviewUpdates.length).toBeGreaterThan(0);
   });
 });

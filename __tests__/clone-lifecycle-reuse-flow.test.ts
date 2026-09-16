@@ -17,9 +17,11 @@ import path from "node:path";
 const gitRaw = vi.hoisted(() => vi.fn());
 const getRemotes = vi.hoisted(() => vi.fn());
 
-vi.mock("simple-git", () => ({
-  default: vi.fn(() => ({ raw: gitRaw, getRemotes })),
-}));
+vi.mock("simple-git", () => {
+  const git = { raw: gitRaw, getRemotes, checkIsRepo: async () => true,
+    revparse: (args: string[]) => gitRaw(["rev-parse", ...args]), env: () => git };
+  return { default: vi.fn(() => git), CheckRepoActions: { IS_REPO_ROOT: "root" } };
+});
 
 vi.mock("@/lib/db", () => ({ db: {} }));
 
@@ -96,7 +98,7 @@ function tempDirsInRoot(): string[] {
   if (!fs.existsSync(parent)) return [];
   return fs
     .readdirSync(parent)
-    .filter((entry) => entry.startsWith(".arij-clone-tmp-"));
+    .filter((entry) => entry.startsWith(".arij-clone-"));
 }
 
 beforeEach(() => {
@@ -131,14 +133,16 @@ describe("cloneGitHubRepository — fresh clone", () => {
     expect(clone[0]).toContain("https://github.com/owner/repo.git");
   });
 
-  it("passes the token as a one-shot config value, never in the remote URL", async () => {
+  it("retries with one-shot credentials only after an anonymous refusal", async () => {
+    gitRaw.mockImplementationOnce(async () => { throw new Error("repository not found"); });
     await cloneGitHubRepository({
       input: "owner/repo",
       destination,
       token: TOKEN,
     });
 
-    const [args] = calledWith("clone");
+    const [anonymous, args] = calledWith("clone");
+    expect(anonymous[0]).toBe("clone");
     expect(args[0]).toBe("-c");
     expect(args[1]).toBe(buildAuthHeaderConfig(TOKEN));
     expect(args[1]).toContain(
@@ -358,7 +362,7 @@ describe("cloneGitHubRepository — conflicts and failures", () => {
     expect(tempDirsInRoot()).toEqual([]);
   });
 
-  it("sweeps a staging directory abandoned by a killed process", async () => {
+  it("preserves another process staging directory instead of guessing ownership from its name", async () => {
     const stale = path.join(
       path.dirname(destination),
       ".arij-clone-tmp-owner-repo-deadbeef"
@@ -368,8 +372,8 @@ describe("cloneGitHubRepository — conflicts and failures", () => {
 
     await cloneGitHubRepository({ input: "owner/repo", destination });
 
-    expect(fs.existsSync(stale)).toBe(false);
-    expect(tempDirsInRoot()).toEqual([]);
+    expect(fs.readFileSync(path.join(stale, "half.pack"), "utf8")).toBe("x");
+    expect(tempDirsInRoot()).toEqual([path.basename(stale)]);
   });
 
   it("serialises concurrent clones of the same destination", async () => {

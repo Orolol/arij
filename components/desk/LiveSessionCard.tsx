@@ -22,8 +22,7 @@ import { cn } from "@/lib/utils";
  * one loud colour it is allowed is the turquoise progress fill.
  *
  * PROGRESS IS INDETERMINATE ON PURPOSE. Nothing in Arij computes per-session
- * progress — `session:progress` is declared in lib/events/bus.ts and NOTHING
- * emits it — so the bar crawls rather than lying about a percentage.
+ * progress, so the bar crawls rather than lying about a percentage.
  */
 export interface LiveSessionCardProps {
   session: DeskWorkingSession;
@@ -41,6 +40,7 @@ export function LiveSessionCard({
   className,
 }: LiveSessionCardProps) {
   const t = useTranslations("Desk");
+  const tKey = useTranslations();
   const tone = projectTone(project?.colorIndex ?? 0);
   const metaParts = [session.readableId, session.agentName].filter(Boolean);
 
@@ -118,7 +118,7 @@ export function LiveSessionCard({
           "disabled:cursor-default",
         )}
       >
-        {session.title}
+        {session.titleKey ? tKey(session.titleKey) : session.title}
       </button>
 
       <div className="flex items-baseline gap-[9px]">

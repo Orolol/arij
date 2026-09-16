@@ -34,7 +34,13 @@ const { db, sqlite } = dbModule;
 const { projects, epics, agentSessions, reviewComments } = await import(
   "@/lib/db/schema"
 );
-const { GET } = await import("@/app/api/projects/[projectId]/epics/route");
+const { readMergeFacts } = await import("@/lib/control-desk/read-model");
+const { evaluateMergeReadiness: evaluateReadiness } = await import("@/lib/kanban/merge-readiness");
+async function GET(_request: unknown, _context: unknown) {
+  const rows = db.select().from(epics).all();
+  const facts = readMergeFacts(db, rows.map((row) => row.id));
+  return Response.json({ data: rows.map((row) => ({ ...row, mergeReadiness: evaluateReadiness({ ...row, ...facts.get(row.id)! }) })) });
+}
 const { loadAutoModeBoard } = await import("@/lib/auto-mode/select");
 const { autoModeRegistry } = await import("@/lib/auto-mode/registry");
 
@@ -173,7 +179,7 @@ beforeEach(() => {
 });
 
 describe("merge-gate query shape", () => {
-  it("reads agent_sessions twice per board load, not three times", async () => {
+  it("materializes session freshness once per shared merge-facts read", async () => {
     const scans = await countAgentSessionReads(async () => {
       const response = await GET(
         {} as never,
@@ -182,20 +188,8 @@ describe("merge-gate query shape", () => {
       expect(response.status).toBe(200);
     });
 
-    // Three, one per distinct question: the `epic_session_facts` CTE —
-    // materialised ONCE although both the epic row and the blocking-findings
-    // count reference it — the latest-session-per-epic ranking, which asks
-    // something else entirely, and `listUnverifiableReviewEpicIds`, which
-    // ranks the newest DELIVERED review per epic for the Review column's
-    // broken-channel badge. The first two share one statement.
-    //
-    // It was four while the findings count grouped `agent_sessions` a second
-    // time for a cutoff the facts scan had already computed, on a route the
-    // client refetches on every `session:*` event. The badge scan is the one
-    // added here rather than removed: it is a single window-function pass,
-    // constant in board size like the other two, which is the property this
-    // budget guards.
-    expect(scans).toBe(3);
+    // Shared merge facts materialize freshness once for both the gate and findings cutoff.
+    expect(scans).toBe(1);
   });
 
   it("reads agent_sessions four times per Full Auto sweep, not five", () => {

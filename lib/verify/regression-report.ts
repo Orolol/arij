@@ -1,6 +1,6 @@
 /**
  * Client-safe wire format for the bug-regression verify report
- * (lib/pipeline/verify.ts writes it, the ticket UI reads it).
+ * (lib/pipeline/regression-gate.ts writes it, the ticket UI reads it).
  *
  * A verify report is persisted as an ordinary ticket comment whose content
  * starts with a stable HTML-comment marker followed by one fenced JSON

@@ -2,9 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
-}));
+vi.mock("next/navigation", async () =>
+  (await import("@/__tests__/helpers/next-navigation-mock")).nextNavigationMock(),
+);
 
 vi.mock("@/hooks/useChat", () => ({
   useChat: () => ({

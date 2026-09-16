@@ -1,42 +1,32 @@
+import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
+import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
+import { createSessionLogsPath } from "@/lib/agent-sessions/session-paths";
 import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
-import { NextRequest, NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { agentSessions } from "@/lib/db/schema";
 import {
+  errorResponse,
   getProjectOr404,
   isErrorResponse,
-  errorResponse,
 } from "@/lib/api/route-helpers";
+import { db } from "@/lib/db";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
+import { agentSessions } from "@/lib/db/schema";
+import { dispatchPullConflictResolution } from "@/lib/git/dispatch-pull-conflict";
 import {
   assertGitRepository,
   assertRemoteConfigured,
-  getCurrentGitBranch,
   getConflictFileDiffs,
+  getCurrentGitBranch,
   GitRemoteNotConfiguredError,
   GitRepositoryUnavailableError,
   pullGitBranchWithConflictSupport,
 } from "@/lib/git/remote";
-import { writeGitSyncLog } from "@/lib/github/sync-log";
-import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { logSyncOperation } from "@/lib/github/sync-log";
 import { createId } from "@/lib/utils/nanoid";
-import {
-  createQueuedSession,
-  isSessionLifecycleConflictError,
-  markSessionRunning,
-  markSessionTerminal,
-} from "@/lib/agent-sessions/lifecycle";
-import { processManager } from "@/lib/claude/process-manager";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-} from "@/lib/claude/resolve-session-output";
-import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
-import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
-import fs from "fs";
-import path from "path";
+import { pullProjectSchema } from "@/lib/validation/git-schemas";
+import { isValidationError, validateOptionalBody } from "@/lib/validation/validate";
+import { eq } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -46,7 +36,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
   const found = getProjectOr404(projectId, { requireGitRepo: true });
   if (isErrorResponse(found)) {
     if (found.status === 400) {
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
         operation: "pull",
         status: "failed",
@@ -58,7 +48,9 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
   }
   const { project } = found;
 
-  const body = await request.json().catch(() => ({}));
+  const validated = await validateOptionalBody(pullProjectSchema, request);
+  if (isValidationError(validated)) return validated;
+  const body = validated.data;
   const remote = typeof body?.remote === "string" ? body.remote : "origin";
   const autoResolve =
     typeof body?.autoResolveConflicts === "boolean"
@@ -101,7 +93,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
           project.gitRepoPath,
           result.conflictedFiles
         );
-        writeGitSyncLog({
+        logSyncOperation({
           projectId,
           operation: "pull",
           status: "failed",
@@ -127,9 +119,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
       try {
         const sessionId = createId();
         const now = new Date().toISOString();
-        const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-        fs.mkdirSync(logsDir, { recursive: true });
-        const logsPath = path.join(logsDir, "logs.json");
+        const logsPath = createSessionLogsPath(sessionId);
 
         let cliSessionId: string | undefined;
         let resumeSession = false;
@@ -141,7 +131,6 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
                 projectId: agentSessions.projectId,
                 provider: agentSessions.provider,
                 cliSessionId: agentSessions.cliSessionId,
-                claudeSessionId: agentSessions.claudeSessionId,
               })
               .from(agentSessions)
               .where(eq(agentSessions.id, resumeSessionId))
@@ -180,70 +169,13 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
           "5. In your final response, summarize the resolution decisions.",
         ].join("\n");
 
-        createQueuedSession({
-          id: sessionId,
-          projectId,
-          mode: "code",
-          provider,
-          prompt,
-          logsPath,
-          branchName: branch,
-          worktreePath: project.gitRepoPath,
-          cliSessionId,
-          namedAgentId: resolved.namedAgentId ?? null,
-          compositeAgentId: resolved.compositeAgentId ?? null,
-          agentType: "merge",
-          namedAgentName: resolved.name || null,
-          model: model || null,
-          createdAt: now,
-        });
+        dispatchPullConflictResolution({ projectId, sessionId, prompt, resolvedAgent: resolved,
+          cwd: project.gitRepoPath, branchName: branch, cliSessionId, resumeSession });
 
-        markSessionRunning(sessionId, now);
-        processManager.start(
-          sessionId,
-          {
-            mode: "code",
-            prompt,
-            cwd: project.gitRepoPath,
-            model,
-            allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-            cliSessionId,
-            resumeSession,
-          },
-          provider
-        );
-
-        (async () => {
-          const info = await waitForProcessCompletion(sessionId);
-          const completedAt = new Date().toISOString();
-          const agentResult = info?.result;
-          try {
-            fs.writeFileSync(logsPath, JSON.stringify(agentResult, null, 2));
-          } catch {
-            // best effort
-          }
-          try {
-            markSessionTerminal(
-              sessionId,
-              {
-                success: !!agentResult?.success,
-                error: agentResult?.error || null,
-                outcome: classifySessionOutcome(agentResult, sessionId),
-                usage: extractSessionUsage(agentResult),
-              },
-              completedAt
-            );
-          } catch (error) {
-            if (!isSessionLifecycleConflictError(error)) {
-              console.error("[git/pull] Failed to finalize conflict session", error);
-            }
-          }
-        })();
-
-        writeGitSyncLog({
+        logSyncOperation({
           projectId,
           operation: "pull",
-          status: "failed",
+          status: "success",
           branch,
           detail: {
             remote,
@@ -290,7 +222,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
       }
     }
 
-    writeGitSyncLog({
+    logSyncOperation({
       projectId,
       operation: "pull",
       status: "success",
@@ -317,7 +249,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
     // state as the unconfigured remote below — audited the same way, refused
     // with the same 400 and code the two detect routes already publish.
     if (error instanceof GitRepositoryUnavailableError) {
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
         operation: "pull",
         status: "failed",
@@ -339,7 +271,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
     // 409 with the code and the repository's real remotes so the client can
     // offer them, matching git/detect-remote's 4xx for the same state.
     if (error instanceof GitRemoteNotConfiguredError) {
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
         operation: "pull",
         status: "failed",
@@ -364,7 +296,7 @@ export const POST = withAgentResolutionErrors(async function POST(request: NextR
       );
     }
 
-    writeGitSyncLog({
+    logSyncOperation({
       projectId,
       operation: "pull",
       status: "failed",

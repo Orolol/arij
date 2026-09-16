@@ -1,6 +1,8 @@
 "use client";
 
 import { useTranslations } from "next-intl";
+import Link from "next/link";
+import { pillButtonVariants } from "@/components/piscine";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -73,6 +75,7 @@ export default function NewProjectPage() {
           {error}
         </div>
       )}
+      <Link href="/projects/import" className={pillButtonVariants({ variant: "outline", size: "md" })}>{t("newProject.import")}</Link>
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label

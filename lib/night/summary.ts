@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, isNull, like, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, notInArray, sql } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions, epics } from "@/lib/db/schema";
 import type { TicketExecutionStatus } from "@/lib/dependencies/scheduler";
@@ -31,11 +31,14 @@ export const NIGHT_DB_DERIVED_RUNS_LIMIT = 10;
 
 interface TaggedSessionRow {
   id: string;
+  projectId: string;
   epicId: string | null;
+  readableId: string | null;
+  title: string | null;
   status: string | null;
   outcome: string | null;
   createdAt: string | null;
-  completedAt: string | null;
+  endedAt: string | null;
   totalCostUsd: number | null;
 }
 
@@ -43,16 +46,23 @@ function loadTaggedSessions(runId: string): TaggedSessionRow[] {
   return db
     .select({
       id: agentSessions.id,
+      projectId: agentSessions.projectId,
       epicId: agentSessions.epicId,
+      readableId: epics.readableId,
+      title: epics.title,
       status: agentSessions.status,
       outcome: agentSessions.outcome,
-      createdAt: agentSessions.createdAt,
-      completedAt: agentSessions.completedAt,
+      createdAt: sql<string | null>`strftime('%Y-%m-%dT%H:%M:%fZ', ${agentSessions.createdAt})`,
+      endedAt: sql<string | null>`COALESCE(
+        strftime('%Y-%m-%dT%H:%M:%fZ', ${agentSessions.endedAt}),
+        strftime('%Y-%m-%dT%H:%M:%fZ', ${agentSessions.completedAt})
+      )`,
       totalCostUsd: agentSessions.totalCostUsd,
     })
     .from(agentSessions)
+    .leftJoin(epics, eq(epics.id, agentSessions.epicId))
     .where(eq(agentSessions.batchRunId, runId))
-    .orderBy(asc(agentSessions.createdAt))
+    .orderBy(asc(sql`julianday(${agentSessions.createdAt})`), asc(agentSessions.id))
     .all();
 }
 
@@ -87,16 +97,11 @@ function emptyCounts(): Record<TicketExecutionStatus, number> {
   return { pending: 0, running: 0, done: 0, asked: 0, failed: 0, skipped: 0 };
 }
 
-function epicLabel(epicId: string): {
-  readableId: string | null;
-  title: string | null;
-} {
-  const epic = db
-    .select({ readableId: epics.readableId, title: epics.title })
-    .from(epics)
-    .where(eq(epics.id, epicId))
-    .get();
-  return { readableId: epic?.readableId ?? null, title: epic?.title ?? null };
+function sessionCosts(rows: TaggedSessionRow[]) {
+  return {
+    totalCostUsd: rows.reduce((total, row) => total + (row.totalCostUsd ?? 0), 0),
+    costIsPartial: rows.some((row) => row.totalCostUsd === null),
+  };
 }
 
 /** Per-epic session ids + cost from the tagged rows (dispatch order). */
@@ -128,18 +133,30 @@ function groupSessionsByEpic(rows: TaggedSessionRow[]): Map<
 function detailFromRegistry(snapshot: NightRunSnapshot): NightRunDetail {
   const rows = loadTaggedSessions(snapshot.runId);
   const byEpic = groupSessionsByEpic(rows);
+  // Pending epics may have no session yet, so load the snapshot's labels in
+  // one query rather than one lookup for every epic on every polling tick.
+  const labels = new Map(
+    (snapshot.epics.length === 0
+      ? []
+      : db.select({ id: epics.id, readableId: epics.readableId, title: epics.title })
+          .from(epics)
+          .where(and(
+            eq(epics.projectId, snapshot.projectId),
+            inArray(epics.id, snapshot.epics.map((epic) => epic.epicId)),
+          ))
+          .all()
+    ).map((epic) => [epic.id, epic]),
+  );
 
   const epicsEntries: NightRunEpicEntry[] = snapshot.epics.map((epic) => {
     const sessions = byEpic.get(epic.epicId);
-    const label = epicLabel(epic.epicId);
+    const label = labels.get(epic.epicId);
     return {
       epicId: epic.epicId,
-      readableId: label.readableId,
-      title: label.title,
+      readableId: label?.readableId ?? null,
+      title: label?.title ?? null,
       status: epic.status,
       reason: epic.reason,
-      pipelineRunId: epic.pipelineRunId,
-      sessionIds: sessions?.sessionIds ?? [],
       costUsd: sessions?.costUsd ?? null,
     };
   });
@@ -158,12 +175,9 @@ function detailFromRegistry(snapshot: NightRunSnapshot): NightRunDetail {
     counts: { ...snapshot.counts },
     epics: epicsEntries,
     stopRequested: snapshot.stopRequested,
-    totalCostUsd: sumNightRunCost(snapshot.runId),
-    costIsPartial: isNightRunCostPartial(snapshot.runId),
+    ...sessionCosts(rows),
     abortReason: snapshot.abortReason,
     abortedAtWave: snapshot.abortedAtWave,
-    breakerThreshold: snapshot.breakerThreshold,
-    costCapUsd: snapshot.costCapUsd,
   };
 }
 
@@ -182,12 +196,7 @@ function detailFromDb(runId: string): NightRunDetail | null {
   const rows = loadTaggedSessions(runId);
   if (rows.length === 0) return null;
 
-  const projectId =
-    db
-      .select({ projectId: agentSessions.projectId })
-      .from(agentSessions)
-      .where(eq(agentSessions.batchRunId, runId))
-      .get()?.projectId ?? "";
+  const projectId = rows[0].projectId;
 
   const byEpic = groupSessionsByEpic(rows);
   const counts = emptyCounts();
@@ -196,15 +205,12 @@ function detailFromDb(runId: string): NightRunDetail | null {
   for (const [epicId, group] of byEpic) {
     const status = statusFromLastSession(group.last);
     counts[status] += 1;
-    const label = epicLabel(epicId);
     epicsEntries.push({
       epicId,
-      readableId: label.readableId,
-      title: label.title,
+      readableId: group.last.readableId,
+      title: group.last.title,
       status,
       reason: null,
-      pipelineRunId: null,
-      sessionIds: group.sessionIds,
       costUsd: group.costUsd,
     });
   }
@@ -214,7 +220,7 @@ function detailFromDb(runId: string): NightRunDetail | null {
     .filter((value): value is string => !!value)
     .sort()[0];
   const endedAt = rows
-    .map((row) => row.completedAt)
+    .map((row) => row.endedAt)
     .filter((value): value is string => !!value)
     .sort()
     .at(-1);
@@ -234,12 +240,9 @@ function detailFromDb(runId: string): NightRunDetail | null {
     epics: epicsEntries,
     // A DB-derived run has no live engine left to stop.
     stopRequested: false,
-    totalCostUsd: sumNightRunCost(runId),
-    costIsPartial: isNightRunCostPartial(runId),
+    ...sessionCosts(rows),
     abortReason: null,
     abortedAtWave: null,
-    breakerThreshold: null,
-    costCapUsd: null,
   };
 }
 
@@ -275,37 +278,36 @@ function toListEntry(detail: NightRunDetail): NightRunListEntry {
  * then the terminal ring) merged with recent DB-derived night-run ids the
  * registry no longer knows (restart-interrupted), flagged `interrupted`.
  *
- * The SQL LIKE pre-filter treats `_` as a single-char wildcard, so the
- * candidate ids are re-checked in JS with startsWith.
+ * GLOB treats the prefix's underscore literally. Exclude registry runs in
+ * SQL before applying the limit so the fallback reads at most ten runs.
  */
 export function listNightRuns(projectId: string): NightRunListEntry[] {
   const registryEntries = nightRunRegistry
     .listByProject(projectId)
     .map((snapshot) => toListEntry(detailFromRegistry(snapshot)));
-  const known = new Set(registryEntries.map((entry) => entry.runId));
+  const known = registryEntries.map((entry) => entry.runId);
 
   const candidateRows = db
     .select({
       batchRunId: agentSessions.batchRunId,
-      latest: sql<string>`MAX(${agentSessions.createdAt})`,
     })
     .from(agentSessions)
     .where(
       and(
         eq(agentSessions.projectId, projectId),
-        like(agentSessions.batchRunId, `${NIGHT_RUN_ID_PREFIX}%`)
+        sql`${agentSessions.batchRunId} GLOB ${`${NIGHT_RUN_ID_PREFIX}*`}`,
+        known.length > 0 ? notInArray(agentSessions.batchRunId, known) : undefined,
       )
     )
     .groupBy(agentSessions.batchRunId)
-    .orderBy(desc(sql`MAX(${agentSessions.createdAt})`))
+    .orderBy(desc(sql`MAX(julianday(${agentSessions.createdAt}))`), desc(agentSessions.batchRunId))
+    .limit(NIGHT_DB_DERIVED_RUNS_LIMIT)
     .all();
 
   const dbEntries: NightRunListEntry[] = [];
   for (const row of candidateRows) {
-    if (dbEntries.length >= NIGHT_DB_DERIVED_RUNS_LIMIT) break;
     const runId = row.batchRunId;
-    if (!runId || !runId.startsWith(NIGHT_RUN_ID_PREFIX)) continue;
-    if (known.has(runId)) continue;
+    if (!runId) continue;
     const detail = detailFromDb(runId);
     if (detail) dbEntries.push(toListEntry(detail));
   }

@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 import createNextIntlPlugin from "next-intl/plugin";
 import { extractHost, isLoopbackHost } from "./bin/launch-plan.mjs";
+import { excludeInstrumentationRuntimeFiles, runtimeTraceExcludes } from "./bin/build-traces.mjs";
 
 function getListeningServerAddresses(): string[] {
   const handles = (process as any)._getActiveHandles?.() ?? [];
@@ -71,6 +72,16 @@ enforceListenerSecurity();
 
 const nextConfig: NextConfig = {
   serverExternalPackages: ["better-sqlite3", "pdf-parse", "pdfjs-dist"],
+  // Runtime user data must stay on disk without being
+  // copied into each route's deployment trace by artifact readers.
+  outputFileTracingExcludes: {
+    "/*": runtimeTraceExcludes,
+    // Webpack retraces this entry after the compiler hook; it has no route slash.
+    instrumentation: runtimeTraceExcludes,
+  },
+  compiler: {
+    runAfterProductionCompile: excludeInstrumentationRuntimeFiles,
+  },
 
   logging: {
     incomingRequests: {

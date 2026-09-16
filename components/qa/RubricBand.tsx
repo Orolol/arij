@@ -24,11 +24,15 @@ import { RubricChips } from "./RubricChips";
  */
 export interface RubricBandProps {
   rubric: QaRubric;
+  projectId?: string;
   className?: string;
 }
 
-export function RubricBand({ rubric, className }: RubricBandProps) {
+export function RubricBand({ rubric, projectId, className }: RubricBandProps) {
   const t = useTranslations("Qa");
+  const editHref = projectId
+    ? `/agents/prompts?project=${encodeURIComponent(projectId)}`
+    : "/agents/prompts";
 
   return (
     <StrataBand stratum="next" density="full" gap={9} className={className}>
@@ -47,7 +51,7 @@ export function RubricBand({ rubric, className }: RubricBandProps) {
             <QuietLink
               tone="next"
               size={12}
-              href="/agents/prompts"
+              href={editHref}
               testId="qa-rubric-edit"
             >
               {t("rubric.edit")}
@@ -56,12 +60,7 @@ export function RubricBand({ rubric, className }: RubricBandProps) {
         }
       />
 
-      {rubric.items.length > 0 || rubric.projectRuleCount > 0 ? (
-        <RubricChips
-          items={rubric.items}
-          projectRuleCount={rubric.projectRuleCount}
-        />
-      ) : null}
+      {rubric.items.length > 0 ? <RubricChips items={rubric.items} /> : null}
 
       <span
         data-testid="qa-rubric-footnote"

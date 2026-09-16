@@ -2,11 +2,10 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { ChevronDown, ChevronRight, FileText, FilePlus, FileMinus, FileEdit } from "lucide-react";
 import type { FileDiff } from "@/lib/git/diff";
 import type { ReviewComment } from "@/hooks/useReviewComments";
+import { Mono, Stamp } from "@/components/piscine";
 import { DiffLine } from "./DiffLine";
 
 interface FileDiffViewProps {
@@ -16,6 +15,7 @@ interface FileDiffViewProps {
   onUpdateComment: (id: string, updates: { body?: string; status?: string }) => Promise<unknown>;
   onDeleteComment: (id: string) => Promise<unknown>;
   defaultExpanded?: boolean;
+  disabled?: boolean;
 }
 
 const statusIcons: Record<string, typeof FileText> = {
@@ -25,13 +25,6 @@ const statusIcons: Record<string, typeof FileText> = {
   renamed: FileEdit,
 };
 
-const statusColors: Record<string, string> = {
-  added: "text-green-500",
-  modified: "text-blue-500",
-  deleted: "text-red-500",
-  renamed: "text-yellow-500",
-};
-
 export function FileDiffView({
   file,
   comments,
@@ -39,6 +32,7 @@ export function FileDiffView({
   onUpdateComment,
   onDeleteComment,
   defaultExpanded = true,
+  disabled,
 }: FileDiffViewProps) {
   const [expanded, setExpanded] = useState(defaultExpanded);
   const t = useTranslations("Review");
@@ -56,18 +50,18 @@ export function FileDiffView({
   );
 
   return (
-    <div className="border border-border rounded-lg overflow-hidden">
-      <Button
-        variant="ghost"
-        className="w-full justify-start h-auto py-2 px-3 rounded-none hover:bg-accent/50"
+    <div className="border border-border/40 rounded-[10px] overflow-hidden bg-card">
+      <button
+        type="button"
+        className="w-full flex items-center justify-start py-2 px-3 text-left hover:bg-accent/40 cursor-pointer bg-transparent border-0 transition-colors"
         onClick={() => setExpanded(!expanded)}
       >
         {expanded ? (
-          <ChevronDown className="h-4 w-4 shrink-0 mr-2" />
+          <ChevronDown className="h-4 w-4 shrink-0 mr-2 text-muted-foreground" />
         ) : (
-          <ChevronRight className="h-4 w-4 shrink-0 mr-2" />
+          <ChevronRight className="h-4 w-4 shrink-0 mr-2 text-muted-foreground" />
         )}
-        <StatusIcon className={`h-4 w-4 shrink-0 mr-2 ${statusColors[file.status]}`} />
+        <StatusIcon className="h-4 w-4 shrink-0 mr-2 text-muted-foreground" />
         <span className="text-sm font-mono truncate flex-1 text-left">
           {file.filePath}
         </span>
@@ -77,19 +71,15 @@ export function FileDiffView({
           </span>
         )}
         {openComments.length > 0 && (
-          <Badge variant="outline" className="text-[10px] h-5 px-1.5 mr-2 border-blue-500/30 text-blue-500">
+          <Stamp tone="live" className="mr-2">
             {t("file.comments", { count: openComments.length })}
-          </Badge>
+          </Stamp>
         )}
-        <span className="text-xs shrink-0">
-          {additions > 0 && (
-            <span className="text-green-500 mr-1">+{additions}</span>
-          )}
-          {deletions > 0 && (
-            <span className="text-red-500">-{deletions}</span>
-          )}
-        </span>
-      </Button>
+        <Mono size={10} tone="muted" className="shrink-0 flex items-center gap-1">
+          {additions > 0 && <span>+{additions}</span>}
+          {deletions > 0 && <span>-{deletions}</span>}
+        </Mono>
+      </button>
 
       {expanded && (
         <div className="border-t border-border overflow-x-auto">
@@ -109,6 +99,7 @@ export function FileDiffView({
                   }
                   onUpdateComment={onUpdateComment}
                   onDeleteComment={onDeleteComment}
+                  disabled={disabled}
                 />
               ))}
             </div>

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   estimateTokens,
-  estimatePromptTokens,
   findLargestContextSection,
   estimatePromptTokensBySections,
 } from "@/lib/tokens/estimator";
@@ -50,100 +49,6 @@ describe("Token Estimator", () => {
     expect(estimateTokens("12345")).toBe(2);
   });
 
-  it("breaks down an assembled build prompt into standard context sections", () => {
-    const project: PromptProject = {
-      name: "Arij",
-      description: "Local-first project manager.",
-      spec: "# Full Specification\nThis is a detailed specification document with multiple paragraphs.",
-      memory: "## Pitfalls\n- Avoid using globals.\n- Always migrate database safely.",
-    };
-
-    const documents: PromptDocument[] = [
-      {
-        name: "architecture.md",
-        contentMd: "Architecture overview and component diagrams.",
-      },
-    ];
-
-    const epic: PromptEpic = {
-      title: "Token estimation epic",
-      description: "Estimate token volume sent to agents.",
-      type: "feature",
-    };
-
-    const userStories: PromptUserStory[] = [
-      {
-        title: "Display estimation in modal",
-        description: "Show tokens before confirming dispatch.",
-        acceptanceCriteria: "- Total tokens\n- Breakdown by section",
-      },
-    ];
-
-    const comments = [
-      {
-        author: "user" as const,
-        content: "Please make sure the breakdown is clear and scannable.",
-        createdAt: "2026-08-27T10:00:00Z",
-      },
-    ];
-
-    const prompt = buildBuildPrompt(
-      project,
-      documents,
-      epic,
-      userStories,
-      "You are an expert software engineer.",
-      comments
-    );
-
-    const result = estimatePromptTokens(prompt);
-    expect(result.total).toBeGreaterThan(0);
-    expect(result.total).toBe(Math.ceil(prompt.length / 4));
-
-    expect(Object.values(result.breakdown)).toEqual(Array(8).fill(0));
-    expect(findLargestContextSection(result.breakdown, result.total)).toBeNull();
-  });
-
-  it("handles review prompts and identifies findings & checklists", () => {
-    const project: PromptProject = {
-      name: "Arij",
-      spec: "Project specification.",
-    };
-    const epic: PromptEpic = {
-      title: "Epic Title",
-      description: "Epic description.",
-    };
-    const story: PromptUserStory = {
-      title: "Story Title",
-      description: "Story description.",
-      acceptanceCriteria: "Must pass all tests.",
-    };
-
-    const prompt = buildReviewPrompt(
-      project,
-      [],
-      epic,
-      story,
-      "security",
-      "System prompt"
-    );
-
-    const result = estimatePromptTokens(prompt);
-    expect(result.total).toBe(Math.ceil(prompt.length / 4));
-    expect(Object.values(result.breakdown)).toEqual(Array(8).fill(0));
-  });
-
-  it("returns zero counts for empty or missing prompt", () => {
-    const result = estimatePromptTokens("");
-    expect(result.total).toBe(0);
-    expect(result.breakdown.spec).toBe(0);
-    expect(result.breakdown.memory).toBe(0);
-    expect(result.breakdown.ticket).toBe(0);
-    expect(result.breakdown.comments).toBe(0);
-    expect(result.breakdown.findings).toBe(0);
-    expect(result.breakdown.documents).toBe(0);
-    expect(findLargestContextSection(result.breakdown)).toBeNull();
-  });
   it("accurately estimates sections by construction without misattribution", () => {
     const commentWithReviewChecklist =
       "## Code Review Checklist\n\n- [x] Item 1\n- [x] Item 2\n\n```typescript\nconst a = 1234;\n";
@@ -501,7 +406,7 @@ describe("Session Creation Token Persistence", () => {
       .run();
 
     // Default: null
-    expect(resolvePromptTokenBudget(projId)).toBeNull();
+    expect(resolvePromptTokenBudget(projId)).toBe(30000);
 
     // Global set
     db.insert(settings)

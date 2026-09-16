@@ -1,28 +1,23 @@
-import { db } from "@/lib/db";
-import { epics, projects, ticketComments, userStories } from "@/lib/db/schema";
-import { createId } from "@/lib/utils/nanoid";
-import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
-import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import type { AgentType } from "@/lib/agent-config/constants";
+import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import {
   buildBuildPrompt,
   buildDeterministicVerificationFixSection,
   buildTicketBuildPrompt,
   type PromptComment,
 } from "@/lib/claude/prompt-builder";
-import { isVisualProofEnabled } from "@/lib/claude/visual-proof";
-import { buildRegressionFixSection } from "@/lib/verify/regression-report";
-import { readRegressionConfig } from "@/lib/pipeline/verify";
-import { buildGradingFixSection } from "@/lib/grading/report";
+import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import type { ClaudeResult } from "@/lib/claude/spawn";
-import {
-  emitSessionCompleted,
-  emitSessionFailed,
-} from "@/lib/events/emit";
+import { isVisualProofEnabled } from "@/lib/claude/visual-proof";
+import { db } from "@/lib/db";
+import { epics, projects, ticketComments, userStories } from "@/lib/db/schema";
+import { buildGradingFixSection } from "@/lib/grading/report";
+import { readRegressionConfig } from "@/lib/pipeline/regression-gate";
+import { createId } from "@/lib/utils/nanoid";
+import { buildRegressionFixSection } from "@/lib/verify/regression-report";
 import {
   finalizeBuildTerminalOutcome,
-  SILENT_BUILD_ERROR,
-  type BuildTerminalOutcome,
+  type BuildTerminalOutcome
 } from "@/lib/workflow/automatic-transitions";
 import type { PipelineStageRequest } from "./runner";
 import type { PipelineStageDriverInit } from "./stage-driver-init";
@@ -126,20 +121,20 @@ export async function buildCodeStagePrompt(input: {
     }
     // A regression-gate rejection carries its exact red→green verdict so
     // the agent repairs the real problem instead of guessing.
-    if (request.verifyFailure) {
+    if (request.verificationFailure?.kind === "regression") {
       // Same patterns the gate filtered the diff with, so the prompt states
       // the rule the agent actually has to satisfy.
       const regressionFixSection = buildRegressionFixSection(
-        request.verifyFailure,
+        request.verificationFailure.report,
         readRegressionConfig(projectId).patterns,
       );
       prompt = prompt + "\n\n" + regressionFixSection;
       promptSections.append("findings", regressionFixSection);
     }
-    if (request.verificationFailure) {
+    if (request.verificationFailure?.kind === "command") {
       const verificationFixSection =
         buildDeterministicVerificationFixSection(
-          request.verificationFailure,
+          request.verificationFailure.command,
         );
       prompt = prompt + "\n\n" + verificationFixSection;
       promptSections.append("findings", verificationFixSection);
@@ -174,29 +169,6 @@ export function finalizeCodeSession(input: {
         ? "Build completed successfully"
         : "Story build completed successfully",
   });
-  if (scope === "epic") {
-    // `silent` sits with the failures: the run delivered nothing, so the desk
-    // must not light up as if a build had landed.
-    if (
-      terminal.kind === "failed" ||
-      terminal.kind === "refused" ||
-      terminal.kind === "silent"
-    ) {
-      emitSessionFailed(
-        projectId,
-        epicId,
-        sessionId,
-        terminal.kind === "refused"
-          ? terminal.error
-          : terminal.kind === "silent"
-            ? SILENT_BUILD_ERROR
-            : result?.error || "Build failed"
-      );
-    } else {
-      emitSessionCompleted(projectId, epicId, sessionId);
-    }
-  }
-
   // The stored comment stays complete — agents can pull it whole through
   // get_ticket; only the PROMPT rendering is budgeted
   // (commentHistorySection). resolveSessionOutput scrubs prompt echoes.

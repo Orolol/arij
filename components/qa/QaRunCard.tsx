@@ -23,9 +23,8 @@ import { cn } from "@/lib/utils";
  * 4px track and the word REVIEW — not a green border. The single loud colour it
  * is allowed is the turquoise progress fill.
  *
- * PROGRESS IS INDETERMINATE ON PURPOSE. `session:progress` is declared in
- * `lib/events/bus.ts` and NOTHING emits it, so the bar crawls rather than lying
- * about a percentage.
+ * PROGRESS IS INDETERMINATE ON PURPOSE. Nothing computes per-session
+ * progress, so the bar crawls rather than lying about a percentage.
  */
 export interface QaRunCardProps {
   run: QaRun;

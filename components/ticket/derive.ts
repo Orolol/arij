@@ -41,37 +41,6 @@ export function ticketLabel(
   return shortId(id);
 }
 
-/**
- * Stable 32-bit string hash (FNV-1a). The project palette is picked from
- * `projects.colorIndex` when that column exists; until then a project still
- * has to keep the SAME colour between two opens of the same ticket, so the id
- * is hashed instead of being assigned a random or list-position tone.
- */
-export function hashString(value: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    // 32-bit FNV prime multiply, kept in range with Math.imul.
-    hash = Math.imul(hash, 0x01000193) >>> 0;
-  }
-  return hash >>> 0;
-}
-
-/**
- * The tone index to hand `projectTone()`. Prefers the stored colour index and
- * falls back to the id hash, so this keeps working unchanged the day
- * `projects.colorIndex` lands.
- */
-export function projectToneIndex(
-  projectId: string | null | undefined,
-  colorIndex?: number | null,
-): number {
-  if (typeof colorIndex === "number" && Number.isFinite(colorIndex)) {
-    return colorIndex;
-  }
-  return hashString(projectId ?? "");
-}
-
 /* ------------------------------------------------------------------ */
 /* User stories                                                        */
 /* ------------------------------------------------------------------ */

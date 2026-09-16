@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { routines, type Routine } from "@/lib/db/schema";
-import { createRoutineRunNotification } from "@/lib/notifications/create";
+import { sendProjectWebhook } from "@/lib/webhooks/send";
 import {
   executeRoutineAction,
   type RoutineActionResult,
@@ -79,6 +79,28 @@ export interface RoutineSchedulerDeps {
   }): void;
 }
 
+/**
+ * A routine's durable state is its `routines.last_status` row (the Settings
+ * screen reads it); what a project webhook adds is the PUSH. A completed or
+ * skipped run has nothing to announce, so only a failure leaves the process —
+ * the notifications table this used to write had no reader.
+ */
+function notifyRoutineRun(input: {
+  projectId: string;
+  kind: Routine["kind"];
+  status: "completed" | "skipped" | "failed";
+  message: string;
+  targetUrl: string;
+}): void {
+  if (input.status !== "failed") return;
+  void sendProjectWebhook(input.projectId, {
+    event: "routine.failed",
+    summary: `${input.kind} routine failed — ${input.message}`,
+    path: input.targetUrl,
+    error: input.message,
+  });
+}
+
 export const defaultRoutineSchedulerDeps: RoutineSchedulerDeps = {
   listEnabledRoutines: () =>
     db.select().from(routines).where(eq(routines.enabled, true)).all(),
@@ -95,7 +117,7 @@ export const defaultRoutineSchedulerDeps: RoutineSchedulerDeps = {
       .run();
   },
   execute: executeRoutineAction,
-  notify: createRoutineRunNotification,
+  notify: notifyRoutineRun,
 };
 
 export interface InterruptedRoutineRecoveryDeps {
@@ -119,7 +141,7 @@ const defaultInterruptedRoutineRecoveryDeps: InterruptedRoutineRecoveryDeps = {
       .where(eq(routines.id, routineId))
       .run();
   },
-  notify: createRoutineRunNotification,
+  notify: notifyRoutineRun,
 };
 
 /**
@@ -329,10 +351,6 @@ function schedulerSlot(): RoutineSchedulerSlot {
     };
   }
   return store[ROUTINE_SCHEDULER_GLOBAL_KEY];
-}
-
-export function getRoutineScheduler(): RoutineScheduler {
-  return schedulerSlot().scheduler;
 }
 
 /** Boot entry point. Idempotent across instrumentation/hot reloads. */

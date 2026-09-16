@@ -88,7 +88,7 @@ vi.mock("@/lib/claude/process-manager", () => ({
 }));
 
 vi.mock("@/lib/github/sync-log", () => ({
-  writeGitSyncLog: mockWriteGitSyncLog,
+  logSyncOperation: mockWriteGitSyncLog,
 }));
 
 /** Makes the shared remote guard reject exactly as the real one would. */

@@ -8,7 +8,7 @@
  * mode never rewrites a global safety setting).
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 vi.mock("@/components/shared/NamedAgentSelect", () => ({
   NamedAgentSelect: ({
@@ -113,6 +113,38 @@ describe("AutoModeDialog", () => {
     await waitFor(() =>
       expect(screen.getAllByTestId("named-agent-select")).toHaveLength(2)
     );
+  });
+
+  it("keeps the open draft when the project's default agent changes", async () => {
+    const calls = installFetch(statusFixture());
+    const view = render(<AutoModeDialog projectId="p1" open onOpenChange={() => {}} defaultNamedAgentId="initial-agent" />);
+    await waitFor(() => expect(screen.getAllByTestId("named-agent-select")[0]).toHaveAttribute("data-value", "initial-agent"));
+    fireEvent.change(screen.getByTestId("auto-mode-build-concurrency"), { target: { value: "4" } });
+    fireEvent.click(screen.getAllByTestId("named-agent-select")[0]);
+    await act(async () => view.rerender(<AutoModeDialog projectId="p1" open onOpenChange={() => {}} defaultNamedAgentId="new-project-default" />));
+    expect(screen.getByTestId("auto-mode-build-concurrency")).toHaveValue(4);
+    expect(screen.getAllByTestId("named-agent-select")[0]).toHaveAttribute("data-value", "picked-agent");
+    expect(calls).toHaveLength(1);
+  });
+
+  it("locks draft fields until loaded and while saving, then preserves them on rejection", async () => {
+    let settle!: (value: Response) => void;
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((resolve) => { settle = resolve; })));
+    render(<AutoModeDialog projectId="p1" open onOpenChange={() => {}} />);
+    const build = screen.getByTestId("auto-mode-build-concurrency");
+    expect(build).toBeDisabled();
+    expect(screen.getByTestId("auto-mode-enabled")).toBeDisabled();
+    await act(async () => settle(new Response(JSON.stringify({ data: statusFixture() }))));
+    expect(build).toBeEnabled();
+    fireEvent.change(build, { target: { value: "4" } });
+    fireEvent.click(screen.getByTestId("auto-mode-save"));
+    expect(build).toBeDisabled();
+    expect(screen.getByTestId("auto-mode-smart-dispatch")).toBeDisabled();
+    expect(screen.getAllByTestId("named-agent-select")[0]).toBeDisabled();
+    await act(async () => settle(new Response(JSON.stringify({ error: "Rejected" }), { status: 409 })));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Rejected");
+    expect(build).toBeEnabled();
+    expect(build).toHaveValue(4);
   });
 
   it("persists the seven settings through PUT and reports the new state", async () => {

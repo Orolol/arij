@@ -303,8 +303,10 @@ describe("document upload under the platform body cap", () => {
 
 describe("executable HTTP integration against isolated Next.js server with proxy", () => {
   let port: number;
-  let serverProc: ChildProcess;
-  let dbPath: string;
+  let serverProc: ChildProcess | undefined;
+  let fixtureDir: string | undefined;
+  let serverOutput = "";
+  let spawnError: Error | undefined;
   let projectId: string;
 
   beforeAll(async () => {
@@ -317,50 +319,74 @@ describe("executable HTTP integration against isolated Next.js server with proxy
       srv.on("error", reject);
     });
 
-    dbPath = path.join(
-      os.tmpdir(),
-      `test-upload-suite-${Date.now()}-${Math.random().toString(36).slice(2)}.db`
-    );
+    const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
     const repoRoot = process.cwd();
+    fixtureDir = realFs.mkdtempSync(path.join(os.tmpdir(), "arij-upload-http-"));
+    // Keep the production route, proxy and platform configuration, but give
+    // Next its own app root, build cache, database and upload directory.
+    for (const source of [
+      "lib", "bin", "next.config.ts", "tsconfig.json", "package.json",
+      "package-lock.json", "proxy.ts", "app/api/projects/route.ts",
+      "app/api/projects/[projectId]/documents/route.ts",
+    ]) {
+      const target = path.join(fixtureDir, source);
+      realFs.mkdirSync(path.dirname(target), { recursive: true });
+      realFs.cpSync(path.join(repoRoot, source), target, { recursive: true });
+    }
+    realFs.symlinkSync(path.join(repoRoot, "node_modules"), path.join(fixtureDir, "node_modules"), "dir");
 
-    serverProc = spawn("node", ["./node_modules/next/dist/bin/next", "dev", "--port", String(port)], {
-      cwd: repoRoot,
+    // Webpack resolves the shared dependency symlink; Turbopack requires every
+    // symlink target inside its root, which would defeat this scratch root.
+    serverProc = spawn(process.execPath, [
+      path.join(repoRoot, "node_modules/next/dist/bin/next"), "dev", "--webpack",
+      "--hostname", "127.0.0.1", "--port", String(port),
+    ], {
+      cwd: fixtureDir,
       detached: true,
       env: {
         ...process.env,
         PORT: String(port),
-        ARIJ_DB_PATH: dbPath,
+        ARIJ_DB_PATH: path.join(fixtureDir, "data", "test.db"),
+        ARIJ_REMOTE_TOKEN: "",
         NODE_ENV: "development",
+        NEXT_TELEMETRY_DISABLED: "1",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const captureOutput = (chunk: Buffer) => {
+      serverOutput = (serverOutput + chunk.toString()).slice(-16_000);
+    };
+    serverProc.stdout?.on("data", captureOutput);
+    serverProc.stderr?.on("data", captureOutput);
+    serverProc.on("error", (error) => { spawnError = error; });
 
+    const deadline = Date.now() + 45_000;
     let ready = false;
-    for (let i = 0; i < 50; i++) {
-      await new Promise((r) => setTimeout(r, 200));
+    let lastError = "No response";
+    while (Date.now() < deadline) {
+      if (spawnError || serverProc.exitCode !== null || serverProc.signalCode !== null) break;
       try {
-        const statusCode = await new Promise<number>((res, rej) => {
-          const req = http.get(`http://127.0.0.1:${port}/api/projects`, (r) => {
-            r.resume();
-            res(r.statusCode ?? 0);
+        const statusCode = await new Promise<number>((resolve, reject) => {
+          const req = http.get(`http://127.0.0.1:${port}/api/projects`, (res) => {
+            res.resume();
+            resolve(res.statusCode ?? 0);
           });
-          req.on("error", rej);
-          req.setTimeout(1000);
+          req.on("error", reject);
+          req.setTimeout(1000, () => req.destroy(new Error("Readiness request timed out")));
         });
         if (statusCode === 200) {
           ready = true;
           break;
         }
-      } catch {}
+        lastError = `GET /api/projects returned ${statusCode}`;
+      } catch (error) {
+        lastError = String(error);
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200));
     }
 
     if (!ready) {
-      if (serverProc.pid) {
-        try {
-          process.kill(-serverProc.pid, "SIGTERM");
-        } catch {}
-      }
-      throw new Error(`Server failed to start on port ${port} within timeout`);
+      throw new Error(`Isolated Next server failed to start: ${spawnError ?? lastError}. Exit: ${serverProc.exitCode ?? serverProc.signalCode}.\n${serverOutput}`);
     }
 
     projectId = await new Promise<string>((resolve, reject) => {
@@ -379,12 +405,20 @@ describe("executable HTTP integration against isolated Next.js server with proxy
             body += c;
           });
           res.on("end", () => {
-            const json = JSON.parse(body);
-            resolve(json.data.id);
+            try {
+              const json = JSON.parse(body);
+              if (res.statusCode !== 201 || typeof json.data?.id !== "string") {
+                throw new Error(`Project setup returned ${res.statusCode}: ${body}`);
+              }
+              resolve(json.data.id);
+            } catch (error) {
+              reject(error);
+            }
           });
         }
       );
       req.on("error", reject);
+      req.setTimeout(5000, () => req.destroy(new Error("Project setup timed out")));
       req.write(JSON.stringify({ name: "Live Upload Integration Project" }));
       req.end();
     });
@@ -392,22 +426,18 @@ describe("executable HTTP integration against isolated Next.js server with proxy
 
   afterAll(async () => {
     const realFs = await vi.importActual<typeof import("node:fs")>("node:fs");
-    if (serverProc?.pid) {
-      try {
-        process.kill(-serverProc.pid, "SIGTERM");
-      } catch {}
+    const child = serverProc;
+    if (child?.pid && child.exitCode === null && child.signalCode === null) {
+      await new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => {
+          try { process.kill(-child.pid!, "SIGKILL"); } catch {}
+          resolve();
+        }, 3000);
+        child.once("exit", () => { clearTimeout(timeout); resolve(); });
+        try { process.kill(-child.pid!, "SIGTERM"); } catch { clearTimeout(timeout); resolve(); }
+      });
     }
-    for (const f of [dbPath, `${dbPath}-wal`, `${dbPath}-shm`]) {
-      try {
-        realFs.unlinkSync(f);
-      } catch {}
-    }
-    if (projectId) {
-      const storageDir = path.join(process.cwd(), "data", "documents", projectId);
-      try {
-        realFs.rmSync(storageDir, { recursive: true, force: true });
-      } catch {}
-    }
+    if (fixtureDir) realFs.rmSync(fixtureDir, { recursive: true, force: true });
   });
 
   function executeUpload({
@@ -468,6 +498,7 @@ describe("executable HTTP integration against isolated Next.js server with proxy
         }
       );
       req.on("error", reject);
+      req.setTimeout(25_000, () => req.destroy(new Error(`Upload timed out.\n${serverOutput}`)));
 
       if (rawBody) {
         req.write(rawBody);

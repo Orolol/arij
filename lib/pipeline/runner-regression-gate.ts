@@ -2,7 +2,7 @@ import type { RegressionReportPayload } from "@/lib/verify/regression-report";
 import { PIPELINE_REASONS } from "./constants";
 import type { PipelineRunContext, PipelineStepOutcome } from "./runner-context";
 import { dispatchStage } from "./runner-dispatch";
-import type { VerifyGateOutcome } from "./verify";
+import type { VerifyGateOutcome } from "./regression-gate";
 
 /**
  * Regression gate step of the code stage (bug tickets, opt-in).
@@ -128,7 +128,7 @@ export async function runRegressionGateStep(
       fixCycle: state.fixCycles,
       previousAttemptSessionId: null,
       lastCodeSessionId: state.lastCodeSessionId,
-      verifyFailure: payload,
+      verificationFailure: { kind: "regression", report: payload },
     });
     return summary ? { kind: "terminal", summary } : { kind: "dispatched" };
   }

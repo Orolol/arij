@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Sparkles } from "lucide-react";
 import { AgentDispatchDialog } from "@/components/shared/AgentDispatchDialog";
@@ -12,7 +12,7 @@ interface SpecUpdateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onStarted: (data: { sessionId: string }) => void;
-  onBeforeStart?: () => Promise<void>;
+  onBeforeStart?: () => Promise<boolean | void>;
   onError?: (message: string) => void;
 }
 /**
@@ -34,6 +34,7 @@ export function SpecUpdateDialog({
   const [namedAgentId, setNamedAgentId] = useState<string | null>(null);
   const [instruction, setInstruction] = useState("");
   const [starting, setStarting] = useState(false);
+  const startingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
 
   function resetForm() {
@@ -49,10 +50,18 @@ export function SpecUpdateDialog({
   }
 
   async function handleStart() {
+    if (startingRef.current) return;
+    startingRef.current = true;
     setStarting(true);
     setError(null);
     try {
-      await onBeforeStart?.();
+      const ready = await onBeforeStart?.();
+      if (ready === false) {
+        setError(t("updateDialog.saveFailed"));
+        setStarting(false);
+        startingRef.current = false;
+        return;
+      }
       const res = await fetch(`/api/projects/${projectId}/spec/update`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -79,6 +88,7 @@ export function SpecUpdateDialog({
     // Trailing, not in a `finally` clause: the React Compiler stops at the
     // clause, and stopping left this component unread by every compiler rule.
     setStarting(false);
+    startingRef.current = false;
   }
 
   return (
@@ -104,6 +114,7 @@ export function SpecUpdateDialog({
             onChange={(event) => setInstruction(event.target.value)}
             placeholder={t("updateDialog.instructionPlaceholder")}
             rows={4}
+            disabled={starting}
             className="rounded-[10px] border-[1.5px] text-[13px] leading-[1.6] shadow-none"
             data-testid="spec-update-instruction"
           />

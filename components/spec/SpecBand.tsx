@@ -100,7 +100,7 @@ export function SpecBand({
   function handleCardKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
-      if (!saving && !updateRunning) void onSave();
+      if (loaded && !saving && !updateRunning) void onSave();
     }
   }
 
@@ -166,7 +166,7 @@ export function SpecBand({
               projectId={projectId}
               value={spec}
               onChange={onSpecChange}
-              disabled={updateRunning}
+              disabled={!loaded || updateRunning}
             />
           ) : (
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -183,7 +183,7 @@ export function SpecBand({
               size="sm"
               className="ml-auto"
               onClick={() => void onSave()}
-              disabled={saving || updateRunning}
+              disabled={!loaded || saving || updateRunning}
               pending={saving}
               pendingLabel={t("band.savePending")}
             >

@@ -3,7 +3,6 @@
  */
 
 import { eventBus, type TicketEventType } from "./bus";
-import { createNotificationFromSession } from "@/lib/notifications/create";
 
 function emit(
   type: TicketEventType,
@@ -84,17 +83,26 @@ export function emitSessionStarted(
   emit("session:started", projectId, epicId, { sessionId, agentType });
 }
 
+/**
+ * A session that belongs to NO ticket — a project-level pass (Dreaming, a
+ * memory distillation). `TicketEvent.epicId` is optional, and an empty string
+ * would read as a ticket id to any consumer that filters on truthiness, so
+ * the field is omitted rather than blanked.
+ */
+export function emitProjectSessionStarted(
+  projectId: string,
+  sessionId: string,
+  agentType: string,
+) {
+  emit("session:started", projectId, undefined, { sessionId, agentType });
+}
+
 export function emitSessionCompleted(
   projectId: string,
   epicId: string,
   sessionId: string
 ) {
   emit("session:completed", projectId, epicId, { sessionId });
-  try {
-    createNotificationFromSession(sessionId);
-  } catch {
-    // Non-critical — don't break session flow if notification fails
-  }
 }
 
 export function emitSessionFailed(
@@ -104,11 +112,6 @@ export function emitSessionFailed(
   error: string
 ) {
   emit("session:failed", projectId, epicId, { sessionId, error });
-  try {
-    createNotificationFromSession(sessionId);
-  } catch {
-    // Non-critical — don't break session flow if notification fails
-  }
 }
 
 export function emitSessionArtifactCreated(

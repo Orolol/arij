@@ -32,10 +32,8 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
   const gradings = parseGradingEntries(report.gradings);
   if (!gradings) {
-    return NextResponse.json(
-      { error: "Latest grading report is malformed" },
-      { status: 500 },
-    );
+    console.warn("[grading] malformed report", report.id);
+    return NextResponse.json({ data: null });
   }
   return NextResponse.json({ data: { ...report, gradings } });
 }

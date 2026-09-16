@@ -11,6 +11,13 @@
     "invalid": "Budget must be a positive integer token count (e.g. 50000 or 50k).",
     "saveFailed": "Failed to save project prompt token budget.",
     "cleared": "Project override cleared (using global default).",
-    "saved": "Project budget saved."
+    "saved": "Project budget saved.",
+    "loadFailed": "Failed to load project settings."
+  },
+  "delete": {
+    "action": "Delete project",
+    "description": "Delete “{name}” and its Arij data?",
+    "removeDirectory": "Also remove the Arij-managed clone",
+    "failed": "Failed to delete project."
   }
 }

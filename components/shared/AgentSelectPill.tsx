@@ -21,11 +21,8 @@ import {
 import type { TranslationKey } from "@/lib/i18n/catalogue";
 
 /**
- * The one agent picker. Three menus used to answer "who runs this?" — the
- * desk composer's pill, the chat page's pill and the project panel's shadcn
- * `Select` — and they drifted: only one of them offered the direct API and the
- * persistent CLIs, and only one of them was a Piscine `SelectPill`.
- *
+ * The Piscine pill agent picker, used across composers and toolbars (desk, chat).
+ * Form dialogs use NamedAgentSelect for role-based reliability metrics.
  * `mode` is the capability gate, and it is not cosmetic:
  * - `chat` — everything a conversation can run on (see `ChatModeProvider`).
  * - `dispatch` — named agents only, because a BUILD cannot run on the direct

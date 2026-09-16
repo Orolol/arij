@@ -1,7 +1,9 @@
 "use client";
+import { useMergeBatch } from "@/hooks/useMergeBatch";
+import { markRead, replyToEpic, sendToDev } from "@/lib/inbox/client";
 
 import * as React from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Infinity as InfinityIcon } from "lucide-react";
 import { useTranslations } from "next-intl";
@@ -27,11 +29,11 @@ import {
   ToastStack,
   type ToastAction,
   type ToastTone,
-} from "@/components/notifications/ToastStack";
+} from "@/components/toast/ToastStack";
 import {
   useDispatchFailureReporter,
   useToastStack,
-} from "@/components/notifications/useToastStack";
+} from "@/components/toast/useToastStack";
 
 import { FullAutoProjectRow } from "./FullAutoProjectRow";
 import { DeskComposer } from "./DeskComposer";
@@ -117,8 +119,9 @@ export function NowDesk({
   const { data, refresh } = useControlDesk(activeProjectId);
   const { toasts, raise, dismiss: dismissToast } = useToastStack(onToast);
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
+  const landingInFlight = useRef(false);
   const [landingEpicId, setLandingEpicId] = useState<string | null>(null);
-  const [landingAll, setLandingAll] = useState(false);
+
   const [composerProjectId, setComposerProjectId] = useState<string | null>(null);
   const [namedAgentId, setNamedAgentId] = useState<string | null>(null);
 
@@ -151,9 +154,16 @@ export function NowDesk({
         onOpenTicket(epicId);
         return;
       }
-      const owner =
-        data?.upNext.find((row) => row.tickets.some((t) => t.epicId === epicId))
-          ?.projectId ?? activeProjectId;
+      const tickets = data ? [
+        ...data.working,
+        ...data.queued,
+        ...data.readyToLand,
+        ...data.yourTurn.awaitingReply,
+        ...data.yourTurn.failed,
+        ...data.yourTurn.conflicts,
+        ...data.upNext.flatMap((row) => row.tickets),
+      ] : [];
+      const owner = tickets.find((row) => row.epicId === epicId)?.projectId ?? activeProjectId;
       openTicket(epicId, { projectId: owner });
     },
     [data, activeProjectId, openTicket, onOpenTicket],
@@ -183,26 +193,15 @@ export function NowDesk({
   const handleReply = useCallback(
     async (item: DeskAwaitingReply, message: string) => {
       markPending(item.epicId, true);
+      let sent = false;
       try {
-        const res = await fetch(
-          `/api/projects/${item.projectId}/epics/${item.epicId}/comments`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ author: "user", content: message }),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || body.error) {
-          reportFailure(res, body, t("toasts.replyFailed"), item.projectId);
+        const result = await replyToEpic(item, message, t("toasts.replyFailed"));
+        if (result.error) {
+          raise("error", result.error);
         } else {
-          // The reply is also the read: the durable cursor move is what keeps
-          // the row from coming straight back on the next poll.
-          await fetch("/api/inbox/read", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ epicId: item.epicId }),
-          }).catch(() => {});
+          const read = await markRead(item.epicId, t("toasts.replyFailed"));
+          if (read.error) raise("error", read.error);
+          sent = true;
           raise("success", t("toasts.replySent"));
           changed();
         }
@@ -213,6 +212,7 @@ export function NowDesk({
       // the React Compiler stops at the clause, and stopping left this
       // component unread by every compiler rule.
       markPending(item.epicId, false);
+      return sent;
     },
     [markPending, raise, reportFailure, changed, t],
   );
@@ -220,45 +220,18 @@ export function NowDesk({
   const handleSendToDev = useCallback(
     async (item: DeskAwaitingReply, message: string) => {
       markPending(item.epicId, true);
-      try {
-        // The typed answer is posted first so the builder's prompt sees it, then
-        // the epic build is dispatched. An empty field just dispatches.
-        if (message.length > 0) {
-          await fetch(`/api/projects/${item.projectId}/epics/${item.epicId}/comments`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ author: "user", content: message }),
-          }).catch(() => {});
-        }
-        const res = await fetch(
-          `/api/projects/${item.projectId}/epics/${item.epicId}/build`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(namedAgentId ? { namedAgentId } : {}),
-          },
-        );
-        const body = await res.json().catch(() => ({}));
-        if (!res.ok || body.error) {
-          reportFailure(res, body, t("toasts.buildFailed"), item.projectId);
-        } else {
-          raise("success", t("toasts.sentToDev"));
-          changed();
-        }
-      } catch {
-        raise("error", t("toasts.buildFailed"));
+      if (message.length > 0) {
+        const reply = await replyToEpic(item, message, t("toasts.replyFailed"));
+        if (reply.error) { raise("error", reply.error); markPending(item.epicId, false); return; }
       }
+      const result = await sendToDev(item, namedAgentId, t("toasts.buildFailed"));
+      if (result.error) raise("error", result.error);
+      else { raise("success", t("toasts.sentToDev")); changed(); }
       markPending(item.epicId, false);
     },
     [markPending, namedAgentId, raise, reportFailure, changed, t],
   );
 
-  /**
-   * Retry = a second attempt at the SAME work by the SAME agent. Which agent
-   * and whether to resume its conversation are both decided by
-   * `buildRetryDispatch`, because the badged session can be a review or a story
-   * build rather than the epic build this button dispatches.
-   */
   const handleRetry = useCallback(
     async (item: DeskFailure) => {
       markPending(item.epicId, true);
@@ -301,7 +274,7 @@ export function NowDesk({
    * Dismiss a "Your turn" signal.
    *
    * The optimistic hide goes through `refresh()` rather than local state on
-   * purpose: `useControlDesk`'s requestSeq/mutationSeq guards make the refresh
+   * purpose: `usePolledResource` refresh generations make the refresh
    * win against the in-flight 4s poll, whereas a local hidden-set would fight
    * that poll and flicker the row back.
    *
@@ -392,50 +365,35 @@ export function NowDesk({
         }
         return body.data?.autoAgent ? "agent" : "merged";
       } catch {
+        raise("error", t("toasts.mergeFailed"));
         return "failed";
       }
     },
-    [reportFailure, t],
+    [raise, reportFailure, t],
   );
 
   const handleLand = useCallback(
     async (row: DeskLandRow) => {
-      if (landingEpicId !== null || landingAll) return;
+      if (landingInFlight.current) return;
+      landingInFlight.current = true;
       setLandingEpicId(row.epicId);
       const outcome = await landOne(row);
       setLandingEpicId(null);
+      landingInFlight.current = false;
       if (outcome === "merged") raise("success", t("toasts.merged"));
       if (outcome === "agent") raise("success", t("toasts.mergeFixAgent"));
       changed();
     },
-    [landingEpicId, landingAll, landOne, raise, changed, t],
+    [landOne, raise, changed, t],
   );
 
-  const handleLandAll = useCallback(
-    async (rows: readonly DeskLandRow[]) => {
-      if (landingEpicId !== null || landingAll) return;
-      setLandingAll(true);
-      let merged = 0;
-      let agentLaunched = 0;
-      let failed = 0;
-      // Sequential on purpose: one shared checkout per project, and a parallel
-      // batch would collide on git's index.lock.
-      for (const row of rows) {
-        const outcome = await landOne(row);
-        if (outcome === "merged") merged += 1;
-        else if (outcome === "agent") agentLaunched += 1;
-        else failed += 1;
-      }
-      setLandingAll(false);
-      if (merged > 0) raise("success", t("toasts.mergedCount", { count: merged }));
-      if (agentLaunched > 0) {
-        raise("success", t("toasts.mergeFixAgentCount", { count: agentLaunched }));
-      }
-      if (failed > 0) raise("error", t("toasts.mergesFailed", { count: failed }));
-      changed();
-    },
-    [landingEpicId, landingAll, landOne, raise, changed, t],
-  );
+  const { merge: mergeBatch, pending: landingAll } = useMergeBatch(projectId ?? "desk", raise, changed);
+  const handleLandAll = useCallback(async (rows: readonly DeskLandRow[]) => {
+    if (landingInFlight.current) return;
+    landingInFlight.current = true;
+    await mergeBatch(rows);
+    landingInFlight.current = false;
+  }, [mergeBatch]);
 
   const handleStopSession = useCallback(
     async (sessionId: string) => {
@@ -750,6 +708,7 @@ export function NowDesk({
         awaitingReply={data?.yourTurn.awaitingReply ?? []}
         failed={data?.yourTurn.failed ?? []}
         conflicts={data?.yourTurn.conflicts ?? []}
+        parked={data?.yourTurn.parked ?? []}
         projectsById={projectsById}
         pendingIds={pendingIds}
         onReply={handleReply}
@@ -777,6 +736,11 @@ export function NowDesk({
         <ReadyToLandBand
           rows={data?.readyToLand ?? []}
           heldBackCount={data?.heldBackCount ?? 0}
+          onShowHeldBack={() => {
+            const filters = new URLSearchParams({ status: "to_merge" });
+            if (activeProjectId) filters.set("project", activeProjectId);
+            router.push(`/tickets?${filters}`);
+          }}
           projectsById={projectsById}
           landingEpicId={landingEpicId}
           landingAll={landingAll}

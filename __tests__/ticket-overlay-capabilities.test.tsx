@@ -354,8 +354,8 @@ describe("dependency editing", () => {
 
 /* ------------------------------------------------------------------ */
 
-describe("story detail link", () => {
-  it("links each story to the story surface, the route's only door", () => {
+describe("story edit button", () => {
+  it("renders an edit button for each story and opens in-place editor when clicked", () => {
     setEpic({}, {
       userStories: [
         { id: "story-1", title: "First", status: "todo", acceptanceCriteria: null },
@@ -364,14 +364,14 @@ describe("story detail link", () => {
     });
     renderSubject();
 
-    const links = screen.getAllByTestId("ticket-story-link");
-    expect(links.map((link) => link.getAttribute("href"))).toEqual([
-      "/projects/proj-1/stories/story-1",
-      "/projects/proj-1/stories/story-2",
-    ]);
+    const editButtons = screen.getAllByTestId("ticket-story-link");
+    expect(editButtons).toHaveLength(2);
+
+    fireEvent.click(editButtons[0]);
+    expect(screen.getByTestId("ticket-story-edit-title")).toHaveValue("First");
   });
 
-  it("draws no link row when there are no stories", () => {
+  it("draws no edit button when there are no stories", () => {
     renderSubject();
     expect(screen.queryAllByTestId("ticket-story-link")).toHaveLength(0);
   });

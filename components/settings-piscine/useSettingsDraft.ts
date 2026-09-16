@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
 import {
@@ -74,6 +74,7 @@ export function useSettingsDraft(): SettingsDraft {
   const [loadFailed, setLoadFailed] = useState(false);
   const [draft, setDraft] = useState<Record<string, EditorValue>>({});
   const [saving, setSaving] = useState(false);
+  const pendingSave = useRef<Record<string, EditorValue> | null>(null);
   const [message, setMessageState] = useState<string | null>(null);
   const [messageTone, setMessageTone] = useState<"muted" | "danger">("muted");
 
@@ -120,9 +121,12 @@ export function useSettingsDraft(): SettingsDraft {
   const set = useCallback(
     (key: string, next: EditorValue) => {
       setMessageState(null);
+      const savingKey = key in (pendingSave.current ?? {});
       setDraft((current) => {
         const loadedValue = editors[key];
-        if (Object.is(next, loadedValue)) {
+        // A value reverted while its replacement is being saved must remain
+        // an edit against the incoming baseline, even if it matches the old one.
+        if (Object.is(next, loadedValue) && !savingKey) {
           if (!(key in current)) return current;
           // Not `const { [key]: _, ...rest } = current`: a computed key in a
           // destructuring pattern is one of the constructs the React Compiler
@@ -139,6 +143,7 @@ export function useSettingsDraft(): SettingsDraft {
   );
 
   const discard = useCallback(() => {
+    if (pendingSave.current) return;
     setDraft({});
     setMessageState(null);
     setMessageTone("muted");
@@ -153,6 +158,7 @@ export function useSettingsDraft(): SettingsDraft {
   );
 
   const save = useCallback(async () => {
+    if (!loaded || loadFailed || pendingSave.current) return;
     const body: Record<string, unknown> = {};
     for (const key of Object.keys(draft)) {
       const spec = SETTING_FIELDS[key];
@@ -177,8 +183,10 @@ export function useSettingsDraft(): SettingsDraft {
       return;
     }
 
+    pendingSave.current = draft;
     setSaving(true);
     setMessageState(null);
+    let saved = false;
     try {
       const response = await fetch("/api/settings", {
         method: "PATCH",
@@ -192,11 +200,16 @@ export function useSettingsDraft(): SettingsDraft {
         );
         setMessageTone("danger");
       } else {
+        saved = true;
         // Feed the stored values back through the readers: that is what shows
         // a clamped breaker, a re-joined pattern list and reformatted verify
         // JSON.
         setData((current) => ({ ...current, ...body }));
-        setDraft({});
+        // The fields stay editable during the request. Clear only the values
+        // we actually submitted, preserving edits made while it was in flight.
+        setDraft((current) => Object.fromEntries(
+          Object.entries(current).filter(([key, value]) => !Object.is(value, draft[key])),
+        ));
         setMessageState(savedMessage);
         setMessageTone("muted");
       }
@@ -204,10 +217,18 @@ export function useSettingsDraft(): SettingsDraft {
       setMessageState(saveOfflineMessage);
       setMessageTone("danger");
     }
+    if (!saved) {
+      // A rejected write leaves the old baseline authoritative. A value
+      // reverted during the request may therefore no longer be a real edit.
+      setDraft((current) => Object.fromEntries(
+        Object.entries(current).filter(([key, value]) => !Object.is(value, editors[key])),
+      ));
+    }
     // Every branch above falls through here — what the `finally` did before
     // it; the React Compiler stops at a `finally` clause.
     setSaving(false);
-  }, [draft, t, savedMessage, saveRefusedMessage, saveOfflineMessage]);
+    pendingSave.current = null;
+  }, [draft, editors, loaded, loadFailed, t, savedMessage, saveRefusedMessage, saveOfflineMessage]);
 
   return {
     loaded,

@@ -50,14 +50,14 @@
 
 import {
   Activity,
-  Bell,
   Bot,
   FileText,
   FlaskConical,
   Gauge,
+  GitBranch,
   Github,
   Layers,
-  Moon,
+  Palette,
   Rows3,
   ShieldCheck,
   SlidersHorizontal,
@@ -87,6 +87,8 @@ export interface NavEntry {
   forProject?: (projectId: string) => string;
   /** The route does not exist yet. Renders soft; never links. */
   planned?: boolean;
+  /** Match exact pathname instead of prefix match. */
+  exact?: boolean;
 }
 
 export interface NavCategory {
@@ -175,27 +177,30 @@ export const NAV_CATEGORIES: readonly NavCategory[] = [
     stratum: "feed",
     panel: null,
     entries: [
-      // 11c is ONE page with sections; `?tab=` names the section. /settings
-      // exists today and ignores an unknown tab, so none of these 404 — they
-      // land on the settings page, which is why they are not `planned`.
       {
         id: "workspace",
         labelKey: "Nav.entries.workspace",
         icon: SlidersHorizontal,
         href: "/settings",
+        exact: true,
       },
-      { id: "night-runs", labelKey: "Nav.entries.nightRuns", icon: Moon, href: "/settings#night-runs" },
       {
-        id: "notifications",
-        labelKey: "Nav.entries.notifications",
-        icon: Bell,
-        href: "/settings#notifications",
+        id: "pipeline",
+        labelKey: "Nav.entries.pipeline",
+        icon: GitBranch,
+        href: "/settings/pipeline",
       },
       {
         id: "integrations",
         labelKey: "Nav.entries.integrations",
         icon: Github,
         href: "/settings/integrations",
+      },
+      {
+        id: "appearance",
+        labelKey: "Nav.entries.appearance",
+        icon: Palette,
+        href: "/settings/appearance",
       },
     ],
   },
@@ -250,6 +255,9 @@ export function isNavEntryActive(
   if (!href) return false;
   if (href.includes("?")) return false;
   const path = pathOf(href);
+  if (entry.exact) {
+    return pathname === path;
+  }
   return pathname === path || pathname.startsWith(`${path}/`);
 }
 

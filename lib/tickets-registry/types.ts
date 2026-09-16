@@ -1,3 +1,5 @@
+import type { TranslationKey } from "@/lib/i18n";
+
 /**
  * The payload of `GET /api/tickets` — the one read the tickets REGISTRY makes.
  *
@@ -92,7 +94,8 @@ export interface RegistryRow {
   isQueued: boolean;
   /** done — `evaluateMergeReadiness(...).ready`. */
   mergeReady: boolean;
-  /** done — `describeMergeBlocker()`, when a blocker stands. */
+  /** done — `describeMergeBlockerKey()`, when a blocker stands. */
+  mergeBlockerKey: TranslationKey | null;
   mergeBlockerLine: string | null;
   /** released — the release's version, `null` when `release_id` is null. */
   releaseVersion: string | null;

@@ -1,8 +1,10 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
+import { requestJson } from "@/lib/api/client";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { useScopedMutation } from "@/hooks/useScopedMutation";
 
 /** What a worktree is doing right now, from the agent's point of view. */
 export type WorktreeState = "running" | "idle" | "orphan";
@@ -18,106 +20,60 @@ export interface WorktreeSummary {
 
 export interface WorktreesResult {
   worktrees: WorktreeSummary[];
-  /**
-   * Number of agent worktrees, or null while unknown — loading, no git repo,
-   * or a failed listing. Callers must render nothing rather than a "0" that
-   * would be a lie.
-   */
+  /** Unknown until a successful listing; never invent a zero after an error. */
   count: number | null;
   orphanCount: number;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
-  /** `git worktree prune` — drops records whose directory is already gone. */
+  /** Drops git records whose directory is already gone. */
   prune: () => Promise<void>;
   pruning: boolean;
 }
 
-/**
- * Agent worktrees of a project, from `GET /api/projects/{id}/worktrees`.
- *
- * Deliberately not polled: the route shells out to git, and both consumers
- * (repo status bar, Git Sync column) refresh on an explicit user action.
- */
-export function useWorktrees(
-  projectId: string,
-  enabled: boolean = true
-): WorktreesResult {
+interface WorktreeData {
+  worktrees: WorktreeSummary[];
+  count: number | null;
+  orphanCount: number;
+}
+
+const NO_WORKTREES: WorktreeSummary[] = [];
+function isWorktreeData(value: unknown): value is WorktreeData {
+  if (!value || typeof value !== "object") return false;
+  const data = value as WorktreeData;
+  return Array.isArray(data.worktrees)
+    && (data.count === null || (Number.isInteger(data.count) && data.count >= 0))
+    && Number.isInteger(data.orphanCount) && data.orphanCount >= 0;
+}
+
+/** One explicit read: polling this resource would repeatedly shell out to git. */
+export function useWorktrees(projectId: string, enabled: boolean = true): WorktreesResult {
   const tErrors = useTranslations("ClientErrors");
-  const [worktrees, setWorktrees] = useState<WorktreeSummary[]>([]);
-  const [count, setCount] = useState<number | null>(null);
-  const [orphanCount, setOrphanCount] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [pruning, setPruning] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const apply = useCallback((data: unknown) => {
-    const payload = data as
-      | { worktrees?: WorktreeSummary[]; count?: number; orphanCount?: number }
-      | undefined;
-    setWorktrees(payload?.worktrees ?? []);
-    // Strictly the server's number: an absent count stays unknown rather than
-    // becoming a "0 worktrees" nobody vouched for.
-    setCount(typeof payload?.count === "number" ? payload.count : null);
-    setOrphanCount(payload?.orphanCount ?? 0);
-  }, []);
-
-  const refresh = useCallback(async () => {
-    if (!enabled) return;
-
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/worktrees`);
-      const json = await res.json();
-      if (!res.ok) {
-        setCount(null);
-        setError(json?.error || tErrors("failedToReadWorktrees"));
-        return;
-      }
-      setError(null);
-      apply(json?.data);
-    } catch {
-      setCount(null);
-      setError(tErrors("failedToReadWorktrees"));
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId, enabled, apply, tErrors]);
+  const url = enabled ? `/api/projects/${projectId}/worktrees` : null;
+  const errorMessage = useCallback(() => tErrors("failedToReadWorktrees"), [tErrors]);
+  const { data, loading, error, refresh: reload, updateData } = usePolledResource<WorktreeData>(
+    url, null, errorMessage, { validateData: isWorktreeData },
+  );
+  const { run, pending: pruning, error: mutationError, clearError } = useScopedMutation(url);
 
   const prune = useCallback(async () => {
-    if (!enabled) return;
-
-    setPruning(true);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/worktrees`, {
-        method: "POST",
+    if (!url || !data) return;
+    await run(async () => {
+      const response = await requestJson<WorktreeData>(url, {
+        method: "POST", errorMessage: tErrors("failedToCleanWorktrees"), validateData: isWorktreeData,
       });
-      const json = await res.json();
-      if (!res.ok) {
-        setError(json?.error || tErrors("failedToCleanWorktrees"));
-        return;
-      }
-      setError(null);
-      apply(json?.data);
-    } catch {
-      setError(tErrors("failedToCleanWorktrees"));
-    } finally {
-      setPruning(false);
-    }
-  }, [projectId, enabled, apply, tErrors]);
+      if (response.error !== null) throw new Error(response.error);
+      updateData(response.data);
+      return true;
+    }, tErrors("failedToCleanWorktrees"));
+  }, [url, data, run, updateData, tErrors]);
 
-  useEffect(() => {
-    void refresh();
-  }, [refresh]);
+  const refresh = useCallback(async () => { clearError(); await reload(); }, [clearError, reload]);
 
   return {
-    worktrees,
-    count,
-    orphanCount,
-    loading,
-    error,
-    refresh,
-    prune,
-    pruning,
+    worktrees: data?.worktrees ?? NO_WORKTREES,
+    count: data?.count ?? null,
+    orphanCount: data?.orphanCount ?? 0,
+    loading, error: mutationError ?? error, refresh, prune, pruning,
   };
 }

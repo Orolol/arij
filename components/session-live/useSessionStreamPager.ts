@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { usePolling } from "@/hooks/usePolling";
-import type { SessionStreamSeed } from "@/components/sessions/SessionOutputStream";
+import { useSessionPolling } from "./useSessionPolling";
 import type {
   AgentSessionStreamType,
   BoundedSessionChunk,
@@ -15,13 +14,8 @@ import {
 } from "@/lib/agent-sessions/session-detail";
 
 /**
- * One chunk stream, paged — the cursor discipline of
- * `components/sessions/SessionOutputStream.tsx` lifted out of the component so
- * the LIVE LOG can render the same stream its own way (line grammar, glyphs,
- * per-chunk timestamps) without forking the paging.
- *
- * `SessionOutputStream` itself is untouched: 16 tests pin it, and the Réponse
- * pane on this screen still mounts it as-is.
+ * Shared paging for the live log and response pane. Each renderer keeps its
+ * own presentation, while cursors, cancellation and completion reads agree.
  *
  * The session detail route used to inline all three streams in full — 112 MB
  * for the worst session on the live database, read synchronously on the one
@@ -30,6 +24,14 @@ import {
  * with `?stream=&after=`, one bounded page per click (or per poll while the
  * session is still writing).
  */
+
+export interface SessionStreamSeed {
+  chunks: BoundedSessionChunk[];
+  nextAfter: number | null;
+  /** Characters of the chunk at `nextAfter` already delivered, if any. */
+  nextOffset?: number;
+  hasMore: boolean;
+}
 
 export interface SessionStreamPagerOptions {
   projectId: string;
@@ -41,6 +43,7 @@ export interface SessionStreamPagerOptions {
   unavailable?: boolean;
   /** While the session runs, the stream tails itself from its own cursor. */
   isRunning: boolean;
+  errorMessages?: { unreadable: string; loadFailed: string };
 }
 
 export interface SessionStreamPager {
@@ -60,12 +63,14 @@ export function useSessionStreamPager({
   seed,
   unavailable = false,
   isRunning,
+  errorMessages,
 }: SessionStreamPagerOptions): SessionStreamPager {
   // Read into plain strings so `loadMore` depends on the two messages rather
   // than on the translator identity, which changes on every render.
   const t = useTranslations("SessionLive");
-  const unreadableCopy = t("log.streamUnreadable");
-  const loadFailedCopy = t("log.loadMoreFailed");
+  const unreadableCopy = errorMessages?.unreadable ?? t("log.streamUnreadable");
+  const loadFailedCopy = errorMessages?.loadFailed ?? t("log.loadMoreFailed");
+  const key = JSON.stringify([projectId, sessionId, streamType]);
   const [chunks, setChunks] = useState<BoundedSessionChunk[]>(
     seed?.chunks ?? []
   );
@@ -78,30 +83,31 @@ export function useSessionStreamPager({
   // non-zero only for a chunk too large to fit one page.
   const cursor = useRef<number | null>(seed?.nextAfter ?? null);
   const cursorOffset = useRef<number>(seed?.nextOffset ?? 0);
-  const inFlight = useRef(false);
 
-  // A different session (or stream) in the same mounted page starts over.
-  useEffect(() => {
+  // Capture a preview once per identity. A poll can replace the seed object
+  // without discarding pages already loaded from this stream.
+  const [identity, setIdentity] = useState({ key, seed });
+  if (identity.key !== key) {
+    setIdentity({ key, seed });
     setChunks(seed?.chunks ?? []);
     setHasMore(seed?.hasMore ?? false);
     setError(null);
-    cursor.current = seed?.nextAfter ?? null;
-    cursorOffset.current = seed?.nextOffset ?? 0;
-    // Seeding is deliberately keyed on the identity of the stream, not on the
-    // seed object: the detail route re-sends its preview on every 3s poll, and
-    // re-seeding from it would throw away everything paged in since.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, sessionId, streamType]);
+    setLoading(false);
+  }
+  useEffect(() => {
+    cursor.current = identity.seed?.nextAfter ?? null;
+    cursorOffset.current = identity.seed?.nextOffset ?? 0;
+  }, [identity]);
 
-  const loadMore = useCallback(async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
+  const load = useCallback(async (signal: AbortSignal) => {
     setLoading(true);
     try {
       const page = await fetchSessionChunkPage(projectId, sessionId, streamType, {
         after: cursor.current,
         offset: cursorOffset.current,
+        signal,
       });
+      if (signal.aborted) return;
       cursor.current = page.nextAfter;
       cursorOffset.current = page.nextOffset ?? 0;
       setHasMore(page.hasMore);
@@ -112,15 +118,13 @@ export function useSessionStreamPager({
         setChunks((current) => [...current, ...page.chunks]);
       }
     } catch {
-      setError(loadFailedCopy);
-    } finally {
-      inFlight.current = false;
-      setLoading(false);
+      if (!signal.aborted) setError(loadFailedCopy);
     }
+    if (!signal.aborted) setLoading(false);
   }, [projectId, sessionId, streamType, unreadableCopy, loadFailedCopy]);
 
-  // A running session appends as it writes; a finished one waits for a click.
-  usePolling(loadMore, 3000, isRunning && !unavailable, { immediate: false });
+  // The final read matters for responses that are only written at completion.
+  const loadMore = useSessionPolling(key, load, isRunning, 3000, { enabled: !unavailable });
 
   /**
    * Chunks that are on screen only in part.

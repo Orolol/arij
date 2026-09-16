@@ -58,7 +58,10 @@ beforeEach(() => {
       VALUES('chat','p','claude-code-persistent','Regression conversation');
   `);
   spawn.mockReturnValue({ promise: Promise.resolve({ success: true, result: "Member reply" }), kill: vi.fn() });
-  vi.mocked(getProvider).mockReturnValue({ spawn } as unknown as ReturnType<typeof getProvider>);
+  vi.mocked(getProvider).mockImplementation((provider) => ({
+    spawn,
+    ...(provider === "claude-code" ? { spawnStream: spawnClaudeStream } : {}),
+  }) as unknown as ReturnType<typeof getProvider>);
   vi.mocked(spawnClaudeStream).mockImplementation(() => ({
     stream: new ReadableStream({ start(controller) { controller.close(); } }),
     kill: vi.fn(),

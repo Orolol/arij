@@ -65,6 +65,7 @@ export interface CsvCopy {
     waitsOn: (blocker: string) => string;
     queueRank: (label: string, rank: number) => string;
   };
+  blockers?: Record<string, string>;
 }
 
 /**
@@ -110,6 +111,12 @@ export function useCsvCopy(): CsvCopy {
         waitsOn: (blocker) => t("state.waitsOn", { blocker }),
         queueRank: (label, rank) => t("state.queueRank", { label, rank }),
       },
+      blockers: {
+        "Registry.blocker.mergeConflict": t("blocker.mergeConflict"),
+        "Registry.blocker.conflictMarkers": t("blocker.conflictMarkers"),
+        "Registry.blocker.changesRequested": t("blocker.changesRequested"),
+        "Registry.blocker.noBranch": t("blocker.noBranch"),
+      },
     }),
     [t, tKey],
   );
@@ -154,6 +161,9 @@ export function csvState(row: RegistryRow, copy: CsvCopy): string {
     case "done":
       if (row.status === "to_merge" && row.mergeReady) return state.readyToLand;
       if (row.status === "done") return state.merged;
+      if (row.mergeBlockerKey && copy.blockers?.[row.mergeBlockerKey]) {
+        return copy.blockers[row.mergeBlockerKey];
+      }
       return row.mergeBlockerLine ?? "";
     case "released":
       return row.releaseVersion ?? state.released;

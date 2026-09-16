@@ -17,7 +17,7 @@ export type GitSyncOperation =
   // App-managed clone lifecycle (lib/git/clone.ts, lib/projects/clone-cleanup.ts).
   | "clone_removed";
 
-export type GitSyncStatus = "success" | "failed" | "failure";
+export type GitSyncStatus = "success" | "failed";
 
 interface LogSyncOperationInput {
   /**
@@ -113,9 +113,6 @@ export function logSyncOperation(input: LogSyncOperationInput): void {
     console.error("[git/sync-log] failed to write audit row", error);
   }
 }
-
-/** Alias kept for backward compat with main's naming */
-export const writeGitSyncLog = logSyncOperation;
 
 export function getRecentSyncLogs(projectId: string, limit = 50) {
   return db

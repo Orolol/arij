@@ -1,0 +1,10 @@
+{
+  "loadError": "Impossible de charger la boîte de réception.",
+  "retry": "Réessayer",
+  "pagination": {
+    "label": "Pages de l’inbox",
+    "previous": "Précédente",
+    "next": "Suivante",
+    "page": "Page {page} sur {totalPages}"
+  }
+}

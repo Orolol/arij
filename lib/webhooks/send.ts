@@ -27,7 +27,8 @@ export type WebhookEventName =
   | "session.completed"
   | "session.failed"
   | "release.created"
-  | "night_run.completed";
+  | "night_run.completed"
+  | "routine.failed";
 
 /** Caller-supplied context. Everything else on the wire is derived here. */
 export interface WebhookEventInput {

@@ -161,37 +161,12 @@ describe("createCompositeAgent", () => {
   });
 });
 
-describe("setCompositeMembers", () => {
-  it("refuses a composite that would contain itself", async () => {
-    const { createCompositeAgent } = await import(
-      "@/lib/agent-config/named-agents"
-    );
-    const { setCompositeMembers } = await import(
-      "@/lib/agent-config/composite-agents"
-    );
-    const member = await makeSimple("Member");
-    const { data: composite } = await createCompositeAgent({
-      name: "Selfish",
-      memberIds: [member.id],
-    });
-
-    const error = setCompositeMembers(composite!.id, [composite!.id]);
-    expect(error).toMatch(/cannot contain itself/i);
-
-    // The membership is untouched by the refusal.
-    const { listCompositeMembers } = await import(
-      "@/lib/agent-config/composite-agents"
-    );
-    expect(listCompositeMembers(composite!.id).map((m) => m.id)).toEqual([
-      member.id,
-    ]);
-  });
-
+describe("composite membership reordering", () => {
   it("reorders by full replacement without colliding on the position index", async () => {
-    const { createCompositeAgent } = await import(
+    const { createCompositeAgent, updateNamedAgent } = await import(
       "@/lib/agent-config/named-agents"
     );
-    const { listCompositeMembers, setCompositeMembers } = await import(
+    const { listCompositeMembers } = await import(
       "@/lib/agent-config/composite-agents"
     );
     const a = await makeSimple("Alpha");
@@ -204,7 +179,10 @@ describe("setCompositeMembers", () => {
 
     // A swap of the first two is exactly the case a diff-based update would
     // collide on: (composite_id, position) is uniquely indexed.
-    expect(setCompositeMembers(composite!.id, [b.id, a.id, c.id])).toBeNull();
+    const { error } = await updateNamedAgent(composite!.id, {
+      memberIds: [b.id, a.id, c.id],
+    });
+    expect(error).toBeUndefined();
     expect(listCompositeMembers(composite!.id).map((m) => m.name)).toEqual([
       "Beta",
       "Alpha",

@@ -82,6 +82,7 @@ vi.mock("@/hooks/useAutoModeArmed", () => ({
 }));
 
 vi.mock("@/hooks/useControlDesk", () => ({
+  useDeskInboxSummary: () => ({ enabled: false, unreadCount: 0 }),
   useControlDesk: () => ({ data: null, loading: false, error: null, refresh: vi.fn() }),
 }));
 

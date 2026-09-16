@@ -79,7 +79,7 @@ const DELIBERATE: Record<string, { sites: number; why: string }> = {
     sites: 1,
     why: "split parts of one prompt string around the elision marker",
   },
-  "components/sessions/SessionOutputStream.tsx": {
+  "components/session-live/SessionOutputStream.tsx": {
     sites: 2,
     why: "split parts of one output string around the elision and prune markers",
   },

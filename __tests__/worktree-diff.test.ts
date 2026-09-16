@@ -110,7 +110,7 @@ describe("getWorktreeDiff", () => {
     // First call: merge-base diff (empty)
     // Second/third calls: uncommitted changes
     let diffCallCount = 0;
-    mockGit.diff.mockImplementation((args: string[]) => {
+    mockGit.diff.mockImplementation(() => {
       diffCallCount++;
       if (diffCallCount === 1) return ""; // merge-base diff
       if (diffCallCount === 2) {

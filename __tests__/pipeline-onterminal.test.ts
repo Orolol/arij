@@ -42,14 +42,9 @@ const { pipelineMaxAttemptsSettingKey } = await import(
   "@/lib/pipeline/constants"
 );
 import type { PipelineStageResult, PipelineTerminalSummary } from "@/lib/pipeline";
+import { waitForBackground } from "./helpers/background";
 
 let counter = 0;
-
-async function flushBackground() {
-  for (let i = 0; i < 4; i++) {
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
 
 function seed() {
   counter += 1;
@@ -133,13 +128,14 @@ describe("startPipelineRun — onTerminal", () => {
     driverMocks.assessReview.mockResolvedValueOnce({
       blocking: false,
       blockingCount: 0,
-      agentCommentCount: 1,
-      usedProseFallback: false,
     });
 
     const onTerminal = vi.fn();
     start(projectId, epicId, { onTerminal });
-    await flushBackground();
+    await waitForBackground(
+      () => expect(onTerminal).toHaveBeenCalledTimes(1),
+      "the run reaching its terminal state",
+    );
 
     expect(onTerminal).toHaveBeenCalledTimes(1);
     expect(onTerminal).toHaveBeenCalledWith({
@@ -159,13 +155,16 @@ describe("startPipelineRun — onTerminal", () => {
         settledResult("s-build", { outcome: "asked_question" })
       ),
     });
-    await flushBackground();
-
-    expect(onTerminal).toHaveBeenCalledTimes(1);
-    expect(onTerminal.mock.calls[0][0]).toMatchObject({
-      state: "paused_question",
-      reason: "agent asked a question (build)",
-    });
+    await waitForBackground(
+      () => {
+        expect(onTerminal).toHaveBeenCalledTimes(1);
+        expect(onTerminal.mock.calls[0][0]).toMatchObject({
+                state: "paused_question",
+                reason: "agent asked a question (build)",
+        });
+      },
+      "the run reaching its terminal state",
+    );
   });
 
   it("fires once with cancelled when the user stopped the session", async () => {
@@ -182,13 +181,16 @@ describe("startPipelineRun — onTerminal", () => {
         })
       ),
     });
-    await flushBackground();
-
-    expect(onTerminal).toHaveBeenCalledTimes(1);
-    expect(onTerminal.mock.calls[0][0]).toMatchObject({
-      state: "cancelled",
-      reason: "stopped by user",
-    });
+    await waitForBackground(
+      () => {
+        expect(onTerminal).toHaveBeenCalledTimes(1);
+        expect(onTerminal.mock.calls[0][0]).toMatchObject({
+                state: "cancelled",
+                reason: "stopped by user",
+        });
+      },
+      "the run reaching its terminal state",
+    );
   });
 
   it("fires once with failed after the ladder exhausts (forensic threaded the batchRunId)", async () => {
@@ -214,13 +216,16 @@ describe("startPipelineRun — onTerminal", () => {
         })
       ),
     });
-    await flushBackground();
-
-    expect(onTerminal).toHaveBeenCalledTimes(1);
-    expect(onTerminal.mock.calls[0][0]).toMatchObject({
-      state: "failed",
-      reason: "stage build failed after 1 attempts",
-    });
+    await waitForBackground(
+      () => {
+        expect(onTerminal).toHaveBeenCalledTimes(1);
+        expect(onTerminal.mock.calls[0][0]).toMatchObject({
+                state: "failed",
+                reason: "stage build failed after 1 attempts",
+        });
+      },
+      "the run reaching its terminal state",
+    );
     // The forensic dispatch carries the run tag.
     expect(driverMocks.runForensic).toHaveBeenCalledWith(
       expect.objectContaining({ batchRunId: "night_run_1" })
@@ -239,7 +244,10 @@ describe("startPipelineRun — onTerminal", () => {
         undefined as unknown as PipelineStageResult
       ),
     });
-    await flushBackground();
+    await waitForBackground(
+      () => expect(onTerminal).toHaveBeenCalledTimes(1),
+      "the run reaching its terminal state",
+    );
 
     expect(onTerminal).toHaveBeenCalledTimes(1);
     expect(onTerminal).toHaveBeenCalledWith({
@@ -265,7 +273,10 @@ describe("startPipelineRun — onTerminal", () => {
         settledResult("s-build", { outcome: "asked_question" })
       ),
     });
-    await flushBackground();
+    await waitForBackground(
+      () => expect(onTerminal).toHaveBeenCalledTimes(1),
+      "the run reaching its terminal state",
+    );
 
     expect(onTerminal).toHaveBeenCalledTimes(1);
     expect(pipelineRegistry.get(runId)).toMatchObject({
@@ -281,10 +292,13 @@ describe("startPipelineRun — onTerminal", () => {
         settledResult("s-build", { outcome: "asked_question" })
       ),
     });
-    await flushBackground();
-    expect(
-      driverMocks.createPipelineStageDriver.mock.calls.at(-1)![0]
-    ).toMatchObject({ batchRunId: "night_tag_test" });
+    await waitForBackground(
+      () =>
+        expect(
+          driverMocks.createPipelineStageDriver.mock.calls.at(-1)?.[0],
+        ).toMatchObject({ batchRunId: "night_tag_test" }),
+      "the tagged run's stage driver being created",
+    );
 
     const { projectId: p2, epicId: e2 } = seed();
     start(p2, e2, {
@@ -292,9 +306,12 @@ describe("startPipelineRun — onTerminal", () => {
         settledResult("s-build", { outcome: "asked_question" })
       ),
     });
-    await flushBackground();
-    expect(
-      driverMocks.createPipelineStageDriver.mock.calls.at(-1)![0]
-    ).toMatchObject({ batchRunId: null });
+    await waitForBackground(
+      () =>
+        expect(
+          driverMocks.createPipelineStageDriver.mock.calls.at(-1)?.[0],
+        ).toMatchObject({ batchRunId: null }),
+      "the untagged run's stage driver being created",
+    );
   });
 });

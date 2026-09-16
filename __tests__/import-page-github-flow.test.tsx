@@ -367,7 +367,6 @@ describe("import page — project creation payload", () => {
         gitRepoPath: CLONE.path,
         githubOwnerRepo: "Orolol/arij",
         gitRemoteUrl: "https://github.com/Orolol/arij.git",
-        cloneSource: "github",
         defaultBranch: "main",
       })
     );

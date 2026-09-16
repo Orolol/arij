@@ -100,7 +100,7 @@ export function TicketsRegistryView() {
     () => new Set(),
   );
 
-  const { data, error, setWindow, refresh } = useTicketsRegistry(selectedProjectId, query, sort, direction, status);
+  const { data, error, loading, setWindow, refresh } = useTicketsRegistry(selectedProjectId, query, sort, direction, status);
   const { openTicket } = useTicketOverlay();
 
   /**
@@ -353,7 +353,7 @@ export function TicketsRegistryView() {
   })();
   const projectCount = data?.totals.projects ?? 0;
   const footerStatus =
-    error ?? t("footer.status", { tickets: ticketCount, projects: projectCount });
+    loading && !data ? t("footer.loading") : error ?? t("footer.status", { tickets: ticketCount, projects: projectCount });
 
   const counts = data?.counts ?? {
     all: null,
@@ -391,7 +391,7 @@ export function TicketsRegistryView() {
         actions={refinementActions}
       />
 
-      <div className="flex min-h-0 flex-1 flex-col px-[14px] pb-[14px]">
+      <div aria-busy={loading} className="flex min-h-0 flex-1 flex-col px-[14px] pb-[14px]">
         <RegistryTable
           sort={sort}
           direction={direction}

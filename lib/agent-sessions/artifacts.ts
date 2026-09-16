@@ -1,3 +1,4 @@
+import { isStoredPathWithin as isStrictlyWithin } from "@/lib/storage/stored-path";
 import fs from "node:fs";
 import path from "node:path";
 import { and, count, eq } from "drizzle-orm";
@@ -59,15 +60,7 @@ const EXTENSION_TYPES: Readonly<Record<string, ArtifactImageType>> = {
   ".webp": "webp",
 };
 
-function isStrictlyWithin(root: string, candidate: string): boolean {
-  const relative = path.relative(root, candidate);
-  return (
-    relative.length > 0 &&
-    relative !== ".." &&
-    !relative.startsWith(`..${path.sep}`) &&
-    !path.isAbsolute(relative)
-  );
-}
+
 
 /** Sniff only the image signatures Arij accepts as visual session proofs. */
 export function sniffArtifactImageType(bytes: Buffer): ArtifactImageType | null {

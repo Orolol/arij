@@ -10,7 +10,7 @@ import {
   SurfaceCard,
   TimelineLine,
 } from "@/components/piscine";
-import type { SessionStreamSeed } from "@/components/sessions/SessionOutputStream";
+import type { SessionStreamSeed } from "./useSessionStreamPager";
 import { isChunkElisionMarker } from "@/lib/agent-sessions/chunk-cap";
 import { isChunkPruneMarker } from "@/lib/agent-sessions/chunk-retention";
 

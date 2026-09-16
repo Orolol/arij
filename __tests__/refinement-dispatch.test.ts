@@ -62,7 +62,7 @@ vi.mock("fs", () => ({
 }));
 
 const { db } = await import("@/lib/db");
-const { agentSessions, epics, notifications, projects, settings } =
+const { agentSessions, epics, projects, settings } =
   await import("@/lib/db/schema");
 const {
   REFINEMENT_EMPTY_BOARD_REASON,
@@ -253,14 +253,6 @@ describe("dispatchRefinementSession", () => {
     // Nothing was changed by this (faked) run, and that is still reported.
     expect(settled.summary).toContain("no changes");
 
-    const rows = db
-      .select()
-      .from(notifications)
-      .where(eq(notifications.projectId, projectId))
-      .all();
-    expect(rows).toHaveLength(1);
-    expect(rows[0].agentType).toBe(REFINEMENT_AGENT_TYPE);
-    expect(rows[0].sessionId).toBe(result.sessionId);
   });
 
   it("reports a failed run and still publishes what it changed", async () => {
@@ -282,14 +274,6 @@ describe("dispatchRefinementSession", () => {
       .where(eq(agentSessions.id, result.sessionId))
       .get();
     expect(row!.status).toBe("failed");
-
-    const notification = db
-      .select()
-      .from(notifications)
-      .where(eq(notifications.projectId, projectId))
-      .all()[0];
-    expect(notification.status).toBe("failed");
-    expect(notification.title).toContain("ended early");
   });
 
   /**
@@ -342,9 +326,8 @@ describe("dispatchRefinementSession", () => {
    * Regression: MCP injection is capability-gated to claude-code/codex, but
    * agent resolution honours any named agent or provider default. On another
    * provider the session spawned, received no tools, called nothing, and the
-   * report raised a *completed* notification reading "no changes — the board
-   * was already in shape" — affirmatively false, since the board was never
-   * judged.
+   * report read "no changes — the board was already in shape" — affirmatively
+   * false, since the board was never judged.
    */
   it("refuses a provider that cannot carry the MCP tool channel", async () => {
     const projectId = seedProject(["backlog", "todo"]);

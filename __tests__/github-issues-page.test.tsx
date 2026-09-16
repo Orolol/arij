@@ -28,8 +28,7 @@ function mockFetchByUrl(options: {
   onImport?: () => void;
 }) {
   return vi.spyOn(global, "fetch").mockImplementation((async (
-    input: RequestInfo | URL,
-    init?: RequestInit
+    input: RequestInfo | URL
   ) => {
     const url = String(input);
 
@@ -52,13 +51,13 @@ function mockFetchByUrl(options: {
         json: async () => ({ data: { featureLabels: ["feature"], bugLabels: ["bug"] } }),
       } as Response;
     }
-    if (url === "/api/settings") {
-      return { ok: true, json: async () => ({ data: { github_pat: { hasToken: true } } }) } as Response;
+    if (url === "/api/github/config") {
+      return { ok: true, json: async () => ({ data: { tokenSet: true } }) } as Response;
     }
-    if (url === "/api/projects/proj-1") {
+    if (url === "/api/projects") {
       return {
         ok: true,
-        json: async () => ({ data: { githubOwnerRepo: "Orolol/arij" } }),
+        json: async () => ({ data: [{ id: "proj-1", githubOwnerRepo: "Orolol/arij" }] }),
       } as Response;
     }
 
@@ -82,17 +81,17 @@ function mockUnconfiguredFetch(options: {
   ) => {
     const url = String(input);
 
-    if (url === "/api/settings") {
+    if (url === "/api/github/config") {
       return {
         ok: true,
-        json: async () => ({ data: { github_pat: { hasToken: Boolean(options.pat ?? "tok") } } }),
+        json: async () => ({ data: { tokenSet: Boolean(options.pat ?? "tok") } }),
       } as Response;
     }
-    if (url === "/api/projects/proj-1") {
+    if (url === "/api/projects") {
       return {
         ok: true,
         json: async () => ({
-          data: { githubOwnerRepo: options.ownerRepo ?? null },
+          data: [{ id: "proj-1", githubOwnerRepo: options.ownerRepo ?? null }],
         }),
       } as Response;
     }

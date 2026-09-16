@@ -42,59 +42,6 @@ export type SurfaceStratum = Stratum | "card" | "paper";
  * - `mid`    — secondary text on the ground.
  * - `under`  — the 3px label underline.
  */
-export const STRATUM: Record<
-  Stratum,
-  { ground: string; deep: string; mid: string; under: string }
-> = {
-  live: {
-    ground: "var(--strata-live)",
-    deep: "var(--strata-live-deep)",
-    mid: "var(--strata-live-mid)",
-    under: "var(--strata-live-under)",
-  },
-  you: {
-    ground: "var(--strata-you)",
-    deep: "var(--strata-you-deep)",
-    mid: "var(--strata-you-mid)",
-    under: "var(--strata-you-under)",
-  },
-  land: {
-    ground: "var(--strata-land)",
-    deep: "var(--strata-land-deep)",
-    mid: "var(--strata-land-mid)",
-    under: "var(--strata-land-under)",
-  },
-  next: {
-    ground: "var(--strata-next)",
-    deep: "var(--strata-next-deep)",
-    mid: "var(--strata-next-mid)",
-    under: "var(--strata-next-under)",
-  },
-  feed: {
-    // There is deliberately no --strata-feed-mid: frames 7a and 8b use the deep
-    // linden for helper text on the composer/spec/persona grounds. Shipping the
-    // frame behaviour rather than inventing a token the design never used.
-    ground: "var(--strata-feed)",
-    deep: "var(--strata-feed-deep)",
-    mid: "var(--strata-feed-deep)",
-    under: "var(--strata-feed-under)",
-  },
-};
-
-/**
- * Class names that scope the shared ambient-activity animations to a stratum.
- * Put one on a band (or on the indicator itself) and every `.breathing-dot`,
- * `.progress-track` and `.crawl-fill` beneath it adopts that stratum's figure
- * colours. Defined in `app/globals.css`.
- */
-export const STRATUM_MOTION_CLASS: Record<Stratum, string> = {
-  live: "stratum-live",
-  you: "stratum-you",
-  land: "stratum-land",
-  next: "stratum-next",
-  feed: "stratum-feed",
-};
-
 /** The fixed project-identity cycle. Colour = WHO, never state. */
 export const PROJECT_TONES = [1, 2, 3, 4] as const;
 
@@ -145,6 +92,32 @@ export function projectTone(index: number): ProjectTone {
   const i = ((Math.trunc(index) % PROJECT_TONES.length) + PROJECT_TONES.length) %
     PROJECT_TONES.length;
   return PROJECT_TONES[i];
+}
+
+/**
+ * The tone index to hand `projectTone()`.
+ *
+ * Prefers the stored colour index and falls back to an FNV-1a hash of the id,
+ * so a project keeps the SAME colour between two opens when there is no
+ * `projects.color_index` column to read. The desk assigns its index by
+ * creation order (`projectColorIndexById`, lib/control-desk/aggregate.ts); this
+ * is the id-stable fallback every other surface shares.
+ */
+export function projectToneIndex(
+  projectId: string | null | undefined,
+  colorIndex?: number | null,
+): number {
+  if (typeof colorIndex === "number" && Number.isFinite(colorIndex)) {
+    return colorIndex;
+  }
+  let hash = 0x811c9dc5;
+  const value = projectId ?? "";
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    // 32-bit FNV prime multiply, kept in range with Math.imul.
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return hash >>> 0;
 }
 
 /**

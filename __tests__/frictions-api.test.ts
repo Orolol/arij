@@ -6,21 +6,12 @@ import { epics, frictions, projects } from "@/lib/db/schema";
 import { mockJsonRequest, mockNextRequest, mockRouteContext } from "@/__tests__/helpers/db-mock";
 
 const testDb = vi.hoisted(() => ({
-  instance: null as ReturnType<
-    typeof import("@/lib/db/test-utils").createTestDb
-  > | null,
+  instance: null as ReturnType<typeof import("@/lib/db/test-utils").createTestDb> | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
 vi.mock("@/lib/sync/export", () => ({ tryExportArjiJson: vi.fn() }));
 vi.mock("@/lib/events/emit", () => ({ emitTicketCreated: vi.fn() }));

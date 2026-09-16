@@ -31,7 +31,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
-  execFileSync: vi.fn(() => "omp/18.0.6\n"),
+  execFile: vi.fn((_file: string, _args: string[], _options: unknown, callback: (error: Error | null, stdout: string, stderr: string) => void) => callback(null, "omp/18.0.6\n", "")),
   createChannel: vi.fn(),
   writeMcpConfigFile: vi.fn(() => "/tmp/arij-persistent-mcp.json"),
   cleanupMcpConfigFile: vi.fn(),
@@ -44,9 +44,9 @@ const mocks = vi.hoisted(() => ({
 // path itself — the gate's own supported/refused/unreadable cases live in
 // `omp-version-gate.test.ts`.
 vi.mock("child_process", () => ({
-  default: { spawn: mocks.spawn, execFileSync: mocks.execFileSync },
+  default: { spawn: mocks.spawn, execFile: mocks.execFile },
   spawn: mocks.spawn,
-  execFileSync: mocks.execFileSync,
+  execFile: mocks.execFile,
 }));
 vi.mock("@/lib/chat/cli-tool-channel", () => ({
   createChatCliToolChannel: mocks.createChannel,
@@ -144,6 +144,12 @@ describe("omp spawns leave the user's omp configuration alone", () => {
 
     afterEach(() => {
       resetPersistentChatRunnerForTests();
+      for (const result of mocks.spawn.mock.results) {
+        if (result.value instanceof FakeChild) {
+          result.value.exitCode = 0;
+          result.value.emit("close", 0);
+        }
+      }
     });
 
     it("passes no config overlay to the persistent omp process", async () => {

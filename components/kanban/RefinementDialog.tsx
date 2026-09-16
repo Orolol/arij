@@ -23,6 +23,40 @@ import {
   type RefinementOptions,
 } from "@/lib/refinement/options";
 
+const ACTION_COPY_KEYS: Record<RefinementAction, { labelKey: string; descriptionKey: string }> = {
+  grooming: {
+    labelKey: "Kanban.refinementDialog.actions.grooming.label",
+    descriptionKey: "Kanban.refinementDialog.actions.grooming.description",
+  },
+  dependencies: {
+    labelKey: "Kanban.refinementDialog.actions.dependencies.label",
+    descriptionKey: "Kanban.refinementDialog.actions.dependencies.description",
+  },
+  ordering: {
+    labelKey: "Kanban.refinementDialog.actions.ordering.label",
+    descriptionKey: "Kanban.refinementDialog.actions.ordering.description",
+  },
+  priorities: {
+    labelKey: "Kanban.refinementDialog.actions.priorities.label",
+    descriptionKey: "Kanban.refinementDialog.actions.priorities.description",
+  },
+  readiness: {
+    labelKey: "Kanban.refinementDialog.actions.readiness.label",
+    descriptionKey: "Kanban.refinementDialog.actions.readiness.description",
+  },
+  merge: {
+    labelKey: "Kanban.refinementDialog.actions.merge.label",
+    descriptionKey: "Kanban.refinementDialog.actions.merge.description",
+  },
+  discard: {
+    labelKey: "Kanban.refinementDialog.actions.discard.label",
+    descriptionKey: "Kanban.refinementDialog.actions.discard.description",
+  },
+  create: {
+    labelKey: "Kanban.refinementDialog.actions.create.label",
+    descriptionKey: "Kanban.refinementDialog.actions.create.description",
+  },
+};
 export function RefinementDialog({
   open,
   onOpenChange,
@@ -37,6 +71,7 @@ export function RefinementDialog({
   onStart: (options: RefinementOptions) => void;
 }) {
   const t = useTranslations("Kanban");
+  const tKey = useTranslations();
   const id = useId();
   const [namedAgentId, setNamedAgentId] = useState<string | null>(null);
   const [instructions, setInstructions] = useState("");
@@ -96,9 +131,11 @@ export function RefinementDialog({
                   : current.filter((item) => item !== action.id))}
               />
               <span>
-                <span className="font-medium">{action.label}</span>
+                <span className="font-medium">
+                  {tKey(ACTION_COPY_KEYS[action.id].labelKey)}
+                </span>
                 <span className="block text-xs text-muted-foreground">
-                  {action.description}
+                  {tKey(ACTION_COPY_KEYS[action.id].descriptionKey)}
                 </span>
               </span>
             </label>

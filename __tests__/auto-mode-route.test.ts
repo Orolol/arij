@@ -1,3 +1,4 @@
+import { NextRequest } from "next/server";
 /**
  * GET/PUT /api/projects/[projectId]/auto-mode against the migrated schema.
  *
@@ -72,13 +73,13 @@ beforeEach(() => {
 
 describe("GET /auto-mode", () => {
   it("404s on an unknown project", async () => {
-    const res = await GET({} as never, params("nope"));
+    const res = await GET(new NextRequest("http://localhost/api?candidates=1"), params("nope"));
     expect(res.status).toBe(404);
     expect((await res.json()).error).toBe("Project not found");
   });
 
   it("returns the full status shape with defaults", async () => {
-    const res = await GET({} as never, params());
+    const res = await GET(new NextRequest("http://localhost/api?candidates=1"), params());
     const { data } = await res.json();
 
     expect(data).toMatchObject({
@@ -133,7 +134,7 @@ describe("GET /auto-mode", () => {
     });
     autoModeRegistry.park(PROJECT_ID, "e-parked", "e-parked", "boom");
 
-    const res = await GET({} as never, params());
+    const res = await GET(new NextRequest("http://localhost/api?candidates=1"), params());
     const { data } = await res.json();
 
     expect(data.candidates).toEqual({ build: 1, review: 1, merge: 0 });
@@ -152,7 +153,7 @@ describe("GET /auto-mode", () => {
       })
       .run();
 
-    const { data } = await (await GET({} as never, params())).json();
+    const { data } = await (await GET(new NextRequest("http://localhost/api?candidates=1"), params())).json();
     expect(data.effectiveSchedulerBudget).toBe(6);
   });
 });

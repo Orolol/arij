@@ -180,12 +180,6 @@ export const BUILTIN_AGENT_PROMPTS: Record<AgentType, string> = {
 };
 
 /**
- * Ready-to-use instructions for a custom review agent. The creation form is
- * intentionally useful after typing only a name.
- */
-export const DEFAULT_REVIEW_AGENT_PROMPT = `You are a code reviewer. Review the changes on this ticket's branch and report concrete problems: bugs, security issues, missing edge cases, and unclear naming. Reference files and lines. Do not restyle working code.`;
-
-/**
  * Selectable CLI providers. Every entry must support per-spawn MCP
  * injection of the Arij tool channel (lib/providers/types.ts documents the
  * rule); CLIs without that surface were removed in the 2026-08 cleanup.
@@ -332,3 +326,13 @@ export const DEFAULT_PERSONA_PROMPT = "You're an experienced developer";
  * enough that it can never be the reason a prompt outgrows argv.
  */
 export const PERSONA_PROMPT_MAX_CHARS = 2_000;
+
+export const VALID_REVIEW_TYPES = BUILTIN_REVIEW_TYPES;
+
+export const REVIEW_LABELS: Record<BuiltinReviewType, string> = {
+  security: "Security Review",
+  code_review: "Code Review",
+  compliance: "Compliance & Accessibility Review",
+  feature_review: "Feature Review",
+};
+

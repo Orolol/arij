@@ -30,6 +30,7 @@ import {
   IdentityChip,
   Mono,
   SelectPill,
+  PillButton,
   StrataBand,
   type ProjectTone,
 } from "@/components/piscine";
@@ -48,6 +49,9 @@ export interface DependenciesBandProps {
   /** Add or drop one WAITS ON edge. Omit to render the band read-only. */
   onToggleWaitsOn?: (epicId: string) => void;
   saving?: boolean;
+  loading?: boolean;
+  ready?: boolean;
+  onRetry?: () => void;
   /** The route's refusal — a cycle, most often. */
   error?: string | null;
 }
@@ -60,6 +64,9 @@ export function DependenciesBand({
   options,
   onToggleWaitsOn,
   saving = false,
+  loading = false,
+  ready = true,
+  onRetry,
   error = null,
 }: DependenciesBandProps) {
   const t = useTranslations("Ticket");
@@ -85,12 +92,13 @@ export function DependenciesBand({
                 // No other ticket in the project = nothing to depend on. The
                 // pill stays, disabled: "there is nothing to pick" is itself
                 // information, and hiding it would read as a missing feature.
-                disabled={!options || options.length === 0 || saving}
+                disabled={!options || options.length === 0 || saving || loading || !ready}
               >
                 {(options ?? []).map((option) => (
                   <DropdownMenuItem
                     key={option.id}
                     onSelect={() => onToggleWaitsOn?.(option.id)}
+                    disabled={saving || loading || !ready}
                   >
                     <span className="flex min-w-0 items-center gap-2">
                       {/* Fixed 12px gutter so ticked and unticked rows align. */}
@@ -130,12 +138,15 @@ export function DependenciesBand({
         onOpenTicket={onOpenTicket}
       />
       {error ? (
+        <div role="alert" className="space-y-2">
         <p
           data-testid="ticket-dependency-error"
           className="m-0 text-[12px] leading-[1.5] text-destructive"
         >
           {error}
         </p>
+        {onRetry && <PillButton variant="outline" size="sm" onClick={onRetry}>{t("dependencies.retry")}</PillButton>}
+        </div>
       ) : null}
     </StrataBand>
   );

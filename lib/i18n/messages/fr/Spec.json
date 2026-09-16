@@ -24,14 +24,18 @@
     },
     "errors": {
       "importFile": "Échec de l'import de {name}.",
-      "import": "Échec de l'import du document."
+      "load": "Impossible de charger les documents."
     }
   },
   "anatomy": {
     "label": "Anatomie du prompt",
     "helper": "ce que chaque agent reçoit au départ de session, en tokens",
     "note": "La spec (vert tilleul) et la mémoire (turquoise) pèsent dans <em>chaque</em> session de <em>chaque</em> agent — élaguer ici paie partout. Le blanc en fin de barre : ce que l'agent n'a pas reçu (pas de docs cités).",
-    "empty": "Aucune session n'a encore enregistré son prompt — la première dispatche remplira ce tableau."
+    "empty": "Aucune session n'a encore enregistré son prompt — la première dispatche remplira ce tableau.",
+    "legend": {
+      "system": "SYSTÈME",
+      "memory": "MÉMOIRE"
+    }
   },
   "suggestion": {
     "label": "Suggestion d'agent"
@@ -40,6 +44,12 @@
     "helper": "ce que les agents ont appris"
   },
   "page": {
-    "regenerate": "Régénérer par chat"
+    "regenerate": "Régénérer par chat",
+    "loadFailed": "Impossible de charger la spécification.",
+    "saveFailed": "Impossible d’enregistrer la spécification. Vos modifications sont conservées.",
+    "retry": "Réessayer"
+  },
+  "updateDialog": {
+    "saveFailed": "Enregistrez la spécification avant de lancer sa mise à jour."
   }
 }

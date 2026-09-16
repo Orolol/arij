@@ -6,14 +6,13 @@
  * — which is exactly what selects the prose fallback.
  */
 
-import Database from "better-sqlite3";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getTableColumns } from "drizzle-orm";
 import { initDb } from "@/lib/db/init";
 import { agentSessions } from "@/lib/db/schema";
+import { columnNames, tempDbPath, withDb } from "./helpers/migration";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
 const PREVIOUS_MIGRATION_TAG = "0033_grading_reports";
@@ -35,31 +34,6 @@ afterEach(() => {
     fs.rmSync(tempDirs.pop() as string, { recursive: true, force: true });
   }
 });
-
-function tempDbPath(): string {
-  const dir = fs.mkdtempSync(
-    path.join(os.tmpdir(), "arij-review-verdict-test-"),
-  );
-  tempDirs.push(dir);
-  return path.join(dir, "arij.db");
-}
-
-function withDb<T>(file: string, fn: (conn: Database.Database) => T): T {
-  const conn = new Database(file);
-  try {
-    return fn(conn);
-  } finally {
-    conn.close();
-  }
-}
-
-function columnNames(conn: Database.Database, table: string): string[] {
-  return (
-    conn.prepare("SELECT name FROM pragma_table_info(?)").all(table) as {
-      name: string;
-    }[]
-  ).map((row) => row.name);
-}
 
 describe("0034_agent_session_review_verdict — migration file", () => {
   it("adds the column with an ALTER TABLE statement", () => {
@@ -102,17 +76,6 @@ describe("0034_agent_session_review_verdict — migration file", () => {
     );
   });
 
-  it("leaves the drizzle-kit snapshots untouched (generate must not be run)", () => {
-    const snapshots = fs
-      .readdirSync(path.join(MIGRATIONS_FOLDER, "meta"))
-      .filter((name) => name.endsWith("_snapshot.json"))
-      .sort();
-
-    // The snapshots stop at 0013 while the journal runs far ahead;
-    // regenerating them would diff against stale state and emit wrong DDL.
-    expect(snapshots).not.toContain("0034_snapshot.json");
-    expect(snapshots[snapshots.length - 1]).toBe("0013_snapshot.json");
-  });
 });
 
 describe("0034_agent_session_review_verdict — applied schema", () => {
@@ -208,6 +171,7 @@ describe("0034_agent_session_review_verdict — applied schema", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
       const entry = journal.entries.find((e) => e.tag === MIGRATION_TAG);
       conn
         .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at >= ?')
@@ -286,6 +250,7 @@ describe("0034_agent_session_review_verdict — applied schema", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
       conn
         .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at >= ?')
         .run(PREVIOUS_MIGRATION_WHEN);

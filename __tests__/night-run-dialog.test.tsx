@@ -7,7 +7,7 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import {
   NIGHT_CIRCUIT_BREAKER_SETTING_KEY,
@@ -411,5 +411,73 @@ describe("NightRunDialog — guard conflicts", () => {
         "Pipeline batch builds run as dependency waves"
       )
     );
+  });
+});
+
+
+describe("NightRunDialog — asynchronous prerequisites", () => {
+  it("preserves edited run settings when retrying a failed scope preview", async () => {
+    const fallback = mockFetch().getMockImplementation()!;
+    let failPreview = false;
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes("/dependencies/transitive") && failPreview) {
+        return new Response(JSON.stringify({ error: "Preview unavailable" }), { status: 503 });
+      }
+      return fallback(url);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    renderDialog();
+    await waitFor(() => expect(screen.getByTestId("night-run-confirm")).toBeEnabled());
+    fireEvent.change(screen.getByTestId("night-cost-cap"), { target: { value: "7" } });
+    fireEvent.change(screen.getByTestId("night-circuit-breaker"), { target: { value: "2" } });
+
+    failPreview = true;
+    fireEvent.click(screen.getByTestId("night-include-backlog"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Preview unavailable");
+    failPreview = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByTestId("night-run-confirm")).toBeEnabled());
+    expect(screen.getByTestId("night-cost-cap")).toHaveValue(7);
+    expect(screen.getByTestId("night-circuit-breaker")).toHaveValue(2);
+    expect(fetchMock.mock.calls.filter(([url]) => url === "/api/settings")).toHaveLength(1);
+    fireEvent.click(screen.getByTestId("night-run-confirm"));
+    await waitFor(() => expect(buildBody(fetchMock)).toMatchObject({ costCapUsd: 7, circuitBreaker: 2 }));
+  });
+
+  it("blocks the run when settings fail and recovers through Retry", async () => {
+    const fallback = mockFetch().getMockImplementation()!;
+    let failSettings = true;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url === "/api/settings" && failSettings) return new Response(JSON.stringify({ error: "Settings unavailable" }), { status: 503 });
+      return fallback(url);
+    }));
+    renderDialog();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Settings unavailable");
+    expect(screen.getByTestId("night-run-confirm")).toBeDisabled();
+    failSettings = false;
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await waitFor(() => expect(screen.getByTestId("night-run-confirm")).not.toBeDisabled());
+    expect(screen.getByTestId("night-cost-cap")).toHaveValue(12);
+  });
+
+  it("ignores a prerequisite preview from a previous scope", async () => {
+    const fallback = mockFetch().getMockImplementation()!;
+    let resolveFirst!: (response: Response) => void;
+    let previews = 0;
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/dependencies/transitive")) {
+        previews += 1;
+        if (previews === 1) return new Promise<Response>((resolve) => { resolveFirst = resolve; });
+        return new Response(JSON.stringify({ data: { autoIncluded: ["current-a", "current-b"] } }));
+      }
+      return fallback(url);
+    }));
+    renderDialog();
+    await waitFor(() => expect(previews).toBe(1));
+    fireEvent.click(screen.getByTestId("night-include-backlog"));
+    await waitFor(() => expect(screen.getByTestId("night-scope-preview")).toHaveTextContent("2 required prerequisites"));
+    await act(async () => resolveFirst(new Response(JSON.stringify({ data: { autoIncluded: ["obsolete"] } }))));
+    expect(screen.getByTestId("night-scope-preview")).toHaveTextContent("2 required prerequisites");
+    expect(screen.getByTestId("night-run-confirm")).not.toBeDisabled();
   });
 });

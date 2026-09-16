@@ -5,13 +5,14 @@
  * When an agent stops to ask the user a question, the workflow must:
  *   1. Hold the ticket where it is (callers skip their advance path —
  *      this module is the shared side-effect handler, not the guard),
- *   2. Notify the user with a deep link to the ticket awaiting a reply,
- *   3. Record the decision in the ticket activity log so the hold is
+ *   2. Record the decision in the ticket activity log so the hold is
  *      auditable ("why didn't this ticket move?").
+ *
+ * The user-facing signal is the desk's "Your turn" stratum, derived from the
+ * session's `asked_question` outcome — there is no notification row to write.
  */
 
 import { logTransition } from "./log";
-import { createAskedQuestionNotificationFromSession } from "@/lib/notifications/create";
 
 export const AGENT_ASKED_QUESTION_REASON = "Agent asked a question";
 
@@ -39,9 +40,8 @@ export interface AskedQuestionOutcomeInput {
 }
 
 /**
- * Applies the shared asked_question side effects: one notification for the
- * session (deep-linking to the epic when the session is epic-scoped) and one
- * activity-log entry per held epic (actor "system").
+ * Applies the shared asked_question side effects: one activity-log entry per
+ * held epic (actor "system").
  *
  * Best-effort by design — it runs inside background completion blocks and
  * must never throw into them.
@@ -49,15 +49,6 @@ export interface AskedQuestionOutcomeInput {
 export function handleAskedQuestionOutcome(
   input: AskedQuestionOutcomeInput
 ): void {
-  try {
-    createAskedQuestionNotificationFromSession(input.sessionId);
-  } catch (err) {
-    console.warn(
-      "[agent-question] Failed to create asked-question notification:",
-      (err as Error).message
-    );
-  }
-
   const fallbackStatus = input.ticketStatus ?? "in_progress";
   for (const epicId of input.epicIds) {
     if (!epicId) continue;

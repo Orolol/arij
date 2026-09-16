@@ -1,39 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 
 import { PillButton, projectTone } from "@/components/piscine";
-import { ToastStack } from "@/components/notifications/ToastStack";
-import { useToastStack } from "@/components/notifications/useToastStack";
-import type { AgentSelection } from "@/components/shared/AgentSelectPill";
+import { ToastStack } from "@/components/toast/ToastStack";
+import { useToastStack } from "@/components/toast/useToastStack";
 import { useTicketOverlay } from "@/components/ticket/TicketOverlayProvider";
-import { useChat } from "@/hooks/useChat";
 import { useControlDesk } from "@/hooks/useControlDesk";
-import { useConversations } from "@/hooks/useConversations";
-import { useEpicCreate } from "@/hooks/useEpicCreate";
 import { useNamedAgentsList } from "@/hooks/useNamedAgentsList";
 import { usePolling } from "@/hooks/usePolling";
-import { useSpecGeneration } from "@/hooks/useSpecGeneration";
 import {
-  OPENAI_COMPATIBLE_PROVIDER,
   PROVIDER_LABELS,
   type ChatModeProvider,
 } from "@/lib/agent-config/constants";
-import {
-  isBrainstormConversationAgentType,
-  isEpicCreationConversationAgentType,
-} from "@/lib/chat/conversation-agent";
-import { isLegacyConversationGenerating } from "@/lib/chat/parity-contract";
 import type { ControlDeskPayload, DeskProject } from "@/lib/control-desk/types";
 import { cn } from "@/lib/utils";
+import { requestJson } from "@/lib/api/client";
 
-import {
-  agentSelectionPatch,
-  selectionForConversation,
-} from "./agent-selection";
+import type { AgentSelection } from "@/components/shared/AgentSelectPill";
+import { useChatWorkspace } from "@/hooks/useChatWorkspace";
 import { ChatComposer } from "./ChatComposer";
 import {
   ChatPaneSwitcher,
@@ -49,6 +36,7 @@ import { TowardSpecBand } from "./TowardSpecBand";
 import { useChatContextTokens } from "./chat-context-tokens";
 import { epicsByMessageId } from "./message-epics";
 import { longPlacement, shortPlacement } from "./placement";
+import { flattenDeskTickets, uniqueTicketsByTitle, normalizeTitle, type DeskTicket } from "./ticket-bindings";
 
 /**
  * Frame 11a — Chat as a full page.
@@ -83,20 +71,7 @@ export interface ChatPageViewProps {
   initialConversationId?: string;
 }
 
-/** Every desk collection that can tell us about a ticket, flattened. */
-interface DeskTicket {
-  epicId: string;
-  readableId: string | null;
-  title: string;
-  status: string | null;
-  rank: number | null;
-}
-
 const EPIC_MAP_STORAGE_PREFIX = "arij.chat.epic-by-message.";
-
-function normalizeTitle(title: string | null | undefined): string {
-  return (title ?? "").trim().toLowerCase();
-}
 
 /**
  * The in-thread cards' identity has to survive a reload, and the in-memory map
@@ -134,86 +109,10 @@ function writeStoredEpicMap(conversationId: string, map: Map<string, string>) {
   }
 }
 
-function flattenDeskTickets(data: ControlDeskPayload | null): DeskTicket[] {
-  if (!data) return [];
-  const rows: DeskTicket[] = [];
-
-  for (const project of data.upNext) {
-    for (const ticket of project.tickets) {
-      rows.push({
-        epicId: ticket.epicId,
-        readableId: ticket.readableId,
-        title: ticket.title,
-        status: ticket.status,
-        rank: ticket.rank,
-      });
-    }
-  }
-  for (const row of data.readyToLand) {
-    rows.push({
-      epicId: row.epicId,
-      readableId: row.readableId,
-      title: row.title,
-      status: null,
-      rank: null,
-    });
-  }
-  for (const row of data.working) {
-    if (!row.epicId) continue;
-    rows.push({
-      epicId: row.epicId,
-      readableId: row.readableId,
-      title: row.title,
-      status: null,
-      rank: null,
-    });
-  }
-  for (const row of data.queued) {
-    if (!row.epicId) continue;
-    rows.push({
-      epicId: row.epicId,
-      readableId: row.readableId,
-      title: row.title,
-      status: null,
-      rank: null,
-    });
-  }
-  for (const row of data.yourTurn.awaitingReply) {
-    rows.push({
-      epicId: row.epicId,
-      readableId: row.readableId,
-      title: row.title,
-      status: null,
-      rank: null,
-    });
-  }
-  for (const row of data.yourTurn.failed) {
-    rows.push({
-      epicId: row.epicId,
-      readableId: row.readableId,
-      title: row.title,
-      status: null,
-      rank: null,
-    });
-  }
-  for (const row of data.yourTurn.conflicts) {
-    rows.push({
-      epicId: row.epicId,
-      readableId: row.readableId,
-      title: row.title,
-      status: null,
-      rank: null,
-    });
-  }
-
-  return rows;
-}
-
 export function ChatPageView({
   initialProjectId,
   initialConversationId,
 }: ChatPageViewProps) {
-  const router = useRouter();
   const { openTicket } = useTicketOverlay();
 
   /*
@@ -278,7 +177,6 @@ export function ChatPageView({
           onToast={raise}
           onDeskChanged={refreshDesk}
           openTicket={openTicket}
-          router={router}
         />
       ) : (
         <EmptyChatWorkspace />
@@ -415,7 +313,6 @@ interface ChatWorkspaceProps {
   onToast: (tone: "success" | "error", message: string) => void;
   onDeskChanged: () => void;
   openTicket: (epicId: string, options?: { projectId?: string | null }) => void;
-  router: ReturnType<typeof useRouter>;
 }
 
 function ChatWorkspace({
@@ -429,17 +326,17 @@ function ChatWorkspace({
   onToast,
   onDeskChanged,
   openTicket,
-  router,
 }: ChatWorkspaceProps) {
   const {
-    conversations,
-    activeId,
-    setActiveId,
-    createConversation,
-    updateConversation,
-    restartPersistentSession,
-    refresh: refreshConversations,
-  } = useConversations(projectId);
+    conversations, activeId, setActiveId, conversationsLoading,
+    createConversation, restartPersistentSession, refreshConversations,
+    messages, loading, sending, error, pendingQuestions, streamStatus,
+    sendMessage: handleSend, answerQuestions, activeConversation,
+    activeAgentSelection, agentLocked, attachmentsDisabled,
+    hasUserMessage, isBrainstorm, isEpicCreation, busy, sendStartedAt,
+    selectAgent: handleSelectAgent, createEpic: handleCreateEpicFallback,
+    epicCreating, generateSpec, generatingSpec, actionsDisabled, mutating,
+  } = useChatWorkspace(projectId, onDeskChanged);
 
   const t = useTranslations("Chat");
   /*
@@ -449,73 +346,23 @@ function ChatWorkspace({
   */
   const tKey = useTranslations();
 
-  const {
-    messages,
-    loading,
-    sending,
-    error: chatError,
-    pendingQuestions,
-    streamStatus,
-    sendMessage,
-    answerQuestions,
-  } = useChat(projectId, activeId);
-
   const { agents } = useNamedAgentsList();
-
-  const activeConversation = useMemo(
-    () => conversations.find((row) => row.id === activeId) ?? null,
-    [conversations, activeId],
-  );
-
-  const activeProvider = activeConversation?.provider || "claude-code";
-  const {
-    generateSpec,
-    generating: generatingSpec,
-    error: specError,
-  } = useSpecGeneration(projectId, activeProvider);
-
-  const {
-    createEpic,
-    isLoading: epicCreating,
-    error: epicError,
-  } = useEpicCreate({
-    projectId,
-    conversationId: activeId,
-    sendMessage,
-  });
 
   /* ---- conversation bookkeeping, lifted from UnifiedChatPanel ---------- */
 
   // The deep link only applies while the conversation it names still exists,
   // and only once: after that the user's own selection wins.
-  const deepLinkApplied = useRef(false);
+  const deepLinkApplied = useRef<string | undefined>(undefined);
   useEffect(() => {
-    if (deepLinkApplied.current || !initialConversationId) return;
+    if (!initialConversationId) {
+      deepLinkApplied.current = undefined;
+      return;
+    }
+    if (deepLinkApplied.current === initialConversationId) return;
     if (!conversations.some((row) => row.id === initialConversationId)) return;
-    deepLinkApplied.current = true;
+    deepLinkApplied.current = initialConversationId;
     setActiveId(initialConversationId);
   }, [conversations, initialConversationId, setActiveId]);
-
-  // Deleting or losing the active conversation must not blank the thread.
-  useEffect(() => {
-    if (conversations.length === 0) return;
-    if (!activeId || !conversations.some((row) => row.id === activeId)) {
-      setActiveId(conversations[0].id);
-    }
-  }, [activeId, conversations, setActiveId]);
-
-  // The conversation row's status flips to `generated` SERVER-side after the
-  // stream closes; without this catch-up the roster keeps showing the busy
-  // state for a turn that finished.
-  const previousSending = useRef(sending);
-  useEffect(() => {
-    if (previousSending.current && !sending) {
-      const timer = setTimeout(() => void refreshConversations(), 3000);
-      previousSending.current = sending;
-      return () => clearTimeout(timer);
-    }
-    previousSending.current = sending;
-  }, [sending, refreshConversations]);
 
   usePolling(refreshConversations, 3000, true, { immediate: false });
 
@@ -549,15 +396,6 @@ function ChatWorkspace({
     ? agentLabelFor(activeConversation)
     : "—";
 
-  /**
-   * What the composer's pill selects on. `agentLabelFor` stays: the thread and
-   * the roster name the same agent, and only the pill derives its own label.
-   */
-  const activeAgentSelection: AgentSelection = useMemo(
-    () => selectionForConversation(activeConversation),
-    [activeConversation],
-  );
-
   /* ---- per-message epics ----------------------------------------------- */
 
   // Memoised over `messages`: the JSON candidate scan is O(content) per
@@ -567,34 +405,32 @@ function ChatWorkspace({
     [messages],
   );
 
-  const [epicByMessage, setEpicByMessage] = useState<Map<string, string>>(
-    () => new Map(),
-  );
+  const [epicBindings, setEpicBindings] = useState(() => ({
+    conversationId: activeId, map: activeId ? readStoredEpicMap(activeId) : new Map<string, string>(),
+  }));
+  if (epicBindings.conversationId !== activeId) setEpicBindings({
+    conversationId: activeId, map: activeId ? readStoredEpicMap(activeId) : new Map<string, string>(),
+  });
+  const epicByMessage = epicBindings.map;
   /** Status seeded by the create response, so placement never starts at `—`. */
   const [createdMeta, setCreatedMeta] = useState<
     Map<string, { readableId: string | null; status: string }>
   >(() => new Map());
-
-  // Reload restores the exact bindings; the heuristics below are the fallback.
-  useEffect(() => {
-    if (!activeId) {
-      setEpicByMessage(new Map());
-      return;
-    }
-    setEpicByMessage(readStoredEpicMap(activeId));
-  }, [activeId]);
 
   const recordEpicBinding = useCallback(
     (
       messageId: string,
       created: { epicId: string; readableId: string | null; status: string },
     ) => {
-      setEpicByMessage((current) => {
-        const next = new Map(current);
-        next.set(messageId, created.epicId);
-        if (activeId) writeStoredEpicMap(activeId, next);
-        return next;
-      });
+      if (activeId) {
+        // Persist to the conversation that started the request, even if the
+        // user selected another one before creation completed.
+        const saved = readStoredEpicMap(activeId);
+        saved.set(messageId, created.epicId);
+        writeStoredEpicMap(activeId, saved);
+      }
+      setEpicBindings((current) => current.conversationId === activeId
+        ? { ...current, map: new Map(current.map).set(messageId, created.epicId) } : current);
       setCreatedMeta((current) => {
         const next = new Map(current);
         next.set(created.epicId, {
@@ -608,7 +444,7 @@ function ChatWorkspace({
     [activeId, onDeskChanged],
   );
 
-  const deskTickets = useMemo(() => flattenDeskTickets(desk), [desk]);
+  const deskTickets = useMemo(() => flattenDeskTickets(desk, projectId), [desk, projectId]);
   const ticketsById = useMemo(() => {
     const map = new Map<string, DeskTicket>();
     for (const row of deskTickets) {
@@ -641,11 +477,7 @@ function ChatWorkspace({
       }
     }
 
-    const byTitle = new Map<string, DeskTicket>();
-    for (const row of deskTickets) {
-      const key = normalizeTitle(row.title);
-      if (key && !byTitle.has(key)) byTitle.set(key, row);
-    }
+    const byTitle = uniqueTicketsByTitle(deskTickets);
     for (const [messageId, parsed] of epicsByMessage) {
       if (map.has(messageId)) continue;
       const hit = byTitle.get(normalizeTitle(parsed.title));
@@ -660,9 +492,11 @@ function ChatWorkspace({
       const row = ticketsById.get(epicId);
       const seeded = createdMeta.get(epicId);
       const readableId = row?.readableId ?? seeded?.readableId ?? null;
-      const placement =
-        longPlacement(row?.status ?? null, row?.rank ?? null, tKey) ??
-        longPlacement(seeded?.status ?? null, null, tKey);
+      const status = row?.status ?? null;
+      const rank = row?.rank ?? null;
+      const seededStatus = seeded?.status ?? null;
+      const currentPlacement = longPlacement(status, rank, tKey);
+      const placement = currentPlacement ?? longPlacement(seededStatus, null, tKey);
       return { readableId, placement };
     },
     [ticketsById, createdMeta, tKey],
@@ -689,13 +523,16 @@ function ChatWorkspace({
         ([, id]) => id === epicId,
       );
       const parsedTitle = parsed ? epicsByMessage.get(parsed[0])?.title : null;
+      const status = row?.status ?? null;
+      const rank = row?.rank ?? null;
+      const seededStatus = seeded?.status ?? null;
+      const currentPlacement = shortPlacement(status, rank, tKey);
+      const placement = currentPlacement ?? shortPlacement(seededStatus, null, tKey);
       return {
         epicId,
         readableId: row?.readableId ?? seeded?.readableId ?? null,
         title: row?.title ?? parsedTitle ?? null,
-        placement:
-          shortPlacement(row?.status ?? null, row?.rank ?? null, tKey) ??
-          shortPlacement(seeded?.status ?? null, null, tKey),
+        placement,
       };
     });
   }, [
@@ -724,16 +561,16 @@ function ChatWorkspace({
 
   const [pane, setPane] = useState<ChatPane>(DEFAULT_CHAT_PANE);
   const threadPaneRef = useRef<HTMLDivElement>(null);
-  const [claimThreadFocus, setClaimThreadFocus] = useState(false);
+  const claimThreadFocus = useRef(false);
 
   // AFTER the commit that un-hides the pane, never during the click: focusing
   // a `display: none` element is a silent no-op, so this cannot be done in the
   // handler that asks for the switch.
   useEffect(() => {
-    if (!claimThreadFocus) return;
-    setClaimThreadFocus(false);
+    if (!claimThreadFocus.current) return;
+    claimThreadFocus.current = false;
     threadPaneRef.current?.focus();
-  }, [claimThreadFocus]);
+  }, [pane, activeId]);
 
   const handleSelectConversation = useCallback(
     (conversationId: string) => {
@@ -745,7 +582,7 @@ function ChatWorkspace({
       // pane and nothing here moves focus away from the roster it clicked.
       if (pane !== "thread") {
         setPane("thread");
-        setClaimThreadFocus(true);
+        claimThreadFocus.current = true;
       }
     },
     [pane, setActiveId],
@@ -753,44 +590,17 @@ function ChatWorkspace({
 
   /* ---- sending --------------------------------------------------------- */
 
-  const [sendStartedAt, setSendStartedAt] = useState<string | null>(null);
-
-  const hasMessages = messages.length > 0;
-  const hasUserMessage = messages.some((message) => message.role === "user");
   const hasAssistantMessage = messages.some(
     (message) => message.role === "assistant" && message.content.trim().length > 0,
   );
-  // Busy also covers "the user switched away mid-generation and came back":
-  // useChat has no live stream then, but the DB row still says `generating`.
-  // Without it the composer re-enables and the user double-fires a turn.
-  const busy =
-    sending || isLegacyConversationGenerating(activeConversation?.status);
-
-  const handleSend = useCallback(
-    (content: string, attachmentIds: string[]) => {
-      if (!activeId) return;
-      setSendStartedAt(new Date().toISOString());
-      void sendMessage(content, attachmentIds);
-    },
-    [activeId, sendMessage],
-  );
 
   const handleCreateConversation = useCallback(
-    (options: { type: string; label: string }) => {
-      void createConversation(options);
+    async (options: { type: string; label: string }) => {
+      if (mutating || conversationsLoading) return;
+      const created = await createConversation(options);
+      if (created) handleSelectConversation(created.id);
     },
-    [createConversation],
-  );
-
-  const handleSelectAgent = useCallback(
-    (choice: AgentSelection) => {
-      // The agent cannot change mid-conversation.
-      if (!activeId || hasMessages) return;
-      const patch = agentSelectionPatch(choice);
-      if (!patch) return;
-      void updateConversation(activeId, patch);
-    },
-    [activeId, hasMessages, updateConversation],
+    [createConversation, mutating, conversationsLoading, handleSelectConversation],
   );
 
   /* ---- the TOWARD THE SPEC proposal ------------------------------------ */
@@ -805,55 +615,36 @@ function ChatWorkspace({
     if (!lastAssistant) return;
 
     setProposing(true);
-    try {
-      // AGENT-FACING, so it is NOT a catalogue key and never follows the
-      // interface locale (lib/i18n/catalogue.ts, §5) — a model reads it, not a
-      // user. Pinned to English for the same reason the prompt builders are:
-      // the specification it is asking to edit is English, as is the project
-      // memory injected alongside it, and a French instruction over English
-      // context is exactly the mix that degrades the rewrite.
-      const instruction = `Integrate into the spec the decision made in this conversation:\n${lastAssistant.content.slice(0, 4000)}`;
-      const res = await fetch(`/api/projects/${projectId}/spec/update`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ instruction }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || body.error) {
-        // 409 SPEC_UPDATE_PENDING and 400 (stale named agent) both carry a
-        // readable `error`. Neither is retried: a second rewrite would race
-        // the first, last-write-wins.
-        onToast("error", body.error || t("towardSpec.proposalFailed"));
-        return;
-      }
-      setSpecHref(`/projects/${projectId}/spec`);
-      onToast("success", t("towardSpec.proposalSent"));
-    } catch {
-      onToast("error", t("towardSpec.proposalFailed"));
-    } finally {
-      setProposing(false);
+    // AGENT-FACING, so it is NOT a catalogue key and never follows the
+    // interface locale (lib/i18n/catalogue.ts, §5) — a model reads it, not a
+    // user. Pinned to English for the same reason the prompt builders are:
+    // the specification it is asking to edit is English, as is the project
+    // memory injected alongside it, and a French instruction over English
+    // context is exactly the mix that degrades the rewrite.
+    const instruction = `Integrate into the spec the decision made in this conversation:\n${lastAssistant.content.slice(0, 4000)}`;
+    const result = await requestJson(`/api/projects/${projectId}/spec/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instruction }),
+      errorMessage: t("towardSpec.proposalFailed"),
+    });
+    setProposing(false);
+    if (result.error) {
+      // 409 SPEC_UPDATE_PENDING and 400 (stale named agent) both carry a
+      // readable `error`. Neither is retried: a second rewrite would race
+      // the first, last-write-wins.
+      onToast("error", result.error);
+      return;
     }
+    setSpecHref(`/projects/${projectId}/spec`);
+    onToast("success", t("towardSpec.proposalSent"));
   }, [messages, projectId, onToast, t]);
 
   /* ---- the fallback epic path ------------------------------------------ */
 
-  const isEpicCreation = isEpicCreationConversationAgentType(
-    activeConversation?.type,
-  );
-  const isBrainstorm = isBrainstormConversationAgentType(
-    activeConversation?.type,
-  );
   // The moment ANY message parses to an epic, the in-thread cards take over.
   const showEpicFallback =
     isEpicCreation && hasUserMessage && epicsByMessage.size === 0;
-
-  async function handleCreateEpicFallback() {
-    const epicId = await createEpic();
-    if (epicId) {
-      onDeskChanged();
-      router.refresh();
-    }
-  }
 
   const footer =
     showEpicFallback || isBrainstorm ? (
@@ -864,6 +655,7 @@ function ChatWorkspace({
             size="sm"
             icon={Sparkles}
             pending={epicCreating}
+            disabled={actionsDisabled}
             pendingLabel={t("thread.createEpicPending")}
             onClick={() => void handleCreateEpicFallback()}
           >
@@ -876,6 +668,7 @@ function ChatWorkspace({
             size="sm"
             icon={Sparkles}
             pending={generatingSpec}
+            disabled={actionsDisabled}
             pendingLabel={t("thread.generateSpecPending")}
             onClick={generateSpec}
           >
@@ -901,6 +694,7 @@ function ChatWorkspace({
         ticketCounts={ticketCounts}
         onSelect={handleSelectConversation}
         onCreate={handleCreateConversation}
+        createDisabled={conversationsLoading || mutating}
         onRestartPersistentSession={(conversationId) =>
           void restartPersistentSession(conversationId)
         }
@@ -915,6 +709,7 @@ function ChatWorkspace({
         className={cn(THREAD_PANE_CLASS, chatPaneClass(pane, "thread"))}
       >
         <ChatThread
+          conversationId={activeId}
           projectId={projectId}
           messages={messages}
           loading={loading}
@@ -930,7 +725,7 @@ function ChatWorkspace({
           onEpicCreated={recordEpicBinding}
           onOpenTicket={(epicId) => openTicket(epicId, { projectId })}
           onToast={onToast}
-          error={epicError || specError || chatError}
+          error={error}
           pendingQuestions={pendingQuestions}
           onAnswerQuestions={answerQuestions}
           busy={busy}
@@ -940,13 +735,14 @@ function ChatWorkspace({
 
         <ChatComposer
           projectId={projectId}
+          conversationId={activeId}
           projects={projects}
           project={project}
           onSelectProject={onSelectProject}
           agentSelection={activeAgentSelection}
           onSelectAgent={handleSelectAgent}
-          agentLocked={!activeId || hasMessages}
-          attachmentsDisabled={activeProvider === OPENAI_COMPATIBLE_PROVIDER}
+          agentLocked={agentLocked}
+          attachmentsDisabled={attachmentsDisabled}
           disabled={busy || !activeConversation}
           onSend={handleSend}
         />

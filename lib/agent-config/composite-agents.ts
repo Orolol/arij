@@ -9,7 +9,6 @@ import {
   isAgentProvider,
   type AgentProvider,
 } from "./constants";
-import { parseStoredProviderOptions } from "@/lib/providers/options-registry";
 import { createId } from "@/lib/utils/nanoid";
 
 /**
@@ -76,17 +75,6 @@ export function listCompositeMembers(compositeId: string): CompositeMember[] {
       model: row.model,
       position: row.position,
     }));
-}
-
-/** Per-CLI options of a member, read at unfold time like any agent's. */
-export function readMemberCliOptions(memberId: string) {
-  const row = db
-    .select({ provider: namedAgents.provider, options: namedAgents.options })
-    .from(namedAgents)
-    .where(eq(namedAgents.id, memberId))
-    .get();
-  if (!row) return {};
-  return parseStoredProviderOptions(row.provider, row.options);
 }
 
 /** Members of every composite in one pass, for list endpoints and pickers. */
@@ -181,33 +169,16 @@ export function validateCompositeMembers(
   return null;
 }
 
-/**
- * Replaces the membership of `compositeId` with `memberIds`, in order.
- *
- * Delete-then-insert inside one transaction rather than a diff: the position
- * column is uniquely indexed per composite, so any reordering that moved two
- * members past each other would collide mid-update. The whole list is small
- * by construction (it is an attempt budget, not a catalogue).
- */
-export function setCompositeMembers(
-  compositeId: string,
-  memberIds: string[]
-): string | null {
-  const error = validateCompositeMembers(compositeId, memberIds);
-  if (error) return error;
-
-  db.transaction((tx) => {
-    writeCompositeMembers(tx, compositeId, memberIds);
-  });
-
-  return null;
-}
-
 /** The transaction handle drizzle hands a `db.transaction` callback. */
 type CompositeTx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
 /**
  * The membership write itself — no validation, no transaction of its own.
+ *
+ * Delete-then-insert inside the caller's transaction rather than a diff: the
+ * position column is uniquely indexed per composite, so any reordering that
+ * moved two members past each other would collide mid-update. The whole list
+ * is small by construction (it is an attempt budget, not a catalogue).
  *
  * Split out so a caller that already holds a transaction can replace the list
  * without nesting one: `updateCompositeAgent` renames the agent and rewrites

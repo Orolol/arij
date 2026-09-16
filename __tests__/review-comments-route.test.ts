@@ -122,4 +122,20 @@ describe("review-comments route", () => {
 
     expect(res.status).toBe(400);
   });
+
+  it("POST resolve-all resolves open comments and returns count", async () => {
+    const { POST } = await import(
+      "@/app/api/projects/[projectId]/epics/[epicId]/review-comments/resolve-all/route"
+    );
+    const chain = getDbChainMock();
+    chain.get.mockReturnValue(mockEpic);
+    chain.run.mockReturnValue({ changes: 3 });
+
+    const req = mockNextRequest({ method: "POST" });
+    const res = await POST(req, mockRouteContext({ projectId: "p1", epicId: "epic-1" }));
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.data).toEqual({ resolved: 3 });
+  });
 });

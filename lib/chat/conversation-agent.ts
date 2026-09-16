@@ -3,7 +3,6 @@ export const BRAINSTORM_AGENT_TYPE = "brainstorm";
 export const EPIC_CREATION_AGENT_TYPE = "epic_creation";
 export const LEGACY_EPIC_AGENT_TYPE = "epic";
 export const CHAT_AGENT_TYPE = "chat";
-export const CUSTOM_REVIEW_AGENT_PREFIX = "custom_review:";
 
 export interface BuiltinConversationAgentType {
   value: string;

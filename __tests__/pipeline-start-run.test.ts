@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { waitForBackground } from "./helpers/background";
 import type {
   PipelineDeterministicVerificationOutcome,
   PipelineStageResult,
@@ -74,12 +75,6 @@ const { pipelineMaxAttemptsSettingKey } = await import(
 );
 let counter = 0;
 
-async function flushBackground() {
-  for (let i = 0; i < 4; i++) {
-    await new Promise((r) => setTimeout(r, 10));
-  }
-}
-
 function seed() {
   counter += 1;
   const projectId = `proj-run-${counter}`;
@@ -136,8 +131,6 @@ describe("startPipelineRun", () => {
     driverMocks.assessReview.mockResolvedValueOnce({
       blocking: false,
       blockingCount: 0,
-      agentCommentCount: 1,
-      usedProseFallback: false,
     });
 
     const { runId } = startPipelineRun({
@@ -164,15 +157,19 @@ describe("startPipelineRun", () => {
       endedAt: null,
     });
 
-    await flushBackground();
-
-    const snapshot = pipelineRegistry.get(runId)!;
-    expect(snapshot).toMatchObject({
-      state: "succeeded",
-      reason: null,
-      sessionIds: ["s-build", "s-review"],
-    });
-    expect(snapshot.endedAt).toBeTruthy();
+    const snapshot = await waitForBackground(
+      () => {
+        const current = pipelineRegistry.get(runId)!;
+        expect(current).toMatchObject({
+          state: "succeeded",
+          reason: null,
+          sessionIds: ["s-build", "s-review"],
+        });
+        expect(current.endedAt).toBeTruthy();
+        return current;
+      },
+      "the two-stage run reaching succeeded",
+    );
     // Terminal runs live in the recent ring, still listed for the project.
     expect(
       pipelineRegistry.listByProject(projectId).map((r) => r.runId)
@@ -228,8 +225,6 @@ describe("startPipelineRun", () => {
     driverMocks.assessReview.mockResolvedValueOnce({
       blocking: false,
       blockingCount: 0,
-      agentCommentCount: 1,
-      usedProseFallback: false,
     });
 
     startPipelineRun({
@@ -247,17 +242,22 @@ describe("startPipelineRun", () => {
         error: null,
       }),
     });
-    await flushBackground();
-
-    const verifyActivity = db
-      .select()
-      .from(ticketActivityLog)
-      .where(eq(ticketActivityLog.epicId, epicId))
-      .all()
-      .find(
-        (entry) =>
-          entry.reason === PIPELINE_REASONS.deterministicVerificationPassed(1)
-      );
+    const verifyActivity = await waitForBackground(
+      () => {
+        const entry = db
+          .select()
+          .from(ticketActivityLog)
+          .where(eq(ticketActivityLog.epicId, epicId))
+          .all()
+          .find(
+            (row) =>
+              row.reason === PIPELINE_REASONS.deterministicVerificationPassed(1)
+          );
+        expect(entry).toBeDefined();
+        return entry!;
+      },
+      "the deterministic-verification pass entry in the activity log",
+    );
     expect(verifyActivity).toMatchObject({
       actor: "system",
       fromStatus: "in_progress",
@@ -299,8 +299,10 @@ describe("startPipelineRun", () => {
       }),
     });
 
-    await flushBackground();
-
+    await waitForBackground(
+      () => expect(driverMocks.runForensic).toHaveBeenCalled(),
+      "the forensic dispatch after the failed stage",
+    );
     // No retry (cap 1): the launcher was never asked for a second build.
     expect(driverMocks.launchStage).not.toHaveBeenCalled();
     expect(driverMocks.runForensic).toHaveBeenCalledWith({
@@ -346,12 +348,14 @@ describe("startPipelineRun", () => {
       }),
     });
 
-    await flushBackground();
-
-    expect(pipelineRegistry.get(runId)).toMatchObject({
-      state: "paused_question",
-      reason: "agent asked a question (build)",
-    });
+    await waitForBackground(
+      () =>
+        expect(pipelineRegistry.get(runId)).toMatchObject({
+          state: "paused_question",
+          reason: "agent asked a question (build)",
+        }),
+      "the run pausing on the agent's question",
+    );
     const reasons = db
       .select()
       .from(ticketActivityLog)

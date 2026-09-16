@@ -4,6 +4,8 @@
  * directly in `__tests__/session-live-log-lines.test.ts`.
  */
 
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
+
 /**
  * The line grammar the frames draw, plus two the caller supplies:
  * `live` (assigned to the trailing line of a running session, never returned
@@ -67,28 +69,18 @@ export function classifyLogLine(raw: string): {
 }
 
 /**
- * SQLite's `CURRENT_TIMESTAMP` writes `"YYYY-MM-DD HH:MM:SS"` in UTC with no
- * zone marker, while `agent_sessions.started_at` is a full ISO string. V8
- * parses the bare form as LOCAL time, so east of Greenwich every chunk would
- * land BEFORE the session started and every stamp would vanish. Normalise the
- * bare shape to UTC before parsing; anything else is handed to `Date` as-is.
- */
-function toEpochMs(value: string): number {
-  const trimmed = value.trim();
-  const bare = /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?$/;
-  const normalised = bare.test(trimmed)
-    ? `${trimmed.replace(" ", "T")}Z`
-    : trimmed;
-  return new Date(normalised).getTime();
-}
-
-/**
  * `mm:ss` since the session started, floored to the second, both halves
  * zero-padded to two digits — minutes may run past two (`"102:07"`).
  *
  * `null` when either timestamp is missing or unparseable, or when the delta
  * is negative. Derived PER CHUNK, not per line: `agent_session_chunks` has a
  * `created_at`, nothing stores a per-line time. The caller owns that rule.
+ *
+ * Both shapes come from `parseStoredTimestamp`: SQLite's `CURRENT_TIMESTAMP`
+ * writes `"YYYY-MM-DD HH:MM:SS"` in UTC with no zone marker while
+ * `agent_sessions.started_at` is a full ISO string, and V8 would read the bare
+ * form as LOCAL time — east of Greenwich every chunk would land BEFORE the
+ * session started and every stamp would vanish.
  */
 export function elapsedStamp(
   startedAt: string | null,
@@ -96,9 +88,9 @@ export function elapsedStamp(
 ): string | null {
   if (!startedAt || !at) return null;
 
-  const start = toEpochMs(startedAt);
-  const end = toEpochMs(at);
-  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  const start = parseStoredTimestamp(startedAt);
+  const end = parseStoredTimestamp(at);
+  if (start === null || end === null) return null;
 
   const seconds = Math.floor((end - start) / 1000);
   if (seconds < 0) return null;

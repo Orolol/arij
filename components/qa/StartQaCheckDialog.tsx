@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useId, useState } from "react";
+import { PillButton } from "@/components/piscine";
+import { useCallback, useId, useState } from "react";
 import { useTranslations } from "next-intl";
 import { AlertTriangle, Loader2, Play, Save, X } from "lucide-react";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
@@ -23,6 +24,9 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
+import { requestJson } from "@/lib/api/client";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { useScopedMutation } from "@/hooks/useScopedMutation";
 import { TELESCOPE_MAX_WINDOW_DAYS } from "@/lib/telescope/constants";
 
 type CheckType = "tech_check" | "e2e_test" | "failure_digest";
@@ -74,7 +78,11 @@ const CHECK_TYPE_CONFIG: Record<
   },
 };
 
-export function StartQaCheckDialog({
+export function StartQaCheckDialog(props: StartQaCheckDialogProps) {
+  return props.open ? <QaCheckForm key={props.projectId} {...props} /> : null;
+}
+
+function QaCheckForm({
   projectId,
   open,
   onOpenChange,
@@ -100,37 +108,16 @@ export function StartQaCheckDialog({
   const [customPromptId, setCustomPromptId] = useState<string | null>(null);
   const [savePromptName, setSavePromptName] = useState("");
   const [failureDigestWindowDays, setFailureDigestWindowDays] = useState("14");
-  const [prompts, setPrompts] = useState<QaPrompt[]>([]);
-  const [loadingPrompts, setLoadingPrompts] = useState(false);
-  const [savingPrompt, setSavingPrompt] = useState(false);
-  const [starting, setStarting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // `useCallback` because the failure copy now comes from the catalogue, so
-  // this closes over `t` and the mount effect has to depend on it. `t` is
-  // memoised per (locale, namespace) by next-intl, so the identity is stable.
-  const loadPrompts = useCallback(async () => {
-    setLoadingPrompts(true);
-    try {
-      const res = await fetch("/api/qa/prompts");
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(json.error || t("checkDialog.errors.loadPrompts"));
-        return;
-      }
-      setPrompts((json.data || []) as QaPrompt[]);
-    } catch {
-      setError(t("checkDialog.errors.loadPrompts"));
-    } finally {
-      setLoadingPrompts(false);
-    }
-  }, [t]);
-
-  useEffect(() => {
-    if (!open) return;
-    setError(null);
-    void loadPrompts();
-  }, [open, loadPrompts]);
+  const loadErrorMessage = useCallback(() => t("checkDialog.errors.loadPrompts"), [t]);
+  const { data: promptData, loading: loadingPrompts, error: loadError, refresh: loadPrompts, updateData } = usePolledResource<QaPrompt[]>(
+    "/api/qa/prompts", null, loadErrorMessage, { validateData: Array.isArray },
+  );
+  const prompts = promptData ?? [];
+  const { run, pending, error: mutationError, clearError } = useScopedMutation(projectId);
+  const [action, setAction] = useState<"save" | "start" | null>(null);
+  const savingPrompt = pending && action === "save";
+  const starting = pending && action === "start";
+  const error = mutationError || loadError;
 
   function resetForm() {
     setCheckType("tech_check");
@@ -139,41 +126,44 @@ export function StartQaCheckDialog({
     setCustomPromptId(null);
     setSavePromptName("");
     setFailureDigestWindowDays("14");
-    setError(null);
+    clearError();
   }
 
   async function handleSavePrompt() {
     const name = savePromptName.trim();
     const prompt = customPrompt.trim();
-    if (!name || !prompt) return;
-
-    setSavingPrompt(true);
-    setError(null);
-
-    try {
-      const res = await fetch("/api/qa/prompts", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, prompt }),
+    if (!name || !prompt || !promptData) return;
+    const saved = await run(async () => {
+      setAction("save");
+      const result = await requestJson<QaPrompt>("/api/qa/prompts", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, prompt }), errorMessage: t("checkDialog.errors.savePrompt"),
       });
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(json.error || t("checkDialog.errors.savePrompt"));
-        return;
-      }
-
-      const newPromptId =
-        typeof json.data?.id === "string" ? json.data.id : null;
-      await loadPrompts();
+      if (result.error !== null) throw new Error(result.error);
+      updateData((current) => [...(current ?? []), result.data]);
+      return result.data;
+    }, t("checkDialog.errors.savePrompt"));
+    if (saved) {
       setSavePromptName("");
-      if (newPromptId) {
-        setCustomPromptId(newPromptId);
-      }
-    } catch {
-      setError(t("checkDialog.errors.savePrompt"));
-    } finally {
-      setSavingPrompt(false);
+      setCustomPromptId(saved.id);
     }
+  }
+
+  async function mutatePreset(method: "PATCH" | "DELETE") {
+    const selected = prompts.find((prompt) => prompt.id === customPromptId);
+    if (!selected) return;
+    const changed = await run(async () => {
+      setAction("save");
+      const result = await requestJson(`/api/qa/prompts/${selected.id}`, { method,
+        headers: { "Content-Type": "application/json" },
+        ...(method === "PATCH" ? { body: JSON.stringify({ name: savePromptName.trim() || selected.name, prompt: customPrompt.trim() }) } : {}),
+        errorMessage: t("checkDialog.errors.savePrompt"),
+      });
+      if (result.error) throw new Error(result.error);
+      await loadPrompts();
+      return true;
+    }, t("checkDialog.errors.savePrompt"));
+    if (changed && method === "DELETE") setCustomPromptId(null);
   }
 
   function handlePromptSelect(value: string) {
@@ -189,46 +179,24 @@ export function StartQaCheckDialog({
   }
 
   async function handleStart() {
-    setStarting(true);
-    setError(null);
-
-    try {
-      const res = await fetch(`/api/projects/${projectId}/qa/check`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          namedAgentId,
-          customPrompt,
-          customPromptId,
-          checkType,
-          ...(checkType === "failure_digest"
-            ? { windowDays: Number(failureDigestWindowDays) }
-            : {}),
-        }),
-      });
-      const json = await res.json().catch(() => ({}));
-
-      if (!res.ok || !json.data) {
-        setError(
-          json.error ||
-            t("checkDialog.errors.start", { checkType: tKey(config.nameKey) }),
-        );
-        return;
-      }
-
-      onStarted?.(
-        json.data as {
-          reportId: string;
-          sessionId: string | null;
-          noOp?: boolean;
+    const result = await run(async () => {
+      setAction("start");
+      const response = await requestJson<Parameters<NonNullable<StartQaCheckDialogProps["onStarted"]>>[0]>(
+        `/api/projects/${projectId}/qa/check`, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ namedAgentId, customPrompt, customPromptId, checkType,
+            ...(checkType === "failure_digest" ? { windowDays: Number(failureDigestWindowDays) } : {}),
+          }),
+          errorMessage: t("checkDialog.errors.start", { checkType: tKey(config.nameKey) }),
         },
       );
+      if (response.error !== null) throw new Error(response.error);
+      return response.data;
+    }, t("checkDialog.errors.start", { checkType: tKey(config.nameKey) }));
+    if (result) {
+      onStarted?.(result);
       onOpenChange(false);
       resetForm();
-    } catch {
-      setError(t("checkDialog.errors.start", { checkType: tKey(config.nameKey) }));
-    } finally {
-      setStarting(false);
     }
   }
 
@@ -250,7 +218,7 @@ export function StartQaCheckDialog({
           <DialogDescription>{tKey(config.descriptionKey)}</DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-4 py-1">
+        <fieldset disabled={pending} className="space-y-4 py-1">
           <div className="space-y-1.5">
             <label
               htmlFor={checkTypeId}
@@ -385,6 +353,10 @@ export function StartQaCheckDialog({
                 ))}
               </SelectContent>
             </Select>
+            {customPromptId && <div className="flex gap-2">
+              <PillButton variant="outline" size="sm" disabled={pending || !customPrompt.trim()} onClick={() => void mutatePreset("PATCH")}>{t("checkDialog.updatePreset")}</PillButton>
+              <PillButton variant="outline" size="sm" disabled={pending} onClick={() => void mutatePreset("DELETE")}>{t("checkDialog.deletePreset")}</PillButton>
+            </div>}
           </div>
 
           <div className="space-y-1.5">
@@ -426,7 +398,7 @@ export function StartQaCheckDialog({
               size="sm"
               className="h-8 text-xs"
               onClick={handleSavePrompt}
-              disabled={!savePromptName.trim() || !customPrompt.trim() || savingPrompt}
+              disabled={!savePromptName.trim() || !customPrompt.trim() || pending || !promptData}
             >
               {savingPrompt ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" />
@@ -438,7 +410,8 @@ export function StartQaCheckDialog({
           </div>
 
           {error && <p className="text-xs text-destructive">{error}</p>}
-        </div>
+          {loadError && <Button variant="outline" onClick={() => void loadPrompts()}>{t("report.retry")}</Button>}
+        </fieldset>
 
         <DialogFooter>
           <Button
@@ -447,11 +420,11 @@ export function StartQaCheckDialog({
               onOpenChange(false);
               resetForm();
             }}
-            disabled={starting}
+            disabled={pending}
           >
             {t("checkDialog.cancel")}
           </Button>
-          <Button onClick={handleStart} disabled={starting}>
+          <Button onClick={handleStart} disabled={pending}>
             {starting ? (
               <Loader2 className="h-4 w-4 animate-spin mr-1" />
             ) : (

@@ -294,6 +294,10 @@ describe("EpicCreateDialog", () => {
     expect(screen.getByTestId("epic-create-spinner")).toBeInTheDocument();
     // Cancel locks too, so an in-flight create can't be abandoned half-written.
     expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    // The submitted snapshot is final: later edits would be lost when success closes the form.
+    expect(screen.getByTestId("epic-title-input")).toBeDisabled();
+    expect(screen.getByTestId("epic-description-input")).toBeDisabled();
+    expect(screen.getByTestId("add-user-story")).toBeDisabled();
 
     // A double-click while in flight must not create the epic twice.
     fireEvent.click(submit);

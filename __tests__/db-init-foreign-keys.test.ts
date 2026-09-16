@@ -15,30 +15,16 @@
  * production uses rather than a hand-rolled `migrate()` call.
  */
 
-import Database from "better-sqlite3";
 import fs from "fs";
-import os from "os";
+import Database from "better-sqlite3";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initDb, defaultMigrationsFolder } from "@/lib/db/init";
-
-const tempDirs: string[] = [];
+import { cleanupTempDirs, tempDbPath, tempDir } from "./helpers/migration";
 
 afterEach(() => {
-  while (tempDirs.length > 0) {
-    fs.rmSync(tempDirs.pop() as string, { recursive: true, force: true });
-  }
+  cleanupTempDirs();
 });
-
-function tempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  tempDirs.push(dir);
-  return dir;
-}
-
-function tempDbPath(): string {
-  return path.join(tempDir("arij-fk-db-"), "arij.db");
-}
 
 /** A connection configured exactly as lib/db/index.ts configures production. */
 function openProductionLike(file: string): Database.Database {
@@ -151,7 +137,7 @@ function rebuildTableSql(
  * link shapes that hang off it in the real schema:
  *   - ON DELETE CASCADE  — agent_session_chunks, agent_session_sequences,
  *                          session_artifacts
- *   - ON DELETE SET NULL — qa_reports, notifications
+ *   - ON DELETE SET NULL — qa_reports
  *   - NO ACTION          — ticket_comments (blocks the delete outright)
  */
 function seedSessionGraph(
@@ -171,8 +157,6 @@ function seedSessionGraph(
       VALUES ('a1', 's1', 'e1', 'shot.png', 'A screenshot');
     INSERT INTO qa_reports (id, project_id, agent_session_id, status)
       VALUES ('q1', 'p1', 's1', 'completed');
-    INSERT INTO notifications (project_id, project_name, session_id, status, title, target_url)
-      VALUES ('p1', 'FK fixture', 's1', 'completed', 'Done', '/x');
   `);
 
   if (options.withNoActionLink) {
@@ -203,10 +187,6 @@ function sessionGraphCensus(connection: Database.Database) {
       connection,
       "SELECT COUNT(*) AS n FROM qa_reports WHERE agent_session_id = 's1'",
     ),
-    notificationsLinked: count(
-      connection,
-      "SELECT COUNT(*) AS n FROM notifications WHERE session_id = 's1'",
-    ),
   };
 }
 
@@ -227,7 +207,6 @@ describe("initDb foreign-key boundary", () => {
         sequences: 1,
         artifacts: 1,
         qaReportsLinked: 1,
-        notificationsLinked: 1,
       });
 
       const folder = stageMigrations(

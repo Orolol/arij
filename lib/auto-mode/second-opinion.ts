@@ -1,3 +1,5 @@
+import { isStructuredReviewVerdict, parseProseVerdict, type StructuredReviewVerdict } from "@/lib/review/verdict";
+import { blockingFindingSeverity } from "@/lib/review/finding-severity";
 import fs from "fs";
 import simpleGit from "simple-git";
 import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
@@ -31,6 +33,7 @@ import {
   providerSupportsMcp,
 } from "@/lib/claude/mcp-injection";
 import type { AgentProvider } from "@/lib/agent-config/constants";
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
 import { sessionAtSql } from "@/lib/agent-sessions/session-time";
 import { ORDINARY_REVIEW_AGENT_TYPES } from "@/lib/pipeline/findings";
 import { autoRunId } from "./constants";
@@ -39,16 +42,6 @@ import { autoRunId } from "./constants";
 export const SECOND_OPINION_AGENT_TYPE = "review_second_opinion";
 
 const ACTIVE_SESSION_STATUSES = new Set(["queued", "running"]);
-const STRUCTURED_VERDICT_RE =
-  /^\*\*Review findings \((approved|approved with minor issues|changes requested)\)\*\*/i;
-const PROSE_VERDICT_RE =
-  /^\*\*Overall Verdict:\s*(Approved with Minor Issues|Approved|Changes Requested)\*\*$/i;
-
-type GateVerdict =
-  | "approved"
-  | "approved with minor issues"
-  | "changes requested";
-
 export type SecondOpinionState =
   | { status: "missing"; sessionId: null }
   | { status: "pending"; sessionId: string }
@@ -66,12 +59,7 @@ export interface SecondOpinionDispatchResult {
 
 function timestamp(value: string | null | undefined): number | null {
   if (!value) return null;
-  const normalized = value.replace(" ", "T");
-  const zoned = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(normalized)
-    ? normalized
-    : `${normalized}Z`;
-  const parsed = Date.parse(zoned);
-  return Number.isNaN(parsed) ? null : parsed;
+  return parseStoredTimestamp(value);
 }
 
 function latestOrdinaryReviewAt(
@@ -80,7 +68,7 @@ function latestOrdinaryReviewAt(
 ): number | null {
   const row = db
     .select({
-      sessionAt: sessionAtSql() as ReturnType<typeof sql<string | null>>,
+      sessionAt: sessionAtSql(),
     })
     .from(agentSessions)
     .where(
@@ -105,7 +93,7 @@ function latestOrdinaryReviewAt(
  * ask for a fresh opinion after the ticket is unparked.
  */
 function latestUserCommentAt(epicId: string): number | null {
-  const commentAt = sql<string>`REPLACE(${ticketComments.createdAt}, ' ', 'T')`;
+  const commentAt = sql<string | null>`strftime('%Y-%m-%dT%H:%M:%fZ', ${ticketComments.createdAt})`;
   const row = db
     .select({ createdAt: commentAt })
     .from(ticketComments)
@@ -121,60 +109,20 @@ function latestUserCommentAt(epicId: string): number | null {
   return timestamp(row?.createdAt);
 }
 
-function structuredVerdictForSession(sessionId: string): GateVerdict | null {
-  const commentAt = sql<string>`REPLACE(${ticketComments.createdAt}, ' ', 'T')`;
-  const comments = db
-    .select({
-      content: ticketComments.content,
-      createdAt: ticketComments.createdAt,
-    })
-    .from(ticketComments)
+function proseVerdictForSession(sessionId: string): StructuredReviewVerdict | null {
+  const comments = db.select({ content: ticketComments.content }).from(ticketComments)
     .where(eq(ticketComments.agentSessionId, sessionId))
-    .orderBy(desc(commentAt))
-    .all();
-  let newestVerdict: GateVerdict | null = null;
+    .orderBy(desc(ticketComments.createdAt), desc(ticketComments.id)).all();
   for (const comment of comments) {
-    const verdict = comment.content
-      .match(STRUCTURED_VERDICT_RE)?.[1]
-      ?.toLowerCase() as GateVerdict | undefined;
-    if (!verdict) continue;
-    // The prompt requires exactly one submission. If an agent submits more
-    // than once, a negative verdict must never be hidden by a stale approval.
-    if (verdict === "changes requested") return verdict;
-    newestVerdict ??= verdict;
+    const verdict = parseProseVerdict(comment.content);
+    if (verdict) return verdict;
   }
-  return newestVerdict;
-}
-
-/**
- * Compatibility evidence for providers without MCP injection, which cannot
- * call submit_findings. Structured submissions always win when present; this
- * parser only consumes the exact final line the prompt mandates.
- */
-function proseVerdictForSession(sessionId: string): GateVerdict | null {
-  const commentAt = sql<string>`REPLACE(${ticketComments.createdAt}, ' ', 'T')`;
-  const comments = db
-    .select({ content: ticketComments.content })
-    .from(ticketComments)
-    .where(eq(ticketComments.agentSessionId, sessionId))
-    .orderBy(desc(commentAt))
-    .all();
-  let newestVerdict: GateVerdict | null = null;
-  for (const comment of comments) {
-    const lastLine = comment.content.trim().split(/\r?\n/).at(-1)?.trim();
-    const verdict = lastLine
-      ?.match(PROSE_VERDICT_RE)?.[1]
-      ?.toLowerCase() as GateVerdict | undefined;
-    if (!verdict) continue;
-    if (verdict === "changes requested") return verdict;
-    newestVerdict ??= verdict;
-  }
-  return newestVerdict;
+  return null;
 }
 
 function openFindingCount(sessionId: string): number {
   return db
-    .select({ id: reviewComments.id })
+    .select({ body: reviewComments.body })
     .from(reviewComments)
     .where(
       and(
@@ -182,7 +130,7 @@ function openFindingCount(sessionId: string): number {
         eq(reviewComments.status, "open")
       )
     )
-    .all().length;
+    .all().filter((row) => blockingFindingSeverity(row.body) !== null).length;
 }
 
 /**
@@ -199,7 +147,7 @@ export function readSecondOpinionState(
   const reviewedAt = latestOrdinaryReviewAt(projectId, epicId);
   if (reviewedAt === null) return { status: "missing", sessionId: null };
 
-  const createdAt = sql<string>`REPLACE(${agentSessions.createdAt}, ' ', 'T')`;
+  const createdAt = sql<number | null>`julianday(${agentSessions.createdAt})`;
   const session = db
     .select()
     .from(agentSessions)
@@ -210,7 +158,7 @@ export function readSecondOpinionState(
         eq(agentSessions.agentType, SECOND_OPINION_AGENT_TYPE)
       )
     )
-    .orderBy(desc(createdAt))
+    .orderBy(desc(createdAt), desc(agentSessions.id))
     .all()
     .find(
       (row) =>
@@ -247,7 +195,7 @@ export function readSecondOpinionState(
   }
 
   const verdict =
-    structuredVerdictForSession(session.id) ?? proseVerdictForSession(session.id);
+    (isStructuredReviewVerdict(session.reviewVerdict) ? session.reviewVerdict : null) ?? parseProseVerdict(session.lastNonEmptyText) ?? proseVerdictForSession(session.id);
   if (!verdict) {
     return {
       status: "retry",
@@ -256,11 +204,9 @@ export function readSecondOpinionState(
     };
   }
 
-  // Full Auto's merge selector and workflow completion guard treat every open
-  // finding as blocking, irrespective of its advisory severity label. Match
-  // that rule here so a minor finding cannot leave an epic silently stranded.
+  // Same severity rule as ordinary review: critical/major block; minor/info advise.
   const blocking = openFindingCount(session.id);
-  if (verdict === "changes requested" || blocking > 0) {
+  if (verdict === "changes_requested" || blocking > 0) {
     return {
       status: "rejected",
       sessionId: session.id,

@@ -1,3 +1,4 @@
+import { runAuthenticatedGit } from "./authenticated";
 import { execFile } from "node:child_process";
 import { stat } from "node:fs/promises";
 import { promisify } from "node:util";
@@ -361,11 +362,11 @@ export async function assertRemoteConfigured(
 
 export async function fetchGitRemote(
   repoPath: string,
-  remote = "origin"
+  remote = "origin",
+  signal?: AbortSignal,
 ) {
   const cleanRemote = defaultRemote(remote);
-  const git = getGit(repoPath);
-  return git.fetch(cleanRemote);
+  return runAuthenticatedGit(repoPath, ["fetch", cleanRemote], { signal });
 }
 
 export async function pullGitBranchWithConflictSupport(
@@ -377,12 +378,10 @@ export async function pullGitBranchWithConflictSupport(
   const cleanRemote = defaultRemote(remote);
   const git = getGit(repoPath);
   try {
-    const pullResult = await git.pull(cleanRemote, cleanBranch);
+    const pullResult = await runAuthenticatedGit(repoPath, ["pull", cleanRemote, cleanBranch]);
     return {
       conflicted: false,
-      summary: pullResult.summary
-        ? JSON.stringify(pullResult.summary)
-        : "Pulled successfully.",
+      summary: pullResult || "Pulled successfully.",
       conflictedFiles: [],
     };
   } catch (error) {
@@ -406,9 +405,8 @@ export async function pushGitBranch(
 ) {
   const cleanBranch = assertNotFlagLike(branch, "branch name");
   const cleanRemote = defaultRemote(remote);
-  const git = getGit(repoPath);
   const options = setUpstream ? ["--set-upstream"] : [];
-  return git.push(cleanRemote, cleanBranch, options);
+  return runAuthenticatedGit(repoPath, ["push", ...options, cleanRemote, cleanBranch]);
 }
 
 export async function validatePushPreconditions(

@@ -1,7 +1,7 @@
 import type { PipelineStage, PipelineState } from "./constants";
 import { PIPELINE_REASONS } from "./constants";
 import type { ReviewVerdictSource } from "./findings";
-import type { VerifyGate } from "./verify";
+import type { VerifyGate } from "./regression-gate";
 import type { RegressionReportPayload } from "@/lib/verify/regression-report";
 import type { VerificationResult } from "@/lib/verify/runner";
 import type {
@@ -123,9 +123,7 @@ export interface PipelineStageRequest {
    * (bug tickets): the exact red→green verdict so the fix prompt carries
    * the precise failure reason. Null/absent for every other dispatch.
    */
-  verifyFailure?: RegressionReportPayload | null;
-  /** Failed human-configured command whose tail must guide this fix stage. */
-  verificationFailure?: VerifyCommandResult;
+  verificationFailure?: { kind: "regression"; report: RegressionReportPayload } | { kind: "command"; command: VerifyCommandResult };
   /**
    * Passing mechanical evidence appended to this review stage's prompt.
    * Deliberately the client-safe report shape, not the runner's result: the
@@ -155,10 +153,6 @@ export interface PipelineReviewAssessment {
   blocking: boolean;
   /** Open [critical]/[major] agent findings filed during the stage window. */
   blockingCount: number;
-  /** All agent review-comment rows filed during the stage window. */
-  agentCommentCount: number;
-  /** True when zero rows were filed and the prose scan decided instead. */
-  usedProseFallback: boolean;
   /**
    * Which channel decided: `structured` when the reviewer's persisted
    * submit_findings verdict did, `prose` for the fallback path,
@@ -298,7 +292,7 @@ export interface RunPipelineOptions {
   callbacks?: PipelineRunnerCallbacks;
   /**
    * Mechanical verify gate run after each successful code stage, before
-   * review (lib/pipeline/verify.ts). Absent → no gate: behaviour identical
+   * review (lib/pipeline/regression-gate.ts). Absent → no gate: behaviour identical
    * to pre-regression runs.
    */
   runVerifyGate?: VerifyGate;

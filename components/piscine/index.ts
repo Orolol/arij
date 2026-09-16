@@ -20,7 +20,7 @@
  * `color` takes a raw `var(--token)` STRING, never a hex and never an enum.
  *
  * Raw colour strings, when a class name cannot reach (SVG fills, canvas):
- * `lib/piscine/tokens.ts` — STRATUM, PROJECT, PROMPT_SEGMENT, projectTone().
+ * `lib/piscine/tokens.ts` — PROJECT, PROMPT_SEGMENT, projectTone().
  */
 
 export { StrataBand } from "./StrataBand";
@@ -51,7 +51,7 @@ export type { ProgressTrackProps } from "./ProgressTrack";
 export { Chrono } from "./Chrono";
 export type { ChronoProps } from "./Chrono";
 
-export { Mono, MONO_TONE, MONO_TONE_CLASS } from "./Mono";
+export { Mono, MONO_TONE_CLASS } from "./Mono";
 export type { MonoProps, MonoTone } from "./Mono";
 
 export { FieldKicker } from "./FieldKicker";
@@ -88,8 +88,6 @@ export type { DiffDeltaProps } from "./DiffDelta";
 export { AvatarSquare } from "./AvatarSquare";
 export type { AvatarSquareProps, AvatarTone, AvatarSize } from "./AvatarSquare";
 
-export { DeskHeader } from "./DeskHeader";
-export type { DeskHeaderProps } from "./DeskHeader";
 
 /**
  * The GLOBAL bar (frame 13a). Mounted once in `app/layout.tsx` — a screen
@@ -149,12 +147,11 @@ export type { NavCategory, NavCategoryId, NavEntry } from "@/lib/piscine/nav";
 
 export {
   STRATA,
-  STRATUM,
-  STRATUM_MOTION_CLASS,
   PROJECT,
   PROJECT_TONES,
   PROMPT_SEGMENT,
   projectTone,
+  projectToneIndex,
 } from "@/lib/piscine/tokens";
 export type {
   Stratum,

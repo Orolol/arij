@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useRef, useState } from "react";
+import { usePolledResource } from "@/hooks/usePolledResource";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +33,9 @@ interface ReviewResolutionPreview {
   segregated: boolean;
   builderProvider: string | null;
 }
+
+// This preview is optional; the dispatch endpoint remains authoritative.
+const previewUnavailable = () => "Review preview unavailable";
 
 function providerLabel(provider: string): string {
   return isChatProvider(provider) ? PROVIDER_LABELS[provider] : provider;
@@ -147,8 +151,7 @@ export function AgentActionsBar({
   const [reviewTypes, setReviewTypes] = useState<Set<string>>(new Set(["feature_review"]));
   const [approving, setApproving] = useState(false);
   const [reviewResumeSessionId, setReviewResumeSessionId] = useState<string | undefined>();
-  const [reviewResolution, setReviewResolution] =
-    useState<ReviewResolutionPreview | null>(null);
+  const completePending = useRef(false);
 
   // Explains a session the user did not dispatch by hand: while an agent is
   // running, check whether it belongs to an autonomous pipeline run.
@@ -170,45 +173,15 @@ export function AgentActionsBar({
   // Preview which provider a review dispatch would resolve to (surfaces the
   // "Reviewer must differ from builder" redirect in the dialog).
   const firstReviewType = Array.from(reviewTypes)[0];
-  useEffect(() => {
-    if (!reviewOpen || !firstReviewType) {
-      setReviewResolution(null);
-      return;
-    }
-    const agentType =
-      REVIEW_TYPE_TO_AGENT_TYPE[firstReviewType as BuiltinReviewType] ??
-      "review_feature";
-    const searchParams = new URLSearchParams({ agentType });
-    if (sessionUserStoryId) searchParams.set("storyId", sessionUserStoryId);
-    if (sessionEpicId) searchParams.set("epicId", sessionEpicId);
-    if (reviewAgentId) searchParams.set("namedAgentId", reviewAgentId);
-
-    let cancelled = false;
-    try {
-      fetch(`/api/projects/${projectId}/review-resolution?${searchParams}`)
-        .then((r) => r.json())
-        .then((json) => {
-          if (!cancelled && json?.data) {
-            setReviewResolution(json.data as ReviewResolutionPreview);
-          }
-        })
-        .catch(() => {
-          // preview is best-effort — dispatch still works without it
-        });
-    } catch {
-      // ignore (no fetch in some test environments)
-    }
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    reviewOpen,
-    firstReviewType,
-    reviewAgentId,
-    projectId,
-    sessionEpicId,
-    sessionUserStoryId,
-  ]);
+  const agentType = REVIEW_TYPE_TO_AGENT_TYPE[firstReviewType as BuiltinReviewType] ?? "review_feature";
+  const searchParams = new URLSearchParams({ agentType });
+  if (sessionUserStoryId) searchParams.set("storyId", sessionUserStoryId);
+  if (sessionEpicId) searchParams.set("epicId", sessionEpicId);
+  if (reviewAgentId) searchParams.set("namedAgentId", reviewAgentId);
+  const { data: reviewResolution } = usePolledResource<ReviewResolutionPreview>(
+    reviewOpen && firstReviewType ? `/api/projects/${projectId}/review-resolution?${searchParams}` : null,
+    null, previewUnavailable,
+  );
 
   const segregationNotice =
     reviewResolution?.segregated && reviewResolution.builderProvider
@@ -295,14 +268,16 @@ export function AgentActionsBar({
 
   // Merge (epic) / Approve (story)
   async function handleComplete() {
+    if (completePending.current || actionsLocked) return;
+    completePending.current = true;
     setApproving(true);
     try {
       await onComplete();
     } catch (error) {
       onActionError?.(error);
-    } finally {
-      setApproving(false);
     }
+    completePending.current = false;
+    setApproving(false);
   }
 
   return (

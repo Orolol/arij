@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ projectId: "proj-1" }),
@@ -101,6 +101,40 @@ beforeEach(() => {
 });
 
 describe("project Frictions page", () => {
+  it("keeps another friction locked when the first concurrent dismissal finishes", async () => {
+    let releaseLow!: (response: Response) => void;
+    let releaseHigh!: (response: Response) => void;
+    const low = new Promise<Response>((resolve) => { releaseLow = resolve; });
+    const high = new Promise<Response>((resolve) => { releaseHigh = resolve; });
+    const fetchMock = vi.fn((url: string, init?: RequestInit) => init?.method === "PATCH"
+      ? url.endsWith("/low") ? low : high
+      : Promise.resolve(new Response(JSON.stringify({ data: { frictions: baseRows, openCount: 2 } }))));
+    global.fetch = fetchMock as typeof fetch;
+    render(<ProjectFrictionsPage />);
+    const lowCard = await screen.findByTestId("friction-low");
+    const highCard = screen.getByTestId("friction-high");
+    fireEvent.click(within(lowCard).getByRole("button", { name: "Dismiss" }));
+    fireEvent.click(within(highCard).getByRole("button", { name: "Dismiss" }));
+    await act(async () => { releaseLow(new Response(JSON.stringify({ error: "Low refused" }), { status: 409 })); });
+    expect(within(highCard).getByRole("button", { name: "Dismiss" })).toBeDisabled();
+    fireEvent.click(within(highCard).getByRole("button", { name: "Dismiss" }));
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(2);
+    await act(async () => { releaseHigh(new Response(JSON.stringify({ error: "High refused" }), { status: 409 })); });
+    expect(within(highCard).getByRole("button", { name: "Dismiss" })).toBeEnabled();
+  });
+
+  it("offers retry after an initial read failure without claiming zero frictions", async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(new Response("offline", { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ data: { frictions: baseRows, openCount: 2 } })));
+    render(<ProjectFrictionsPage />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load frictions");
+    expect(screen.queryByText("0 open")).not.toBeInTheDocument();
+    expect(screen.queryByText("No frictions match these filters.")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByTestId("friction-high");
+    expect(screen.getByText("2 open")).toBeInTheDocument();
+  });
+
   it("sorts open reports by occurrences and filters category and status", async () => {
     render(<ProjectFrictionsPage />);
     await screen.findByTestId("friction-high");

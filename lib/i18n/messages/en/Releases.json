@@ -1,4 +1,11 @@
 {
+  "feedback": {
+    "loadFailed": "Failed to load releases",
+    "retry": "Retry",
+    "createFailed": "Failed to create release",
+    "created": "Release v{version} created",
+    "githubFailed": "Release v{version} created, but GitHub sync failed: {error}"
+  },
   "next": {
     "label": "Next release",
     "inspectLabel": "Release",

@@ -19,7 +19,7 @@ function edgeKey(edge: { ticketId: string; dependsOnTicketId: string }) {
  * removed and the added endpoints together, in one pass, rather than emitting
  * twice for the added ones.
  */
-function insertDependencies(
+export function insertDependencies(
   projectId: string,
   edges: DependencyEdge[]
 ) {
@@ -163,16 +163,6 @@ export function setTicketDependencies(
   return created;
 }
 
-/**
- * Get all dependencies for a project, optionally filtered by ticket IDs.
- */
-export function getProjectDependencies(projectId: string) {
-  return db
-    .select()
-    .from(ticketDependencies)
-    .where(eq(ticketDependencies.projectId, projectId))
-    .all();
-}
 /**
  * Delete a single dependency edge (ticket -> dependsOnTicket).
  * The delete is project-scoped; a missing edge is a no-op.

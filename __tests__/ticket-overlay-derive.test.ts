@@ -19,11 +19,9 @@ import {
   dependencyRowItems,
   descriptionMeta,
   diffTotals,
-  hashString,
   liveStampLabel,
   mergeTimelineLines,
   pipelineSteps,
-  projectToneIndex,
   shortId,
   ticketLabel,
   timelineKindForAction,
@@ -34,7 +32,7 @@ import {
 import type { EpicActivityEntry } from "@/hooks/useEpicActivity";
 import { buildActivityFeed } from "@/lib/kanban/activity-feed";
 import { MCP_CREATE_BUG_ACTIVITY_PREFIX } from "@/lib/mcp/create-bug-contract";
-import { projectTone } from "@/lib/piscine/tokens";
+import { projectTone, projectToneIndex } from "@/lib/piscine/tokens";
 
 describe("countAcceptanceCriteria", () => {
   it("counts non-empty lines and treats absence as zero", () => {
@@ -238,11 +236,6 @@ describe("dependencyRowItems", () => {
 });
 
 describe("project tone fallback", () => {
-  it("hashes stably for the same id", () => {
-    expect(hashString("proj-1")).toBe(hashString("proj-1"));
-    expect(hashString("proj-1")).not.toBe(hashString("proj-2"));
-  });
-
   it("always lands inside the four-tone palette", () => {
     for (const id of ["a", "proj-1", "arij", "", "zzzzzzzzzzzzzzzz"]) {
       const tone = projectTone(projectToneIndex(id));
@@ -252,7 +245,6 @@ describe("project tone fallback", () => {
 
   it("prefers a stored colour index once the column exists", () => {
     expect(projectToneIndex("proj-1", 2)).toBe(2);
-    expect(projectToneIndex("proj-1", null)).toBe(hashString("proj-1"));
   });
 });
 

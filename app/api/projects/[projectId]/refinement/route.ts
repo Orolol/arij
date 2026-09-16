@@ -18,12 +18,8 @@ import {
 } from "@/lib/refinement/dispatch";
 import { countRefinableTickets } from "@/lib/refinement/snapshot";
 
-export interface RefinementStatus {
-  running: boolean;
-  sessionId: string | null;
-  /** Tickets currently sitting in Backlog + To do — the pass's workload. */
-  ticketCount: number;
-}
+import type { RefinementStatus } from "@/lib/refinement/types";
+
 
 export async function GET(
   _request: NextRequest,

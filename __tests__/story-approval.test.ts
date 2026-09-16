@@ -25,7 +25,6 @@ const mocks = vi.hoisted(() => ({
   mergeWorktree: vi.fn(),
   applyStoryTransition: vi.fn(),
   logWorkflowDecision: vi.fn(),
-  createApproveMergeFailedNotification: vi.fn(),
   tryExportArjiJson: vi.fn(),
   beginMergeWork: vi.fn(),
   endMergeWork: vi.fn(),
@@ -43,11 +42,6 @@ vi.mock("@/lib/git/manager", () => ({
 vi.mock("@/lib/workflow/transition-service", () => ({
   applyStoryTransition: mocks.applyStoryTransition,
   logWorkflowDecision: mocks.logWorkflowDecision,
-}));
-
-vi.mock("@/lib/notifications/create", () => ({
-  createApproveMergeFailedNotification:
-    mocks.createApproveMergeFailedNotification,
 }));
 
 vi.mock("@/lib/sync/export", () => ({
@@ -195,7 +189,6 @@ describe("Story approval", () => {
       // merge route, never through a story approval.
       expect(mocks.mergeWorktree).not.toHaveBeenCalled();
       expect(mocks.beginMergeWork).not.toHaveBeenCalled();
-      expect(mocks.createApproveMergeFailedNotification).not.toHaveBeenCalled();
       expect(dbMockState.updateCalls).toEqual([]);
       expect(dbMockState.insertCalls).toEqual([]);
     });

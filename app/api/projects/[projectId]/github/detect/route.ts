@@ -8,7 +8,7 @@ import {
   detectGitHubRemote,
   GitRepositoryUnavailableError,
 } from "@/lib/git/remote";
-import { writeGitSyncLog } from "@/lib/github/sync-log";
+import { logSyncOperation } from "@/lib/github/sync-log";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -18,7 +18,7 @@ export async function GET(_request: Request, { params }: Params) {
   const found = getProjectOr404(projectId, { requireGitRepo: true });
   if (isErrorResponse(found)) {
     if (found.status === 400) {
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
         operation: "detect",
         status: "failed",
@@ -32,7 +32,7 @@ export async function GET(_request: Request, { params }: Params) {
   try {
     const detected = await detectGitHubRemote(project.gitRepoPath);
     if (!detected) {
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
         operation: "detect",
         status: "success",
@@ -42,7 +42,7 @@ export async function GET(_request: Request, { params }: Params) {
       return NextResponse.json({ data: { detected: false } });
     }
 
-    writeGitSyncLog({
+    logSyncOperation({
       projectId,
       operation: "detect",
       status: "success",
@@ -70,7 +70,7 @@ export async function GET(_request: Request, { params }: Params) {
     // console error on every project page. 400 with the code matches the
     // no-remote 400 `git/detect-remote` already answers.
     if (error instanceof GitRepositoryUnavailableError) {
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
         operation: "detect",
         status: "failed",
@@ -86,7 +86,7 @@ export async function GET(_request: Request, { params }: Params) {
       );
     }
 
-    writeGitSyncLog({
+    logSyncOperation({
       projectId,
       operation: "detect",
       status: "failed",

@@ -54,6 +54,7 @@ const t = createTranslator({ locale: "en", messages: messagesFor("en") });
 function renderCard(overrides: Partial<React.ComponentProps<typeof DraftedEpicCard>> = {}) {
   const props = {
     projectId: "p1",
+    conversationId: "conversation-1",
     epic: EPIC,
     tone: 1 as const,
     epicId: null,
@@ -144,6 +145,15 @@ describe("DraftedEpicCard — what it prints", () => {
 });
 
 describe("DraftedEpicCard — the three actions", () => {
+  it("uses the actual placement when the server replays an epic created in another window", async () => {
+    const props = renderCard();
+    fetchMock.mockResolvedValueOnce(ok({ data: { id: "existing", readableId: "ARJ-9", status: "done" } }));
+    await userEvent.click(screen.getByRole("button", { name: "Edit stories" }));
+    await waitFor(() => expect(props.onCreated).toHaveBeenCalledWith({ epicId: "existing", readableId: "ARJ-9", status: "done" }));
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).sourceConversationId).toBe("conversation-1");
+    expect(props.onOpenTicket).toHaveBeenCalledWith("existing");
+  });
+
   it("Send to dev creates the ticket in To Do, then dispatches the build", async () => {
     const props = renderCard();
     fetchMock
@@ -157,6 +167,7 @@ describe("DraftedEpicCard — the three actions", () => {
     expect(fetchMock.mock.calls[0][0]).toBe("/api/projects/p1/epics");
     const created = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(created.status).toBe("todo");
+    expect(created.sourceConversationId).toBe("conversation-1");
     expect(created.title).toBe("Spec diff view before agent dispatch");
     expect(created.userStories).toHaveLength(3);
 
@@ -303,6 +314,7 @@ describe("the card stays actionable from history", () => {
 
     render(
       <ChatThread
+        conversationId="conversation-1"
         projectId="p1"
         messages={messages}
         loading={false}

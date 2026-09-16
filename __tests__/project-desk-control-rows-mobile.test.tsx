@@ -44,14 +44,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { installMockEventSource } from "./helpers/event-source-mock";
 
-class MockEventSource {
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  close() {}
-}
-(globalThis as Record<string, unknown>).EventSource = MockEventSource;
+installMockEventSource();
 
 const nav = vi.hoisted(() => ({
   pathname: "/projects/proj-1",
@@ -186,7 +181,7 @@ async function renderActionRow(): Promise<HTMLElement> {
   );
   const row = await screen.findByTestId("project-action-row");
   await waitFor(() => {
-    expect(global.fetch).toHaveBeenCalledWith("/api/projects/proj-1");
+    expect(global.fetch).toHaveBeenCalledWith("/api/projects");
   });
   return row;
 }

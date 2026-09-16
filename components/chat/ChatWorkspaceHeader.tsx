@@ -109,6 +109,7 @@ interface ChatProposalCardProps {
   onGenerateSpec: () => void;
   showCreateEpic: boolean;
   epicCreating: boolean;
+  disabled?: boolean;
   onCreateEpic: () => void;
 }
 
@@ -124,6 +125,7 @@ export function ChatProposalCard({
   onGenerateSpec,
   showCreateEpic,
   epicCreating,
+  disabled = false,
   onCreateEpic,
 }: ChatProposalCardProps) {
   const t = useTranslations("ChatLegacy");
@@ -152,7 +154,7 @@ export function ChatProposalCard({
               size="sm"
               variant="default"
               onClick={onCreateEpic}
-              disabled={epicCreating}
+              disabled={epicCreating || disabled}
               className="h-[31px] rounded-[8px] text-[13px]"
             >
               {epicCreating ? (
@@ -173,7 +175,7 @@ export function ChatProposalCard({
             size="sm"
             variant="outline"
             onClick={onGenerateSpec}
-            disabled={generatingSpec}
+            disabled={generatingSpec || disabled}
             className="h-[26px] rounded-full px-[11px] text-[12.5px] text-muted-foreground"
           >
             {generatingSpec ? (

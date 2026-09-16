@@ -32,7 +32,14 @@
   "footer": {
     "status": "{tickets, plural, one {# ticket} other {# tickets}} · {projects, plural, one {# projet} other {# projets}}",
     "cost30d": "coût total 30j :",
-    "exportHint": "Exporte {count, plural, one {le ticket chargé} other {les # tickets chargés}}"
+    "exportHint": "Exporte {count, plural, one {le ticket chargé} other {les # tickets chargés}}",
+    "loading": "Chargement des tickets…"
+  },
+  "blocker": {
+    "mergeConflict": "Conflit de fusion — à résoudre avant de fusionner",
+    "conflictMarkers": "La branche contient des marqueurs de conflit non résolus",
+    "changesRequested": "Modifications demandées — en attente de correction",
+    "noBranch": "Aucune branche à fusionner"
   },
   "activity": {
     "branchUnknown": "branche"

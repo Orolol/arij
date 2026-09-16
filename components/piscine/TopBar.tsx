@@ -29,6 +29,7 @@ import {
 import { DeskCommandPalette } from "@/components/desk/DeskCommandPalette";
 import { useAutoModeArmed, isProjectArmed } from "@/hooks/useAutoModeArmed";
 import { useControlDesk } from "@/hooks/useControlDesk";
+import { useDeskInboxSummary } from "@/hooks/useControlDesk";
 import { useInbox } from "@/hooks/useInbox";
 import { useProjects } from "@/hooks/useProjects";
 import type { NavCategory, NavCategoryId } from "@/lib/piscine/nav";
@@ -43,6 +44,7 @@ import {
   subscribeLastVisitedProjectId,
 } from "@/lib/piscine/nav";
 import { projectTone } from "@/lib/piscine/tokens";
+import { projectColorIndexById } from "@/lib/control-desk/aggregate";
 import type { DashboardProject } from "@/lib/types/dashboard";
 import { cn } from "@/lib/utils";
 
@@ -177,7 +179,9 @@ export function TopBar({ className }: TopBarProps) {
 
   const tBar = useTranslations("TopBar");
   const { allProjects, refresh: refreshProjects } = useProjects();
-  const { unreadCount } = useInbox();
+  const deskInbox = useDeskInboxSummary();
+  const inbox = useInbox({ summaryOnly: true, enabled: !deskInbox.enabled });
+  const unreadCount = deskInbox.enabled ? deskInbox.unreadCount : inbox.unreadCount;
   const autoMode = useAutoModeArmed();
   const refreshAutoMode = autoMode.refresh;
 
@@ -191,8 +195,7 @@ export function TopBar({ className }: TopBarProps) {
   useEffect(() => {
     if (firstRun.current) {
       firstRun.current = false;
-      // useProjects loads itself on mount; auto-mode has no initial load.
-      void refreshAutoMode();
+      // Both resources load themselves on mount.
       return;
     }
     void refreshProjects();
@@ -202,19 +205,13 @@ export function TopBar({ className }: TopBarProps) {
   /**
    * Project identity colours must agree with the desk's, which walks the
    * 4-colour cycle in CREATION order over every project (archived included —
-   * hiding one must not re-colour the others). Same rule as
-   * `deriveProjects()` in lib/control-desk/aggregate.ts.
+   * hiding one must not re-colour the others). `projectColorIndexById` IS that
+   * rule, shared with `deriveProjects()` in lib/control-desk/aggregate.ts.
    */
-  const colorIndexById = useMemo(() => {
-    const ordered = [...allProjects].sort((a, b) => {
-      const byCreated = (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
-      if (byCreated !== 0) return byCreated;
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-    });
-    const map = new Map<string, number>();
-    ordered.forEach((project, index) => map.set(project.id, index));
-    return map;
-  }, [allProjects]);
+  const colorIndexById = useMemo(
+    () => projectColorIndexById(allProjects),
+    [allProjects],
+  );
 
   const visibleProjects = useMemo(
     () => allProjects.filter((project) => project.status !== "archived"),

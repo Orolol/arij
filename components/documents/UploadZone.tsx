@@ -4,6 +4,7 @@ import { useTranslations } from "next-intl";
 import { useState, useCallback } from "react";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useDocumentUploads } from "@/hooks/useDocumentUploads";
 
 interface UploadZoneProps {
   projectId: string;
@@ -12,34 +13,12 @@ interface UploadZoneProps {
 
 export function UploadZone({ projectId, onUploaded }: UploadZoneProps) {
   const t = useTranslations("Documents");
-  const [uploading, setUploading] = useState(false);
   const [dragOver, setDragOver] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleFiles = useCallback(
-    async (files: FileList) => {
-      setUploading(true);
-      setError(null);
-      for (const file of Array.from(files)) {
-        const formData = new FormData();
-        formData.append("file", file);
-        const res = await fetch(`/api/projects/${projectId}/documents`, {
-          method: "POST",
-          body: formData,
-        });
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          setError(
-            body.error || t("errors.uploadFailed", { name: file.name, status: res.status })
-          );
-          break;
-        }
-      }
-      setUploading(false);
-      onUploaded();
-    },
-    [projectId, onUploaded, t]
-  );
+  const uploadError = useCallback((name: string, status?: number) =>
+    status === undefined ? t("errors.importUnreachable") : t("errors.uploadFailed", { name, status }), [t]);
+  const { upload: handleFiles, uploading, error } = useDocumentUploads({
+    projectId, onUploaded, uploadError,
+  });
 
   return (
     <div
@@ -51,7 +30,7 @@ export function UploadZone({ projectId, onUploaded }: UploadZoneProps) {
       onDrop={(e) => {
         e.preventDefault();
         setDragOver(false);
-        if (e.dataTransfer.files.length) handleFiles(e.dataTransfer.files);
+        if (e.dataTransfer.files.length) void handleFiles(e.dataTransfer.files);
       }}
       className={cn(
         "flex w-[252px] max-w-full flex-col justify-center gap-[8px] rounded-[12px] border border-dashed p-[16px] transition-colors",
@@ -77,7 +56,8 @@ export function UploadZone({ projectId, onUploaded }: UploadZoneProps) {
             multiple
             accept=".pdf,.docx,.md,.txt,image/*"
             onChange={(e) => {
-              if (e.target.files?.length) handleFiles(e.target.files);
+              if (e.target.files?.length) void handleFiles(e.target.files);
+              e.target.value = "";
             }}
           />
         </label>

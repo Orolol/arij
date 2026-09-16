@@ -4,16 +4,6 @@ const mockDbState = vi.hoisted(() => ({
   updateSetCalls: [] as Array<Record<string, unknown>>,
 }));
 
-vi.mock("drizzle-orm", () => ({
-  eq: vi.fn(() => ({})),
-}));
-
-vi.mock("@/lib/db/schema", () => ({
-  agentSessions: {
-    id: "id",
-  },
-}));
-
 vi.mock("@/lib/db", () => ({
   db: {
     update: vi.fn(() => ({
@@ -41,7 +31,13 @@ vi.mock("@/lib/claude/spawn", () => ({
   })),
 }));
 
-vi.mock("@/lib/providers", () => {
+// claude-code reaches the mocked spawnClaude through the same provider
+// registry as every other CLI — there is no claude branch in the manager.
+vi.mock("@/lib/providers", async () => {
+  const { spawnClaude } = await import("@/lib/claude/spawn");
+  const { mockProviderRegistry } = await import(
+    "@/__tests__/helpers/provider-mock"
+  );
   const createSession = (label: string) => ({
     handle: `${label}-test`,
     kill: vi.fn(),
@@ -52,14 +48,12 @@ vi.mock("@/lib/providers", () => {
       cliSessionId: `${label}-cli-1`,
     }),
   });
-  return {
-    getProvider: vi.fn((provider: string) => ({
-      type: provider,
-      spawn: vi.fn(() => createSession(provider)),
-      cancel: vi.fn(() => true),
-      isAvailable: vi.fn().mockResolvedValue(true),
-    })),
-  };
+  return mockProviderRegistry(spawnClaude, (provider: string) => ({
+    type: provider,
+    spawn: vi.fn(() => createSession(provider)),
+    cancel: vi.fn(() => true),
+    isAvailable: vi.fn().mockResolvedValue(true),
+  }));
 });
 
 // We need a fresh processManager for each test
@@ -217,6 +211,124 @@ describe("Process Manager", () => {
       expect(processManager.activeCount).toBe(2);
       processManager.cancel("c1");
       expect(processManager.activeCount).toBe(1);
+    });
+  });
+
+  describe("provider registry", () => {
+    it("spawns claude-code through getProvider, like every other provider", async () => {
+      const { getProvider } = await import("@/lib/providers");
+      const { spawnClaude } = await import("@/lib/claude/spawn");
+      processManager.start("g1", { mode: "code", prompt: "test" });
+      processManager.start("g2", { mode: "code", prompt: "test" }, "codex");
+      expect(getProvider).toHaveBeenCalledWith("claude-code");
+      expect(getProvider).toHaveBeenCalledWith("codex");
+      // The registry's claude-code entry is what wraps spawnClaude.
+      expect(spawnClaude).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  /**
+   * The map used to keep every session for the life of the server — prompt
+   * and result included — with remove() called by nothing but tests.
+   */
+  describe("eviction of terminal sessions", () => {
+    const flush = () => new Promise((r) => setImmediate(r));
+
+    it("forgets a completed session after the retention period, keeping it until then", async () => {
+      // Timers only: promises and setImmediate stay real so the spawn
+      // promise settles and `flush()` returns.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const { TERMINAL_SESSION_RETENTION_MS } = await import(
+          "@/lib/claude/process-manager"
+        );
+        processManager.start("e1", { mode: "code", prompt: "a long prompt" });
+        await flush();
+        expect(processManager.getStatus("e1")?.status).toBe("completed");
+        expect(processManager.isProcessClosed("e1")).toBe(true);
+
+        // Still readable by anything polling right after the close.
+        vi.advanceTimersByTime(TERMINAL_SESSION_RETENTION_MS - 1);
+        expect(processManager.getStatus("e1")?.status).toBe("completed");
+
+        vi.advanceTimersByTime(2);
+        expect(processManager.getStatus("e1")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("does not evict a session re-dispatched under the same id", async () => {
+      // Timers only: promises and setImmediate stay real so the spawn
+      // promise settles and `flush()` returns.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const { TERMINAL_SESSION_RETENTION_MS } = await import(
+          "@/lib/claude/process-manager"
+        );
+        processManager.start("e2", { mode: "code", prompt: "first" });
+        await flush();
+        expect(processManager.getStatus("e2")?.status).toBe("completed");
+
+        // A retry ladder re-dispatches under the same session id; the
+        // previous run's timer must not take the new run down with it.
+        const { getProvider } = await import("@/lib/providers");
+        vi.mocked(getProvider).mockReturnValueOnce({
+          type: "claude-code",
+          spawn: vi.fn(() => ({
+            handle: "cc-e2",
+            kill: vi.fn(),
+            promise: new Promise(() => {}),
+          })),
+          cancel: vi.fn(() => true),
+          isAvailable: vi.fn().mockResolvedValue(true),
+        } as never);
+        processManager.start("e2", { mode: "code", prompt: "second" });
+        expect(processManager.getStatus("e2")?.status).toBe("running");
+
+        vi.advanceTimersByTime(TERMINAL_SESSION_RETENTION_MS + 1);
+        expect(processManager.getStatus("e2")?.status).toBe("running");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("gives a completed retry its own full retention period", async () => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const { TERMINAL_SESSION_RETENTION_MS } = await import("@/lib/claude/process-manager");
+        processManager.start("retained-retry", { mode: "code", prompt: "first" });
+        await flush();
+        vi.advanceTimersByTime(1000);
+        processManager.start("retained-retry", { mode: "code", prompt: "retry" });
+        await flush();
+        vi.advanceTimersByTime(TERMINAL_SESSION_RETENTION_MS - 1000);
+        expect(processManager.getStatus("retained-retry")?.status).toBe("completed");
+        vi.advanceTimersByTime(1000);
+        expect(processManager.getStatus("retained-retry")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps the count of tracked sessions bounded across many runs", async () => {
+      // Timers only: promises and setImmediate stay real so the spawn
+      // promise settles and `flush()` returns.
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const { TERMINAL_SESSION_RETENTION_MS } = await import(
+          "@/lib/claude/process-manager"
+        );
+        for (let i = 0; i < 25; i++) {
+          processManager.start(`b${i}`, { mode: "code", prompt: `p${i}` });
+        }
+        await flush();
+        expect(processManager.listAll()).toHaveLength(25);
+        vi.advanceTimersByTime(TERMINAL_SESSION_RETENTION_MS + 1);
+        expect(processManager.listAll()).toHaveLength(0);
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 });

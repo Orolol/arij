@@ -7,6 +7,7 @@
  * of examples for the later `failure_digest` prompt.
  */
 import { and, eq, inArray, like, max, or, sql } from "drizzle-orm";
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
 import { db as defaultDb, type ArijDatabase } from "@/lib/db";
 import {
   agentSessionChunks,
@@ -28,15 +29,15 @@ export {
   TELESCOPE_MAX_WINDOW_DAYS,
   TELESCOPE_WINDOW_DAYS,
 } from "@/lib/telescope/constants";
-export const TELESCOPE_MAX_GROUPS = 50;
-export const TELESCOPE_MAX_EXAMPLES_PER_GROUP = 5;
-export const TELESCOPE_MAX_TICKET_IDS_PER_GROUP = 20;
-export const TELESCOPE_EVIDENCE_TEXT_MAX_CHARS = 1_000;
-export const TELESCOPE_LAST_CHUNK_MAX_CHARS = 1_200;
-export const TELESCOPE_MOTIF_MAX_CHARS = 240;
+const TELESCOPE_MAX_GROUPS = 50;
+const TELESCOPE_MAX_EXAMPLES_PER_GROUP = 5;
+const TELESCOPE_MAX_TICKET_IDS_PER_GROUP = 20;
+const TELESCOPE_EVIDENCE_TEXT_MAX_CHARS = 1_000;
+const TELESCOPE_LAST_CHUNK_MAX_CHARS = 1_200;
+const TELESCOPE_MOTIF_MAX_CHARS = 240;
 export const TELESCOPE_MAX_PAYLOAD_CHARS = 60_000;
-export const TELESCOPE_FINDING_PREFIX_WORDS = 8;
-export const TELESCOPE_FINDING_MIN_OCCURRENCES = 2;
+const TELESCOPE_FINDING_PREFIX_WORDS = 8;
+const TELESCOPE_FINDING_MIN_OCCURRENCES = 2;
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const UNKNOWN_SIGNATURE_PART = "unknown";
@@ -239,9 +240,7 @@ function resolveOptions(
 }
 
 function parseTimestamp(value: string | null | undefined): number | null {
-  if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
+  return value ? parseStoredTimestamp(value) : null;
 }
 
 function isWithinWindow(
@@ -272,7 +271,7 @@ function trimTail(value: string, maxChars: number): string {
 }
 
 /** Normalizes the two categorical parts of a signature. */
-export function normalizeFailureDimension(value: string | null | undefined) {
+function normalizeFailureDimension(value: string | null | undefined) {
   const normalized = (value ?? "")
     .trim()
     .toLowerCase()
@@ -286,7 +285,7 @@ export function normalizeFailureDimension(value: string | null | undefined) {
  * The replacements are intentionally conservative and deterministic: this is
  * pre-grouping, not semantic diagnosis.
  */
-export function normalizeFailureMotif(value: string): string {
+function normalizeFailureMotif(value: string): string {
   const normalized = value
     .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, " ")
     .replace(/<!--\s*arij:[^>]*-->/gi, " ")
@@ -936,4 +935,3 @@ export function collectFailureDigestEvidence(
 }
 
 /** Short alias for callers that already live under `lib/telescope`. */
-export const collectFailureEvidence = collectFailureDigestEvidence;

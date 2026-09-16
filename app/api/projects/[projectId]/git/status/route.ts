@@ -62,12 +62,7 @@ async function refreshRemoteIfStale(
   try {
     // Best-effort with a hard time bound: a black-holed network or hanging
     // SSH auth must not stall the status endpoint past the TTL refresh.
-    await Promise.race([
-      fetchGitRemote(repoPath, remote),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("Fetch timed out.")), 4000)
-      ),
-    ]);
+    await fetchGitRemote(repoPath, remote, AbortSignal.timeout(4000));
     const fetchedAt = Date.now();
     lastFetchByRepo.set(key, fetchedAt);
     return { lastFetchedAt: fetchedAt, lastFetchError: null };

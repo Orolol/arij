@@ -70,6 +70,7 @@ export function ConversationRosterCard({
       aria-pressed={active}
       onClick={onSelect}
       onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         onSelect();

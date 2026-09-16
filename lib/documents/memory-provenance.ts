@@ -61,8 +61,8 @@ export function getMemoryWriteProvenance(
 /**
  * Records a write to the project memory document as its new provenance.
  * Upsert on the settings key; a later write always wins — the record
- * describes the LAST write, not the history (that lives in notifications
- * and the archive doc).
+ * describes the LAST write, not the history (the archive doc keeps the
+ * pre-dream snapshot).
  */
 export function recordMemoryWriteProvenance(
   projectId: string,

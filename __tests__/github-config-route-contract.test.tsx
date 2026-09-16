@@ -46,30 +46,23 @@ async function serveFromRealRoutes(opts: {
   pat: string | null;
   ownerRepo: string | null;
 }) {
-  const { GET: settingsGET } = await import("@/app/api/settings/route");
+  const { GET: settingsGET } = await import("@/app/api/github/config/route");
   const { GET: projectGET } = await import(
-    "@/app/api/projects/[projectId]/route"
+    "@/app/api/projects/route"
   );
 
   // `.all()` feeds the settings route, `.get()` feeds getProjectOr404 -- two
   // independent slots, so the hook's concurrent Promise.all cannot interleave
   // them.
-  dbMockState.allRows =
-    opts.pat === null
-      ? []
-      : [{ key: GITHUB_PAT_SETTING_KEY, value: JSON.stringify(opts.pat) }];
-  dbMockState.getQueue = [
-    { id: "proj-1", name: "Arij", githubOwnerRepo: opts.ownerRepo },
-  ];
+  dbMockState.allRows = [{ id: "proj-1", name: "Arij", githubOwnerRepo: opts.ownerRepo }];
+  dbMockState.getQueue = [opts.pat === null ? undefined : { key: GITHUB_PAT_SETTING_KEY, value: JSON.stringify(opts.pat) }];
 
   return vi.spyOn(global, "fetch").mockImplementation((async (
     input: RequestInfo | URL
   ) => {
     const url = String(input);
-    if (url === "/api/settings") return settingsGET();
-    if (url === "/api/projects/proj-1") {
-      return projectGET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
-    }
+    if (url === "/api/github/config") return settingsGET();
+    if (url === "/api/projects") return projectGET();
     throw new Error(`Unexpected fetch in contract test: ${url}`);
   }) as unknown as typeof fetch);
 }
@@ -100,7 +93,7 @@ describe("useGitHubConfig against the real settings/project routes", () => {
   it("still never ships the raw PAT to the client that reads it", async () => {
     await serveFromRealRoutes({ pat: SECRET, ownerRepo: "Orolol/arij" });
 
-    const { GET: settingsGET } = await import("@/app/api/settings/route");
+    const { GET: settingsGET } = await import("@/app/api/github/config/route");
     const body = JSON.stringify(await (await settingsGET()).json());
 
     expect(body).not.toContain(SECRET);

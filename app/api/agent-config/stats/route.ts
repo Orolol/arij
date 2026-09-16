@@ -16,13 +16,19 @@ export async function GET(request: NextRequest) {
   const projectId =
     request.nextUrl.searchParams.get("projectId")?.trim() || undefined;
 
+  const include = request.nextUrl.searchParams.get("include")?.trim();
+  const includeAgents = !include || include === "agents" || include === "all";
+  const includeBounce = !include || include === "reviewBounce" || include === "all";
+
   try {
-    return NextResponse.json({
-      data: {
-        agents: getAgentReliabilityStats(projectId),
-        reviewBounce: getReviewBounceStats(projectId),
-      },
-    });
+    const data: { agents?: unknown; reviewBounce?: unknown } = {};
+    if (includeAgents) {
+      data.agents = getAgentReliabilityStats(projectId);
+    }
+    if (includeBounce) {
+      data.reviewBounce = getReviewBounceStats(projectId);
+    }
+    return NextResponse.json({ data });
   } catch (error) {
     // Inline (not errorResponse) to match the other agent-config routes:
     // data access goes through lib/agent-config/stats, not route-helpers.

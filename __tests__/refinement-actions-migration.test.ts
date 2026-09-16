@@ -15,6 +15,7 @@ describe("REfinment 2 — refinement actions migration", () => {
       // columns (0053, 0055) have to go back as well.
       sqlite.exec("ALTER TABLE named_agents DROP COLUMN kind");
       sqlite.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      sqlite.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
       // 0054 DROPS a column, so rewinding past it means putting that column
       // back — the inverse of the drops above. The rewind lands after 0039
       // (which adds it), so nothing else re-creates it.

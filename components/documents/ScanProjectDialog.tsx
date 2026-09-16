@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import {
   Dialog,
@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { requestJson } from "@/lib/api/client";
 import { FolderSearch, Loader2 } from "lucide-react";
 
 interface ScannedFile {
@@ -64,12 +65,24 @@ function formatSize(bytes: number): string {
  * source file has vanished from the repo stay visible in Arij and are
  * signalled below the list (« conserver et signaler »).
  */
-export function ScanProjectDialog({
+export function ScanProjectDialog(props: ScanProjectDialogProps) {
+  return <ScanProjectWorkspace key={props.projectId} {...props} />;
+}
+
+function ScanProjectWorkspace({
   projectId,
   onImported,
 }: ScanProjectDialogProps) {
   const t = useTranslations("Documents");
   const [open, setOpen] = useState(false);
+  const scanSequence = useRef(0);
+  const docsSequence = useRef(0);
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
+  const importInFlight = useRef(false);
   const [scanning, setScanning] = useState(false);
   const [result, setResult] = useState<ScanResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,56 +96,43 @@ export function ScanProjectDialog({
     skipped: SkippedImportFile[];
   } | null>(null);
 
-  const runScan = useCallback(async () => {
+  const loadScan = useCallback((request: number) => requestJson<ScanResult>(`/api/projects/${projectId}/documents/scan`, {
+    method: "POST",
+    errorMessage: (status) => status === undefined ? t("errors.scanUnreachable") : t("errors.scanHttp", { status: String(status) }),
+  }).then((response) => {
+    if (request !== scanSequence.current) return;
+    setResult(response.data);
+    setError(response.error);
+    setScanning(false);
+  }), [projectId, t]);
+
+  function runScan() {
+    const request = ++scanSequence.current;
     setScanning(true);
     setError(null);
     setResult(null);
     setSelected(new Set());
     setImportSummary(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/documents/scan`, {
-        method: "POST",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(
-          data.error || t("errors.scanHttp", { status: String(res.status) }),
-        );
-        return;
-      }
-      setResult(data.data as ScanResult);
-    } catch {
-      setError(t("errors.scanUnreachable"));
-    } finally {
-      setScanning(false);
-    }
+    return loadScan(request);
+  }
+
+  const refreshExisting = useCallback(() => {
+    const request = ++docsSequence.current;
+    return requestJson<Array<{ originalFilename: string }>>(`/api/projects/${projectId}/documents`, {
+      errorMessage: t("errors.scanUnreachable"), validateData: Array.isArray,
+    }).then((response) => {
+      // Name lookup is best-effort: the import endpoint also deduplicates.
+      if (request === docsSequence.current && response.data) setExistingDocs(response.data);
+    });
   }, [projectId, t]);
-  // Documents already registered for the project — the same key the upload
-  // route dedups on (case-insensitive originalFilename). Re-fetched on every
-  // open AND every in-dialog rescan, so a second scan also reflects imports
-  // that landed elsewhere (upload route, another session) in between.
-  const refreshExisting = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/projects/${projectId}/documents`);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) return;
-      const docs = (Array.isArray(data.data) ? data.data : []) as Array<{
-        originalFilename: string;
-      }>;
-      setExistingDocs(docs);
-    } catch {
-      // A failed name lookup must not block scanning: worst case the user
-      // selects an already-imported file and the server skips it.
+
+  useEffect(() => {
+    if (open) {
+      void refreshExisting();
+      void loadScan(++scanSequence.current);
     }
-  }, [projectId]);
-
-  useEffect(() => {
-    if (open) refreshExisting();
-  }, [open, refreshExisting]);
-
-  useEffect(() => {
-    if (open) runScan();
-  }, [open, runScan]);
+    return () => { scanSequence.current += 1; docsSequence.current += 1; };
+  }, [open, refreshExisting, loadScan]);
 
   const existingNames = useMemo(
     () =>
@@ -196,46 +196,33 @@ export function ScanProjectDialog({
   }
 
   async function importSelection() {
-    if (selected.size === 0 || importing) return;
+    if (selected.size === 0 || importInFlight.current) return;
+    importInFlight.current = true;
     setImporting(true);
     setError(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/documents/import`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ relativePaths: [...selected] }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(
-          data.error || t("errors.importHttp", { status: String(res.status) }),
-        );
-        return;
-      }
-      const payload = data.data as ImportResponse;
-      setExistingDocs((prev) => [
-        ...prev,
-        ...payload.imported.map((doc) => ({
-          originalFilename: doc.originalFilename,
-        })),
-      ]);
-      setSelected(new Set());
-      setImportSummary({
-        importedCount: payload.imported.length,
-        skipped: payload.skipped,
-      });
-      onImported?.();
-    } catch {
-      setError(t("errors.importUnreachable"));
-    } finally {
-      setImporting(false);
-    }
+    const response = await requestJson<ImportResponse>(`/api/projects/${projectId}/documents/import`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ relativePaths: [...selected] }),
+      errorMessage: (status) => status === undefined ? t("errors.importUnreachable") : t("errors.importHttp", { status: String(status) }),
+    });
+    importInFlight.current = false;
+    if (!active.current) return;
+    setImporting(false);
+    setError(response.error);
+    if (!response.data) return;
+    docsSequence.current += 1;
+    const payload = response.data;
+    setExistingDocs((prev) => [...prev, ...payload.imported.map((doc) => ({ originalFilename: doc.originalFilename }))]);
+    setSelected(new Set());
+    setImportSummary({ importedCount: payload.imported.length, skipped: payload.skipped });
+    onImported?.();
   }
 
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
+        if (importInFlight.current) return;
         setOpen(next);
         if (!next) {
           setResult(null);
@@ -249,7 +236,7 @@ export function ScanProjectDialog({
         variant="outline"
         size="sm"
         className="gap-[7px]"
-        onClick={() => setOpen(true)}
+        onClick={() => { setScanning(true); setOpen(true); }}
       >
         <FolderSearch className="h-[14px] w-[14px]" />
         {t("scan.trigger")}
@@ -299,7 +286,7 @@ export function ScanProjectDialog({
                 <label className="flex cursor-pointer items-center gap-[8px] text-[13px] font-medium">
                   <Checkbox
                     checked={allSelected}
-                    disabled={importableFiles.length === 0}
+                    disabled={importing || importableFiles.length === 0}
                     onCheckedChange={toggleAll}
                     aria-label={t("scan.selectAll")}
                   />
@@ -317,7 +304,7 @@ export function ScanProjectDialog({
                       >
                         <Checkbox
                           checked={selected.has(file.relativePath)}
-                          disabled={alreadyImported}
+                          disabled={importing || alreadyImported}
                           onCheckedChange={() => toggleFile(file.relativePath)}
                           aria-label={t("scan.selectFile", {
                             path: file.relativePath,

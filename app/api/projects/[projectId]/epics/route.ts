@@ -1,57 +1,41 @@
-import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import {
-  agentSessions,
-  epics,
-  frictions,
-  gradingReports,
-  reviewComments,
-  ticketComments,
-  ticketActivityLog,
-  ticketReadCursors,
-  userStories,
-} from "@/lib/db/schema";
-import { count, eq, or, sql, and, inArray } from "drizzle-orm";
-import { createId } from "@/lib/utils/nanoid";
-import { tryExportArjiJson } from "@/lib/sync/export";
-import { createDependencies } from "@/lib/dependencies/crud";
-import {
-  CycleError,
-  CrossProjectError,
-  validateDagIntegrity,
-} from "@/lib/dependencies/validation";
 import {
   getProjectOr404,
   isErrorResponse,
 } from "@/lib/api/route-helpers";
-import { createEpicSchema } from "@/lib/validation/schemas";
-import { validateBody, isValidationError } from "@/lib/validation/validate";
-import { generateReadableId } from "@/lib/db/readable-id";
-import { emitTicketCreated } from "@/lib/events/emit";
-import { resolveOptionalMcpToken } from "@/lib/mcp/http-auth";
+import { ChatEpicProposalError, findChatEpicProposal, identifyChatEpicProposal } from "@/lib/chat/epic-proposals";
+import { readEpicActivityFacts } from "@/lib/control-desk/read-model";
+import { db } from "@/lib/db";
 import {
-  buildMcpCreateBugActivityReason,
-  MCP_CREATE_BUG_ACTION_HEADER,
-  MCP_CREATE_BUG_SOURCE_TICKET_HEADER,
-} from "@/lib/mcp/create-bug-contract";
+  chatEpicProposals,
+  epics,
+  frictions,
+  ticketActivityLog
+} from "@/lib/db/schema";
+import { insertDependencies } from "@/lib/dependencies/crud";
+import {
+  CrossProjectError,
+  CycleError,
+  DependencyTargetNotFoundError,
+} from "@/lib/dependencies/validation";
+import { emitTicketCreated, emitTicketDependenciesChanged } from "@/lib/events/emit";
+import { OPEN_FRICTION_STATUSES } from "@/lib/frictions/constants";
 import {
   findOpenDuplicateBug,
   type OpenBugDuplicate,
 } from "@/lib/mcp/create-bug";
 import {
-  aggregateGradingStatus,
-  parseGradingEntries,
-} from "@/lib/grading/report";
-import { OPEN_FRICTION_STATUSES } from "@/lib/frictions/constants";
-import { listUnverifiableReviewEpicIds } from "@/lib/pipeline/findings";
-import { evaluateMergeReadiness } from "@/lib/kanban/merge-readiness";
-import {
-  MERGE_CONFLICT_REASON_LIKE_PATTERNS,
-  CONFLICT_MARKERS_REASON_LIKE_PATTERNS,
-  MERGE_FAILURE_REASON_LIKE_PATTERNS,
-} from "@/lib/workflow/merge-failure";
-import { epicSessionFactsCte } from "@/lib/workflow/review-freshness";
-import { blocksMergeSql } from "@/lib/workflow/blocking-findings";
+  buildMcpCreateBugActivityReason,
+  MCP_CREATE_BUG_ACTION_HEADER,
+  MCP_CREATE_BUG_SOURCE_TICKET_HEADER,
+} from "@/lib/mcp/create-bug-contract";
+import { resolveOptionalMcpToken } from "@/lib/mcp/http-auth";
+import { insertEpicWithStories } from "@/lib/planning/create";
+import { tryExportArjiJson } from "@/lib/sync/export";
+import { createId } from "@/lib/utils/nanoid";
+import { createEpicSchema } from "@/lib/validation/schemas";
+import { isValidationError, validateBody } from "@/lib/validation/validate";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
 
 class FrictionConversionConflict extends Error {}
 
@@ -71,349 +55,22 @@ class DuplicateMcpBugError extends Error {
 }
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
   const { projectId } = await params;
-  const queryStartedAt = Date.now();
-
-  const storyCounts = db
-    .select({
-      epicId: userStories.epicId,
-      usCount: count(userStories.id).as("us_count"),
-      usDone:
-        sql<number>`SUM(CASE WHEN ${userStories.status} = 'done' THEN 1 ELSE 0 END)`.as(
-          "us_done"
-        ),
-      // Stories carrying an actual rubric. The board's Backlog readiness
-      // criterion is "acceptance criteria present", which a story with an
-      // empty rubric does not satisfy — that is the state that makes the
-      // grading stage a no-op.
-      //
-      // The explicit character set matters: SQLite's one-argument TRIM() strips
-      // U+0020 only, so a "\n" rubric would read as present here while
-      // lib/grading/dispatch.ts (JavaScript .trim()) reads it as absent. Both
-      // the stories PATCH route and lib/sync/import.ts persist the value
-      // untrimmed, so that rubric is reachable.
-      usWithCriteriaCount:
-        sql<number>`SUM(CASE WHEN TRIM(COALESCE(${userStories.acceptanceCriteria}, ''), ' ' || char(9) || char(10) || char(13)) <> '' THEN 1 ELSE 0 END)`.as(
-          "us_with_criteria_count"
-        ),
-    })
-    .from(userStories)
-    .groupBy(userStories.epicId)
-    .as("story_counts");
-
-  const rankedEpicComments = db
-    .select({
-      epicId: ticketComments.epicId,
-      latestCommentId: ticketComments.id,
-      latestCommentAuthor: ticketComments.author,
-      latestCommentCreatedAt: ticketComments.createdAt,
-      rowNum: sql<number>`ROW_NUMBER() OVER (
-        PARTITION BY ${ticketComments.epicId}
-        ORDER BY ${ticketComments.createdAt} DESC, ${ticketComments.id} DESC
-      )`.as("row_num"),
-    })
-    .from(ticketComments)
-    .where(sql`${ticketComments.epicId} IS NOT NULL`)
-    .as("ranked_epic_comments");
-
-  const latestEpicComments = db
-    .select({
-      epicId: rankedEpicComments.epicId,
-      latestCommentId: rankedEpicComments.latestCommentId,
-      latestCommentAuthor: rankedEpicComments.latestCommentAuthor,
-      latestCommentCreatedAt: rankedEpicComments.latestCommentCreatedAt,
-    })
-    .from(rankedEpicComments)
-    .where(eq(rankedEpicComments.rowNum, 1))
-    .as("latest_epic_comments");
-
-  // Latest agent session per epic (any status) — carries the delivery
-  // verdict driving the card's "awaiting reply" signal.
-  const rankedEpicSessions = db
-    .select({
-      epicId: agentSessions.epicId,
-      latestSessionOutcome: agentSessions.outcome,
-      latestSessionEndedAt: sql<string | null>`COALESCE(
-        ${agentSessions.endedAt}, ${agentSessions.completedAt}, ${agentSessions.createdAt}
-      )`.as("latest_session_ended_at"),
-      rowNum: sql<number>`ROW_NUMBER() OVER (
-        PARTITION BY ${agentSessions.epicId}
-        ORDER BY ${agentSessions.createdAt} DESC, ${agentSessions.id} DESC
-      )`.as("session_row_num"),
-    })
-    .from(agentSessions)
-    .where(sql`${agentSessions.epicId} IS NOT NULL`)
-    .as("ranked_epic_sessions");
-
-  const latestEpicSessions = db
-    .select({
-      epicId: rankedEpicSessions.epicId,
-      latestSessionOutcome: rankedEpicSessions.latestSessionOutcome,
-      latestSessionEndedAt: rankedEpicSessions.latestSessionEndedAt,
-    })
-    .from(rankedEpicSessions)
-    .where(eq(rankedEpicSessions.rowNum, 1))
-    .as("latest_epic_sessions");
-
-  // One pass over `agent_sessions` for everything the board reads from it:
-  // the cumulative reported cost (NULL, not 0, when nothing ever reported one)
-  // and the review/code freshness aggregates behind merge readiness.
-  //
-  // Deliberately one scan rather than several identical ones grouped on the
-  // same key — `agent_sessions` carries no index, and this endpoint is
-  // refetched on every `session:*` SSE event. A CTE rather than a subquery
-  // because the blocking-findings count below needs the same columns a second
-  // time and drizzle inlines a `.as()` subquery at every reference; see
-  // `epicSessionFactsCte`.
-  const epicSessionFacts = epicSessionFactsCte(db, projectId);
-
-  const rankedGradingReports = db
-    .select({
-      epicId: gradingReports.epicId,
-      latestGradingEntries: gradingReports.gradings,
-      latestGradingSummary: gradingReports.summary,
-      latestGradingCreatedAt: gradingReports.createdAt,
-      rowNum: sql<number>`ROW_NUMBER() OVER (
-        PARTITION BY ${gradingReports.epicId}
-        ORDER BY ${gradingReports.createdAt} DESC, ${gradingReports.id} DESC
-      )`.as("grading_row_num"),
-    })
-    .from(gradingReports)
-    .as("ranked_grading_reports");
-
-  const latestGradingReports = db
-    .select({
-      epicId: rankedGradingReports.epicId,
-      latestGradingEntries: rankedGradingReports.latestGradingEntries,
-      latestGradingSummary: rankedGradingReports.latestGradingSummary,
-      latestGradingCreatedAt: rankedGradingReports.latestGradingCreatedAt,
-    })
-    .from(rankedGradingReports)
-    .where(eq(rankedGradingReports.rowNum, 1))
-    .as("latest_grading_reports");
-
-  // ---- Merge readiness ------------------------------------------------
-  // The three facts lib/kanban/merge-readiness.ts turns into the board's
-  // "Ready to merge" signal. They ride along in THIS query rather than a
-  // follow-up call: the board polls, and one extra round trip per poll for a
-  // per-card badge is the kind of cost that only shows up on a big board.
-
-  // Open review findings per epic — the merge gate's blocking half.
-  // Scoped to the project via `epics` so SQLite does not scan review_comments
-  // across every project on an un-indexed status column.
-  //
-  // `blocksMergeSql` narrows "open" to "still standing in the way": see
-  // lib/workflow/blocking-findings.ts for why a [minor] the approving review
-  // filed, or a [major] a later verdict superseded, must not park a reviewed
-  // ticket outside "Ready to merge" forever.
-  //
-  // The cutoff is joined, not correlated. As a per-row scalar subquery it
-  // re-scanned the unindexed `agent_sessions` once per candidate finding and
-  // took this query from 0.16 ms to 102 ms on a 120-epic board; hoisted it
-  // costs 1.67 ms for identical results, which matters because the client
-  // refetches this route on every `session:*` SSE event. It joins the SAME
-  // CTE the epic row reads, so the scan is shared rather than repeated.
-  const openFindingCounts = db
-    .select({
-      epicId: reviewComments.epicId,
-      openFindings: sql<number>`COUNT(*)`.as("open_findings"),
-    })
-    .from(reviewComments)
-    .innerJoin(epics, eq(reviewComments.epicId, epics.id))
-    .leftJoin(
-      epicSessionFacts,
-      eq(epicSessionFacts.epicId, reviewComments.epicId)
-    )
-    .where(
-      and(
-        eq(epics.projectId, projectId),
-        eq(reviewComments.status, "open"),
-        blocksMergeSql(epicSessionFacts.supersessionAt)
-      )
-    )
-    .groupBy(reviewComments.epicId)
-    .as("open_finding_counts");
-
-  // Newest "the branch could not land" activity entry. A failed merge writes
-  // no column anywhere, so this same-state log row is the only durable trace
-  // (see lib/workflow/merge-failure.ts for why the patterns are derived).
-  const latestMergeFailures = db
-    .select({
-      epicId: ticketActivityLog.epicId,
-      lastMergeConflictAt:
-        sql<string | null>`MAX(CASE WHEN ${or(
-          ...MERGE_CONFLICT_REASON_LIKE_PATTERNS.map(
-            (pattern) =>
-              sql`${ticketActivityLog.reason} LIKE ${pattern} ESCAPE '\\'`
-          )
-        )} THEN REPLACE(${ticketActivityLog.createdAt}, ' ', 'T') END)`.as(
-          "last_merge_conflict_at"
-        ),
-      lastConflictMarkersAt:
-        sql<string | null>`MAX(CASE WHEN ${or(
-          ...CONFLICT_MARKERS_REASON_LIKE_PATTERNS.map(
-            (pattern) =>
-              sql`${ticketActivityLog.reason} LIKE ${pattern} ESCAPE '\\'`
-          )
-        )} THEN REPLACE(${ticketActivityLog.createdAt}, ' ', 'T') END)`.as(
-          "last_conflict_markers_at"
-        ),
-    })
-    .from(ticketActivityLog)
-    .where(
-      and(
-        // Scoped FIRST so `ticket_activity_log_project_idx` bounds the scan:
-        // this table takes a row per transition AND per guard refusal across
-        // every project, is never pruned, and the LIKEs below run against an
-        // un-indexed column. The join to `epics` already scopes the result,
-        // so this only narrows what SQLite has to string-match — on an
-        // endpoint the board re-fetches on every `session:*` event.
-        eq(ticketActivityLog.projectId, projectId),
-        or(
-          // Spelled out rather than composed from drizzle's `like()` so the
-          // ESCAPE clause lands on the LIKE itself, whatever grouping the
-          // helper decides to emit around its operands.
-          ...MERGE_FAILURE_REASON_LIKE_PATTERNS.map(
-            (pattern) =>
-              sql`${ticketActivityLog.reason} LIKE ${pattern} ESCAPE '\\'`
-          )
-        )
-      )
-    )
-    .groupBy(ticketActivityLog.epicId)
-    .as("latest_merge_failures");
-
-  // Latest user-authored comment per epic — a user comment newer than the
-  // asked_question session counts as the reply.
-  const latestUserComments = db
-    .select({
-      epicId: ticketComments.epicId,
-      latestUserCommentCreatedAt: sql<string | null>`MAX(${ticketComments.createdAt})`.as(
-        "latest_user_comment_created_at"
-      ),
-    })
-    .from(ticketComments)
-    .where(
-      and(
-        sql`${ticketComments.epicId} IS NOT NULL`,
-        eq(ticketComments.author, "user")
-      )
-    )
-    .groupBy(ticketComments.epicId)
-    .as("latest_user_epic_comments");
-
-  const result = db
-    .with(epicSessionFacts)
-    .select({
-      id: epics.id,
-      projectId: epics.projectId,
-      title: epics.title,
-      description: epics.description,
-      priority: epics.priority,
-      status: epics.status,
-      position: epics.position,
-      branchName: epics.branchName,
-      prNumber: epics.prNumber,
-      prUrl: epics.prUrl,
-      prStatus: epics.prStatus,
-      confidence: epics.confidence,
-      evidence: epics.evidence,
-      createdAt: epics.createdAt,
-      updatedAt: epics.updatedAt,
-      type: epics.type,
-      linkedEpicId: epics.linkedEpicId,
-      images: epics.images,
-      readableId: epics.readableId,
-      releaseId: epics.releaseId,
-      usCount: sql<number>`COALESCE(${storyCounts.usCount}, 0)`,
-      usDone: sql<number>`COALESCE(${storyCounts.usDone}, 0)`,
-      usWithCriteriaCount: sql<number>`COALESCE(${storyCounts.usWithCriteriaCount}, 0)`,
-      latestCommentId: latestEpicComments.latestCommentId,
-      latestCommentAuthor: latestEpicComments.latestCommentAuthor,
-      latestCommentCreatedAt: latestEpicComments.latestCommentCreatedAt,
-      latestSessionOutcome: latestEpicSessions.latestSessionOutcome,
-      latestSessionEndedAt: latestEpicSessions.latestSessionEndedAt,
-      latestUserCommentCreatedAt: latestUserComments.latestUserCommentCreatedAt,
-      sessionsCostUsd: epicSessionFacts.sessionsCostUsd,
-      latestGradingEntries: latestGradingReports.latestGradingEntries,
-      gradingSummary: latestGradingReports.latestGradingSummary,
-      gradingCreatedAt: latestGradingReports.latestGradingCreatedAt,
-      // Per-epic read cursor (ticket_read_cursors) — the client derives the
-      // "unread AI comment" dot from latestComment* vs this timestamp.
-      lastReadAt: ticketReadCursors.lastReadAt,
-      openFindings: openFindingCounts.openFindings,
-      lastCleanReviewAt: epicSessionFacts.lastCleanReviewAt,
-      lastTerminalCodeAt: epicSessionFacts.lastTerminalCodeAt,
-      lastNegativeVerdictReviewAt: epicSessionFacts.lastNegativeVerdictReviewAt,
-      supersessionAt: epicSessionFacts.supersessionAt,
-      lastMergeConflictAt: latestMergeFailures.lastMergeConflictAt,
-      lastConflictMarkersAt: latestMergeFailures.lastConflictMarkersAt,
-    })
-    .from(epics)
-    .leftJoin(storyCounts, eq(epics.id, storyCounts.epicId))
-    .leftJoin(latestEpicComments, eq(epics.id, latestEpicComments.epicId))
-    .leftJoin(latestEpicSessions, eq(epics.id, latestEpicSessions.epicId))
-    .leftJoin(latestUserComments, eq(epics.id, latestUserComments.epicId))
-    .leftJoin(epicSessionFacts, eq(epics.id, epicSessionFacts.epicId))
-    .leftJoin(latestGradingReports, eq(epics.id, latestGradingReports.epicId))
-    .leftJoin(ticketReadCursors, eq(epics.id, ticketReadCursors.epicId))
-    .leftJoin(openFindingCounts, eq(epics.id, openFindingCounts.epicId))
-    .leftJoin(latestMergeFailures, eq(epics.id, latestMergeFailures.epicId))
-    .where(eq(epics.projectId, projectId))
-    .orderBy(epics.position)
-    .all();
-
-  console.debug("[epics/GET] query profile", {
-    projectId,
-    rowCount: result.length,
-    queryMs: Date.now() - queryStartedAt,
-  });
-
-  // Two queries for the whole board, not one per epic — see
-  // listUnverifiableReviewEpicIds. The badge is the precise reason; the
-  // readiness signal below already refuses such an epic, because
-  // `lastCleanReviewAt` never counted the unverifiable review in the first
-  // place (lib/workflow/review-freshness.ts).
-  const unverifiableReviewEpicIds = listUnverifiableReviewEpicIds(projectId);
-
-  // The readiness facts are inputs, not board data: they are folded into the
-  // one derived signal the client consumes and dropped from the payload, so
-  // no component can start re-deriving "ready" from a subset of them.
-  const data = result.map(
-    ({
-      latestGradingEntries,
-      openFindings,
-      lastCleanReviewAt,
-      lastTerminalCodeAt,
-      lastNegativeVerdictReviewAt,
-      supersessionAt,
-      lastMergeConflictAt,
-      lastConflictMarkersAt,
-      ...epic
-    }) => ({
-      ...epic,
-      gradingStatus: aggregateGradingStatus(
-        parseGradingEntries(latestGradingEntries),
-      ),
-      reviewUnverifiable: unverifiableReviewEpicIds.has(epic.id),
-      mergeReadiness: evaluateMergeReadiness({
-        status: epic.status,
-        branchName: epic.branchName,
-        openFindings,
-        lastCleanReviewAt,
-        lastTerminalCodeAt,
-        lastNegativeVerdictReviewAt,
-        supersessionAt,
-        lastMergeConflictAt,
-        lastConflictMarkersAt,
-      }),
-    }),
-  );
-
-  return NextResponse.json({ data });
+  if (request.nextUrl.searchParams.get("view") === "index") {
+    const data = db.select({ id: epics.id, readableId: epics.readableId, title: epics.title })
+      .from(epics).where(eq(epics.projectId, projectId)).orderBy(epics.position).all();
+    return NextResponse.json({ data });
+  }
+  const rows = db.select().from(epics).where(eq(epics.projectId, projectId)).orderBy(epics.position).all();
+  const facts = readEpicActivityFacts(db, rows.map((row) => row.id), [projectId], [], false);
+  return NextResponse.json({ data: rows.map((row) => ({
+    ...row,
+    ...facts.storyCountsByEpic.get(row.id) ?? { usCount: 0, usDone: 0 },
+    latestSessionOutcome: facts.latestSessionByEpic.get(row.id)?.outcome ?? null,
+  })) });
 }
 
 export async function POST(
@@ -461,6 +118,19 @@ export async function POST(
   const foundProject = getProjectOr404(projectId);
   if (isErrorResponse(foundProject)) return foundProject;
   const { project } = foundProject;
+
+  const proposal = identifyChatEpicProposal(projectId, body);
+  if (proposal) {
+    try {
+      const previous = findChatEpicProposal(db, proposal);
+      if (previous) return NextResponse.json({ data: previous });
+    } catch (error) {
+      if (error instanceof ChatEpicProposalError) {
+        return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+      }
+      throw error;
+    }
+  }
 
   const sourceFriction = body.frictionId
     ? db
@@ -528,7 +198,7 @@ export async function POST(
 
   // Normalize dependency edges provided by the generation agent, replacing
   // placeholder "$self" references with the newly created epic ID.
-  let dependencyEdges = (Array.isArray(body.dependencies) ? body.dependencies : [])
+  const dependencyEdges = (Array.isArray(body.dependencies) ? body.dependencies : [])
     .filter(
       (dep) =>
         typeof dep?.ticketId === "string" &&
@@ -540,77 +210,22 @@ export async function POST(
         dep.dependsOnTicketId === "$self" ? id : dep.dependsOnTicketId,
     }));
 
-  // Validate dependency edges BEFORE inserting the epic so semantic
-  // dependency errors (cycle / cross-project) reject the request without
-  // leaving a half-created epic behind.
-  if (dependencyEdges.length > 0) {
-    try {
-      const referencedIds = new Set<string>();
-      for (const edge of dependencyEdges) {
-        referencedIds.add(edge.ticketId);
-        referencedIds.add(edge.dependsOnTicketId);
-      }
-      // The new epic isn't inserted yet — skip its own id.
-      referencedIds.delete(id);
-      for (const referencedId of referencedIds) {
-        const referenced = db
-          .select({ id: epics.id, projectId: epics.projectId })
-          .from(epics)
-          .where(eq(epics.id, referencedId))
-          .get();
-        if (!referenced) {
-          throw new Error(`Ticket "${referencedId}" not found`);
-        }
-        if (referenced.projectId !== projectId) {
-          const edge = dependencyEdges.find(
-            (e) =>
-              e.ticketId === referencedId || e.dependsOnTicketId === referencedId
-          );
-          throw new CrossProjectError(
-            edge?.ticketId ?? referencedId,
-            edge?.dependsOnTicketId ?? referencedId
-          );
-        }
-      }
-      validateDagIntegrity(projectId, dependencyEdges);
-    } catch (error) {
-      if (error instanceof CycleError) {
-        return NextResponse.json(
-          { error: error.message, code: "CYCLE_DETECTED", cycle: error.cycle },
-          { status: 422 }
-        );
-      }
-      if (error instanceof CrossProjectError) {
-        return NextResponse.json(
-          { error: error.message, code: "CROSS_PROJECT_DEPENDENCY" },
-          { status: 422 }
-        );
-      }
-      // Non-critical (e.g. a referenced ticket doesn't exist): log and skip
-      // dependency creation, but still create the epic.
-      console.error("[epics/POST] Skipping invalid dependencies:", error);
-      dependencyEdges = [];
-    }
-  }
-
+  let proposalDependencies: ReturnType<typeof insertDependencies> = [];
   try {
-    db.transaction((tx) => {
+    const previous = db.transaction((tx) => {
+      // BEGIN IMMEDIATE serializes separate server connections as well as tabs.
+      // The lookup and claim share the epic/stories transaction, so a failed
+      // insert never consumes the proposal or its readable ticket number.
+      if (proposal) {
+        const existing = findChatEpicProposal(tx, proposal);
+        if (existing) return existing;
+      }
       if (isAttributedAgentBug) {
         const duplicate = findOpenDuplicateBug(projectId, body.title, tx);
         if (duplicate) throw new DuplicateMcpBugError(duplicate);
       }
 
-      // Inside the transaction on purpose: this bumps `projects.ticket_counter`,
-      // so run outside it the increment would survive a rolled-back insert and
-      // burn a readable id on an epic that never existed — a permanent gap in
-      // E-<slug>-NNN. `generateReadableId` asks its callers for exactly this.
-      const readableId = generateReadableId(
-        projectId,
-        project.name,
-        targetType as "feature" | "bug"
-      );
-      tx.insert(epics)
-        .values({
+      insertEpicWithStories(tx, project.name, {
           id,
           projectId,
           title: body.title,
@@ -626,12 +241,7 @@ export async function POST(
           type: targetType,
           linkedEpicId: body.linkedEpicId || null,
           images: body.images ? JSON.stringify(body.images) : null,
-          readableId: readableId || null,
-        })
-        .run();
-      if (storiesToInsert.length > 0) {
-        tx.insert(userStories).values(storiesToInsert).run();
-      }
+        }, storiesToInsert);
       if (body.frictionId) {
         const result = tx
           .update(frictions)
@@ -671,8 +281,28 @@ export async function POST(
           })
           .run();
       }
-    });
+      if (dependencyEdges.length > 0) {
+        proposalDependencies = insertDependencies(projectId, dependencyEdges);
+      }
+      if (proposal) {
+        tx.insert(chatEpicProposals).values({ ...proposal, epicId: id,
+          userStoriesCreated: storiesToInsert.length, dependenciesCreated: proposalDependencies.length,
+          createdAt: now,
+        }).run();
+      }
+      return null;
+    }, { behavior: "immediate" });
+    if (previous) return NextResponse.json({ data: previous });
   } catch (error) {
+    if (error instanceof DependencyTargetNotFoundError || error instanceof CrossProjectError || error instanceof CycleError) {
+      return NextResponse.json({ error: error.message,
+        code: error instanceof DependencyTargetNotFoundError ? "DEPENDENCY_TARGET_NOT_FOUND" : error instanceof CycleError ? "CYCLE_DETECTED" : "CROSS_PROJECT_DEPENDENCY",
+        ...(error instanceof CycleError ? { cycle: error.cycle } : {}),
+      }, { status: 422 });
+    }
+    if (error instanceof ChatEpicProposalError) {
+      return NextResponse.json({ error: error.message, code: error.code }, { status: error.status });
+    }
     if (error instanceof FrictionConversionConflict) {
       return NextResponse.json(
         { error: "Friction is no longer open", code: "FRICTION_CLOSED" },
@@ -699,16 +329,9 @@ export async function POST(
   }
 
   // Persist dependency edges (already validated above, before the insert)
-  let dependenciesCreated = 0;
-  if (dependencyEdges.length > 0) {
-    try {
-      const created = createDependencies(projectId, dependencyEdges);
-      dependenciesCreated = created.length;
-    } catch (error) {
-      // Non-critical: validation ran before the insert, so anything thrown
-      // here is unexpected — log but don't fail the epic creation.
-      console.error("[epics/POST] Failed to create dependencies:", error);
-    }
+  const dependenciesCreated = proposalDependencies.length;
+  if (proposalDependencies.length > 0) {
+    emitTicketDependenciesChanged(projectId, proposalDependencies.flatMap((edge) => [edge.ticketId, edge.dependsOnTicketId]));
   }
 
   const epic = db.select().from(epics).where(eq(epics.id, id)).get();

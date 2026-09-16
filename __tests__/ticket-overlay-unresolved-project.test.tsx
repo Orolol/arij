@@ -180,7 +180,7 @@ describe("a ticket opened with a resolved project", () => {
     await openTicketWith("p1");
 
     await waitFor(() => {
-      expect(requestedUrls()).toContain("/api/projects/p1/epics");
+      expect(requestedUrls()).toContain("/api/projects/p1/epics/E-1");
     });
   });
 });

@@ -30,7 +30,7 @@ it("resolves network fallback copy from the provider and can recover on refresh"
 });
 
 it("formats the response status with the same catalogue", async () => {
-  vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: false, status: 503 }));
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Unavailable", { status: 503 })));
   const { result } = renderHook(() => useProjects(), { wrapper });
   await waitFor(() => expect(result.current.error).toBe("The project request returned 503."));
 });

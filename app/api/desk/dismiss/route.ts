@@ -27,12 +27,12 @@ export async function POST(request: NextRequest) {
   const now = new Date().toISOString();
 
   db.insert(deskDismissals)
-    .values({ epicId, kind, signalAt, dismissedAt: now })
+    .values({ epicId, kind, signalAt })
     .onConflictDoUpdate({
       // One dismissal per (epic, family): re-arming replaces the stored signal
       // rather than accumulating rows.
       target: [deskDismissals.epicId, deskDismissals.kind],
-      set: { signalAt, dismissedAt: now },
+      set: { signalAt },
     })
     .run();
 

@@ -9,7 +9,7 @@ import { and, asc, desc, eq, or, sql, type Column, type SQL } from "drizzle-orm"
 import { getSessionStatusForApi } from "@/lib/agent-sessions/lifecycle";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { runBackfillRecentSessionLastNonEmptyTextOnce } from "@/lib/agent-sessions/backfill";
-import { latestActivityTimestamp } from "@/lib/agent-sessions/last-activity";
+import { latestActivityTimestamp } from "@/lib/utils/timestamps";
 import { getSessionLastActivityAt } from "@/lib/agents/watchdog";
 import {
   SESSION_LIST_DEFAULT_PAGE_SIZE,
@@ -83,9 +83,6 @@ const sessionListColumns = {
   namedAgentName: agentSessions.namedAgentName,
   model: agentSessions.model,
   cliSessionId: agentSessions.cliSessionId,
-  // Read only through resolveCliSessionId() — legacy rows populate it instead
-  // of cli_session_id, and it is dropped from the response below.
-  claudeSessionId: agentSessions.claudeSessionId,
 };
 
 /**
@@ -188,7 +185,7 @@ export async function GET(
     .all();
 
   const normalizedSessions = sessions.map(
-    ({ claudeSessionId, errorLength, producedOutput, error, ...session }) => ({
+    ({ errorLength, producedOutput, error, ...session }) => ({
       ...session,
       kind: "agent_session" as const,
       status: getSessionStatusForApi(session.status),
@@ -200,11 +197,7 @@ export async function GET(
           : error,
       producedOutput: producedOutput === 1,
       lastActivityAt: getSessionLastActivityAt(session),
-      // Legacy-row fallback handled inside resolveCliSessionId().
-      cliSessionId: resolveCliSessionId({
-        cliSessionId: session.cliSessionId,
-        claudeSessionId,
-      }),
+      cliSessionId: resolveCliSessionId(session),
     })
   );
 
@@ -220,7 +213,7 @@ export async function GET(
       provider: chatConversations.provider,
       namedAgentId: chatConversations.namedAgentId,
       createdAt: chatConversations.createdAt,
-      namedAgentName: namedAgents.readableAgentName,
+      namedAgentName: namedAgents.name,
       messageCount: sql<number>`(
         SELECT COUNT(*) FROM chat_messages
         WHERE chat_messages.conversation_id = ${chatConversations.id}

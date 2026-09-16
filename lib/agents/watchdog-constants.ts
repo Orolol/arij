@@ -1,7 +1,7 @@
 /**
  * Client-safe constants for the silent-session watchdog's staleness
  * threshold. Kept separate from lib/agents/watchdog.ts (which imports the
- * database, notifications, and the activity log) so client components can
+ * database and the activity log) so client components can
  * import the setting keys without pulling server modules into the bundle —
  * same pattern as lib/agents/scheduler-constants.ts.
  */

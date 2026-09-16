@@ -37,21 +37,12 @@ import { eq, ne } from "drizzle-orm";
 import { eventBus, type TicketEvent } from "@/lib/events/bus";
 
 const testDb = vi.hoisted(() => ({
-  instance: null as ReturnType<
-    typeof import("@/lib/db/test-utils").createTestDb
-  > | null,
+  instance: null as ReturnType<typeof import("@/lib/db/test-utils").createTestDb> | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
 // ---- Import route handlers AFTER mocks ----
 import { POST as getTicketPost } from "@/app/api/mcp/get-ticket/route";
@@ -1201,6 +1192,16 @@ describe("POST /api/mcp/ask-question", () => {
 // ---------------------------------------------------------------------------
 
 describe("POST /api/mcp/submit-findings", () => {
+  beforeEach(() => {
+    token = mintMcpToken({ sessionId, projectId, epicId, agentType: "review_code" });
+    noEpicToken = mintMcpToken({ sessionId: noEpicSessionId, projectId, agentType: "review_code" });
+  });
+  it("refuses build sessions before any write", async () => {
+    const builder = mintMcpToken({ sessionId, projectId, epicId, agentType: "build" });
+    const response = await submitFindingsPost(mockNextRequest({ method: "POST", headers: { Authorization: `Bearer ${builder}` }, body: {} }));
+    expect(response.status).toBe(403);
+  });
+
   it("stores one open agent review comment per finding plus a summary comment", async () => {
     const res = await call(
       submitFindingsPost,
@@ -1563,6 +1564,16 @@ describe("POST /api/mcp/submit-findings", () => {
 // ---------------------------------------------------------------------------
 
 describe("POST /api/mcp/submit-grading", () => {
+  beforeEach(() => {
+    token = mintMcpToken({ sessionId, projectId, epicId, agentType: "grading" });
+    noEpicToken = mintMcpToken({ sessionId: noEpicSessionId, projectId, agentType: "grading" });
+  });
+  it("refuses build sessions before any write", async () => {
+    const builder = mintMcpToken({ sessionId, projectId, epicId, agentType: "build" });
+    const response = await submitGradingPost(mockNextRequest({ method: "POST", headers: { Authorization: `Bearer ${builder}` }, body: {} }));
+    expect(response.status).toBe(403);
+  });
+
   function seedStory(storyId: string, parentEpicId = epicId) {
     db()
       .insert(userStories)

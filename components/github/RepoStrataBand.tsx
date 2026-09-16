@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { useEffect, useState } from "react";
+import { useCallback } from "react";
 import { GitMerge, RefreshCw } from "lucide-react";
 
 import { BandHeader, Mono, PillButton, StrataBand } from "@/components/piscine";
@@ -9,6 +9,7 @@ import { PrBadge } from "@/components/github/PrBadge";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import { useGitStatus } from "@/hooks/useGitStatus";
 import { useWorktrees } from "@/hooks/useWorktrees";
+import { usePolledResource } from "@/hooks/usePolledResource";
 import { formatRelative } from "@/lib/i18n/format";
 
 /**
@@ -36,6 +37,9 @@ interface OpenPr {
   status: string;
 }
 
+const NO_PRS: OpenPr[] = [];
+const isPrList = (value: unknown): value is OpenPr[] => Array.isArray(value);
+
 export interface RepoStrataBandProps {
   projectId: string;
   /** From the project record; may be null. */
@@ -45,6 +49,13 @@ export interface RepoStrataBandProps {
   /** Stored default branch, captured at GitHub import. "main" is the legacy
    *  fallback for rows that predate the column. */
   defaultBranch?: string | null;
+  snapshot?: {
+    branch: string;
+    ahead: number; behind: number; lastFetchedAt: number | null;
+    loading: boolean; error: string | null; refresh: () => void;
+    push: () => void; pushing: boolean;
+    worktreeCount: number | null; refreshWorktrees: () => void;
+  };
 }
 
 export function RepoStrataBand({
@@ -52,6 +63,7 @@ export function RepoStrataBand({
   ownerRepo,
   gitRepoPath,
   defaultBranch,
+  snapshot,
 }: RepoStrataBandProps) {
   const locale = useLocale();
   const t = useTranslations("Github");
@@ -59,42 +71,24 @@ export function RepoStrataBand({
   const repo = ownerRepo ?? config.ownerRepo;
   const enabled = Boolean(gitRepoPath);
   const prsEnabled = enabled && config.isConfigured;
-  const branch = defaultBranch || "main";
+  const branch = snapshot?.branch || defaultBranch || "main";
 
-  const { ahead, behind, lastFetchedAt, loading, error, refresh, push, pushing } =
-    useGitStatus(projectId, branch, enabled);
+  const fetched = useGitStatus(projectId, branch, enabled && !snapshot);
+  const { ahead, behind, lastFetchedAt, loading, error, refresh, push, pushing } = snapshot ?? fetched;
 
   // Count only — the list and the cleanup action are the panel beside this
   // band. Null while unknown: a "0 worktrees" we cannot vouch for would be
   // worse than no counter.
-  const { count: worktreeCount, refresh: refreshWorktrees } = useWorktrees(
-    projectId,
-    enabled,
+  const worktrees = useWorktrees(projectId, enabled && !snapshot);
+  const worktreeCount = snapshot ? snapshot.worktreeCount : worktrees.count;
+  const refreshWorktrees = snapshot ? snapshot.refreshWorktrees : worktrees.refresh;
+
+  const prErrorMessage = useCallback(() => t("repo.prsFailed"), [t]);
+  const { data: prData, error: prsError, refresh: refreshPrs } = usePolledResource<OpenPr[]>(
+    prsEnabled ? `/api/projects/${projectId}/prs` : null,
+    null, prErrorMessage, { validateData: isPrList },
   );
-
-  const [prs, setPrs] = useState<OpenPr[]>([]);
-  /** Bumped by Fetch to re-run the PR read; see the effect below. */
-  const [prsReloads, setPrsReloads] = useState(0);
-
-  // The write happens in the async continuation behind a cancel guard rather
-  // than in the effect body, so an unmount mid-flight cannot set state and
-  // `react-hooks/set-state-in-effect` stays satisfied without a suppression.
-  useEffect(() => {
-    if (!prsEnabled) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(`/api/projects/${projectId}/prs`);
-        const json = await res.json();
-        if (!cancelled && Array.isArray(json?.data)) setPrs(json.data as OpenPr[]);
-      } catch {
-        // ignore — pills are informational
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, prsEnabled, prsReloads]);
+  const prs = prData ?? NO_PRS;
 
   /* ---- no local repository: name what is missing ------------------- */
 
@@ -139,7 +133,7 @@ export function RepoStrataBand({
               disabled={loading}
               onClick={() => {
                 refresh();
-                setPrsReloads((n) => n + 1);
+                void refreshPrs();
                 void refreshWorktrees();
               }}
             >
@@ -150,7 +144,7 @@ export function RepoStrataBand({
               size="sm"
               icon={GitMerge}
               data-testid="repo-push-button"
-              disabled={pushing || ahead === 0}
+              disabled={pushing || loading || Boolean(error) || ahead === 0}
               onClick={() => void push()}
             >
               {t("repo.push", { branch })}
@@ -161,7 +155,7 @@ export function RepoStrataBand({
 
       <div className="flex flex-wrap items-center gap-x-[14px] gap-y-2">
         {error ? (
-          // The hook resolves ahead/behind against the stored default branch;
+          // Counters refer to the snapshot branch or the stored default branch;
           // when it cannot (branch missing locally, git unreadable) it says
           // why, rather than showing a stale zero-count.
           <span data-testid="repo-status-error" className="min-w-0">
@@ -202,6 +196,7 @@ export function RepoStrataBand({
             ))}
           </div>
         ) : null}
+        {prsError && <p role="alert" className="text-sm text-muted-foreground">{prsError}</p>}
       </div>
     </StrataBand>
   );

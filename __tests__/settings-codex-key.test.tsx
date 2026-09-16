@@ -180,6 +180,7 @@ describe("Settings → Pipeline — global prompt", () => {
     );
     fireEvent.change(textarea, { target: { value: "Use strict TypeScript." } });
 
+    await waitFor(() => expect(screen.getByTestId("settings-save")).toBeEnabled());
     fireEvent.click(screen.getByTestId("settings-save"));
 
     await waitFor(() => {

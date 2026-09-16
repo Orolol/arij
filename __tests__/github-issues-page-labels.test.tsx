@@ -26,13 +26,13 @@ beforeEach(() => {
         }),
       } as Response;
     }
-    if (url === "/api/settings") {
+    if (url === "/api/github/config") {
       return {
         ok: true,
-        json: async () => ({ data: { github_pat: { hasToken: true } } }),
+        json: async () => ({ data: { tokenSet: true } }),
       } as Response;
     }
-    if (url === "/api/projects/proj-1") {
+    if (url === "/api/projects") {
       return {
         ok: true,
         json: async () => ({ data: { githubOwnerRepo: "Orolol/arij" } }),
@@ -82,7 +82,7 @@ describe("GitHub issues label mapping accessibility", () => {
 
 describe("GitHub issues label mapping feedback", () => {
   it.each([
-    { outcome: "success", status: 200, body: {}, message: "Label mapping saved" },
+    { outcome: "success", status: 200, body: { data: { featureLabels: ["feature", "enhancement", "epic"], bugLabels: ["bug", "defect"] } }, message: "Label mapping saved" },
     { outcome: "validation failure", status: 400, body: { error: "Invalid label mapping" }, message: "Invalid label mapping" },
     { outcome: "server failure", status: 500, body: { error: "Database disk full" }, message: "Database disk full" },
     { outcome: "HTTP failure without an error message", status: 500, body: {}, message: "Failed to save label mapping" },

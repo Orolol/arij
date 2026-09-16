@@ -10,7 +10,7 @@ import {
   buildChatCompletionsUrl,
   buildOpenAiHeaders,
   describeNetworkError,
-  streamOpenAiChatCompletion,
+  streamOpenAiChatEvents,
   testOpenAiConnection,
   type OpenAiChatMessage,
   type OpenAiConfig,
@@ -43,9 +43,14 @@ function sseResponse(chunks: string[]): Response {
   });
 }
 
-async function collect(stream: AsyncGenerator<string, void, unknown>): Promise<string[]> {
+/** Text deltas of an events stream, in order — the wrapper this replaced is gone. */
+async function collect(
+  stream: AsyncGenerator<{ type: string; text?: string }, void, unknown>,
+): Promise<string[]> {
   const out: string[] = [];
-  for await (const delta of stream) out.push(delta);
+  for await (const event of stream) {
+    if (event.type === "text" && event.text) out.push(event.text);
+  }
   return out;
 }
 
@@ -122,7 +127,7 @@ describe("describeNetworkError", () => {
   });
 });
 
-describe("streamOpenAiChatCompletion", () => {
+describe("streamOpenAiChatEvents (text deltas)", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -145,7 +150,7 @@ describe("streamOpenAiChatCompletion", () => {
       ]),
     );
 
-    const deltas = await collect(streamOpenAiChatCompletion(baseConfig, messages));
+    const deltas = await collect(streamOpenAiChatEvents(baseConfig, messages));
     expect(deltas).toEqual(["Hel", "lo", " world"]);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -166,7 +171,7 @@ describe("streamOpenAiChatCompletion", () => {
       }),
     );
 
-    const deltas = await collect(streamOpenAiChatCompletion(baseConfig, messages));
+    const deltas = await collect(streamOpenAiChatEvents(baseConfig, messages));
     expect(deltas).toEqual(["The whole answer"]);
   });
 
@@ -178,7 +183,7 @@ describe("streamOpenAiChatCompletion", () => {
       }),
     );
 
-    await expect(collect(streamOpenAiChatCompletion(baseConfig, messages))).rejects.toThrow(
+    await expect(collect(streamOpenAiChatEvents(baseConfig, messages))).rejects.toThrow(
       "OpenAI-compatible API error: 401 Unauthorized: Invalid API key",
     );
   });
@@ -188,14 +193,14 @@ describe("streamOpenAiChatCompletion", () => {
       Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }),
     );
 
-    await expect(collect(streamOpenAiChatCompletion(baseConfig, messages))).rejects.toThrow(
+    await expect(collect(streamOpenAiChatEvents(baseConfig, messages))).rejects.toThrow(
       "OpenAI-compatible API error: connection refused — is the server running.",
     );
   });
 
   it("throws a readable error for an invalid Base URL without calling fetch", async () => {
     await expect(
-      collect(streamOpenAiChatCompletion({ ...baseConfig, baseUrl: "not a url" }, messages)),
+      collect(streamOpenAiChatEvents({ ...baseConfig, baseUrl: "not a url" }, messages)),
     ).rejects.toThrow('OpenAI-compatible API error: invalid Base URL "not a url".');
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -207,9 +212,9 @@ describe("streamOpenAiChatCompletion", () => {
     ];
     fetchMock.mockResolvedValue(sseResponse(chunks));
 
-    const gen = streamOpenAiChatCompletion(baseConfig, messages);
+    const gen = streamOpenAiChatEvents(baseConfig, messages);
     const first = await gen.next();
-    expect(first.value).toBe("Partial ");
+    expect(first.value).toEqual({ type: "text", text: "Partial " });
 
     await expect(gen.next()).rejects.toThrow(
       "OpenAI-compatible API error: insufficient credits",

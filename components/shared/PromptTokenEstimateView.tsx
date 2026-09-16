@@ -8,6 +8,7 @@ import type { TranslationKey } from "@/lib/i18n/catalogue";
 import type {
   PromptTokenBreakdown,
   LargestContextSection,
+  PromptContextSectionKey,
 } from "@/lib/tokens/estimator";
 
 /**
@@ -25,6 +26,16 @@ const PER_SESSION_LABEL_KEYS: Record<string, TranslationKey> = {
   code_review: "Shared.reviewTypes.codeReview.label",
   compliance: "Shared.promptEstimate.compliance",
   feature_review: "Shared.reviewTypes.featureReview.label",
+};
+const SECTION_KEY_MAP: Record<PromptContextSectionKey, string> = {
+  spec: "Shared.promptEstimate.sections.spec",
+  memory: "Shared.promptEstimate.sections.memory",
+  ticket: "Shared.promptEstimate.sections.ticket",
+  comments: "Shared.promptEstimate.sections.comments",
+  findings: "Shared.promptEstimate.sections.findings",
+  documents: "Shared.promptEstimate.sections.documents",
+  system: "Shared.promptEstimate.sections.system",
+  other: "Shared.promptEstimate.sections.other",
 };
 
 export interface PromptTokenEstimateData {
@@ -307,9 +318,11 @@ export function PromptTokenEstimateView({
                 {largestSection && (
                   <>
                     {" "}
-                    {/* `label` is the estimator's section name, not copy. */}
                     {t.rich("promptEstimate.budgetWarning.largest", {
-                      label: largestSection.label,
+                      label:
+                        largestSection.key && SECTION_KEY_MAP[largestSection.key]
+                          ? tKey(SECTION_KEY_MAP[largestSection.key])
+                          : largestSection.label,
                       tokens: formatTokens(largestSection.tokens) ?? "",
                       percentage: String(largestSection.percentage),
                       strong: (chunks) => (

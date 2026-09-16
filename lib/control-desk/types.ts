@@ -1,3 +1,4 @@
+import type { BuildQueueHold } from "@/lib/kanban/build-work";
 /**
  * The payload of `GET /api/control-desk` — the one read the "Now" desk makes.
  *
@@ -58,6 +59,8 @@ export interface DeskWorkingSession {
   readableId: string | null;
   /** Epic or story title; falls back to the derived activity label. */
   title: string;
+  /** Translation key for fallback titles; null when title is user copy (story/epic). */
+  titleKey?: string | null;
   taskType: DeskTaskType;
   agentName: string | null;
   /** ISO/SQLite timestamp the chrono counts from. */
@@ -76,6 +79,7 @@ export interface DeskQueuedSession {
   epicId: string | null;
   readableId: string | null;
   title: string;
+  titleKey?: string | null;
 }
 
 export interface DeskToday {
@@ -102,6 +106,10 @@ export interface DeskAwaitingReply {
   askedAt: string | null;
   /** The epic's latest comment is agent-authored and past the read cursor. */
   unreadAi: boolean;
+}
+
+export interface DeskParkedTicket {
+  ticketId: string; epicId: string; projectId: string; title: string; readableId: string | null; reason: string; at: string;
 }
 
 export interface DeskFailure {
@@ -161,13 +169,17 @@ export interface DeskQueueTicket {
   title: string;
   status: string;
   /**
-   * Execution rank (1 = the next one Full Auto picks). `null` for a ticket the
-   * supervisor would skip today: blocked by a dependency, or awaiting a reply.
+   * Position among eligible parent tickets. `null` when the desk can see an
+   * active session, unmet dependency, unanswered question or no buildable
+   * story. Full Auto also considers runtime exclusions absent from this view.
    */
   rank: number | null;
   /** Resolved labels of the unmet prerequisites (readableId || title || id). */
   blockedBy: string[];
   awaitingReply: boolean;
+  /** No story is in the build queue; opening the ticket remains available. */
+  noBuildableStories?: boolean;
+  hold?: BuildQueueHold;
   /** Feature epic with no story yet — the frame's "spec" chip. */
   specOnly: boolean;
   storyCount: number;
@@ -180,6 +192,7 @@ export interface DeskUpNextProject {
 
 export interface ControlDeskPayload {
   generatedAt: string;
+  inboxUnreadCount?: number;
   projects: DeskProject[];
   working: DeskWorkingSession[];
   queued: DeskQueuedSession[];
@@ -188,6 +201,7 @@ export interface ControlDeskPayload {
     awaitingReply: DeskAwaitingReply[];
     failed: DeskFailure[];
     conflicts: DeskConflict[];
+    parked?: DeskParkedTicket[];
   };
   readyToLand: DeskLandRow[];
   /** Tickets in `to_merge` that a blocker keeps out of `readyToLand`. */

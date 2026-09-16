@@ -4,7 +4,7 @@
  * 11b is the cross-project review layer: which review passes are running,
  * which open findings still need a human verdict, what the last week of
  * reviews concluded, and the checklist the reviewers are handed. Every field
- * here is cross-project by construction, exactly like the control desk.
+ * here belongs to the requested workspace or project scope.
  *
  * Nothing in this module touches the database: it is the contract shared by
  * `lib/qa/aggregate.ts` (which derives it), `app/api/qa/findings/route.ts`
@@ -120,6 +120,9 @@ export interface QaQueuedRun {
  */
 export const QA_CHECK_LIMIT = 5;
 
+/** Max items returned by the QA report history route (/api/projects/:id/qa/reports). */
+export const QA_REPORT_HISTORY_LIMIT = 50;
+
 /** Max characters of `qa_reports.summary` this route ships. */
 export const QA_CHECK_SUMMARY_LIMIT = 200;
 
@@ -196,8 +199,6 @@ export interface QaVerdict {
 export interface QaRubric {
   /** The bold headings of the feature-review checklist, in order. */
   items: string[];
-  /** Enabled `custom_review_agents` rows — the "+ N règles projet" chip. */
-  projectRuleCount: number;
 }
 
 /**
@@ -237,7 +238,7 @@ export interface QaPayload {
    * checks than the band draws breathing dots.
    *
    * PER PROJECT rather than one workspace figure, because the screen takes an
-   * optional `projectId` and `filterQaPayload` narrows the rows. A single total
+   * optional `projectId` and the server scopes rows and totals together. A single total
    * would survive that narrowing unchanged and print a workspace count over one
    * project's band — a worse lie than the capped slice it replaces. Projects
    * with no report at all are simply absent; `sumCheckTotals` reads a missing

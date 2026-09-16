@@ -6,6 +6,7 @@ import { Loader2 } from "lucide-react";
 
 import { FieldBoxInput } from "@/components/agents-workshop/FieldBox";
 import { ScopeSwitcher } from "@/components/agents-workshop/ScopeSwitcher";
+import { AgentConfigError } from "./AgentConfigError";
 import {
   BandHeader,
   CheckMark,
@@ -16,6 +17,9 @@ import {
   SurfaceCard,
 } from "@/components/piscine";
 import { REVIEW_PROVIDER_SEGREGATION_SETTING_KEY } from "@/lib/agent-config/review-segregation-constants";
+// Payload shape owned by the server module; `import type` is erased before
+// bundling, so the db import behind it never reaches this client component.
+import type { ProjectReviewBounceRow } from "@/lib/agent-config/stats";
 import {
   AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY,
   DEFAULT_MAX_CONCURRENT_AGENTS,
@@ -79,6 +83,8 @@ function RuntimeBand({
     project: number | null;
   } | null>(null);
   const [savingMaxConcurrent, setSavingMaxConcurrent] = useState(false);
+  const [loadError, setLoadError] = useState(false);
+  const [loadAttempt, setLoadAttempt] = useState(0);
 
   const projectScoped = scope === "project" && !!projectId;
   const maxConcurrentKey = projectScoped
@@ -128,8 +134,14 @@ function RuntimeBand({
   useEffect(() => {
     let cancelled = false;
     fetch("/api/settings")
-      .then((r) => r.json())
+      .then((response) => {
+        if (!response.ok) throw new Error("Settings request failed");
+        return response.json();
+      })
       .then((json) => {
+        if (!json?.data || typeof json.data !== "object" || Array.isArray(json.data)) {
+          throw new Error("Settings response had no configuration");
+        }
         if (cancelled) return;
         const value = json?.data?.[REVIEW_PROVIDER_SEGREGATION_SETTING_KEY];
         setSegregation(value === true || value === "true");
@@ -143,18 +155,21 @@ function RuntimeBand({
             )
           : null;
         setMaxConcurrent({ global, project });
+        setLoadError(false);
       })
       .catch(() => {
         if (cancelled) return;
-        setSegregation(false);
-        setMaxConcurrent({ global: null, project: null });
+        // An unreadable settings document says nothing about effective limits.
+        // Leave the controls unresolved until a successful initial read.
+        setLoadError(true);
       });
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, loadAttempt]);
 
   async function toggleSegregation(next: boolean) {
+    if (segregation === null || loadError || savingSegregation) return;
     // Optimistic with rollback: the toggle answers instantly and restores the
     // previous value if the write is refused.
     const previous = segregation;
@@ -190,6 +205,7 @@ function RuntimeBand({
   async function saveMaxConcurrent() {
     if (
       !maxConcurrent ||
+      loadError ||
       !inputValid ||
       !maxConcurrentDirty ||
       savingMaxConcurrent
@@ -241,12 +257,17 @@ function RuntimeBand({
         meta={t("limits.runtimeMeta")}
       />
 
+      {loadError && <AgentConfigError onRetry={async () => {
+        setLoadError(false);
+        setLoadAttempt((attempt) => attempt + 1);
+      }} />}
+
       <SurfaceCard radius={12} className="flex items-start gap-3 px-4 py-3">
         <CheckMark
           shape="square"
           tone="action"
           checked={segregation === true}
-          disabled={segregation === null || savingSegregation}
+          disabled={segregation === null || loadError || savingSegregation}
           onToggle={() => toggleSegregation(segregation !== true)}
         />
         <div className="flex flex-col gap-1">
@@ -280,7 +301,7 @@ function RuntimeBand({
             className="font-sans text-[12px] text-muted-foreground"
             data-testid="agent-max-concurrent-effective"
           >
-            {maxConcurrent === null
+            {loadError ? "—" : maxConcurrent === null
               ? t("common.loading")
               : status === "error"
                 ? t("limits.saveFailed")
@@ -317,14 +338,14 @@ function RuntimeBand({
             }}
             onBlur={() => void saveMaxConcurrent()}
             placeholder={formatMaxConcurrent(inheritedMaxConcurrent)}
-            disabled={maxConcurrent === null || savingMaxConcurrent}
+            disabled={maxConcurrent === null || loadError || savingMaxConcurrent}
             className="w-24"
           />
           <PillButton
             variant="filled"
             size="sm"
             onClick={saveMaxConcurrent}
-            disabled={!maxConcurrentDirty || !inputValid}
+            disabled={!maxConcurrentDirty || !inputValid || loadError}
             pending={savingMaxConcurrent}
             pendingLabel={t("common.saving")}
           >
@@ -339,14 +360,6 @@ function RuntimeBand({
 /* ------------------------------------------------------------------ */
 /* Review bounce                                                       */
 /* ------------------------------------------------------------------ */
-
-interface ProjectReviewBounceRow {
-  projectId: string;
-  projectName: string | null;
-  reviewedEpics: number;
-  bounceTransitions: number;
-  bounceRate: number | null;
-}
 
 function ReviewBounceCard({ projectId }: { projectId?: string }) {
   const t = useTranslations("AgentsWorkshop");
@@ -369,8 +382,8 @@ function ReviewBounceCard({ projectId }: { projectId?: string }) {
     let cancelled = false;
     const key = projectId ?? "";
     const query = projectId
-      ? `?projectId=${encodeURIComponent(projectId)}`
-      : "";
+      ? `?projectId=${encodeURIComponent(projectId)}&include=reviewBounce`
+      : "?include=reviewBounce";
     fetch(`/api/agent-config/stats${query}`)
       .then((r) => r.json())
       .then((json) => {

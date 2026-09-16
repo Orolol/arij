@@ -256,7 +256,6 @@ describe("sessions list route (unified)", () => {
         "namedAgentId",
         "namedAgentName",
         "cliSessionId",
-        "claudeSessionId",
       ])
     );
 

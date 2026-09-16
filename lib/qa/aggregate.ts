@@ -1,3 +1,4 @@
+import { isStructuredReviewVerdict, parseProseVerdict } from "@/lib/review/verdict";
 /**
  * The pure half of frame 11b.
  *
@@ -17,11 +18,12 @@
  */
 
 import { FINDING_SEVERITY_PREFIXES } from "@/lib/review/finding-severity";
+import { compareStoredTimestamps } from "@/lib/utils/timestamps";
 
 // The LEAF module, not `lifecycle.ts`: this file is pure and reaches the client
 // through `QaScreen`, and `lifecycle.ts` imports `@/lib/db` — importing it here
 // pulled `better-sqlite3` into the browser bundle.
-import { TERMINAL_STATUSES } from "@/lib/agent-sessions/lifecycle-status";
+import { NON_TERMINAL_STATUSES } from "@/lib/agent-sessions/lifecycle-status";
 
 import {
   QA_VERDICT_LIMIT,
@@ -120,7 +122,7 @@ export function compareFindings(
 ): number {
   const byTier = TIER_RANK[a.tier] - TIER_RANK[b.tier];
   if (byTier !== 0) return byTier;
-  return (b.filedAt ?? "").localeCompare(a.filedAt ?? "");
+  return compareStoredTimestamps(a.filedAt, b.filedAt, "desc");
 }
 
 /* ------------------------------------------------------------------ */
@@ -179,7 +181,7 @@ export function deriveRuns(
         blockingFiled: filed ? filed.blocking : null,
       };
     })
-    .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
+    .sort((a, b) => compareStoredTimestamps(a.startedAt, b.startedAt) || a.sessionId.localeCompare(b.sessionId));
 }
 
 /** The translucent queued tile's rows. */
@@ -272,7 +274,7 @@ export function isCheckLive(row: {
 }): boolean {
   if ((row.status ?? "running") !== "running") return false;
   if (row.sessionStatus === null) return false;
-  return !TERMINAL_STATUSES.has(row.sessionStatus);
+  return (NON_TERMINAL_STATUSES as readonly string[]).includes(row.sessionStatus);
 }
 
 /**
@@ -392,7 +394,7 @@ export function deriveChecks(rows: readonly QaCheckRow[]): QaCheck[] {
     )
     .sort((a, b) => {
       if (a.live !== b.live) return a.live ? -1 : 1;
-      return (b.createdAt ?? "").localeCompare(a.createdAt ?? "");
+      return compareStoredTimestamps(a.createdAt, b.createdAt, "desc") || b.reportId.localeCompare(a.reportId);
     });
 }
 
@@ -405,6 +407,7 @@ export interface QaVerdictSessionRow {
   epicId: string;
   projectId: string;
   reviewVerdict: string | null;
+  lastNonEmptyText?: string | null;
   /** `sessionAtSql()` — already normalised for lexicographic comparison. */
   at: string | null;
   /** Rows this session filed. */
@@ -487,20 +490,19 @@ export function deriveVerdicts(
       const epic = epicsById.get(row.epicId);
       const n = row.findingsFiled;
       const structured =
-        row.reviewVerdict === "approved" ||
-        row.reviewVerdict === "approved_with_minor_issues" ||
-        row.reviewVerdict === "changes_requested";
+        isStructuredReviewVerdict(row.reviewVerdict);
 
+      const proseVerdict = parseProseVerdict(row.lastNonEmptyText);
       let kind: QaVerdict["kind"] = "clean";
       let verdictText: string;
 
       if (!structured && unverifiableEpicIds.has(row.epicId)) {
         kind = "attention";
         verdictText = copy.unverifiable;
-      } else if (row.reviewVerdict === "changes_requested") {
+      } else if (row.reviewVerdict === "changes_requested" || (!structured && proseVerdict === "changes_requested")) {
         kind = "attention";
         verdictText = copy.changesRequested(n);
-      } else if (structured) {
+      } else if (structured || proseVerdict) {
         verdictText = n === 0 ? copy.cleanNoFindings : copy.cleanWithFindings(n);
       } else {
         // No structured verdict and not unverifiable: an MCP-less provider
@@ -524,8 +526,8 @@ export function deriveVerdicts(
 
 /** `a` is newer than `b` — same tie-break as `listUnverifiableReviewEpicIds`. */
 function outranks(a: QaVerdictSessionRow, b: QaVerdictSessionRow): boolean {
-  const byAt = (a.at ?? "").localeCompare(b.at ?? "");
-  if (byAt !== 0) return byAt > 0;
+  const byAt = compareStoredTimestamps(a.at, b.at, "desc");
+  if (byAt !== 0) return byAt < 0;
   return a.sessionId > b.sessionId;
 }
 

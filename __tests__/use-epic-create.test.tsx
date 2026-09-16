@@ -82,6 +82,7 @@ Acceptance Criteria:
 
     const payload = JSON.parse((createCall[1] as { body: string }).body);
     expect(payload.title).toBe("Account Security");
+    expect(payload.sourceConversationId).toBe("conv1");
     expect(payload.description).toContain("Improve authentication");
     expect(payload.userStories).toHaveLength(2);
     expect(payload.userStories[0].title).toContain("As a user");
@@ -329,4 +330,118 @@ Acceptance Criteria:
     expect(result.current.createdEpic).toBeNull();
     expect(result.current.error).toBe("Title is required");
   });
+  it("prevents concurrent requests and retries the same proposal through the server", async () => {
+    const messages = [{ role: "assistant", content: JSON.stringify({ title: "One epic", description: "Scope", user_stories: [{ title: "Story" }] }) }];
+    let finish!: (response: Response) => void;
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
+      .mockReturnValueOnce(new Promise<Response>((resolve) => { finish = resolve; }));
+    const { result } = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a" }));
+    let first!: Promise<string | null>;
+    act(() => { first = result.current.createEpic(); void result.current.createEpic(); });
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
+    await act(async () => {
+      finish({ ok: true, json: async () => ({ data: { id: "epic-1" } }) } as Response);
+      await first;
+    });
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { id: "epic-1" } }) });
+    await act(async () => { expect(await result.current.createEpic()).toBe("epic-1"); });
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(2);
+    expect(posts.map(([, init]) => JSON.parse(init.body))).toEqual([
+      expect.objectContaining({ sourceConversationId: "a", title: "One epic" }),
+      JSON.parse(posts[0][1].body),
+    ]);
+  });
+
+  it("does not publish a prior conversation's creation error over a different conversation", async () => {
+    let finish!: (response: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => { finish = resolve; }));
+    const { result, rerender } = renderHook(({ conversationId }) => useEpicCreate({ projectId: "p1", conversationId }), { initialProps: { conversationId: "a" } });
+    let first!: Promise<string | null>;
+    act(() => { first = result.current.createEpic(); });
+    rerender({ conversationId: "b" });
+    expect(result.current.error).toBeNull();
+    expect(result.current.isLoading).toBe(false);
+    await act(async () => { finish({ ok: false } as Response); await first; });
+    expect(result.current.error).toBeNull();
+  });
+
+  it("stops finalization immediately when sending the prompt fails", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [{ role: "user", content: "Idea" }] }) });
+    const sendMessage = vi.fn(async () => false);
+    const { result } = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a", sendMessage }));
+    await act(async () => { expect(await result.current.createEpic()).toBeNull(); });
+    expect(result.current.error).toBe("Failed to send message");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores an in-flight creation on return and publishes its completion", async () => {
+    const messages = [{ role: "assistant", content: JSON.stringify({ title: "One epic", description: "Scope", user_stories: [{ title: "Story" }] }) }];
+    let finish!: (response: Response) => void;
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
+      .mockReturnValueOnce(new Promise<Response>((resolve) => { finish = resolve; }));
+    const onEpicCreated = vi.fn();
+    const { result, rerender } = renderHook(({ conversationId }) => useEpicCreate({ projectId: "p1", conversationId, onEpicCreated }), { initialProps: { conversationId: "a" } });
+    let first!: Promise<string | null>;
+    act(() => { first = result.current.createEpic(); });
+    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
+    rerender({ conversationId: "b" });
+    expect(result.current.isLoading).toBe(false);
+    rerender({ conversationId: "a" });
+    expect(result.current.isLoading).toBe(true);
+    await act(async () => { expect(await result.current.createEpic()).toBeNull(); });
+    await act(async () => {
+      finish({ ok: true, json: async () => ({ data: { id: "epic-1" } }) } as Response);
+      expect(await first).toBe("epic-1");
+    });
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.createdEpic?.epicId).toBe("epic-1");
+    expect(onEpicCreated).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    rerender({ conversationId: "b" });
+    expect(result.current.createdEpic).toBeNull();
+  });
+
+  it("stops finalization when the accepted prompt's reply fails", async () => {
+    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [{ role: "user", content: "Idea" }] }) });
+    const sendMessage = vi.fn(async () => ({ accepted: true, error: "Connection lost" }));
+    const { result } = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a", sendMessage }));
+    await act(async () => { expect(await result.current.createEpic()).toBeNull(); });
+    expect(result.current.error).toBe("Connection lost");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries the same conversation proposal after a lost response and a remount", async () => {
+    const messages = [{ role: "assistant", content: JSON.stringify({ title: "One epic", description: "Scope", user_stories: [{ title: "Story" }] }) }];
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
+      .mockRejectedValueOnce(new Error("Connection lost"))
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { id: "epic-1" } }) });
+    const first = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a" }));
+    await act(async () => { expect(await first.result.current.createEpic()).toBeNull(); });
+    first.unmount();
+    const second = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a" }));
+    await act(async () => { expect(await second.result.current.createEpic()).toBe("epic-1"); });
+    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts).toHaveLength(2);
+    expect(posts[1][1].body).toBe(posts[0][1].body);
+    expect(JSON.parse(posts[1][1].body).sourceConversationId).toBe("a");
+  });
+
+  it("surfaces a deleted proposal instead of returning a stale cached success", async () => {
+    const messages = [{ role: "assistant", content: JSON.stringify({ title: "One epic", description: "Scope", user_stories: [{ title: "Story" }] }) }];
+    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { id: "epic-1" } }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ error: "The epic created from this proposal was deleted" }) });
+    const { result } = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a" }));
+    await act(async () => { expect(await result.current.createEpic()).toBe("epic-1"); });
+    await act(async () => { expect(await result.current.createEpic()).toBeNull(); });
+    expect(result.current.error).toContain("was deleted");
+    expect(result.current.createdEpic).toBeNull();
+  });
+
 });

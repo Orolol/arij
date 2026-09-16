@@ -12,6 +12,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import { resetTestUiLocale, setTestUiLocale } from "@/__tests__/support/next-intl-mock";
 
+vi.mock("@/components/ProjectsProvider", () => ({ ProjectsProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+vi.mock("@/components/ControlDeskProvider", () => ({ ControlDeskProvider: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
+
 vi.mock("next/font/google", () => {
   const font = (name: string) => () => ({ variable: `--font-${name}` });
   return {

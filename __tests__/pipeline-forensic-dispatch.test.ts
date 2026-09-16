@@ -16,6 +16,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { claudeEnvelope } from "./helpers/provider-fixtures";
 
 const processManagerState = vi.hoisted(() => ({
   result: undefined as Record<string, unknown> | undefined,
@@ -89,15 +90,6 @@ const { resolveAgentByNamedId } = await import(
 );
 
 let counter = 0;
-
-async function flushBackground() {
-  await new Promise((r) => setTimeout(r, 25));
-  await new Promise((r) => setTimeout(r, 25));
-}
-
-function claudeEnvelope(text: string): string {
-  return JSON.stringify({ type: "result", subtype: "success", result: text });
-}
 
 /** The cheap named agent users bind to agentType 'forensic'. */
 function seedCheapAgent() {
@@ -232,7 +224,7 @@ describe("runForensic — happy path", () => {
       attempts: 2,
     });
     expect(sessionId).toBeTruthy();
-    await flushBackground();
+    await settled;
 
     const session = db
       .select()
@@ -316,7 +308,7 @@ describe("runForensic — happy path", () => {
     const { projectId, epicId, storyId } = seedProject();
     const deadId = seedDeadSession(projectId, epicId);
 
-    const { sessionId } = await runForensic({
+    const { sessionId, settled } = await runForensic({
       projectId,
       epicId,
       userStoryId: storyId,
@@ -324,7 +316,7 @@ describe("runForensic — happy path", () => {
       stage: "fix",
       attempts: 1,
     });
-    await flushBackground();
+    await settled;
 
     const session = db
       .select()
@@ -345,7 +337,7 @@ describe("runForensic — happy path", () => {
       lastNonEmptyText: null,
     });
 
-    const { sessionId } = await runForensic({
+    const { sessionId, settled } = await runForensic({
       projectId,
       epicId,
       userStoryId: null,
@@ -353,7 +345,7 @@ describe("runForensic — happy path", () => {
       stage: "review",
       attempts: 2,
     });
-    await flushBackground();
+    await settled;
 
     const session = db
       .select()
@@ -421,8 +413,8 @@ describe("runForensic — guards", () => {
       stage: "build",
       attempts: 2,
     });
-    await flushBackground();
-
+    // The refusal's own settled promise is asserted just below; nothing else
+    // was queued, so there is no second wait.
     expect(result.sessionId).toBeNull();
     await expect(result.settled).resolves.toMatchObject({
       success: false,
@@ -450,7 +442,7 @@ describe("runForensic — guards", () => {
       stage: "build",
       attempts: 2,
     });
-    await flushBackground();
+    await settled;
 
     expect(
       db.select().from(agentSessions).where(eq(agentSessions.id, sessionId!)).get()
@@ -483,7 +475,7 @@ describe("runForensic — guards", () => {
       stage: "build",
       attempts: 2,
     });
-    await flushBackground();
+    await settled;
 
     expect(commentsFor(epicId)).toHaveLength(0);
     await expect(settled).resolves.toMatchObject({

@@ -1,35 +1,24 @@
 /**
  * End-of-run synthesis report for a board refinement re-pass.
  *
- * Two surfaces, deliberately:
- *
- *   - a **notification**, project-scoped, carrying the aggregate the user
- *     wants at a glance ("4 promoted · 2 sent back · 3 edges added") and
- *     deep-linking to the board;
- *   - a **recap comment on every ticket whose column changed**, which is
- *     where "with links to the tickets" actually lands. Arij has no
- *     project-level comment surface — comments hang off an epic or a story —
- *     so a single board-wide comment would have nowhere to be read. The
- *     comment leads with what happened to *that* ticket and why, then lists
- *     the rest of the pass, so a user opening a moved ticket sees both the
- *     local reason and the context it was moved in.
+ * One surface: a **recap comment on every ticket whose column changed**,
+ * where "with links to the tickets" actually lands. Arij has no project-level
+ * comment surface — comments hang off an epic or a story — so a single
+ * board-wide comment would have nowhere to be read; the comment leads with
+ * what happened to *that* ticket and why, then lists the rest of the pass, so
+ * a user opening a moved ticket sees both the local reason and the context it
+ * was moved in.
  *
  * Tickets that only changed priority, order or dependencies get their
  * activity-log entry and no comment: those entries already carry the
  * justification, and a comment per reorder would bury the feed.
  *
  * Discarded tickets are the one thing here that has no ticket left to be
- * filed on, so their tombstones ride BOTH surfaces: the recap comment, and
- * the notification's `message`.
- *
- * The comment is the one that matters, and it always gets a host: the pass's
- * own surviving tickets first, then — for a pass that deleted everything it
- * touched — any ticket the project still has (`fallbackCommentHost`), with
- * the comment saying why it is filed there. The notification is a duplicate,
- * not a fallback: nothing in the app renders `notifications` today
- * (hooks/useNotifications.ts has no consumer; the chrome reads /api/inbox,
- * built from ticket_comments and agent_sessions), so a tombstone that lived
- * only there would be a permanently deleted ticket with no readable record.
+ * filed on, so their tombstones ride the recap comment — the only surface
+ * that renders them. The comment always gets a host: the pass's own surviving
+ * tickets first, then — for a pass that deleted everything it touched — any
+ * ticket the project still has (`fallbackCommentHost`), with the comment
+ * saying why it is filed there.
  *
  * What is not covered: a project with no tickets left at all has no host, and
  * a server restart mid-pass drops the in-process registry, so a discard whose
@@ -43,10 +32,7 @@ import { db } from "@/lib/db";
 import { epics, ticketComments } from "@/lib/db/schema";
 import { REFINEMENT_STATUSES } from "@/lib/mcp/refinement";
 import { createId } from "@/lib/utils/nanoid";
-import {
-  buildEpicTargetUrl,
-  createRefinementReportNotification,
-} from "@/lib/notifications/create";
+import { epicDeepLink } from "@/lib/navigation/deep-link";
 import { REFINEMENT_LABEL } from "./constants";
 import { takeRefinementChanges, type RefinementChange } from "./registry";
 
@@ -93,8 +79,7 @@ function plural(count: number, one: string, many: string): string {
 }
 
 /**
- * The one-line aggregate — the notification title's payload and the recap
- * comment's opening. Only non-empty categories are listed, so a pass that
+ * The one-line aggregate — the recap comment's opening. Only non-empty categories are listed, so a pass that
  * only re-ranked To do does not claim "0 promoted, 0 sent back".
  */
 export function formatRefinementSummary(report: RefinementReport): string {
@@ -140,7 +125,7 @@ export function formatRefinementSummary(report: RefinementReport): string {
  */
 function ticketLink(projectId: string, change: RefinementChange): string {
   if (change.ticketGone) return `~~${change.label}~~`;
-  return `[${change.label}](${buildEpicTargetUrl(projectId, change.ticketId)})`;
+  return `[${change.label}](${epicDeepLink(projectId, change.ticketId)})`;
 }
 
 function changeList(
@@ -275,45 +260,12 @@ export function formatRefinementComment(
     );
   } else if (options.fullListTicketId) {
     lines.push(
-      `Full breakdown of this pass: ${buildEpicTargetUrl(projectId, options.fullListTicketId)}`,
+      `Full breakdown of this pass: ${epicDeepLink(projectId, options.fullListTicketId)}`,
       ""
     );
   }
 
   return lines.join("\n").trim();
-}
-
-/**
- * Ceiling on the tombstone text carried by one notification.
- *
- * `notifications.message` is read whole by the notification list, so an
- * unbounded dump of every discarded ticket's acceptance criteria would be
- * paid for on every poll. Truncation is marked, never silent.
- */
-export const REFINEMENT_NOTIFICATION_MESSAGE_MAX_CHARS = 4000;
-
-/**
- * The discarded tickets' full text for the notification, or null when the
- * pass discarded nothing (the ordinary case — `message` stays NULL, as it is
- * for every other completed session).
- */
-export function formatDiscardedTombstones(
-  report: RefinementReport
-): string | null {
-  if (report.discarded.length === 0) return null;
-
-  const blocks = report.discarded.map((change) =>
-    [
-      `Discarded ${change.label}: ${change.reason}`,
-      change.snapshot ?? "",
-    ]
-      .filter(Boolean)
-      .join("\n\n")
-  );
-
-  const body = blocks.join("\n\n---\n\n");
-  if (body.length <= REFINEMENT_NOTIFICATION_MESSAGE_MAX_CHARS) return body;
-  return `${body.slice(0, REFINEMENT_NOTIFICATION_MESSAGE_MAX_CHARS)}\n\n[truncated — the full text is in the recap comment]`;
 }
 
 /** Which of these ids are still rows in the project. */
@@ -379,12 +331,11 @@ export interface PublishedRefinementReport {
   report: RefinementReport;
   summary: string;
   commentedTicketIds: string[];
-  notificationId: string | null;
 }
 
 /**
- * Drain the session's changes, post the recap comments, and raise the
- * notification. Returns what it published so the dispatcher can log it.
+ * Drain the session's changes and post the recap comments. Returns what it
+ * published so the dispatcher can log it.
  *
  * A pass that changed nothing still notifies: "the board was already in
  * shape" is a result the user asked for, and silence would read as a
@@ -442,13 +393,11 @@ export function publishRefinementReport(
 
   // And when the pass DELETED everything it touched, to any ticket the
   // project still has. That reads as a board-wide record filed on an
-  // unrelated ticket, which is odd — but it is the only readable surface
-  // there is: `notifications` has no consumer in the app (hooks/
-  // useNotifications.ts is unmounted; the chrome reads /api/inbox, which is
-  // built from ticket_comments and agent_sessions), so without this a pass
-  // that discarded two Backlog tickets and nothing else leaves the user with
-  // two tickets gone and no explanation anywhere they will look. The comment
-  // says why it is filed there.
+  // unrelated ticket, which is odd — but the inbox is the only readable
+  // surface left, and without this a pass that discarded two Backlog tickets
+  // and nothing else leaves the user with two tickets gone and no
+  // explanation anywhere they will look. The comment says why it is filed
+  // there.
   const fullListTicketId =
     movedTicketIds[0] ??
     touchedTicketIds[0] ??
@@ -495,16 +444,5 @@ export function publishRefinementReport(
     }
   }
 
-  const notificationId = createRefinementReportNotification({
-    projectId: input.projectId,
-    sessionId: input.sessionId,
-    summary,
-    succeeded: input.succeeded,
-    // A duplicate of what the recap comment carries, kept for the day the
-    // notification surface is mounted — and the only copy when the project
-    // has no ticket left to host a comment at all.
-    message: formatDiscardedTombstones(report),
-  });
-
-  return { report, summary, commentedTicketIds, notificationId };
+  return { report, summary, commentedTicketIds };
 }

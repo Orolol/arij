@@ -17,6 +17,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { claudeEnvelope } from "./helpers/provider-fixtures";
 
 const processManagerState = vi.hoisted(() => ({
   result: undefined as Record<string, unknown> | undefined,
@@ -68,7 +69,6 @@ const {
   epics,
   agentSessions,
   settings,
-  notifications,
   documents,
 } = await import("@/lib/db/schema");
 const {
@@ -93,6 +93,9 @@ const {
   getProjectMemoryContent,
   saveProjectMemory,
 } = await import("@/lib/documents/memory");
+const { getMemoryWriteProvenance } = await import(
+  "@/lib/documents/memory-provenance"
+);
 const {
   PROJECT_MEMORY_MAX_CHARS,
   PROJECT_MEMORY_MAX_TOKENS,
@@ -108,20 +111,6 @@ const { sumNightRunCost } = await import("@/lib/night/summary");
 let counter = 0;
 let projectId = "";
 let epicId = "";
-
-async function flushBackground() {
-  await new Promise((r) => setTimeout(r, 25));
-  await new Promise((r) => setTimeout(r, 25));
-}
-
-function claudeEnvelope(text: string, costUsd?: number): string {
-  return JSON.stringify({
-    type: "result",
-    subtype: "success",
-    result: text,
-    ...(costUsd !== undefined ? { total_cost_usd: costUsd } : {}),
-  });
-}
 
 function seedProject() {
   counter += 1;
@@ -294,7 +283,7 @@ describe("dispatchDreamingSession", () => {
     seedSourceSession({ lastNonEmptyText: "SOURCE SESSION TEXT" });
 
     const result = await dispatchDreamingSession({ projectId, trigger: "manual" });
-    await flushBackground();
+    await result.settled;
 
     expect(result.dispatched).toBe(true);
     expect(result.sessionsAnalyzed).toBe(1);
@@ -337,8 +326,7 @@ describe("dispatchDreamingSession", () => {
     saveProjectMemory(projectId, "- Rule that is about to be replaced");
     seedSourceSession();
 
-    await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await (await dispatchDreamingSession({ projectId })).settled;
 
     const archive = getProjectMemoryArchiveDoc(projectId);
     expect(archive?.markdownContent).toBe("- Rule that is about to be replaced");
@@ -349,25 +337,18 @@ describe("dispatchDreamingSession", () => {
     );
   });
 
-  it("notifies with a deep link and a summary of the change", async () => {
+  it("records the dream as the memory's provenance, with its session", async () => {
     saveProjectMemory(projectId, "x".repeat(120));
     seedSourceSession();
 
     const result = await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await result.settled;
 
-    const notification = db
-      .select()
-      .from(notifications)
-      .where(eq(notifications.projectId, projectId))
-      .all()
-      .find((row) => row.agentType === DREAMING_AGENT_TYPE);
-    expect(notification).toBeDefined();
-    expect(notification!.title).toContain("Project memory updated by Dreaming");
-    expect(notification!.title).toContain("1 session analyzed");
-    expect(notification!.title).toContain("120 → ");
-    expect(notification!.targetUrl).toBe(`/projects/${projectId}/spec#memory-panel`);
-    expect(notification!.sessionId).toBe(result.sessionId);
+    // The memory panel reads the last-write provenance; there is no
+    // notification row to assert on.
+    const provenance = getMemoryWriteProvenance(projectId);
+    expect(provenance?.source).toBe("dreaming");
+    expect(provenance?.sessionId).toBe(result.sessionId);
   });
 
   it("enforces the memory cap on the dreamed output", async () => {
@@ -384,8 +365,7 @@ describe("dispatchDreamingSession", () => {
       duration: 1000,
     };
 
-    await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await (await dispatchDreamingSession({ projectId })).settled;
 
     expect(getProjectMemoryContent(projectId)).toHaveLength(
       PROJECT_MEMORY_MAX_CHARS
@@ -411,7 +391,7 @@ describe("dispatchDreamingSession", () => {
     };
 
     const result = await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await result.settled;
 
     // The session itself answered...
     expect(
@@ -425,14 +405,6 @@ describe("dispatchDreamingSession", () => {
     expect(getProjectMemoryContent(projectId)).toBe("- EXISTING MEMORY");
     expect(getProjectMemoryArchiveDoc(projectId)).toBeNull();
     expect(findLastDreamCutoff(projectId)).toBeNull();
-    expect(
-      db
-        .select()
-        .from(notifications)
-        .where(eq(notifications.projectId, projectId))
-        .all()
-        .filter((row) => row.agentType === DREAMING_AGENT_TYPE)
-    ).toHaveLength(0);
   });
 
   /**
@@ -456,8 +428,7 @@ describe("dispatchDreamingSession", () => {
       duration: 1000,
     };
 
-    await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await (await dispatchDreamingSession({ projectId })).settled;
 
     expect(getProjectMemoryContent(projectId)).toBe("- EXISTING MEMORY");
     expect(findLastDreamCutoff(projectId)).toBeNull();
@@ -480,8 +451,7 @@ describe("dispatchDreamingSession", () => {
       duration: 1000,
     };
 
-    await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await (await dispatchDreamingSession({ projectId })).settled;
 
     expect(getProjectMemoryContent(projectId)).toBeNull();
     expect(findLastDreamCutoff(projectId)).toBeNull();
@@ -501,8 +471,7 @@ describe("dispatchDreamingSession", () => {
       duration: 1000,
     };
 
-    await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await (await dispatchDreamingSession({ projectId })).settled;
 
     expect(getProjectMemoryContent(projectId)).toBe(body);
   });
@@ -512,7 +481,7 @@ describe("dispatchDreamingSession", () => {
     seedSourceSession({ batchRunId: runId, totalCostUsd: 3 });
     processManagerState.result = {
       success: true,
-      result: claudeEnvelope("## Codebase pitfalls\n\n- rule", 0.5),
+      result: claudeEnvelope("## Codebase pitfalls\n\n- rule", { costUsd: 0.5 }),
       duration: 1000,
     };
 
@@ -521,7 +490,7 @@ describe("dispatchDreamingSession", () => {
       batchRunId: runId,
       trigger: "night_run",
     });
-    await flushBackground();
+    await result.settled;
 
     const row = db
       .select()
@@ -553,7 +522,7 @@ describe("dispatchDreamingSession — the memory is only replaced on delivery", 
     };
 
     const result = await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await result.settled;
 
     const session = db
       .select()
@@ -574,19 +543,10 @@ describe("dispatchDreamingSession — the memory is only replaced on delivery", 
       duration: 10,
     };
 
-    await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await (await dispatchDreamingSession({ projectId })).settled;
 
     expect(getProjectMemoryContent(projectId)).toBe("- Untouched rule");
     expect(getProjectMemoryArchiveDoc(projectId)).toBeNull();
-    expect(
-      db
-        .select()
-        .from(notifications)
-        .where(eq(notifications.projectId, projectId))
-        .all()
-        .filter((row) => row.agentType === DREAMING_AGENT_TYPE)
-    ).toHaveLength(0);
   });
 
   it("leaves the memory untouched when the dream produced nothing", async () => {
@@ -594,8 +554,7 @@ describe("dispatchDreamingSession — the memory is only replaced on delivery", 
     seedSourceSession();
     processManagerState.result = { success: true, result: "", duration: 10 };
 
-    await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await (await dispatchDreamingSession({ projectId })).settled;
 
     expect(getProjectMemoryContent(projectId)).toBe("- Untouched rule");
     expect(getProjectMemoryArchiveDoc(projectId)).toBeNull();
@@ -612,8 +571,7 @@ describe("dispatchDreamingSession — the window only advances on a real write",
     seedSourceSession();
     expect(findLastDreamCutoff(projectId)).toBeNull();
 
-    await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await (await dispatchDreamingSession({ projectId })).settled;
 
     const cutoff = findLastDreamCutoff(projectId);
     expect(cutoff).not.toBeNull();
@@ -629,8 +587,7 @@ describe("dispatchDreamingSession — the window only advances on a real write",
       duration: 1000,
     };
 
-    await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await (await dispatchDreamingSession({ projectId })).settled;
 
     expect(findLastDreamCutoff(projectId)).toBeNull();
   });
@@ -654,7 +611,7 @@ describe("dispatchDreamingSession — the window only advances on a real write",
       .run();
 
     const result = await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await result.settled;
 
     // The session itself completed and answered...
     const session = db
@@ -667,21 +624,13 @@ describe("dispatchDreamingSession — the window only advances on a real write",
     // claimed otherwise.
     expect(getProjectMemoryContent(projectId)).toBeNull();
     expect(findLastDreamCutoff(projectId)).toBeNull();
-    expect(
-      db
-        .select()
-        .from(notifications)
-        .where(eq(notifications.projectId, projectId))
-        .all()
-        .filter((row) => row.agentType === DREAMING_AGENT_TYPE)
-    ).toHaveLength(0);
 
     // And the evidence is still on the table for the next dream.
     db.delete(documents)
       .where(eq(documents.id, `squatter-${counter}`))
       .run();
     const retry = await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await retry.settled;
     expect(retry.dispatched).toBe(true);
     expect(retry.sessionsAnalyzed).toBe(1);
     expect(retry.sessionId).not.toBe(result.sessionId);
@@ -707,7 +656,7 @@ describe("memory writers exclude each other", () => {
 
     expect(hasPendingMemoryWriter(projectId)).toBe(true);
     const result = await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await result.settled;
 
     expect(result.dispatched).toBe(false);
     expect(result.reason).toContain("already pending");
@@ -734,7 +683,13 @@ describe("memory writers exclude each other", () => {
       dispatchDreamingSession({ projectId }),
       dispatchMemoryDistillSession({ projectId }),
     ]);
-    await flushBackground();
+    // Both settlements, so the loser's (absent) run is not left in flight
+    // while the assertions read the database.
+    await Promise.all(
+      [dream, distill].map((outcome) =>
+        outcome.status === "fulfilled" ? outcome.value.settled : undefined,
+      ),
+    );
 
     const dreamWon =
       dream.status === "fulfilled" && dream.value.dispatched === true;
@@ -775,7 +730,7 @@ describe("dispatchDreamingSession — a human edit mid-dream wins", () => {
     }) as unknown as typeof processManager.getStatus);
 
     const result = await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await result.settled;
 
     // The session still answered — its output is readable on the session page.
     const session = db
@@ -789,14 +744,6 @@ describe("dispatchDreamingSession — a human edit mid-dream wins", () => {
     expect(getProjectMemoryContent(projectId)).toBe("- A HUMAN EDITED THIS");
     // No snapshot was taken and no notification claimed an update.
     expect(getProjectMemoryArchiveDoc(projectId)).toBeNull();
-    expect(
-      db
-        .select()
-        .from(notifications)
-        .where(eq(notifications.projectId, projectId))
-        .all()
-        .filter((row) => row.agentType === DREAMING_AGENT_TYPE)
-    ).toHaveLength(0);
     // And the window did not advance, so the next dream re-reads the evidence.
     expect(findLastDreamCutoff(projectId)).toBeNull();
   });
@@ -805,8 +752,7 @@ describe("dispatchDreamingSession — a human edit mid-dream wins", () => {
     saveProjectMemory(projectId, "- AS THE DREAM READ IT");
     seedSourceSession();
 
-    await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await (await dispatchDreamingSession({ projectId })).settled;
 
     expect(getProjectMemoryContent(projectId)).not.toBe(
       "- AS THE DREAM READ IT"
@@ -830,7 +776,7 @@ describe("dispatchDreamingSession — guard rails", () => {
 
     expect(hasPendingMemoryWriter(projectId)).toBe(true);
     const result = await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await result.settled;
 
     expect(result.dispatched).toBe(false);
     expect(result.sessionId).toBeNull();
@@ -848,7 +794,7 @@ describe("dispatchDreamingSession — guard rails", () => {
       dispatchDreamingSession({ projectId, trigger: "manual" }),
       dispatchDreamingSession({ projectId, trigger: "night_run" }),
     ]);
-    await flushBackground();
+    await Promise.all([first.settled, second.settled]);
 
     const dispatched = [first, second].filter((r) => r.dispatched);
     expect(dispatched).toHaveLength(1);
@@ -870,7 +816,7 @@ describe("dispatchDreamingSession — guard rails", () => {
     recordDreamCutoff(projectId, new Date().toISOString());
 
     const result = await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await result.settled;
 
     expect(result.dispatched).toBe(false);
     expect(result.sessionId).toBeNull();
@@ -880,7 +826,7 @@ describe("dispatchDreamingSession — guard rails", () => {
 
   it("no-ops on a project that never ran a dreamable session", async () => {
     const result = await dispatchDreamingSession({ projectId });
-    await flushBackground();
+    await result.settled;
     expect(result.dispatched).toBe(false);
     expect(dreamSessions()).toHaveLength(0);
   });
@@ -914,7 +860,7 @@ describe("maybeDreamAfterNightRun", () => {
     expect(isDreamingAfterNightRunEnabled(projectId)).toBe(false);
 
     const decision = await maybeDreamAfterNightRun(projectId, "night_x");
-    await flushBackground();
+    await decision.settled;
 
     expect(decision.allowed).toBe(false);
     expect(decision.reason).toContain("off");
@@ -926,7 +872,7 @@ describe("maybeDreamAfterNightRun", () => {
     seedSourceSession();
 
     const decision = await maybeDreamAfterNightRun(projectId, "night_on");
-    await flushBackground();
+    await decision.settled;
 
     expect(decision.allowed).toBe(true);
     const spawned = dreamSessions();
@@ -942,7 +888,7 @@ describe("maybeDreamAfterNightRun", () => {
 
     expect(isDreamingAfterNightRunEnabled(projectId)).toBe(false);
     const decision = await maybeDreamAfterNightRun(projectId, "night_off");
-    await flushBackground();
+    await decision.settled;
 
     expect(decision.allowed).toBe(false);
     expect(dreamSessions()).toHaveLength(0);
@@ -956,8 +902,7 @@ describe("maybeDreamAfterNightRun", () => {
     seedSourceSession();
 
     expect(isDreamingAfterNightRunEnabled(projectId)).toBe(true);
-    await maybeDreamAfterNightRun(projectId, "night_opt_in");
-    await flushBackground();
+    await (await maybeDreamAfterNightRun(projectId, "night_opt_in")).settled;
 
     expect(dreamSessions()).toHaveLength(1);
   });

@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 
-import { usePolling } from "@/hooks/usePolling";
+import { useSessionPolling } from "@/components/session-live/useSessionPolling";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 import { fetchSessionArijActions } from "@/lib/agent-sessions/session-detail";
 import type { ArijActionItem } from "@/components/shared/ArijActionsList";
@@ -15,26 +15,24 @@ import type { SessionDetail } from "@/components/session-live/types";
 /**
  * Frame 8a — the live session.
  *
- * All of the page's BEHAVIOUR lives here, so the whole behavioural diff is
- * reviewable in one file; `<LiveSessionScreen>` owns the layout. Three things
- * in here look like ordinary code and are not — each closed a measured stall
- * or a shipped bug, and each is commented where it sits:
- *
- * 1. The Arij-actions scan is its OWN request (`loadSession`, below).
- * 2. The prompt is LAZY (`loadPrompt`, below).
- * 3. `usePolling(loadSession, 3000)` is unconditional, including for finished
- *    sessions.
+ * Metadata and the expensive action scan poll independently, including for
+ * finished sessions. The composed prompt is fetched only when opened.
  */
 export default function SessionDetailPage() {
+  const params = useParams();
+  const projectId = params.projectId as string;
+  const sessionId = params.sessionId as string;
+  return <SessionDetailContent key={`${projectId}:${sessionId}`} projectId={projectId} sessionId={sessionId} />;
+}
+
+function SessionDetailContent({ projectId, sessionId }: { projectId: string; sessionId: string }) {
   const t = useTranslations("SessionLive");
   // Namespace-less, for the KEY REFERENCES `session-live/labels.ts` holds.
   const tKey = useTranslations();
-  const params = useParams();
   const router = useRouter();
-  const projectId = params.projectId as string;
-  const sessionId = params.sessionId as string;
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [distilling, setDistilling] = useState(false);
   const [distillError, setDistillError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
@@ -49,26 +47,67 @@ export default function SessionDetailPage() {
    * list falls back to the durable half the detail payload already carries.
    */
   const [arijActions, setArijActions] = useState<ArijActionItem[] | null>(null);
+  // True when the raw-stream scan failed: the list on screen is then the
+  // durable half only, and saying so is the difference between a short list
+  // and a lie.
+  const [actionsUnavailable, setActionsUnavailable] = useState(false);
+  const lifetime = useRef<AbortController | null>(null);
+  const promptPending = useRef(false);
+  const mutationPending = useRef(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, []);
+  const readFailed = t("page.loadFailed");
 
-  const loadSession = useCallback(async () => {
-    const res = await fetch(
-      `/api/projects/${projectId}/sessions/${sessionId}`
-    );
-    const data = await res.json();
-    setSession(data.data);
+  const readSession = useCallback(async (signal: AbortSignal) => {
+    let ok = false;
+    let body: { data?: SessionDetail; error?: string } | null = null;
+    try {
+      const res = await fetch(`/api/projects/${projectId}/sessions/${sessionId}`, { signal });
+      ok = res.ok;
+      body = await res.json();
+    } catch {
+      // Preserve the last good session and expose a retry when nothing loaded.
+    }
+    if (signal.aborted) return;
+    if (ok && body?.data) {
+      setSession(body.data);
+      setLoadError(null);
+    } else {
+      setLoadError(typeof body?.error === "string" ? body.error : readFailed);
+    }
     setLoading(false);
+  }, [projectId, sessionId, readFailed]);
 
+  const readActions = useCallback(async (signal: AbortSignal) => {
     // The chunk-derived half of the actions list is its own request: finding
     // it means scanning the raw stream, which is 113 MB for the worst session
     // on the live database and would stall the shared connection on every
     // 3-second poll if it rode along with the payload above. The scan resumes
     // where it left off server-side, so after the first pass a poll only
     // covers what the session appended since.
-    const actions = await fetchSessionArijActions(projectId, sessionId, {
-      onPage: (page) => setArijActions(page.actions),
-    });
-    if (actions) setArijActions(actions);
+    try {
+      const actions = await fetchSessionArijActions(projectId, sessionId, {
+        signal,
+        onPage: (page) => {
+          if (signal.aborted) return;
+          setArijActions(page.actions);
+          setActionsUnavailable(page.arijActionsUnavailable === true);
+        },
+      });
+      if (signal.aborted) return;
+      if (actions) setArijActions(actions);
+    } catch {
+      // Keep the last scanned actions and the durable detail payload on failure.
+    }
   }, [projectId, sessionId]);
+  const refreshSession = useSessionPolling(`${projectId}:${sessionId}`, readSession, true, 3000, { immediate: true });
+  const refreshActions = useSessionPolling(`${projectId}:${sessionId}:actions`, readActions, true, 3000, { immediate: true });
+  const loadSession = useCallback(async () => {
+    await Promise.all([refreshSession(), refreshActions()]);
+  }, [refreshSession, refreshActions]);
 
   /**
    * The prompt is up to 1.8 MB on the live database and is only ever looked
@@ -77,11 +116,15 @@ export default function SessionDetailPage() {
    * the 3s poll.
    */
   const loadPrompt = useCallback(async () => {
+    const signal = lifetime.current?.signal;
+    if (!signal || signal.aborted || promptPending.current) return;
+    promptPending.current = true;
     setPromptState((current) => (current === "idle" || current === "error" ? "loading" : current));
     try {
       const res = await fetch(
-        `/api/projects/${projectId}/sessions/${sessionId}?include=prompt`
+        `/api/projects/${projectId}/sessions/${sessionId}?include=prompt`, { signal },
       );
+      if (signal.aborted) return;
       // Not a `throw` into the catch below: a `throw` inside `try/catch` is a
       // construct the React Compiler stops on, and stopping left this page
       // unread by every compiler rule.
@@ -89,12 +132,14 @@ export default function SessionDetailPage() {
         setPromptState("error");
       } else {
         const data = await res.json();
+        if (signal.aborted) return;
         setPrompt(data.data?.prompt ?? null);
         setPromptState("loaded");
       }
     } catch {
-      setPromptState("error");
+      if (!signal.aborted) setPromptState("error");
     }
+    promptPending.current = false;
   }, [projectId, sessionId]);
 
   function handleTogglePrompt() {
@@ -102,10 +147,10 @@ export default function SessionDetailPage() {
     if (promptState === "idle") void loadPrompt();
   }
 
-  // Initial load + poll if running
-  usePolling(loadSession, 3000);
-
   async function handleCancel() {
+    const signal = lifetime.current?.signal;
+    if (!signal || signal.aborted || mutationPending.current) return;
+    mutationPending.current = true;
     setStopping(true);
     setStopError(null);
     try {
@@ -117,18 +162,24 @@ export default function SessionDetailPage() {
       // neither the row nor an ephemeral activity-registry entry matches.
       // Surface it rather than silently reloading into the same state.
       const data = await res.json().catch(() => ({}));
+      if (signal.aborted) return;
       if (!res.ok) {
         setStopError(data.error || "Could not stop this session.");
       }
     } catch {
+      if (signal.aborted) return;
       setStopError("Could not stop this session.");
     }
     // Trailing, not in a `finally` clause (the compiler stops at one).
     setStopping(false);
-    loadSession();
+    mutationPending.current = false;
+    void loadSession();
   }
 
   async function handleDistill() {
+    const signal = lifetime.current?.signal;
+    if (!signal || signal.aborted || mutationPending.current) return;
+    mutationPending.current = true;
     setDistilling(true);
     setDistillError(null);
     try {
@@ -138,6 +189,7 @@ export default function SessionDetailPage() {
         body: JSON.stringify({ sourceSessionId: sessionId }),
       });
       const data = await res.json().catch(() => ({}));
+      if (signal.aborted) return;
       if (!res.ok) {
         setDistillError(data.error || "Failed to start memory distillation.");
       } else {
@@ -147,9 +199,11 @@ export default function SessionDetailPage() {
         }
       }
     } catch {
+      if (signal.aborted) return;
       setDistillError("Failed to start memory distillation.");
     }
     setDistilling(false);
+    mutationPending.current = false;
   }
 
   function handleExportLogs() {
@@ -165,9 +219,17 @@ export default function SessionDetailPage() {
     URL.revokeObjectURL(url);
   }
 
-  if (loading || !session) {
+  if (loading) {
     return (
       <div className="p-6 text-muted-foreground">{t("page.loading")}</div>
+    );
+  }
+  if (!session) {
+    return (
+      <div className="flex flex-col items-start gap-3 p-6">
+        <p role="alert" className="text-sm text-destructive">{loadError}</p>
+        <button type="button" onClick={() => void loadSession()} className="text-sm underline">{t("page.retry")}</button>
+      </div>
     );
   }
 
@@ -188,6 +250,7 @@ export default function SessionDetailPage() {
       sessionId={sessionId}
       session={session}
       isRunning={isRunning}
+      arijActionsUnavailable={actionsUnavailable}
       providerLabel={providerLabel}
       typeLabel={typeLabel}
       arijActions={arijActions}

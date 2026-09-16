@@ -79,9 +79,10 @@ zones:
   active project wears its colour, and a project with a live agent breathes.
 - **center** — a direct `Now` link to the desk, followed by three category bubbles, each opening a menu
   (`lib/piscine/nav.ts` is the single definition):
-  - **Work** — Tickets, Spec & Memory, QA, Releases
-  - **Agents** — Named agents, Sessions, Chat, Usage
-  - **Settings** — Workspace & Full Auto, Night runs, Notifications, Integrations
+  - **Work** — Tickets, Spec & Memory, QA, QA checks, Releases
+  - **Agents** — Named agents, Sessions, Usage
+  - **Settings** — Workspace & Full Auto, Pipeline & Verification, Integrations, Appearance
+  plus a direct destination pill for **Chat**.
 - **right** — `⌘K` command palette, Inbox, Auto, New.
 
 `Now` is a direct destination with no menu; the logo also returns to the desk.
@@ -373,12 +374,6 @@ GitHub credentials live in **Settings**, not in the environment: the PAT is stor
 
 > The `GITHUB_TOKEN` environment variable is **not** read by Arij. If you set it in an older `.env.local`, it has no effect — move the token to Settings → Integrations.
 
-Create `.env.local` for optional settings:
-
-```env
-# Custom Claude CLI path
-CLAUDE_PATH=/usr/local/bin/claude
-```
 
 Customize agent behavior on the **`/agents`** workshop:
 - **Named agents** — create provider+model combinations for different tasks

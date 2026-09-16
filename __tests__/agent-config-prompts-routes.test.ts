@@ -150,4 +150,16 @@ describe("Agent config prompts routes", () => {
     expect(res.status).toBe(200);
     expect(json.data.deleted).toBe(true);
   });
+
+  it("DELETE /api/agent-config/prompts/[agentType] removes global prompt override", async () => {
+    const { DELETE } = await import(
+      "@/app/api/agent-config/prompts/[agentType]/route"
+    );
+
+    const res = await DELETE(mockNextRequest(), mockRouteContext({ agentType: "build" }));
+    const json = await res.json();
+
+    expect(res.status).toBe(200);
+    expect(json.data.deleted).toBe(true);
+  });
 });

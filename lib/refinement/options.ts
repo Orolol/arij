@@ -1,5 +1,6 @@
 /** Shared refinement choices and the tools each choice authorizes. */
 import { z } from "zod";
+import type { ProjectFrictionSummary } from "@/lib/frictions/prompt";
 
 export const REFINEMENT_INSTRUCTIONS_MAX_CHARS = 4000;
 export const REFINEMENT_ACTION_IDS = [
@@ -80,7 +81,9 @@ export const refinementOptionsSchema = z.object({
     .refine((items) => new Set(items).size === items.length, "Actions must be unique")
     .optional(),
 }).strict();
-export type RefinementOptions = z.infer<typeof refinementOptionsSchema>;
+export type RefinementOptions = z.infer<typeof refinementOptionsSchema> & {
+  activeFrictions?: ProjectFrictionSummary[];
+};
 
 export function refinementToolAllowed(
   actions: readonly RefinementAction[],

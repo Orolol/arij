@@ -23,7 +23,7 @@ import { useState } from "react";
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { ToastStack, type ToastItem } from "@/components/notifications/ToastStack";
+import { ToastStack, type ToastItem } from "@/components/toast/ToastStack";
 import {
   Dialog,
   DialogContent,
@@ -40,54 +40,6 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => new URLSearchParams(),
   usePathname: () => "/projects/p1/stories/s1",
 }));
-
-vi.mock("@/hooks/useStoryDetail", () => ({
-  useStoryDetail: () => ({
-    story: {
-      id: "s1",
-      epicId: "e1",
-      title: "Story title",
-      description: "",
-      acceptanceCriteria: "",
-      status: "todo",
-      position: 0,
-      createdAt: new Date().toISOString(),
-      epic: { id: "e1", title: "Epic", description: "", status: "todo", branchName: null, projectId: "p1" },
-    },
-    loading: false,
-    updateStory: vi.fn(),
-    refresh: vi.fn(),
-  }),
-}));
-
-vi.mock("@/hooks/useTicketComments", () => ({
-  useTicketComments: () => ({ comments: [], loading: false, addComment: vi.fn() }),
-}));
-
-vi.mock("@/hooks/useAgentDispatch", () => ({
-  useAgentDispatch: () => ({
-    activeSession: null,
-    dispatching: false,
-    isRunning: false,
-    sendToDev: vi.fn(),
-    sendToReview: vi.fn(),
-    merge: vi.fn(),
-  }),
-}));
-
-vi.mock("@/components/story/StoryDetailPanel", () => ({
-  StoryDetailPanel: () => <div data-testid="story-detail-panel" />,
-}));
-
-vi.mock("@/components/story/CommentThread", () => ({
-  CommentThread: () => <div data-testid="comment-thread" />,
-}));
-
-vi.mock("@/components/shared/AgentActionsBar", () => ({
-  AgentActionsBar: () => <div data-testid="story-actions" />,
-}));
-
-import StoryDetailPage from "@/app/projects/[projectId]/stories/[storyId]/page";
 
 const errorToast: ToastItem = {
   id: "one",
@@ -154,33 +106,5 @@ describe("a toast raised under an open Radix dialog", () => {
       "aria-live",
       "off",
     );
-  });
-
-  it("announces the story delete failure that leaves its dialog open", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        ({
-          ok: false,
-          status: 409,
-          json: async () => ({ error: "Story is owned by a running session" }),
-        }) as unknown as Response,
-      ),
-    );
-
-    render(<StoryDetailPage />);
-    fireEvent.click(screen.getByRole("button", { name: "Delete User Story" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm Delete" }));
-    await screen.findByTestId("story-toast");
-
-    // The dialog is still open by design; the toast sits over it.
-    expect(screen.getByRole("dialog")).toBeInTheDocument();
-
-    const toast = screen.getByRole("alert");
-    expect(toast).toHaveTextContent("Story is owned by a running session");
-    expect(screen.getByRole("region", { name: "Notifications" })).toContainElement(toast);
-    expect(
-      within(toast).getByRole("button", { name: "Dismiss notification" }),
-    ).toBeInTheDocument();
   });
 });

@@ -28,8 +28,6 @@
  * that rule lives.
  */
 
-import { and, eq, inArray, or } from "drizzle-orm";
-import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import {
   agentSessions,
@@ -38,10 +36,12 @@ import {
   ticketDependencies,
   userStories,
 } from "@/lib/db/schema";
-import { storedTicketImagePaths } from "@/lib/uploads/ticket-images";
 import { emitTicketDeleted } from "@/lib/events/emit";
-import { deleteEpicPermanently } from "@/lib/planning/permanent-delete";
 import { REFINEMENT_STATUSES, ticketLabel } from "@/lib/mcp/refinement";
+import { assertTicketIdle, deleteEpicPermanently } from "@/lib/planning/permanent-delete";
+import { storedTicketImagePaths } from "@/lib/uploads/ticket-images";
+import { and, eq, inArray, or } from "drizzle-orm";
+import { NextResponse } from "next/server";
 
 type Epic = typeof epics.$inferSelect;
 
@@ -364,6 +364,7 @@ export function formatTicketSnapshot(snapshot: RetiredTicketSnapshot): string {
  * dependent.
  */
 export function retireTicket(projectId: string, epicId: string): void {
+  assertTicketIdle(epicId);
   db.delete(ticketDependencies)
     .where(
       and(

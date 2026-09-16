@@ -12,7 +12,6 @@ import {
   displayVersion,
   parseEpicIds,
   releaseState,
-  RELEASE_STATE_KEYS,
   type ReleaseEpic,
   type ReleaseRow,
 } from "./derive";
@@ -41,7 +40,6 @@ export function ReleaseHistory({
 }: ReleaseHistoryProps) {
   const locale = useLocale();
   const t = useTranslations("Releases");
-  const all = useTranslations();
   // One at a time: a history card with four open rows is a list, not a history.
   const [expandedId, setExpandedId] = useState<string | null>(null);
 

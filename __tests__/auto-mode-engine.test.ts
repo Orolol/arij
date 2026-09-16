@@ -179,11 +179,6 @@ interface Fakes {
   /** Delivery verdicts, keyed by session id. */
   sessionOutcome: Map<string, string>;
   secondOpinionDispatches: string[];
-  secondOpinionNotifications: Array<{
-    epicId: string;
-    sessionId: string;
-    reason: string;
-  }>;
   setSecondOpinionState(epicId: string, state: SecondOpinionState): void;
   setConfig(patch: Partial<ReturnType<AutoModeEngineDeps["resolveConfig"]>>): void;
   failNextDispatch(times: number, error?: string): void;
@@ -210,7 +205,6 @@ function makeFakes(): Fakes {
   const sessionOutcome = new Map<string, string>();
   const secondOpinionStates = new Map<string, SecondOpinionState>();
   const secondOpinionDispatches: string[] = [];
-  const secondOpinionNotifications: Fakes["secondOpinionNotifications"] = [];
   let dispatchFailures = 0;
   let dispatchError = "dispatch exploded";
   let conflictSessionId: string | null = null;
@@ -264,9 +258,6 @@ function makeFakes(): Fakes {
         status: "missing",
         sessionId: null,
       },
-    notifySecondOpinionRejected: ({ epicId, sessionId, reason }) => {
-      secondOpinionNotifications.push({ epicId, sessionId, reason });
-    },
     dispatch: async (input) => {
       dispatches.push(input);
       if (conflictSessionId) {
@@ -341,7 +332,6 @@ function makeFakes(): Fakes {
     sessionStatus,
     sessionOutcome,
     secondOpinionDispatches,
-    secondOpinionNotifications,
     setSecondOpinionState(epicId, state) {
       secondOpinionStates.set(epicId, state);
     },
@@ -1065,14 +1055,6 @@ describe("merge step", () => {
     }
 
     expect(fakes.merges).toEqual([]);
-    expect(fakes.secondOpinionNotifications).toEqual([
-      {
-        epicId: "m1",
-        sessionId: "second-opinion-no-verdict-3",
-        reason:
-          "gate failed to return usable evidence after 3 attempts: no submit_findings or Overall Verdict evidence was recorded",
-      },
-    ]);
     expect(autoModeRegistry.isParked(PROJECT_ID, "m1")).toBe(true);
   });
 
@@ -1191,13 +1173,6 @@ describe("merge step", () => {
     expect(fakes.merges).toEqual([]);
     expect(result.parked).toEqual(["m1"]);
     expect(autoModeRegistry.isParked(PROJECT_ID, "m1")).toBe(true);
-    expect(fakes.secondOpinionNotifications).toEqual([
-      {
-        epicId: "m1",
-        sessionId: "second-opinion-no",
-        reason: "1 blocking finding",
-      },
-    ]);
     expect(autoReasons("m1")).toContain(
       "Auto mode parked this ticket after the second opinion rejected the merge: 1 blocking finding"
     );

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb } from "@/lib/db/test-utils";
 import { mockNextRequest } from "@/__tests__/helpers/db-mock";
 import {
@@ -6,27 +6,19 @@ import {
   epics,
   ticketComments,
   ticketReadCursors,
+  userStories,
 } from "@/lib/db/schema";
 
 // The inbox routes are pure Drizzle — run them against a real in-memory
 // database built from the full migration chain (house pattern, see
 // notifications-api.test.ts).
 const testDb = vi.hoisted(() => ({
-  instance: null as ReturnType<
-    typeof import("@/lib/db/test-utils").createTestDb
-  > | null,
+  instance: null as ReturnType<typeof import("@/lib/db/test-utils").createTestDb> | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
 // ---- Import route handlers AFTER mocks ----
 import { GET } from "@/app/api/inbox/route";
@@ -111,9 +103,115 @@ beforeEach(() => {
     .run();
 });
 
+afterEach(() => { testDb.instance?.sqlite.close(); });
+
 describe("GET /api/inbox", () => {
+  it("clears a story question answered on its own thread, including finished tickets", async () => {
+    seedEpic("e-story", "p1", { status: "done" });
+    db().insert(userStories).values({ id: "story", epicId: "e-story", title: "Story", status: "done" }).run();
+    db().insert(agentSessions).values({
+      id: "story-question", projectId: "p1", epicId: "e-story", userStoryId: "story",
+      status: "completed", outcome: "asked_question", createdAt: "2026-08-16T09:00:00Z",
+      endedAt: "2026-08-16T09:00:00Z",
+    }).run();
+    seedComment("question", "e-story", "agent", "2026-08-16T09:00:00Z");
+    seedCursor("e-story", "2026-08-16T10:00:00Z");
+    const readInbox = async () => (await (await GET(new Request("http://localhost/api/inbox"))).json()).data;
+    expect(await readInbox()).toMatchObject({ unreadCount: 1, unreadMessageCount: 0, awaitingReplyCount: 1 });
+
+    // The story comments endpoint stores only userStoryId, without epicId.
+    db().insert(ticketComments).values({
+      id: "story-reply", userStoryId: "story", author: "user", content: "Use option A",
+      createdAt: "2026-08-16 10:00:00",
+    }).run();
+    expect(await readInbox()).toMatchObject({ items: [], unreadCount: 0, unreadMessageCount: 0, awaitingReplyCount: 0 });
+    const summary = await (await GET(new Request("http://localhost/api/inbox?summary=1"))).json();
+    expect(summary.data).toMatchObject({ items: [], unreadCount: 0, awaitingReplyCount: 0 });
+    // Answering a story does not mark the parent comment as read implicitly.
+    db().delete(ticketReadCursors).run();
+    expect(await readInbox()).toMatchObject({ unreadCount: 1, unreadMessageCount: 1, awaitingReplyCount: 0,
+      items: [{ epicId: "e-story", unread: true, awaitingReply: false, latestCommentExcerpt: "comment question" }],
+    });
+  });
+
+  it.each(["parent", "sibling"])("keeps a %s question pending when a different story completes", async (target) => {
+    seedEpic("e-held", "p1", { status: "released" });
+    db().insert(userStories).values([
+      { id: "asked-story", epicId: "e-held", title: "Waiting story", status: "done" },
+      { id: "finished-story", epicId: "e-held", title: "Other story", status: "done" },
+    ]).run();
+    db().insert(agentSessions).values([
+      { id: "question", projectId: "p1", epicId: "e-held", userStoryId: target === "parent" ? null : "asked-story",
+        status: "completed", outcome: "asked_question", createdAt: "2026-08-16T09:00:00Z" },
+      { id: "success", projectId: "p1", epicId: "e-held", userStoryId: "finished-story",
+        status: "completed", outcome: "success", createdAt: "2026-08-16 10:00:00" },
+    ]).run();
+    seedComment("report", "e-held", "agent", "2026-08-16T10:00:00Z", "Latest story report");
+    seedCursor("e-held", "2026-08-16T11:00:00Z");
+    const body = await (await GET(new Request("http://localhost/api/inbox?limit=1"))).json();
+    expect(body.data).toMatchObject({ unreadCount: 1, unreadMessageCount: 0, awaitingReplyCount: 1,
+      pagination: { page: 1, pageSize: 1, totalPages: 1 },
+      items: [{ epicId: "e-held", awaitingReply: true, unread: false, latestCommentExcerpt: "Latest story report" }],
+    });
+  });
+
+  it("counts several pending targets once and accepts a parent reply for all of them", async () => {
+    seedEpic("e-many", "p1");
+    db().insert(userStories).values([
+      { id: "s1", epicId: "e-many", title: "First" },
+      { id: "s2", epicId: "e-many", title: "Second" },
+    ]).run();
+    db().insert(agentSessions).values([null, "s1", "s2"].map((storyId, index) => ({
+      id: `ask-${index}`, projectId: "p1", epicId: "e-many", userStoryId: storyId,
+      status: "completed", outcome: "asked_question", createdAt: "2026-08-16T09:00:00Z",
+    }))).run();
+    const readInbox = async () => (await (await GET(new Request("http://localhost/api/inbox"))).json()).data;
+    expect(await readInbox()).toMatchObject({ unreadCount: 1, awaitingReplyCount: 1 });
+    db().insert(ticketComments).values({ id: "s1-reply", userStoryId: "s1", author: "user", content: "Answered",
+      createdAt: "2026-08-16T10:00:00Z" }).run();
+    // A reply on one story cannot answer the parent or the other story.
+    expect(await readInbox()).toMatchObject({ unreadCount: 1, awaitingReplyCount: 1 });
+    seedComment("parent-reply", "e-many", "user", "2026-08-16 11:00:00");
+    expect(await readInbox()).toMatchObject({ items: [], unreadCount: 0, awaitingReplyCount: 0 });
+  });
+
+  it("chooses the latest comment and session by instant across stored formats", async () => {
+    seedEpic("e-replied", "p1");
+    seedComment("z-old", "e-replied", "agent", "2026-08-16T09:00:00Z");
+    seedComment("a-new", "e-replied", "user", "2026-08-16 10:00:00");
+    seedSession("z-question", "p1", "e-replied", "asked_question", "2026-08-16T09:00:00Z");
+    seedSession("a-success", "p1", "e-replied", "success", "2026-08-16 10:00:00");
+    seedEpic("e-question", "p1");
+    seedComment("z-user", "e-question", "user", "2026-08-16T09:00:00Z");
+    seedComment("a-agent", "e-question", "agent", "2026-08-16 10:00:00");
+    seedSession("z-success", "p1", "e-question", "success", "2026-08-16T09:00:00Z");
+    seedSession("a-question", "p1", "e-question", "asked_question", "2026-08-16 10:00:00");
+    const body = await (await GET(new Request("http://localhost/api/inbox"))).json();
+    expect(body.data.items).toHaveLength(1);
+    expect(body.data.items[0]).toMatchObject({ epicId: "e-question", awaitingReply: true, latestCommentExcerpt: "comment a-agent" });
+  });
+
+  it("recognizes later replies even when an earlier ISO reply sorts after them as text", async () => {
+    seedEpic("e1", "p1");
+    seedSession("s1", "p1", "e1", "asked_question", "2026-08-16T10:00:00Z");
+    seedComment("u-old", "e1", "user", "2026-08-16T09:00:00Z");
+    seedComment("u-new", "e1", "user", "2026-08-16 11:00:00");
+    const body = await (await GET(new Request("http://localhost/api/inbox"))).json();
+    expect(body.data.items).toEqual([]);
+  });
+
+  it("orders timezone offsets and resolves equivalent latest instants by id", async () => {
+    seedEpic("e1", "p1");
+    seedEpic("e2", "p1");
+    seedComment("c1", "e1", "agent", "2026-08-16T12:00:00+02:00");
+    seedComment("a2", "e2", "user", "2026-08-16T11:00:00Z");
+    seedComment("z2", "e2", "agent", "2026-08-16 11:00:00");
+    const body = await (await GET(new Request("http://localhost/api/inbox"))).json();
+    expect(body.data.items.map((item: { epicId: string }) => item.epicId)).toEqual(["e2", "e1"]);
+  });
+
   it("returns an empty inbox for an empty database", async () => {
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     expect(res.status).toBe(200);
@@ -148,7 +246,7 @@ describe("GET /api/inbox", () => {
     );
     seedCursor("e-question", "2026-08-16T08:30:00.000Z");
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     // Unchanged rule — the bar badge counts every row in the inbox.
@@ -163,7 +261,7 @@ describe("GET /api/inbox", () => {
     seedComment("c1", "e1", "agent", "2026-08-16T09:00:00.000Z");
     seedSession("s1", "p1", "e1", "asked_question", "2026-08-16T09:00:00.000Z");
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     expect(body.data.items).toHaveLength(1);
@@ -181,7 +279,7 @@ describe("GET /api/inbox", () => {
     seedSession("s1", "p1", "e1", "success", "2026-08-16T09:00:00.000Z");
     seedSession("s2", "p1", "e2", "success", "2026-08-16T10:00:00.000Z");
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     expect(body.data.unreadCount).toBe(2);
@@ -195,7 +293,7 @@ describe("GET /api/inbox", () => {
     seedComment("c1", "e1", "agent", "2026-08-16T09:00:00.000Z");
     seedComment("c2", "e2", "agent", "2026-08-16T10:00:00.000Z");
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     expect(body.data.unreadCount).toBe(2);
@@ -224,7 +322,7 @@ describe("GET /api/inbox", () => {
     seedComment("c1", "e1", "agent", "2026-08-16T09:00:00.000Z");
     seedComment("c2", "e1", "user", "2026-08-16T10:00:00.000Z");
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     expect(body.data.items).toEqual([]);
@@ -238,7 +336,7 @@ describe("GET /api/inbox", () => {
     seedCursor("e1", "2026-08-16T10:00:00.000Z"); // read after the comment
     seedCursor("e2", "2026-08-16T08:00:00.000Z"); // read before the comment
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     expect(body.data.items.map((i: { epicId: string }) => i.epicId)).toEqual([
@@ -255,7 +353,7 @@ describe("GET /api/inbox", () => {
     // replied — the question is still pending.
     seedCursor("e1", "2026-08-16T10:00:00.000Z");
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     expect(body.data.items).toHaveLength(1);
@@ -273,7 +371,7 @@ describe("GET /api/inbox", () => {
     seedComment("c2", "e1", "user", "2026-08-16T09:30:00.000Z");
     seedCursor("e1", "2026-08-16T10:00:00.000Z");
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     // Replied AND read -> gone from the inbox entirely.
@@ -297,7 +395,7 @@ describe("GET /api/inbox", () => {
       "2026-08-16T06:00:00.000Z"
     );
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     expect(body.data.items.map((i: { epicId: string }) => i.epicId)).toEqual([
@@ -313,7 +411,7 @@ describe("GET /api/inbox", () => {
     seedSession("s2", "p1", "e1", "answered", "2026-08-16T11:00:00.000Z");
     seedComment("c1", "e1", "user", "2026-08-16T11:30:00.000Z");
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     expect(body.data.items).toEqual([]);
@@ -324,7 +422,7 @@ describe("GET /api/inbox", () => {
     const content = `line one\nline two    with\tspaces ${"x".repeat(300)}`;
     seedComment("c1", "e1", "agent", "2026-08-16T09:00:00.000Z", content);
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     const excerpt = body.data.items[0].latestCommentExcerpt as string;
@@ -344,7 +442,7 @@ describe("GET /api/inbox", () => {
     seedCursor("e1", "2026-08-16T08:00:00.000Z"); // before -> unread
     seedCursor("e2", "2026-08-16T10:00:00.000Z"); // after -> read
 
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/inbox"));
     const body = await res.json();
 
     expect(body.data.items.map((i: { epicId: string }) => i.epicId)).toEqual([
@@ -392,13 +490,51 @@ describe("POST /api/inbox/read", () => {
     seedEpic("e1", "p1");
     seedComment("c1", "e1", "agent", "2026-08-16T09:00:00.000Z");
 
-    let body = await (await GET()).json();
+    let body = await (await GET(new Request("http://localhost/api/inbox"))).json();
     expect(body.data.unreadCount).toBe(1);
 
     await POST(readBody("e1"));
 
-    body = await (await GET()).json();
+    body = await (await GET(new Request("http://localhost/api/inbox"))).json();
     expect(body.data.items).toEqual([]);
     expect(body.data.unreadCount).toBe(0);
+  });
+});
+
+
+describe("inbox pagination", () => {
+  it("pages a stable queue while keeping global counts and unanswered questions", async () => {
+    for (let index = 0; index < 7; index++) {
+      seedEpic(`page-${index}`, index % 2 ? "p1" : "p2");
+      seedComment(`comment-${index}`, `page-${index}`, "agent", "2026-08-16T10:00:00Z", "long report ".repeat(1000));
+    }
+    seedSession("question", "p2", "page-6", "asked_question", "2026-08-16T10:00:00Z");
+    seedCursor("page-6", "2026-08-16T11:00:00Z");
+    const pages = [];
+    for (let page = 1; page <= 3; page++) {
+      const body = await (await GET(new Request(`http://localhost/api/inbox?limit=3&page=${page}`))).json();
+      expect(body.data).toMatchObject({ unreadCount: 7, unreadMessageCount: 6, awaitingReplyCount: 1,
+        pagination: { page, pageSize: 3, totalPages: 3 } });
+      pages.push(body.data.items);
+    }
+    expect(pages[0][0]).toMatchObject({ epicId: "page-6", awaitingReply: true, unread: false });
+    const ids = pages.flat().map((item) => item.epicId);
+    expect(ids).toHaveLength(7);
+    expect(new Set(ids).size).toBe(7);
+    expect(pages.flat().every((item) => item.latestCommentExcerpt.length <= 200)).toBe(true);
+    const summary = await (await GET(new Request("http://localhost/api/inbox?summary=1"))).json();
+    expect(summary.data).toMatchObject({ items: [], unreadCount: 7, unreadMessageCount: 6, awaitingReplyCount: 1 });
+  });
+
+  it("clamps a page that disappeared after messages were read", async () => {
+    seedEpic("remaining", "p1");
+    seedComment("last", "remaining", "agent", "2026-08-16T10:00:00Z");
+    const body = await (await GET(new Request("http://localhost/api/inbox?page=8"))).json();
+    expect(body.data.pagination).toMatchObject({ page: 1, totalPages: 1 });
+    expect(body.data.items[0].epicId).toBe("remaining");
+  });
+
+  it.each(["page=0", "page=-1", "page=1.5", "page=no", "limit=0", "limit=101"])("rejects invalid pagination %s", async (query) => {
+    expect((await GET(new Request(`http://localhost/api/inbox?${query}`))).status).toBe(400);
   });
 });

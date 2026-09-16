@@ -2,9 +2,12 @@
 
 import { useTranslations } from "next-intl";
 import { useState, useCallback } from "react";
-import { usePolling } from "@/hooks/usePolling";
+import { fetchJson } from "@/lib/api/client";
+import { usePolledResource } from "@/hooks/usePolledResource";
 import { toAgentRequestError } from "@/lib/agents/client-error";
-import type { AgentSession } from "@/lib/types/agent-session";
+import type { UnifiedActivity } from "@/lib/agent-sessions/active-activity";
+
+interface AgentActionResult { sessionId?: string; clean?: boolean; resolved?: boolean; merged?: boolean }
 
 export type AgentDispatchTarget =
   | { kind: "epic"; epicId: string | null }
@@ -30,44 +33,19 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
         : null
       : `/api/projects/${projectId}/stories/${storyId}`;
 
-  const [activeSessions, setActiveSessions] = useState<AgentSession[]>([]);
   const [dispatching, setDispatching] = useState(false);
+  const errorMessage = useCallback(() => tErrors("agentRequestFailed"), [tErrors]);
+  const sessions = usePolledResource<UnifiedActivity[]>(targetPath ? `/api/projects/${projectId}/sessions/active` : null, 3000, errorMessage);
+  const pollSessions = sessions.refresh;
+  const activeSessions = (sessions.data ?? []).filter((session) =>
+    (session.status === "running" || session.status === "queued") &&
+    (kind === "epic" ? session.epicId === epicId : session.userStoryId === storyId || Boolean(epicId && session.epicId === epicId)));
 
-  const pollSessions = useCallback(async () => {
-    if (kind === "epic" && !epicId) {
-      setActiveSessions([]);
-      return;
-    }
-
-    try {
-      const res = await fetch(`/api/projects/${projectId}/sessions/active`);
-      const data = await res.json();
-      const sessions = ((data.data || []) as AgentSession[]).filter((session) => {
-        if (session.status !== "running") return false;
-        if (kind === "epic") return session.epicId === epicId;
-        if (session.userStoryId === storyId) return true;
-        if (epicId && session.epicId === epicId) return true;
-        return false;
-      });
-      setActiveSessions(sessions);
-    } catch {
-      // ignore
-    }
-  }, [projectId, kind, epicId, storyId]);
-
-  usePolling(pollSessions, 3000);
-
-  const requestJson = useCallback(
+  const postAgentRequest = useCallback(
     async (url: string, body: Record<string, unknown>) => {
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) {
-        throw toAgentRequestError(data, tErrors("agentRequestFailed"));
-      }
+      const response = await fetchJson<{ data?: AgentActionResult; error?: string }>(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      const data = response?.body ?? {};
+      if (!response?.ok || data.error) throw toAgentRequestError(data, tErrors("agentRequestFailed"));
       return data.data;
     },
     [tErrors]
@@ -88,7 +66,7 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
         // Only sent when the caller made an explicit choice — omitting the
         // field lets the server fall back to the pipeline_enabled setting.
         if (typeof pipeline === "boolean") body.pipeline = pipeline;
-        const data = await requestJson(`${targetPath}/build`, body);
+        const data = await postAgentRequest(`${targetPath}/build`, body);
         await pollSessions();
         return data;
       };
@@ -97,7 +75,7 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
       // every compiler rule. The rejection still reaches the caller.
       return build().finally(() => setDispatching(false));
     },
-    [targetPath, requestJson, pollSessions]
+    [targetPath, postAgentRequest, pollSessions]
   );
 
   const sendToReview = useCallback(
@@ -107,13 +85,13 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
       const review = async () => {
         const body: Record<string, unknown> = { reviewTypes, namedAgentId };
         if (resumeSessionId) body.resumeSessionId = resumeSessionId;
-        const data = await requestJson(`${targetPath}/review`, body);
+        const data = await postAgentRequest(`${targetPath}/review`, body);
         await pollSessions();
         return data;
       };
       return review().finally(() => setDispatching(false));
     },
-    [targetPath, requestJson, pollSessions]
+    [targetPath, postAgentRequest, pollSessions]
   );
 
   /** Epic targets only: grading is observational and never changes status. */
@@ -122,7 +100,7 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
       if (kind !== "epic" || !targetPath) return;
       setDispatching(true);
       const grade = async () => {
-        const data = await requestJson(`${targetPath}/grading`, {
+        const data = await postAgentRequest(`${targetPath}/grading`, {
           namedAgentId,
         });
         await pollSessions();
@@ -130,7 +108,7 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
       };
       return grade().finally(() => setDispatching(false));
     },
-    [kind, targetPath, requestJson, pollSessions],
+    [kind, targetPath, postAgentRequest, pollSessions],
   );
 
   /** Epic targets only — no-op for story targets. */
@@ -142,13 +120,13 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
         const body: Record<string, unknown> = {};
         if (namedAgentId) body.namedAgentId = namedAgentId;
         if (resumeSessionId) body.resumeSessionId = resumeSessionId;
-        const data = await requestJson(`${targetPath}/resolve-merge`, body);
+        const data = await postAgentRequest(`${targetPath}/resolve-merge`, body);
         await pollSessions();
         return data;
       };
       return resolve().finally(() => setDispatching(false));
     },
-    [kind, targetPath, requestJson, pollSessions]
+    [kind, targetPath, postAgentRequest, pollSessions]
   );
 
   /**
@@ -160,18 +138,13 @@ export function useAgentDispatch(projectId: string, target: AgentDispatchTarget)
     if (!targetPath) return;
     const endpoint =
       kind === "epic" ? `${targetPath}/merge` : `${targetPath}/approve`;
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.error) {
-      throw toAgentRequestError(data, tErrors("agentRequestFailed"));
-    }
+    const response = await fetchJson<{ data?: AgentActionResult; error?: string }>(endpoint, { method: "POST" });
+    const data = response?.body ?? {};
+    if (!response?.ok || data.error) throw toAgentRequestError(data, tErrors("agentRequestFailed"));
     return data.data;
   }, [kind, targetPath, tErrors]);
 
-  const isRunning = activeSessions.some((s) => s.status === "running");
+  const isRunning = activeSessions.length > 0;
   const activeSession = activeSessions[0] ?? null;
 
   return {

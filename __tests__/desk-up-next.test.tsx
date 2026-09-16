@@ -1,5 +1,5 @@
 /**
- * The pool-blue stratum: the order Full Auto will pick from.
+ * The pool-blue stratum: parent tickets in execution order.
  *
  * Replaces the queue-rank half of the deleted
  * `kanban-board-dependency-visibility` suite: rank styling, blocked labels,
@@ -51,7 +51,7 @@ describe("band header", () => {
   it("carries the hint instead of a counter — deliberately", () => {
     renderBand([{ projectId: "p1", tickets: [ticket({ epicId: "1" })] }]);
     expect(screen.getByText("Up next")).toBeInTheDocument();
-    expect(screen.getByText("the order Full Auto picks from")).toBeInTheDocument();
+    expect(screen.getByText("execution queue order")).toBeInTheDocument();
   });
 
   it("collapses to the label line when nothing is queued anywhere", () => {
@@ -60,12 +60,23 @@ describe("band header", () => {
     expect(screen.queryByTestId("desk-up-next-row")).not.toBeInTheDocument();
     // No queue, no promise about an order.
     expect(
-      screen.queryByText("the order Full Auto picks from"),
+      screen.queryByText("execution queue order"),
     ).not.toBeInTheDocument();
   });
 });
 
 describe("queue chips", () => {
+  it("explains why a parent with no buildable story has no queue rank", () => {
+    const onOpen = vi.fn();
+    renderBand([{ projectId: "p1", tickets: [ticket({ epicId: "idle", rank: null, noBuildableStories: true })] }], onOpen);
+    const chip = screen.getByTestId("desk-queue-chip");
+    expect(chip).toHaveTextContent("no build queued");
+    expect(chip).toHaveAttribute("title", "No story is currently in To Do or In Progress");
+    expect(chip).toHaveAttribute("data-rank", "3");
+    fireEvent.click(chip);
+    expect(onOpen).toHaveBeenCalledWith("idle", expect.anything());
+  });
+
   it("gives rank 1, rank 2 and everything else their own chip style", () => {
     renderBand([
       {

@@ -11,19 +11,19 @@
  * "awaiting reply" is exactly the drift those modules exist to prevent.
  */
 
-import {
-  evaluateMergeReadiness,
-  type MergeReadinessFacts,
-} from "@/lib/kanban/merge-readiness";
+import { evaluateMergeReadiness } from "@/lib/kanban/merge-readiness";
 import { isAwaitingReply } from "@/lib/kanban/awaiting-reply";
+import { BUILDABLE_EPIC_STATUSES, type BuildQueueFacts } from "@/lib/kanban/build-work";
 import { hasUnreadAiComment } from "@/lib/kanban/unread-ai";
 import {
   compareExecutionOrder,
   computeBlockedBy,
   computeQueueRanks,
-  type ExecutionOrderEpic,
 } from "@/lib/kanban/queue";
-import { isDeliveredStatus, type TicketDependencyEdge } from "@/lib/types/kanban";
+import type { TicketDependencyEdge } from "@/lib/types/kanban";
+import type { TranslationKey } from "@/lib/i18n/catalogue";
+import { compareStoredTimestamps, parseStoredTimestamp } from "@/lib/utils/timestamps";
+import { classifySessionActivity } from "@/lib/agent-sessions/active-activity";
 import {
   selectLatestFailures,
   type FailureCandidateSession,
@@ -93,11 +93,7 @@ const MAX_SHORT_NAME = 8;
  */
 export function deriveProjects(rows: readonly ProjectRow[]): DeskProject[] {
   return [...rows]
-    .sort((a, b) => {
-      const byCreated = (a.createdAt ?? "").localeCompare(b.createdAt ?? "");
-      if (byCreated !== 0) return byCreated;
-      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-    })
+    .sort(byProjectCreation)
     .map((row, index) => ({
       id: row.id,
       name: row.name,
@@ -106,6 +102,32 @@ export function deriveProjects(rows: readonly ProjectRow[]): DeskProject[] {
       activeAgents: Math.max(0, Math.trunc(Number(row.activeAgents ?? 0)) || 0),
       autoModeEnabled: row.autoModeEnabled === true,
     }));
+}
+
+/**
+ * The one ordering behind a project's identity colour: creation order, ties
+ * broken by id, mixed SQLite/ISO stamps compared as instants
+ * ({@link compareStoredTimestamps}). Extracted so TopBar's chip colour and the
+ * desk's `deriveProjects()` cannot disagree — the two used to sort with
+ * different comparators (raw `localeCompare` vs instant comparison), which
+ * diverge on mixed timestamp formats and on null/invalid values.
+ */
+function byProjectCreation<T extends { id: string; createdAt?: string | null }>(
+  a: T,
+  b: T,
+): number {
+  const byCreated = compareStoredTimestamps(a.createdAt, b.createdAt);
+  if (byCreated !== 0) return byCreated;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/** Position in creation order per project id — the tone index of each project. */
+export function projectColorIndexById(
+  rows: readonly { id: string; createdAt?: string | null }[],
+): Map<string, number> {
+  const map = new Map<string, number>();
+  [...rows].sort(byProjectCreation).forEach((row, index) => map.set(row.id, index));
+  return map;
 }
 
 /* ------------------------------------------------------------------ */
@@ -174,22 +196,36 @@ export function inferTaskType(row: {
   orchestrationMode: string | null;
   mode: string | null;
 }): DeskTaskType {
-  const agentType = row.agentType ?? "";
-  if (agentType === "release_notes") return "RELEASE";
-  if (agentType === "grading") return "GRADING";
-  if (agentType === "refinement") return "REFINEMENT";
-  if (agentType.startsWith("review_")) return "REVIEW";
-  if (agentType === "tech_check" || agentType === "e2e_test" || agentType === "failure_digest") {
-    return "QA";
-  }
-  if (agentType === "memory_distill" || agentType === "dreaming") return "MEMORY";
-  if (agentType === "merge") return "MERGE";
-  if (row.orchestrationMode === "team") return "BUILD";
-  if (row.mode === "plan") return "REVIEW";
-  return "BUILD";
+  // Same function the monitor route reads; the desk spells the result in
+  // uppercase. `UnifiedActivityType` has no CHAT and DeskTaskType no
+  // spec_generation/chat, so the cast is the vocabulary bridge, not a hole.
+  return classifySessionActivity(row).toUpperCase() as DeskTaskType;
 }
 
-function sessionTitle(row: SessionRow, taskType: DeskTaskType): string {
+export const TASK_TITLE_KEYS: Record<DeskTaskType, TranslationKey> = {
+  RELEASE: "Desk.sessionTitle.release",
+  MEMORY: "Desk.sessionTitle.memory",
+  REFINEMENT: "Desk.sessionTitle.refinement",
+  GRADING: "Desk.sessionTitle.grading",
+  QA: "Desk.sessionTitle.qa",
+  MERGE: "Desk.sessionTitle.merge",
+  REVIEW: "Desk.sessionTitle.review",
+  BUILD: "Desk.sessionTitle.build",
+  CHAT: "Desk.sessionTitle.chat",
+};
+
+export function sessionTitleKey(
+  row: Pick<SessionRow, "storyTitle" | "epicTitle">,
+  taskType: DeskTaskType,
+): TranslationKey | null {
+  if (row.storyTitle || row.epicTitle) return null;
+  return TASK_TITLE_KEYS[taskType] ?? "Desk.sessionTitle.build";
+}
+
+export function sessionTitle(
+  row: Pick<SessionRow, "storyTitle" | "epicTitle">,
+  taskType: DeskTaskType,
+): string {
   if (row.storyTitle) return row.storyTitle;
   if (row.epicTitle) return row.epicTitle;
   switch (taskType) {
@@ -238,27 +274,32 @@ export function deriveWorking(rows: readonly SessionRow[]): DeskWorkingSession[]
         epicId: row.epicId,
         readableId: row.epicReadableId,
         title: sessionTitle(row, taskType),
+        titleKey: sessionTitleKey(row, taskType),
         taskType,
         agentName: row.namedAgentName ?? null,
-        startedAt: row.startedAt || row.createdAt || new Date().toISOString(),
+        startedAt: row.startedAt || row.createdAt || "",
         lastLogLine: normalizeLogLine(row.lastLogLine),
         nightRun: Boolean(row.batchRunId),
         stale: row.stale === true,
       };
     })
-    .sort((a, b) => (a.startedAt < b.startedAt ? -1 : a.startedAt > b.startedAt ? 1 : 0));
+    .sort((a, b) => (compareStoredTimestamps(a.startedAt, b.startedAt) || a.sessionId.localeCompare(b.sessionId)));
 }
 
 export function deriveQueued(rows: readonly SessionRow[]): DeskQueuedSession[] {
   return rows
     .filter((row) => row.status === "queued")
-    .map((row) => ({
-      sessionId: row.id,
-      projectId: row.projectId,
-      epicId: row.epicId,
-      readableId: row.epicReadableId,
-      title: sessionTitle(row, inferTaskType(row)),
-    }));
+    .map((row) => {
+      const taskType = inferTaskType(row);
+      return {
+        sessionId: row.id,
+        projectId: row.projectId,
+        epicId: row.epicId,
+        readableId: row.epicReadableId,
+        title: sessionTitle(row, taskType),
+        titleKey: sessionTitleKey(row, taskType),
+      };
+    })
 }
 
 /* ------------------------------------------------------------------ */
@@ -295,6 +336,9 @@ export function deriveToday(counts: TodayCounts): DeskToday {
 /* ------------------------------------------------------------------ */
 
 export interface EpicRow {
+  awaitingReply?: boolean;
+  /** Static parent/story build eligibility, separate from attention signals. */
+  buildQueue?: BuildQueueFacts;
   id: string;
   projectId: string;
   title: string;
@@ -344,7 +388,7 @@ export function excerpt(content: string | null | undefined, limit = QUESTION_LEN
  */
 export function deriveAwaitingReply(epics: readonly EpicRow[]): DeskAwaitingReply[] {
   return epics
-    .filter((epic) => isAwaitingReply(epic))
+    .filter((epic) => epic.awaitingReply ?? isAwaitingReply(epic))
     .map((epic) => ({
       epicId: epic.id,
       projectId: epic.projectId,
@@ -355,7 +399,7 @@ export function deriveAwaitingReply(epics: readonly EpicRow[]): DeskAwaitingRepl
       askedAt: epic.latestSessionEndedAt,
       unreadAi: hasUnreadAiComment(epic),
     }))
-    .sort((a, b) => (b.askedAt ?? "").localeCompare(a.askedAt ?? ""));
+    .sort((a, b) => compareStoredTimestamps(a.askedAt, b.askedAt, "desc") || a.epicId.localeCompare(b.epicId));
 }
 
 /** Epics whose latest comment is agent-authored and newer than the cursor. */
@@ -405,7 +449,7 @@ export function deriveFailures(
       failedAt: session?.endedAt ?? session?.createdAt ?? null,
     });
   }
-  return rows.sort((a, b) => (b.failedAt ?? "").localeCompare(a.failedAt ?? ""));
+  return rows.sort((a, b) => compareStoredTimestamps(a.failedAt, b.failedAt, "desc") || a.epicId.localeCompare(b.epicId));
 }
 
 /**
@@ -419,7 +463,7 @@ export function deriveFailures(
 export function deriveConflicts(epics: readonly EpicRow[]): DeskConflict[] {
   const rows: DeskConflict[] = [];
   for (const epic of epics) {
-    const readiness = evaluateMergeReadiness(mergeFactsOf(epic));
+    const readiness = evaluateMergeReadiness(epic);
     if (readiness.blocker !== "merge_conflict" && readiness.blocker !== "conflict_markers") {
       continue;
     }
@@ -436,7 +480,7 @@ export function deriveConflicts(epics: readonly EpicRow[]): DeskConflict[] {
           : epic.lastMergeConflictAt,
     });
   }
-  return rows.sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
+  return rows.sort((a, b) => compareStoredTimestamps(a.at, b.at, "desc") || a.epicId.localeCompare(b.epicId));
 }
 
 /* ------------------------------------------------------------------ */
@@ -490,9 +534,9 @@ function isNewerSignal(current: string | null, dismissed: string | null): boolea
   if (current === null) return false;
   if (dismissed === null) return true;
 
-  const a = Date.parse(current);
-  const b = Date.parse(dismissed);
-  if (Number.isNaN(a) || Number.isNaN(b)) return current !== dismissed;
+  const a = parseStoredTimestamp(current);
+  const b = parseStoredTimestamp(dismissed);
+  if (a === null || b === null) return current !== dismissed;
   return a > b;
 }
 
@@ -533,20 +577,6 @@ export function applyDeskDismissals(
   };
 }
 
-function mergeFactsOf(epic: EpicRow): MergeReadinessFacts {
-  return {
-    status: epic.status,
-    branchName: epic.branchName,
-    openFindings: epic.openFindings,
-    lastCleanReviewAt: epic.lastCleanReviewAt,
-    lastTerminalCodeAt: epic.lastTerminalCodeAt,
-    lastNegativeVerdictReviewAt: epic.lastNegativeVerdictReviewAt,
-    supersessionAt: epic.supersessionAt,
-    lastMergeConflictAt: epic.lastMergeConflictAt,
-    lastConflictMarkersAt: epic.lastConflictMarkersAt,
-  };
-}
-
 /* ------------------------------------------------------------------ */
 /* READY TO LAND                                                       */
 /* ------------------------------------------------------------------ */
@@ -561,8 +591,9 @@ export interface ReadyToLand {
  * READY TO LAND is a DISPLAY-ONLY slice of `to_merge`.
  *
  * It never writes a position: `epics.position` is Full Auto's execution-order
- * contract (lib/kanban/reorder.ts), and a display order written back into it
- * would silently re-order the supervisor's queue.
+ * contract (stated in lib/workflow/reorder.ts, the only module that writes it),
+ * and a display order written back into it would silently re-order the
+ * supervisor's queue.
  *
  * Ordering mirrors `sortMergeColumn`: ready first, then board position.
  */
@@ -573,9 +604,12 @@ export function deriveReadyToLand(
   const rows: DeskLandRow[] = [];
   let heldBackCount = 0;
 
-  for (const epic of epics) {
+  const ordered = [...epics].sort((a, b) =>
+    a.projectId.localeCompare(b.projectId) || compareExecutionOrder(a, b),
+  );
+  for (const epic of ordered) {
     if (epic.status !== "to_merge") continue;
-    const readiness = evaluateMergeReadiness(mergeFactsOf(epic));
+    const readiness = evaluateMergeReadiness(epic);
     if (!readiness.ready) {
       heldBackCount += 1;
       continue;
@@ -595,12 +629,6 @@ export function deriveReadyToLand(
     });
   }
 
-  rows.sort((a, b) => {
-    const byProject = a.projectId.localeCompare(b.projectId);
-    if (byProject !== 0) return byProject;
-    return (a.readableId ?? a.epicId).localeCompare(b.readableId ?? b.epicId);
-  });
-
   return { rows, heldBackCount };
 }
 
@@ -609,24 +637,22 @@ export function deriveReadyToLand(
 /* ------------------------------------------------------------------ */
 
 /**
- * The order Full Auto will pick from, per project.
+ * The desk's ticket queue, sorted by the shared execution order.
  *
- * This is not "the To Do column in position order": it is the very order
- * `selectBuildCandidates` walks — `compareExecutionOrder` (In Progress before
- * To Do, then position, then id) over the two buildable statuses, minus the
- * tickets `isEpicSelectable` and the dependency gate would skip. The board's
- * old queue numbering deliberately disagreed with the supervisor on both
- * counts; the desk's column claims to BE that order, so it has to earn it.
+ * This is a projection of todo/in_progress parent tickets, not the complete
+ * Full Auto build selector. It applies dependency, active-session and
+ * unanswered-question gates from the facts in this response.
  *
- * What the desk still cannot see are the in-process registry exclusions
- * (parked tickets, pipeline/night-run ownership, merge backoff): they live in
- * `lib/auto-mode/registry.ts`, are lost on restart and no API exposes them.
- * A ticket the registry has parked therefore still shows a rank here.
+ * Parent/story availability, questions, parked work, rejected-review budgets
+ * and live pipeline/night/DAG ownership share Full Auto's policy. A parked
+ * story still leaves its siblings eligible. The supervisor also considers
+ * unfinished stories under review/to_merge and applies per-sweep verification
+ * and capacity gates, so this queue is not a promise of immediate dispatch.
  *
  * Dependency edges never cross projects (`CrossProjectError`), so per-project
  * edge sets union safely and there is no global graph and no global cycle check.
  */
-export const UP_NEXT_STATUSES: ReadonlySet<string> = new Set(["in_progress", "todo"]);
+export const UP_NEXT_STATUSES = BUILDABLE_EPIC_STATUSES;
 
 export interface UpNextInput {
   epics: readonly EpicRow[];
@@ -641,20 +667,16 @@ export interface UpNextInput {
 export function deriveUpNextForProject(input: UpNextInput): DeskQueueTicket[] {
   const blockedBy = computeBlockedBy(input.edges, input.statusById);
 
-  const candidates: (Omit<EpicRow, "status" | "position"> & ExecutionOrderEpic & {
-    status: string;
-    position: number;
-  })[] = input.epics
+  const candidates = input.epics
     .filter((epic) => UP_NEXT_STATUSES.has(epic.status ?? ""))
-    .filter((epic) => !isDeliveredStatus(epic.status))
     .map((epic) => ({ ...epic, status: epic.status ?? "", position: epic.position ?? 0 }))
     .sort(compareExecutionOrder);
 
   const ranks = computeQueueRanks(
-    candidates.map((epic) => ({ ...epic, id: epic.id })),
+    candidates,
     (epic) =>
       blockedBy.has(epic.id) ||
-      isAwaitingReply(epic as unknown as EpicRow) ||
+      (epic.buildQueue ? !epic.buildQueue.available : isAwaitingReply(epic)) ||
       input.busyEpicIds.has(epic.id),
   );
 
@@ -668,7 +690,9 @@ export function deriveUpNextForProject(input: UpNextInput): DeskQueueTicket[] {
     blockedBy: (blockedBy.get(epic.id) ?? []).map(
       (targetId) => input.labelById.get(targetId) ?? targetId,
     ),
-    awaitingReply: isAwaitingReply(epic as unknown as EpicRow),
+    awaitingReply: epic.buildQueue?.awaitingReply ?? isAwaitingReply(epic),
+    noBuildableStories: epic.buildQueue !== undefined && !epic.buildQueue.available && !epic.buildQueue.awaitingReply && !epic.buildQueue.hold,
+    ...(epic.buildQueue?.hold ? { hold: epic.buildQueue.hold } : input.busyEpicIds.has(epic.id) ? { hold: "busy" as const } : {}),
     specOnly: (epic.type ?? "feature") !== "bug" && epic.usCount === 0,
     storyCount: epic.usCount,
   }));

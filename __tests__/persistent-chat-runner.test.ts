@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   spawn: vi.fn(),
-  execFileSync: vi.fn(() => "omp/18.0.6\n"),
+  probeOutput: vi.fn(() => "omp/18.0.6\n"),
   release: vi.fn(),
   createChannel: vi.fn(),
   writeMcpConfigFile: vi.fn(() => "/tmp/arij-persistent-mcp.json"),
@@ -17,9 +17,9 @@ const mocks = vi.hoisted(() => ({
 // path itself — the gate's own supported/refused/unreadable cases live in
 // `omp-version-gate.test.ts`.
 vi.mock("child_process", () => ({
-  default: { spawn: mocks.spawn, execFileSync: mocks.execFileSync },
+  default: { spawn: mocks.spawn, execFile: (_file: string, _args: string[], _options: unknown, callback: (error: Error | null, out: string, err: string) => void) => callback(null, mocks.probeOutput(), "") },
   spawn: mocks.spawn,
-  execFileSync: mocks.execFileSync,
+  execFile: (_file: string, _args: string[], _options: unknown, callback: (error: Error | null, out: string, err: string) => void) => callback(null, mocks.probeOutput(), ""),
 }));
 vi.mock("@/lib/chat/cli-tool-channel", () => ({
   createChatCliToolChannel: mocks.createChannel,
@@ -37,6 +37,7 @@ import {
 } from "@/lib/chat/persistent-runner";
 
 class FakeChild extends EventEmitter {
+  pid = 2147483647;
   stdout = new EventEmitter();
   stderr = new EventEmitter();
   exitCode: number | null = null;
@@ -145,7 +146,114 @@ describe("persistent chat runner — Claude Code", () => {
 
   afterEach(() => {
     resetPersistentChatRunnerForTests();
+    for (const result of mocks.spawn.mock.results) {
+      if (result.value instanceof FakeChild) result.value.closed();
+    }
     vi.useRealTimers();
+  });
+
+  it("releases the token and MCP config when spawn throws synchronously", async () => {
+    mocks.spawn.mockImplementationOnce(() => { throw new Error("invalid spawn environment"); });
+    const turn = runPersistentChatTurn(options("sync-spawn"));
+    await expect(turn.promise).rejects.toThrow("invalid spawn environment");
+    expect(mocks.release).toHaveBeenCalledTimes(1);
+    expect(mocks.cleanupMcpConfigFile).toHaveBeenCalledWith("/tmp/arij-persistent-mcp.json");
+    expect(getPersistentChatSessionState("sync-spawn")).toBe("cold");
+  });
+
+  it("settles cancellation before the child has emitted spawn", async () => {
+    const turn = runPersistentChatTurn(options("cancel-starting"));
+    const child = await waitForSpawn();
+    turn.kill();
+    await expect(turn.promise).rejects.toThrow("stopped");
+    expect(getPersistentChatSessionState("cancel-starting")).toBe("cold");
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    child.closed();
+    expect(mocks.release).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["synchronous", "callback"])("drops a process after a %s input write error", async (kind) => {
+    const turn = runPersistentChatTurn(options("write-error"));
+    const child = await waitForSpawn();
+    child.stdin.write.mockImplementationOnce((_frame, callback) => {
+      const error = new Error("broken input pipe");
+      if (kind === "synchronous") throw error;
+      callback?.(error);
+      return false;
+    });
+    child.started();
+    await expect(turn.promise).rejects.toThrow("broken input pipe");
+    expect(getPersistentChatSessionState("write-error")).toBe("cold");
+    child.closed();
+    expect(mocks.release).toHaveBeenCalledTimes(1);
+
+    const retry = runPersistentChatTurn(options("write-error"));
+    await vi.waitFor(() => expect(mocks.spawn).toHaveBeenCalledTimes(2));
+    const fresh = mocks.spawn.mock.results.at(-1)!.value as FakeChild;
+    await startAndWaitForInput(fresh);
+    finishClaudeTurn(fresh, "recovered");
+    await retry.promise;
+  });
+
+  it("ignores noisy lines and JSON scalars without losing the active turn", async () => {
+    const chunks = vi.fn();
+    const turn = runPersistentChatTurn(options("claude-noise", chunks));
+    const child = await waitForSpawn();
+    await startAndWaitForInput(child);
+    expect(() => child.stdout.emit("data", Buffer.from('null\n[]\n7\n"text"\nnot json\n'))).not.toThrow();
+    finishClaudeTurn(child, "valid response");
+    await turn.promise;
+    expect(chunks).toHaveBeenCalledWith({ type: "text", text: "valid response" });
+  });
+
+  it.each(["claude-code-persistent", "oh-my-pi-persistent"] as const)(
+    "preserves French text and emoji split across stdout byte boundaries for %s",
+    async (provider) => {
+      const chunks = vi.fn();
+      const turn = runPersistentChatTurn({ ...options(`utf8-${provider}`, chunks), provider });
+      const child = await waitForSpawn();
+      if (provider === "oh-my-pi-persistent") {
+        child.event({ type: "ready", protocolVersion: 1 });
+        await vi.waitFor(() => expect(child.writes).toHaveLength(2));
+      } else {
+        await startAndWaitForInput(child);
+      }
+      const text = "Réponse française : ça fonctionne 🧑🏽‍💻 !";
+      const output = provider === "claude-code-persistent"
+        ? JSON.stringify({ type: "result", subtype: "success", result: text })
+        : JSON.stringify({ type: "message_end", message: {
+            role: "assistant", stopReason: "stop", content: [{ type: "text", text }],
+          } }) + "\n" + JSON.stringify({ type: "agent_end", isTerminal: true });
+      const bytes = Buffer.from(output);
+      for (let i = 0; i < bytes.length; i++) child.stdout.emit("data", bytes.subarray(i, i + 1));
+      // No final newline: close must also flush the complete trailing frame.
+      child.closed();
+      await turn.promise;
+      expect(chunks).toHaveBeenCalledExactlyOnceWith({ type: "text", text });
+    },
+  );
+
+  it("preserves UTF-8 stderr split between child-process buffers", async () => {
+    const turn = runPersistentChatTurn(options("utf8-stderr"));
+    const child = await waitForSpawn();
+    await startAndWaitForInput(child);
+    const error = "Échec du modèle : opération interrompue 🚫";
+    const bytes = Buffer.from(error);
+    for (let i = 0; i < bytes.length; i++) child.stderr.emit("data", bytes.subarray(i, i + 1));
+    child.closed(1);
+    await expect(turn.promise).rejects.toThrow(error);
+  });
+
+  it("rejects the turn when a stream observer throws instead of crashing the host", async () => {
+    const turn = runPersistentChatTurn(options("observer-error", vi.fn(() => {
+      throw new Error("closed response controller");
+    })));
+    const child = await waitForSpawn();
+    await startAndWaitForInput(child);
+    expect(() => finishClaudeTurn(child, "answer")).not.toThrow();
+    await expect(turn.promise).rejects.toThrow("closed response controller");
+    expect(getPersistentChatSessionState("observer-error")).toBe("cold");
+    child.closed();
   });
 
   it("spawns once, writes later turns to stdin, and streams partial events", async () => {
@@ -330,8 +438,7 @@ describe("persistent chat runner — Claude Code", () => {
     const turn = runPersistentChatTurn(
       options("conversation-stall", vi.fn(), { turnStallTimeoutMs: 1000 }),
     );
-    await Promise.resolve();
-    const child = mocks.spawn.mock.results[0].value as FakeChild;
+    const child = await waitForSpawn();
     await startAndWaitForInput(child);
 
     // The CLI acknowledges nothing and never emits `result`.
@@ -349,8 +456,7 @@ describe("persistent chat runner — Claude Code", () => {
     const turn = runPersistentChatTurn(
       options("conversation-slow", chunks, { turnStallTimeoutMs: 1000 }),
     );
-    await Promise.resolve();
-    const child = mocks.spawn.mock.results[0].value as FakeChild;
+    const child = await waitForSpawn();
     await startAndWaitForInput(child);
 
     for (let index = 0; index < 4; index += 1) {
@@ -396,6 +502,9 @@ describe("persistent chat runner — Oh My Pi RPC", () => {
 
   afterEach(() => {
     resetPersistentChatRunnerForTests();
+    for (const result of mocks.spawn.mock.results) {
+      if (result.value instanceof FakeChild) result.value.closed();
+    }
     vi.useRealTimers();
   });
 
@@ -499,6 +608,57 @@ describe("persistent chat runner — Oh My Pi RPC", () => {
     expect(mocks.createChannel).toHaveBeenCalledTimes(1);
     expect(mocks.writeMcpConfigFile).not.toHaveBeenCalled();
     expect(getPersistentChatSessionState("omp-conversation")).toBe("hot");
+  });
+
+  it("ignores non-event JSON before and after the RPC handshake", async () => {
+    const turn = runPersistentChatTurn({ ...options("omp-noise"), provider: "oh-my-pi-persistent" });
+    const child = await waitForSpawn();
+    expect(() => child.stdout.emit("data", Buffer.from("null\n[]\nnoise\n"))).not.toThrow();
+    await startOmp(child);
+    expect(() => child.event(null)).not.toThrow();
+    finishOmpTurn(child, "ok");
+    await turn.promise;
+    expect(getPersistentChatSessionState("omp-noise")).toBe("hot");
+  });
+
+  it("settles cancellation during the RPC handshake and disarms its deadline", async () => {
+    vi.useFakeTimers();
+    const turn = runPersistentChatTurn({ ...options("omp-cancel-ready"), provider: "oh-my-pi-persistent" });
+    const child = await waitForSpawn();
+    turn.kill();
+    await expect(turn.promise).rejects.toThrow("stopped");
+    child.closed();
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+    expect(mocks.release).toHaveBeenCalledTimes(1);
+    expect(getPersistentChatSessionState("omp-cancel-ready")).toBe("cold");
+  });
+
+  it("rejects a failing get_state write before marking the RPC process ready", async () => {
+    const turn = runPersistentChatTurn({ ...options("omp-state-write"), provider: "oh-my-pi-persistent" });
+    const child = await waitForSpawn();
+    child.stdin.write.mockImplementationOnce(() => { throw new Error("state pipe closed"); });
+    expect(() => child.event({ type: "ready", protocolVersion: 1 })).not.toThrow();
+    await expect(turn.promise).rejects.toThrow("state pipe closed");
+    expect(getPersistentChatSessionState("omp-state-write")).toBe("cold");
+    child.closed();
+    expect(mocks.release).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases a registered turn after its session-id observer throws", async () => {
+    const turn = runPersistentChatTurn({
+      ...options("omp-session-observer"), provider: "oh-my-pi-persistent",
+      cliSessionId: "resumed-session", onCliSessionId: () => { throw new Error("session write failed"); },
+    });
+    const child = await waitForSpawn();
+    child.event({ type: "ready", protocolVersion: 1 });
+    await expect(turn.promise).rejects.toThrow("session write failed");
+    expect(child.writes.map((frame) => JSON.parse(frame).type)).toEqual(["get_state"]);
+    const retry = runPersistentChatTurn({ ...options("omp-session-observer"), provider: "oh-my-pi-persistent" });
+    expect(retry.wasWarm).toBe(true);
+    await vi.waitFor(() => expect(child.writes).toHaveLength(2));
+    finishOmpTurn(child, "retry accepted");
+    await retry.promise;
   });
 
   it("falls back to the final assistant message when no deltas were emitted", async () => {
@@ -848,8 +1008,7 @@ describe("persistent chat runner — Oh My Pi RPC", () => {
       ...options("omp-stall", vi.fn(), { turnStallTimeoutMs: 1000 }),
       provider: "oh-my-pi-persistent",
     });
-    await Promise.resolve();
-    const child = mocks.spawn.mock.results[0].value as FakeChild;
+    const child = await waitForSpawn();
     await startOmp(child);
 
     // A build that never emits its terminal frame: exactly the omp 18.0.5

@@ -12,6 +12,7 @@ import { arjiJsonExists, readArjiJson } from "@/lib/sync/arji-json";
 import { importProjectSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { validatePath } from "@/lib/validation/path";
+import { GLOBAL_PROMPT_SETTING_KEY } from "@/lib/settings/keys";
 import { createId } from "@/lib/utils/nanoid";
 
 const ARJI_JSON = "arji.json";
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
     console.warn("[import] Existing arji.json is invalid, running agent analysis:", e);
   }
 
-  const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
+  const settingsRow = db.select().from(settings).where(eq(settings.key, GLOBAL_PROMPT_SETTING_KEY)).get();
   const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
 
   const importRolePrompt = await resolveAgentPrompt("import_analysis");
@@ -73,7 +74,6 @@ export async function POST(request: NextRequest) {
       prompt,
       cwd: safePath,
       model: resolvedAgent.model,
-      logIdentifier: sessionId,
     });
 
     const result = await session.promise;

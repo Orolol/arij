@@ -1,3 +1,4 @@
+import { handleAskedQuestionOutcome } from "@/lib/workflow/agent-question";
 /**
  * Acceptance-criteria grader dispatch.
  *
@@ -300,7 +301,10 @@ export async function dispatchGradingSession(
             : "The grading session failed without reporting an error.");
       return { success, error };
     },
-    onTerminal: ({ sessionId, success, error }) => {
+    onTerminal: ({ sessionId, success, error, outcome }) => {
+      if (outcome === "asked_question") {
+        handleAskedQuestionOutcome({ projectId: input.projectId, epicIds: [input.epicId], sessionId, ticketStatus: epic.status ?? "review" });
+      }
       if (success) {
         emitSessionCompleted(input.projectId, input.epicId, sessionId);
       } else {

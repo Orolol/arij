@@ -154,7 +154,9 @@ describe("chat stream route — CLI MCP tool channel wiring", () => {
       }),
       kill: vi.fn(),
     });
-    mockGetProvider.mockReturnValue({ spawn: mockDynamicProviderSpawn });
+    mockGetProvider.mockImplementation((provider) => provider === "claude-code"
+      ? { spawn: mockSpawnHelpers.spawnClaude, spawnStream: mockSpawnHelpers.spawnClaudeStream }
+      : { spawn: mockDynamicProviderSpawn });
     mockDynamicProviderSpawn.mockReturnValue({
       promise: Promise.resolve({ success: true, result: "Codex answer" }),
       kill: vi.fn(),

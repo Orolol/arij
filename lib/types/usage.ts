@@ -176,12 +176,6 @@ export interface UsageBar {
 
 export interface UsageProjectBar extends UsageBar {
   projectId: string;
-  /**
-   * `projects.color_index` when that column exists; null on every row today
-   * (the column is not in the schema yet — see lib/usage/aggregate.ts). The UI
-   * falls back to a stable hash of `projectId`, never to array position.
-   */
-  colorIndex: number | null;
 }
 
 export interface UsageDayBar {
@@ -226,19 +220,8 @@ export interface UsageDashboard {
 }
 
 export interface UsageReport {
-  totals: UsageTotals;
-  byAgent: AgentUsageRow[];     // sorted cost desc, nulls last, then sessions desc
-  byProvider: ProviderUsageRow[];
-  byProject: ProjectUsageRow[];
-  byDay: DayUsageRow[];         // EXACTLY 30 entries, oldest first, zero-filled
-  windows: { last5h: WindowUsage; last7d: WindowUsage };
   subscriptions: SubscriptionStatus[];
   generatedAt: string;          // ISO UTC
-  /**
-   * The range-scoped block frame 8d renders. The eight keys above keep their
-   * pre-existing all-time / 30-day / rolling semantics untouched — they still
-   * feed `subscriptions` and the legacy consumers.
-   */
   dashboard: UsageDashboard;
 }
 

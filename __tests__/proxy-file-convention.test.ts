@@ -54,12 +54,15 @@ describe("root proxy file convention", () => {
   });
 
   it("ships the boundary file in the published package", () => {
-    // `files` is an allowlist. A stale `middleware.ts` entry publishes an
-    // `arij` tarball containing no proxy file at all — an app whose `/api/*`
-    // is unguarded — while every check on this machine still passes.
+    // When published as an npm package, `files` is an allowlist.
+    // Under private git-clone distribution, `private: true` replaces `files`.
     const pkg = JSON.parse(
       fs.readFileSync(path.join(projectRoot, "package.json"), "utf8")
-    ) as { files?: string[] };
+    ) as { files?: string[]; private?: boolean };
+    if (pkg.private) {
+      expect(pkg.files).toBeUndefined();
+      return;
+    }
     expect(pkg.files).toContain("proxy.ts");
     expect(pkg.files).not.toContain("middleware.ts");
   });

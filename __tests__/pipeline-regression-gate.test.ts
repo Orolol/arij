@@ -1,6 +1,6 @@
 /**
  * Runner wiring for the mechanical regression verify gate
- * (lib/pipeline/runner.ts + lib/pipeline/verify.ts contract):
+ * (lib/pipeline/runner.ts + lib/pipeline/regression-gate.ts contract):
  *
  *  - no gate / gate not applicable → review dispatch happens unchanged;
  *  - gate failed with fix-cycle budget left → fix dispatched with the exact
@@ -106,8 +106,6 @@ function runWithGate(config: GateHarnessConfig = {}) {
       return {
         blocking,
         blockingCount: blocking ? 1 : 0,
-        agentCommentCount: 1,
-        usedProseFallback: false,
       };
     },
     readSessionStatus: () => null,
@@ -162,8 +160,8 @@ describe("runPipeline — regression verify gate", () => {
 
     expect(summary.state).toBe("succeeded");
     expect(h.requests.map((r) => r.stage)).toEqual(["fix", "review"]);
-    expect(h.requests[0].verifyFailure).toEqual(
-      expectedPayloadFor(failingCheck())
+    expect(h.requests[0].verificationFailure).toEqual(
+      { kind: "regression", report: expectedPayloadFor(failingCheck()) }
     );
     expect(h.requests[0].fixCycle).toBe(1);
     expect(h.traces).toContain(PIPELINE_REASONS.regressionFailed(1, 1));
@@ -194,10 +192,10 @@ describe("runPipeline — regression verify gate", () => {
     // The retry keeps the gate's exact red→green context so the agent
     // still knows precisely what to repair (deliberate behaviour since the
     // deterministic-verification wiring; not a verify-only concern).
-    expect(h.requests[0].verifyFailure).toMatchObject({
-      regression: { reason: "test_passes_on_base" },
+    expect(h.requests[0].verificationFailure).toMatchObject({
+      kind: "regression", report: { regression: { reason: "test_passes_on_base" } },
     });
-    expect(h.requests[1].verifyFailure).toEqual(h.requests[0].verifyFailure);
+    expect(h.requests[1].verificationFailure).toEqual(h.requests[0].verificationFailure);
   });
 
   it("fails the run without review when the gate is red and no fix cycles remain, parking the ticket", async () => {

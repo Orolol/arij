@@ -1,14 +1,25 @@
 /**
- * Claude Code provider — wraps the existing CLI spawn logic
- * behind the AgentProvider interface.
+ * Claude Code provider — the `claude` CLI behind the AgentProvider interface.
  *
- * Claude Code's spawn logic is kept in lib/claude/spawn.ts because it
- * has unique features (streaming, --allowedTools, --permission-mode)
- * that don't fit neatly into the base class spawn. The provider delegates
- * to spawnClaude() rather than using BaseCliProvider.spawn().
+ * The argv construction and the process lifecycle stay in lib/claude/spawn.ts
+ * (--permission-mode, --allowedTools, the 0600 `--mcp-config` file, the
+ * stream-json variant used by the chat SSE route). This class is the ONLY
+ * caller of spawnClaude outside that module: every one-shot session — the
+ * process manager, the routes that spawn directly (chat, spec generation, QA
+ * epic extraction, import, titling) — goes through `getProvider(provider)
+ * .spawn(...)` regardless of provider, so there is no `provider !==
+ * "claude-code"` branch left to copy from one call site to the next.
+ *
+ * Streaming: when the caller passes `onChunk`, the spawn runs in stream-json
+ * mode and every NDJSON event line becomes a `raw` chunk as it arrives — the
+ * LIVE LOG band of a claude-code session used to stay empty for its whole
+ * duration because json mode yields nothing before exit. The final text is
+ * emitted as the `output`/`response` chunks the other providers emit, with
+ * the same keys, so the process manager persists nothing itself.
  */
 
-import { spawnClaude } from "@/lib/claude/spawn";
+import { spawnClaude, spawnClaudeStream } from "@/lib/claude/spawn";
+import { parseClaudeOutput, isNoTextualOutputFallback } from "@/lib/claude/json-parser";
 import { BaseCliProvider } from "./base-provider";
 import type {
   ProviderSpawnOptions,
@@ -34,9 +45,15 @@ export class ClaudeCodeProvider extends BaseCliProvider {
   }
 
   /**
-   * Override spawn to delegate to the existing spawnClaude() function,
-   * which handles Claude Code's unique CLI arguments and streaming.
+   * Delegates to spawnClaude(), which owns Claude Code's argv and streaming.
+   * Everything the process manager needs back — the kill, the display
+   * command, the temp `--mcp-config` path it tears down on its own exit
+   * path — rides on the returned session.
    */
+  spawnStream(options: ProviderSpawnOptions) {
+    return spawnClaudeStream(options);
+  }
+
   spawn(options: ProviderSpawnOptions): ProviderSession {
     const {
       prompt,
@@ -46,12 +63,14 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       model,
       cliSessionId,
       resumeSession,
-      logIdentifier,
       mcp,
       cliOptions,
+      killGraceMs,
+      onChunk,
     } = options;
 
-    const { promise: rawPromise, kill, command } = spawnClaude({
+    let rawIndex = 0;
+    const { promise: rawPromise, kill, command, mcpConfigPath } = spawnClaude({
       mode,
       prompt,
       cwd,
@@ -59,26 +78,55 @@ export class ClaudeCodeProvider extends BaseCliProvider {
       model,
       cliSessionId,
       resumeSession,
-      logIdentifier,
       mcp,
       cliOptions,
+      killGraceMs,
+      ...(onChunk
+        ? {
+            onRawLine: (line: string) => {
+              rawIndex += 1;
+              onChunk({
+                streamType: "raw",
+                text: `${line}\n`,
+                chunkKey: `stdout:${rawIndex}`,
+                emittedAt: new Date().toISOString(),
+              });
+            },
+          }
+        : {}),
     });
 
-    // Map ClaudeResult → ProviderResult
-    const promise: Promise<ProviderResult> = rawPromise.then((r) => ({
-      success: r.success,
-      result: r.result,
-      error: r.error,
-      duration: r.duration,
-      cliSessionId: r.cliSessionId,
-      endedWithQuestion: r.endedWithQuestion,
-    }));
+    // Map ClaudeResult → ProviderResult, and emit the final chunks the way
+    // BaseCliProvider.emitFinalChunks does for the other CLIs.
+    const promise: Promise<ProviderResult> = rawPromise.then((r) => {
+      if (onChunk && r.result) {
+        try {
+          const text = parseClaudeOutput(r.result).content;
+          if (text && !isNoTextualOutputFallback(text)) {
+            const emittedAt = new Date().toISOString();
+            onChunk({ streamType: "output", text, chunkKey: "final-output", emittedAt });
+            onChunk({ streamType: "response", text, chunkKey: "final-response", emittedAt });
+          }
+        } catch {
+          // A listener must never turn a finished run into a failed one.
+        }
+      }
+      return {
+        success: r.success,
+        result: r.result,
+        error: r.error,
+        duration: r.duration,
+        cliSessionId: r.cliSessionId,
+        endedWithQuestion: r.endedWithQuestion,
+      };
+    });
 
     return {
       handle: `cc-${options.sessionId}`,
       kill,
       promise,
       command,
+      mcpConfigPath,
     };
   }
 }

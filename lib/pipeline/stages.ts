@@ -12,7 +12,10 @@ import {
   REVIEW_TYPE_TO_AGENT_TYPE,
   type AgentType,
 } from "@/lib/agent-config/constants";
-import type { ResolvedAgent } from "@/lib/agent-config/agent-resolution";
+import {
+  readCompositeMemberCount,
+  type ResolvedAgent,
+} from "@/lib/agent-config/agent-resolution";
 import type { PromptComment } from "@/lib/claude/prompt-builder";
 import { createPromptSectionCapture } from "@/lib/tokens/dispatch-prompt";
 import { PIPELINE_REVIEW_TYPE } from "./constants";
@@ -79,6 +82,20 @@ export interface PipelineStageDriver {
     stage: PipelineStageKind,
     configuredMaxAttempts: number
   ): Promise<number>;
+  /**
+   * The ladder the stage's agent affords a caller that retries OUTSIDE the
+   * runner: the member count when that agent is a COMPOSITE — the length of
+   * the list is what the ladder spends — or null for a simple agent, which is
+   * retried as itself under the caller's own cap.
+   *
+   * Full Auto dispatches each stage itself and derives the attempt from the
+   * ticket's failure streak, so it needs the count without the runner's
+   * budget vocabulary. Resolved through the same cache `launchStage` reads,
+   * so the ladder and the member this dispatch spends come from ONE
+   * resolution — the review path is live-query-backed and probes providers,
+   * and two independent resolutions could disagree mid-flight.
+   */
+  compositeMemberCount(stage: PipelineStageKind): Promise<number | null>;
   runDeterministicVerification(
     lastCodeSessionId: string | null
   ): Promise<PipelineDeterministicVerificationOutcome>;
@@ -148,6 +165,19 @@ export function createPipelineStageDriver(
         configuredByStage.delete(stage);
       }
       return resolveStageAttemptBudget(configured, configuredMaxAttempts);
+    },
+
+    compositeMemberCount: async (stage) => {
+      let configured: ResolvedAgent | null = null;
+      try {
+        configured = await configuredAgent(stage);
+      } catch {
+        // An emptied composite. Reported as "no ladder" rather than thrown:
+        // the dispatch itself must raise the real, actionable refusal.
+        return null;
+      }
+      const count = readCompositeMemberCount(configured.compositeAgentId);
+      return count && count > 0 ? count : null;
     },
 
     launchStage: async (request) => {

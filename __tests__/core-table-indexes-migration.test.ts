@@ -7,12 +7,12 @@
  * entry — see lib/db/init.ts), and that each index actually turns its lookup
  * from a SCAN into a SEARCH.
  */
-import Database from "better-sqlite3";
 import fs from "fs";
-import os from "os";
+import Database from "better-sqlite3";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initDb } from "@/lib/db/init";
+import { indexColumns, indexList, tempDbPath, withDb } from "./helpers/migration";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
 const MIGRATION_TAG = "0046_core_table_indexes";
@@ -67,40 +67,8 @@ afterEach(() => {
   }
 });
 
-function tempDbPath(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arij-core-indexes-"));
-  tempDirs.push(dir);
-  return path.join(dir, "arij.db");
-}
-
-function withDb<T>(file: string, fn: (conn: Database.Database) => T): T {
-  const conn = new Database(file);
-  try {
-    return fn(conn);
-  } finally {
-    conn.close();
-  }
-}
-
 /** Index names PRAGMA index_list reports for a table, autoindexes included. */
-function indexList(conn: Database.Database, table: string): string[] {
-  return (
-    conn.prepare(`PRAGMA index_list(${table})`).all() as { name: string }[]
-  ).map((row) => row.name);
-}
-
 /** Indexed column names, in index order. */
-function indexColumns(conn: Database.Database, name: string): string[] {
-  return (
-    conn.prepare(`PRAGMA index_info(${name})`).all() as {
-      seqno: number;
-      name: string;
-    }[]
-  )
-    .sort((a, b) => a.seqno - b.seqno)
-    .map((row) => row.name);
-}
-
 function queryPlan(conn: Database.Database, sql: string): string {
   return (
     conn.prepare(`EXPLAIN QUERY PLAN ${sql}`).all() as { detail: string }[]
@@ -195,6 +163,7 @@ describe("0046_core_table_indexes", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
       // 0054 DROPS a column, so rewinding past it means putting that column
       // BACK — the inverse of the drops above. The rewind lands after
       // 0039 (which adds it), so nothing else re-creates it and the replayed

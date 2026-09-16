@@ -1,4 +1,8 @@
 {
+  "common": {
+    "loadFailed": "Impossible de charger la configuration des agents. Réessayez.",
+    "retry": "Réessayer"
+  },
   "numbers": {
     "meta": "14 derniers jours, tous projets",
     "metaEmpty": "14 derniers jours, tous projets — aucun run sur la période",
@@ -20,8 +24,9 @@
     "footnote": "Full Auto et Night runs suivent ces défauts ; un dispatch manuel peut toujours choisir un autre agent."
   },
   "prompts": {
-    "rolePromptsMeta": "ce que chaque rôle fait quand il tourne — les valeurs actuelles marchent déjà",
-    "reviewAgentsMeta": "les quatre reviews intégrées, plus les vôtres"
+    "saveFailed": "Impossible d'enregistrer et de recharger ce prompt. Votre brouillon a été conservé.",
+    "resetFailed": "Impossible de réinitialiser et de recharger ce prompt. Réessayez.",
+    "rolePromptsMeta": "ce que chaque rôle fait quand il tourne — les valeurs actuelles marchent déjà"
   },
   "limits": {
     "runtimeMeta": "ce que le scheduler applique, pas ce qu'un agent sait faire"

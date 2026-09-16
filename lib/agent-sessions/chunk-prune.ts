@@ -165,22 +165,19 @@ export function createSessionChunkPruner(
 ): SessionChunkPruner {
   // Prepared at construction, like the chunk store's: one prune walks three
   // streams for every terminal session in the project.
-  // `REPLACE(..., ' ', 'T')` normalises the two timestamp shapes the column
-  // can hold before comparing them as text. Every row written by the
-  // application is ISO-8601 with a `T`, but `created_at` DEFAULTs to
-  // `CURRENT_TIMESTAMP`, which SQLite renders space-separated — and
-  // `'2026-09-05 10:00' <= '2026-09-05T09:00'` is true, because a space sorts
-  // below `T`. Without this a same-day default-stamped row reads as older
-  // than it is, and the direction of that error is deletion.
+  // Compare instants, including offsets and fractional seconds. Text order
+  // can make a recent session look old enough to delete. An invalid terminal
+  // timestamp stays NULL: do not fall back to its earlier creation date and
+  // prune a session whose actual completion time is unknown.
   const terminalAt =
-    "REPLACE(COALESCE(ended_at, completed_at, created_at), ' ', 'T')";
+    "julianday(COALESCE(ended_at, completed_at, created_at))";
   const selectEligibleSessions = database.prepare(
     `SELECT id, last_non_empty_text AS lastNonEmptyText
        FROM agent_sessions
       WHERE project_id = ?
         AND status IN (${PRUNABLE_SESSION_STATUSES.map(() => "?").join(", ")})
-        AND ${terminalAt} <= ?
-      ORDER BY ${terminalAt} ASC`,
+        AND ${terminalAt} <= julianday(?)
+      ORDER BY ${terminalAt} ASC, id ASC`,
   );
 
   const selectStreamChunks = database.prepare(

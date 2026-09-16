@@ -6,7 +6,7 @@ import { ListOrdered, Loader2 } from "lucide-react";
 import { RefinementDialog } from "./RefinementDialog";
 import type { RefinementOptions } from "@/lib/refinement/options";
 import { cn } from "@/lib/utils";
-import type { RefinementStatus } from "@/app/api/projects/[projectId]/refinement/route";
+import type { RefinementStatus } from "@/lib/refinement/types";
 
 interface RefinementButtonProps {
   projectId: string;

@@ -91,4 +91,10 @@ describe("hasUnreadAiComment", () => {
       hasUnreadAiComment({ ...base, latestCommentCreatedAt: null })
     ).toBe(true);
   });
+  it("treats equivalent instants as read across precision and timezone variants", () => {
+    for (const lastReadAt of ["2026-08-16 10:00:00", "2026-08-16T12:00:00+02:00"]) {
+      expect(hasUnreadAiComment({ ...base, lastReadAt })).toBe(false);
+    }
+  });
+
 });

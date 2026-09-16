@@ -33,6 +33,7 @@ import { ClaudeCodeProvider } from "@/lib/providers/claude-code";
 import { CodexProvider } from "@/lib/providers/codex";
 import type { ProviderSpawnOptions } from "@/lib/providers/types";
 import { spawnClaude } from "@/lib/claude/spawn";
+import { createFakeChild, type FakeChild } from "./helpers/fake-child";
 
 const baseOptions: ProviderSpawnOptions = {
   sessionId: "test-session-1",
@@ -41,50 +42,8 @@ const baseOptions: ProviderSpawnOptions = {
   mode: "code",
 };
 
-type Listener = (...args: unknown[]) => void;
-
 /** Fake child process whose stdout/stderr/exit events tests can drive. */
-function createFakeChild() {
-  const listeners = new Map<string, Listener[]>();
-  const stdoutListeners: Array<(chunk: Buffer) => void> = [];
-  const stderrListeners: Array<(chunk: Buffer) => void> = [];
-
-  return {
-    stdout: {
-      on: (event: string, fn: (chunk: Buffer) => void) => {
-        if (event === "data") stdoutListeners.push(fn);
-      },
-    },
-    stderr: {
-      on: (event: string, fn: (chunk: Buffer) => void) => {
-        if (event === "data") stderrListeners.push(fn);
-      },
-    },
-    on: (event: string, fn: Listener) => {
-      const arr = listeners.get(event) ?? [];
-      arr.push(fn);
-      listeners.set(event, arr);
-    },
-    kill: vi.fn(),
-    killed: false,
-    // Real ChildProcess fields the kill path reads: a live child reports a
-    // pid and null exit fields, which is what routes the signal to the group.
-    pid: 4242,
-    exitCode: null as number | null,
-    signalCode: null as NodeJS.Signals | null,
-    emitStdout(text: string) {
-      for (const fn of stdoutListeners) fn(Buffer.from(text));
-    },
-    emitStderr(text: string) {
-      for (const fn of stderrListeners) fn(Buffer.from(text));
-    },
-    emitClose(code: number | null) {
-      for (const fn of listeners.get("close") ?? []) fn(code);
-    },
-  };
-}
-
-let fakeChild: ReturnType<typeof createFakeChild>;
+let fakeChild: FakeChild;
 
 beforeEach(() => {
   fakeChild = createFakeChild();
@@ -182,19 +141,6 @@ describe("ClaudeCodeProvider", () => {
       })
     );
   });
-
-  it("forwards logIdentifier to spawnClaude", () => {
-    provider.spawn({
-      ...baseOptions,
-      logIdentifier: "title-project-1",
-    });
-
-    expect(spawnClaude).toHaveBeenCalledWith(
-      expect.objectContaining({
-        logIdentifier: "title-project-1",
-      })
-    );
-  });
 });
 
 describe("CodexProvider", () => {
@@ -269,9 +215,18 @@ describe("CodexProvider", () => {
     }
   });
 
-  it("does not escalate once the agent has actually exited", () => {
+  it("does not escalate once the agent and its whole group have exited", () => {
     vi.useFakeTimers({ toFake: ["setTimeout"] });
-    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+    // Once the leader has exited, the group probe (`kill(-pgid, 0)`) answers
+    // ESRCH: nothing survived SIGTERM, so there is nothing to escalate to.
+    const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+      if (fakeChild.exitCode !== null) {
+        const error = new Error("ESRCH") as NodeJS.ErrnoException;
+        error.code = "ESRCH";
+        throw error;
+      }
+      return true;
+    });
     try {
       const session = provider.spawn(baseOptions);
       provider.cancel(session);
@@ -280,7 +235,9 @@ describe("CodexProvider", () => {
       fakeChild.exitCode = 143;
       vi.advanceTimersByTime(5000);
 
-      expect(killSpy).not.toHaveBeenCalled();
+      // The liveness probe may run; no SIGKILL is delivered to anyone.
+      expect(killSpy).not.toHaveBeenCalledWith(expect.anything(), "SIGKILL");
+      expect(fakeChild.kill).not.toHaveBeenCalledWith("SIGKILL");
     } finally {
       vi.useRealTimers();
     }
@@ -304,7 +261,10 @@ describe("CodexProvider", () => {
     }
   });
 
-  it("uses the codex exec resume subcommand when resuming", () => {
+  it("refuses to build the unreachable codex resume argv", () => {
+    // `codex exec resume` is never built: isResumableProvider excludes codex
+    // (it never reports its thread id), so the flag combination cannot be
+    // reached from any dispatch path. The argv built here is the plain exec.
     provider.spawn({
       ...baseOptions,
       cliSessionId: "cli-codex-1",
@@ -312,8 +272,8 @@ describe("CodexProvider", () => {
     });
 
     expect(mockSpawn).toHaveBeenCalledOnce();
-    expect(mockSpawn.mock.calls[0][0]).toBe("codex");
     const args = mockSpawn.mock.calls[0][1] as string[];
-    expect(args.slice(0, 3)).toEqual(["exec", "resume", "cli-codex-1"]);
+    expect(args[0]).toBe("exec");
+    expect(args).not.toContain("resume");
   });
 });

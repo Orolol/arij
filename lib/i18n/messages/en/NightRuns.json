@@ -8,7 +8,10 @@
     "cancel": "Cancel",
     "start": "Start night run",
     "started": "Night run started — wave 1/{waves}, {count, plural, one {# epic} other {# epics}}",
-    "startFailed": "Failed to start the night run"
+    "startFailed": "Failed to start the night run",
+    "loadFailed": "Could not load the run scope and settings",
+    "previewFailed": "Could not load the run prerequisites",
+    "retry": "Retry"
   },
   "conflicts": {
     "nightRunActive": "A night run is already going for this project — wait for it to finish.",

@@ -44,38 +44,7 @@ import {
   type McpSpawnConfig,
   type ProviderSpawnOptions,
 } from "@/lib/providers/types";
-
-type Listener = (...args: unknown[]) => void;
-
-function createFakeChild() {
-  const listeners = new Map<string, Listener[]>();
-  const stdoutListeners: Array<(chunk: Buffer) => void> = [];
-
-  return {
-    stdout: {
-      on: (event: string, fn: (chunk: Buffer) => void) => {
-        if (event === "data") stdoutListeners.push(fn);
-      },
-    },
-    stderr: { on: () => {} },
-    on: (event: string, fn: Listener) => {
-      const arr = listeners.get(event) ?? [];
-      arr.push(fn);
-      listeners.set(event, arr);
-    },
-    kill: vi.fn(),
-    killed: false,
-    emitStdout(text: string) {
-      for (const fn of stdoutListeners) fn(Buffer.from(text));
-    },
-    emitClose(code: number | null) {
-      for (const fn of listeners.get("close") ?? []) fn(code);
-    },
-    emitError(err: Error) {
-      for (const fn of listeners.get("error") ?? []) fn(err);
-    },
-  };
-}
+import { createFakeChild, type FakeChild } from "./helpers/fake-child";
 
 function baseOptions(
   overrides: Partial<ProviderSpawnOptions> = {},
@@ -114,7 +83,7 @@ const MCP: McpSpawnConfig = {
   allowedToolNames: ["get_ticket"],
 };
 
-let fakeChild: ReturnType<typeof createFakeChild>;
+let fakeChild: FakeChild;
 
 beforeEach(() => {
   fakeChild = createFakeChild();

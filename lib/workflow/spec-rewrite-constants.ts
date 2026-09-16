@@ -12,7 +12,7 @@
  * rewrites `projects.spec` to reflect the project's current reality.
  * DEFAULT OFF — absent key means disabled.
  */
-export const SPEC_AUTO_REWRITE_SETTING_KEY = "spec_auto_rewrite";
+export { SPEC_AUTO_REWRITE_SETTING_KEY } from "@/lib/settings/keys";
 
 /** Tolerant parse of the settings row value ('true'/'false', default off). */
 export function parseSpecAutoRewriteSetting(value: unknown): boolean {

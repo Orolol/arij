@@ -211,6 +211,28 @@ afterEach(() => {
 /* ------------------------------------------------------------------ */
 
 describe("GIT band", () => {
+  it("blocks PR creation and offers retry when the current PR cannot be read", () => {
+    const retry = vi.fn();
+    mockUseGitHubConfig.mockReturnValue({ isConfigured: true });
+    mockUseEpicPr.mockReturnValue({ pr: null, loading: false, ready: false, error: "PR unavailable", refresh: retry });
+    renderSubject();
+    expect(screen.getByTestId("ticket-create-pr")).toBeDisabled();
+    expect(screen.getByText("PR unavailable")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
+  it("blocks dependency edits and offers retry after a failed initial read", () => {
+    const retry = vi.fn();
+    mockUseEpicDependencies.mockReturnValue({ predecessors: [], successors: [], ready: false,
+      loading: false, error: "Dependencies unavailable", refresh: retry, saveDependencies: vi.fn() });
+    mockUseProjectEpicsList.mockReturnValue({ epics: [{ id: "other", title: "Other", readableId: "E-2" }] });
+    renderSubject();
+    expect(screen.getByTestId("ticket-dependency-editor").querySelector("button")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
   it("shows the branch chip and the isolated-worktree tail", () => {
     renderSubject();
     expect(screen.getByText("arij/arj-122-sse-logs")).toBeInTheDocument();
@@ -312,6 +334,24 @@ describe("GIT band", () => {
 /* ------------------------------------------------------------------ */
 
 describe("merge", () => {
+  it("does not close the next ticket when the previous merge completes", async () => {
+    let complete!: (value: unknown) => void;
+    const original = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) =>
+      url.endsWith("/merge") ? new Promise((resolve) => { complete = resolve; }) : original(url, init),
+    );
+    const onClose = vi.fn();
+    const onMerged = vi.fn();
+    const { rerender } = renderSubject({ onClose, onMerged });
+    fireEvent.click(screen.getByTestId("ticket-merge"));
+    setEpic({ id: "epic-2", title: "Next ticket" });
+    rerender(<TicketOverlay projectId="proj-1" epicId="epic-2" open onClose={onClose} onMerged={onMerged} />);
+    await act(async () => { complete({ ok: true, json: async () => ({ data: { merged: true } }) }); });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(onMerged).not.toHaveBeenCalled();
+    expect(screen.getByText("Next ticket")).toBeInTheDocument();
+  });
+
   it("refreshes on the success path and closes the overlay", async () => {
     routes.unshift([/\/merge$/, () => ({ body: { data: { merged: true } } })]);
     const onClose = vi.fn();

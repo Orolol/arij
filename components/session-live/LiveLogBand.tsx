@@ -12,7 +12,7 @@ import {
   StrataBand,
   SurfaceCard,
 } from "@/components/piscine";
-import { SessionOutputStream } from "@/components/sessions/SessionOutputStream";
+import { SessionOutputStream } from "./SessionOutputStream";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
 import { cn } from "@/lib/utils";
 

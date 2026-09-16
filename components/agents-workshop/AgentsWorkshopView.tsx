@@ -13,6 +13,7 @@ import { EditorFooterBar } from "@/components/agents-workshop/EditorFooterBar";
 import { PersonaBand } from "@/components/agents-workshop/PersonaBand";
 import { TheNumbersBand } from "@/components/agents-workshop/TheNumbersBand";
 import { WhereHeWorksBand } from "@/components/agents-workshop/WhereHeWorksBand";
+import { AgentConfigError } from "./AgentConfigError";
 import { resetOptionsForProvider } from "@/components/agents-workshop/cli-options";
 import {
   useAgentAssignments,
@@ -110,6 +111,8 @@ export function AgentsWorkshopView({ projectId }: { projectId?: string }) {
   const {
     data: agents,
     loading,
+    error: loadError,
+    refresh,
     createNamedAgent,
     createCompositeAgent,
     updateNamedAgent,
@@ -122,6 +125,9 @@ export function AgentsWorkshopView({ projectId }: { projectId?: string }) {
     useAgentRosterStats();
   const {
     data: assignments,
+    loading: assignmentsLoading,
+    error: assignmentsError,
+    refresh: refreshAssignments,
     assignAgent,
   } = useAgentAssignments(scope, projectId);
 
@@ -211,9 +217,13 @@ export function AgentsWorkshopView({ projectId }: { projectId?: string }) {
   async function handleToggleDefault(next: boolean) {
     if (!agent) return;
     setError(null);
-    const result = await setDefaultCompositeAgent(next ? agent.id : null);
-    if (!result.ok) {
-      setError(result.error || t("composite.defaultFailed"));
+    try {
+      const result = await setDefaultCompositeAgent(next ? agent.id : null);
+      if (!result.ok) {
+        setError(result.error || t("composite.defaultFailed"));
+      }
+    } catch {
+      setError(t("composite.defaultFailed"));
     }
   }
 
@@ -291,6 +301,7 @@ export function AgentsWorkshopView({ projectId }: { projectId?: string }) {
   }
 
   if (loading) return <WorkshopLoading />;
+  if (loadError && agents.length === 0) return <AgentConfigError onRetry={refresh} />;
 
   return (
     /*
@@ -315,6 +326,7 @@ export function AgentsWorkshopView({ projectId }: { projectId?: string }) {
 
       {agent && draft ? (
         <div className="flex min-w-0 flex-1 flex-col gap-[10px] md:overflow-y-auto">
+          {loadError && <AgentConfigError onRetry={refresh} />}
           {isComposite ? (
             // A composite has no CLI, model, options or persona of its own —
             // those belong to its members — so the editor is its NAME and its
@@ -379,11 +391,15 @@ export function AgentsWorkshopView({ projectId }: { projectId?: string }) {
             </>
           )}
 
+          {assignmentsError && <AgentConfigError onRetry={refreshAssignments} />}
           <WhereHeWorksBand
+            key={projectId ?? "global"}
             assignments={assignments}
             namedAgents={agents}
             selectedAgentId={agent.id}
             scope={scope}
+            projectId={projectId}
+            disabled={assignmentsLoading || assignmentsError}
             onAssign={assignAgent}
           />
 

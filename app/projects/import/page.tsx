@@ -4,7 +4,7 @@ import { useTranslations } from "next-intl";
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { PillButton } from "@/components/piscine";
 import { FolderSelector } from "@/components/import/FolderSelector";
 import {
   GitHubUrlSelector,
@@ -400,7 +400,6 @@ export default function ImportProjectPage() {
           // clone column NULL so the directory is never treated as ours.
           githubOwnerRepo: cloneInfo?.ownerRepo,
           gitRemoteUrl: cloneInfo?.remoteUrl,
-          cloneSource: cloneInfo ? "github" : undefined,
           defaultBranch: cloneInfo?.defaultBranch ?? undefined,
         },
         copy
@@ -555,20 +554,20 @@ export default function ImportProjectPage() {
           role="group"
           aria-label={t("page.sourceLabel")}
         >
-          <Button
-            variant={source === "local" ? "default" : "outline"}
+          <PillButton
+            variant={source === "local" ? "filled" : "outline"}
             aria-pressed={source === "local"}
             onClick={() => handleSourceChange("local")}
           >
             {t("page.localFolder")}
-          </Button>
-          <Button
-            variant={source === "github" ? "default" : "outline"}
+          </PillButton>
+          <PillButton
+            variant={source === "github" ? "filled" : "outline"}
             aria-pressed={source === "github"}
             onClick={() => handleSourceChange("github")}
           >
             {t("page.githubUrl")}
-          </Button>
+          </PillButton>
         </div>
       )}
 
@@ -580,7 +579,7 @@ export default function ImportProjectPage() {
       )}
 
       {cloneInfo?.reused && state !== "select" && (
-        <div className="bg-blue-500/10 text-blue-400 border border-blue-500/20 p-3 rounded-md mb-4 text-sm">
+        <div className="rounded-[10px] border border-border bg-band p-3 mb-4 text-sm text-muted-foreground">
           {t("page.alreadyCloned")}
         </div>
       )}
@@ -590,7 +589,7 @@ export default function ImportProjectPage() {
       )}
       {state === "analyzing" && <ImportProgress step="analyzing" />}
       {state === "preview" && fromExistingFile && (
-        <div className="bg-blue-500/10 text-blue-400 border border-blue-500/20 p-3 rounded-md mb-4 text-sm">
+        <div className="rounded-[10px] border border-border bg-band p-3 mb-4 text-sm text-muted-foreground">
           {t("page.fromExistingFile")}
         </div>
       )}

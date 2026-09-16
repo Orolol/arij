@@ -60,7 +60,9 @@ export async function readArjiJson(repoPath: string): Promise<ArjiJson | null> {
     return null;
   }
 
-  const data = JSON.parse(raw) as ArjiJson;
+  let data: ArjiJson;
+  try { data = JSON.parse(raw) as ArjiJson; }
+  catch { throw new Error("Invalid JSON in arji.json"); }
   if (!data.project || !Array.isArray(data.epics)) {
     throw new Error(`Invalid ${ARJI_JSON}: missing "project" or "epics" keys`);
   }

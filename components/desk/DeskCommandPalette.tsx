@@ -70,6 +70,7 @@ export function DeskCommandPalette({
   onSelectProject,
 }: DeskCommandPaletteProps) {
   const t = useTranslations("Desk");
+  const tKey = useTranslations();
   const [query, setQuery] = useState("");
   const [cursor, setCursor] = useState(0);
 
@@ -113,7 +114,7 @@ export function DeskCommandPalette({
       rows.push({
         key: `session:${session.sessionId}`,
         kind: "session",
-        label: session.title,
+        label: session.titleKey ? tKey(session.titleKey) : session.title,
         hint: t("palette.hintSession", { taskType: session.taskType }),
         project: projectsById.get(session.projectId),
         run: () => session.epicId && onOpenTicket(session.epicId, session.projectId),
@@ -170,7 +171,7 @@ export function DeskCommandPalette({
     }
 
     return rows;
-  }, [payload, onOpenTicket, onSelectProject, t]);
+  }, [payload, onOpenTicket, onSelectProject, t, tKey]);
 
   const results = useMemo(
     () => entries.filter((entry) => fuzzyMatches(entry.label, query)).slice(0, 12),

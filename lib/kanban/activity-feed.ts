@@ -103,39 +103,6 @@ export function buildActivityFeed(
 }
 
 /* ------------------------------------------------------------------ */
-/* Filtering                                                           */
-/* ------------------------------------------------------------------ */
-
-export type ActivityFilter = "all" | "comments" | "system";
-
-/** "comment" for human/agent comments, "system" for everything else. */
-export function feedItemKind(item: FeedItem): "comment" | "system" {
-  return item.kind === "comment" ? "comment" : "system";
-}
-
-export function matchesActivityFilter(
-  item: FeedItem,
-  filter: ActivityFilter
-): boolean {
-  if (filter === "all") return true;
-  const kind = feedItemKind(item);
-  return filter === "comments" ? kind === "comment" : kind === "system";
-}
-
-/**
- * Apply the visible-kind filter to an already-built feed. Grouping is
- * computed on the full feed (see buildActivityFeed) so a heavy system
- * burst still collapses even when some of it is filtered out — filtering
- * only hides, it never re-orders or re-groups.
- */
-export function filterActivityFeed(
-  feed: FeedItem[],
-  filter: ActivityFilter
-): FeedItem[] {
-  return feed.filter((item) => matchesActivityFilter(item, filter));
-}
-
-/* ------------------------------------------------------------------ */
 /* Long-entry collapsing                                               */
 /* ------------------------------------------------------------------ */
 

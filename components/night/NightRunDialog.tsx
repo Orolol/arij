@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Loader2, Moon, TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,8 @@ import {
 } from "@/components/ui/select";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
-import { cn } from "@/lib/utils";
+import { requestJson } from "@/lib/api/client";
+import { OptionRow } from "@/components/shared/OptionRow";
 import {
   AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY,
   DEFAULT_MAX_CONCURRENT_AGENTS,
@@ -31,6 +32,7 @@ import {
   agentMaxConcurrentSettingKey,
   parseMaxConcurrentSetting,
 } from "@/lib/agents/scheduler-constants";
+import type { ProjectEpicListRow } from "@/lib/types/kanban";
 import {
   DEFAULT_NIGHT_CIRCUIT_BREAKER,
   NIGHT_CIRCUIT_BREAKER_RANGE,
@@ -40,11 +42,13 @@ import {
   parseNightCostCap,
 } from "@/lib/night/constants";
 
-interface ScopeEpic {
-  id: string;
-  title: string;
-  status: string;
-  readableId?: string | null;
+type ScopeEpic = Pick<
+  ProjectEpicListRow,
+  "id" | "title" | "status" | "readableId"
+>;
+
+function isScopePreview(value: unknown): value is { autoIncluded: string[] } {
+  return typeof value === "object" && value !== null && "autoIncluded" in value && Array.isArray(value.autoIncluded);
 }
 
 export interface NightRunStartedResult {
@@ -81,58 +85,17 @@ const CONFLICT_MESSAGE_KEYS: Record<string, TranslationKey> = {
 const SCOPE_ID_PREVIEW_LIMIT = 8;
 
 /**
- * One key/value line of the options block: label left, live control right,
- * with an optional caveat underneath. Mirrors the ticket-panel grammar
- * (11px vertical rhythm on a soft hairline).
- */
-function OptionRow({
-  label,
-  htmlFor,
-  hint,
-  last = false,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  hint?: string;
-  last?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex flex-col gap-1 border-t border-border-soft py-[11px]",
-        last && "border-b"
-      )}
-    >
-      <div className="flex items-center justify-between gap-3">
-        {htmlFor ? (
-          <label
-            htmlFor={htmlFor}
-            className="text-[12.5px] text-muted-foreground"
-          >
-            {label}
-          </label>
-        ) : (
-          <span className="text-[12.5px] text-muted-foreground">{label}</span>
-        )}
-        <div className="flex shrink-0 items-center gap-[6px] text-[13px]">
-          {children}
-        </div>
-      </div>
-      {hint && <p className="text-[11.5px] text-meta">{hint}</p>}
-    </div>
-  );
-}
-
-/**
  * Confirm dialog for an unattended overnight run: picks the scope (To Do
  * epics, optionally Backlog too), previews the prerequisites the server will
  * pull in, collects the safety valves (failure policy, circuit breaker, cost
  * cap) and POSTs the batch build in `dag` + `pipeline` mode — the night
  * semantics of the existing batch route.
  */
-export function NightRunDialog({
+export function NightRunDialog(props: NightRunDialogProps) {
+  return props.open ? <NightRunForm key={props.projectId} {...props} /> : null;
+}
+
+function NightRunForm({
   projectId,
   open,
   onOpenChange,
@@ -145,7 +108,7 @@ export function NightRunDialog({
   // the namespace-less translator.
   const tKey = useTranslations();
   const [epics, setEpics] = useState<ScopeEpic[]>([]);
-  const [loadingEpics, setLoadingEpics] = useState(false);
+  const [loadingEpics, setLoadingEpics] = useState(true);
   const [includeBacklog, setIncludeBacklog] = useState(false);
   const [failurePolicy, setFailurePolicy] = useState<"halt" | "stop">("halt");
   const [circuitBreaker, setCircuitBreaker] = useState<string>(
@@ -158,66 +121,44 @@ export function NightRunDialog({
   const [namedAgentId, setNamedAgentId] = useState<string | null>(
     defaultNamedAgentId
   );
-  const [autoIncluded, setAutoIncluded] = useState<string[]>([]);
+  const [preview, setPreview] = useState<{ key: string; autoIncluded: string[]; error: string | null } | null>(null);
+  const [reload, setReload] = useState(0);
+  const [previewReload, setPreviewReload] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Board epics: the scope is picked here rather than from the selection so
-  // "Night run" works without selecting anything first.
+  // Read both prerequisites before enabling a run: failed settings must not
+  // silently turn a configured cost cap into the unlimited default.
   useEffect(() => {
-    if (!open) return;
     let cancelled = false;
-    setLoadingEpics(true);
-    fetch(`/api/projects/${projectId}/epics`)
-      .then((r) => r.json())
-      .then((d) => {
-        if (cancelled) return;
-        setEpics(Array.isArray(d?.data) ? (d.data as ScopeEpic[]) : []);
-      })
-      .catch(() => {})
-      .finally(() => {
-        if (!cancelled) setLoadingEpics(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, open]);
-
-  // Defaults for the two safety valves come from the global settings; the
-  // parallelism budget is read (not set) here — it belongs to the scheduler.
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    fetch("/api/settings")
-      .then((r) => r.json())
-      .then((d) => {
-        if (cancelled) return;
-        const breaker = parseNightCircuitBreaker(
-          d?.data?.[NIGHT_CIRCUIT_BREAKER_SETTING_KEY]
-        );
-        setCircuitBreaker(
-          String(breaker ?? DEFAULT_NIGHT_CIRCUIT_BREAKER)
-        );
-        const cap = parseNightCostCap(d?.data?.[NIGHT_COST_CAP_SETTING_KEY]);
-        setCostCap(cap == null ? "" : String(cap));
-        const concurrency =
-          parseMaxConcurrentSetting(
-            d?.data?.[agentMaxConcurrentSettingKey(projectId)]
-          ) ??
-          parseMaxConcurrentSetting(
-            d?.data?.[AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY]
-          );
-        setMaxConcurrent(concurrency ?? DEFAULT_MAX_CONCURRENT_AGENTS);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [open, projectId]);
-
-  useEffect(() => {
-    if (open) setNamedAgentId(defaultNamedAgentId);
-  }, [open, defaultNamedAgentId]);
+    Promise.all([
+      requestJson<ScopeEpic[]>(`/api/projects/${projectId}/epics`, {
+        errorMessage: t("dialog.loadFailed"), validateData: Array.isArray,
+      }),
+      requestJson<Record<string, unknown>>("/api/settings", { errorMessage: t("dialog.loadFailed") }),
+    ]).then(([scope, settings]) => {
+      if (cancelled) return;
+      setLoadingEpics(false);
+      setLoadError(scope.error || settings.error);
+      if (!scope.data || !settings.data) return;
+      setEpics(scope.data);
+      const values = settings.data;
+      setCircuitBreaker(String(parseNightCircuitBreaker(values[NIGHT_CIRCUIT_BREAKER_SETTING_KEY]) ?? DEFAULT_NIGHT_CIRCUIT_BREAKER));
+      const cap = parseNightCostCap(values[NIGHT_COST_CAP_SETTING_KEY]);
+      setCostCap(cap == null ? "" : String(cap));
+      const concurrency = parseMaxConcurrentSetting(values[agentMaxConcurrentSettingKey(projectId)])
+        ?? parseMaxConcurrentSetting(values[AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY]);
+      setMaxConcurrent(concurrency ?? DEFAULT_MAX_CONCURRENT_AGENTS);
+    });
+    return () => { cancelled = true; };
+  }, [projectId, t, reload]);
 
   const scopeEpics = useMemo(() => {
     const wanted = includeBacklog
@@ -231,91 +172,56 @@ export function NightRunDialog({
     [scopeEpics]
   );
 
-  // Live preview of what the server will actually run: it re-expands the
-  // scope with the transitive prerequisites (dropping done/released ones).
-  const loadPreview = useCallback(async () => {
-    if (scopeEpicIds.length === 0) {
-      setAutoIncluded([]);
-      return;
-    }
-    try {
-      const res = await fetch(
-        `/api/projects/${projectId}/dependencies/transitive`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ticketIds: scopeEpicIds }),
-        }
-      );
-      const json = await res.json();
-      setAutoIncluded(
-        Array.isArray(json?.data?.autoIncluded) ? json.data.autoIncluded : []
-      );
-    } catch {
-      setAutoIncluded([]);
-    }
-  }, [projectId, scopeEpicIds]);
-
+  const scopeKey = JSON.stringify(scopeEpicIds);
+  const autoIncluded = preview?.key === scopeKey ? preview.autoIncluded : [];
+  const previewError = preview?.key === scopeKey ? preview.error : null;
+  const previewLoading = scopeEpicIds.length > 0 && preview?.key !== scopeKey;
   useEffect(() => {
-    if (!open) return;
-    void loadPreview();
-  }, [open, loadPreview]);
+    if (scopeEpicIds.length === 0) return;
+    let cancelled = false;
+    requestJson<{ autoIncluded: string[] }>(`/api/projects/${projectId}/dependencies/transitive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticketIds: scopeEpicIds }),
+      errorMessage: t("dialog.previewFailed"),
+      validateData: isScopePreview,
+    }).then((result) => {
+      if (!cancelled) setPreview({ key: scopeKey, autoIncluded: result.data?.autoIncluded ?? [], error: result.error });
+    });
+    return () => { cancelled = true; };
+  }, [projectId, scopeEpicIds, scopeKey, t, reload, previewReload]);
 
   async function handleConfirm() {
-    if (scopeEpicIds.length === 0) return;
+    if (!scopeEpicIds.length || loadingEpics || loadError || previewLoading || previewError || inFlight.current) return;
+    inFlight.current = true;
     setSubmitting(true);
     setError(null);
-
     const breaker = parseNightCircuitBreaker(circuitBreaker);
     const cap = parseNightCostCap(costCap);
-
-    try {
-      const res = await fetch(`/api/projects/${projectId}/build`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          epicIds: scopeEpicIds,
-          mode: "dag",
-          pipeline: true,
-          failurePolicy,
-          namedAgentId,
-          ...(breaker == null ? {} : { circuitBreaker: breaker }),
-          ...(cap == null ? {} : { costCapUsd: cap }),
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok || data?.error) {
-        const conflictKey = data?.code
-          ? CONFLICT_MESSAGE_KEYS[data.code as string]
-          : undefined;
-        const message =
-          (conflictKey && tKey(conflictKey)) ||
-          data?.error ||
-          t("dialog.startFailed");
-        setError(message);
-        onError?.(message);
-        return;
-      }
-
-      const waves = Number(data?.data?.waves ?? 0);
-      const totalEpics = Number(
-        data?.data?.totalEpics ?? scopeEpicIds.length
-      );
-      onStarted?.({
-        batchId: String(data?.data?.batchId ?? ""),
-        waves,
-        totalEpics,
-        message: t("dialog.started", { waves, count: totalEpics }),
-      });
-      onOpenChange(false);
-    } catch {
-      const message = t("dialog.startFailed");
+    const result = await requestJson<{ batchId: string; waves?: number; totalEpics?: number }>(`/api/projects/${projectId}/build`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        epicIds: scopeEpicIds, mode: "dag", pipeline: true, failurePolicy, namedAgentId,
+        ...(breaker == null ? {} : { circuitBreaker: breaker }),
+        ...(cap == null ? {} : { costCapUsd: cap }),
+      }),
+      errorMessage: t("dialog.startFailed"),
+    });
+    inFlight.current = false;
+    if (!active.current) return;
+    setSubmitting(false);
+    if (result.error !== null) {
+      const conflictKey = result.code ? CONFLICT_MESSAGE_KEYS[result.code] : undefined;
+      const message = conflictKey ? tKey(conflictKey) : result.error;
       setError(message);
       onError?.(message);
-    } finally {
-      setSubmitting(false);
+      return;
     }
+    const waves = Number(result.data.waves ?? 0);
+    const totalEpics = Number(result.data.totalEpics ?? scopeEpicIds.length);
+    onStarted?.({ batchId: result.data.batchId, waves, totalEpics, message: t("dialog.started", { waves, count: totalEpics }) });
+    onOpenChange(false);
   }
 
   const scopeLabel =
@@ -385,6 +291,7 @@ export function NightRunDialog({
               <input
                 type="checkbox"
                 data-testid="night-include-backlog"
+                disabled={loadingEpics || submitting}
                 checked={includeBacklog}
                 onChange={(e) => setIncludeBacklog(e.target.checked)}
                 className="h-3.5 w-3.5 rounded border-border"
@@ -393,7 +300,7 @@ export function NightRunDialog({
             </label>
           </div>
 
-          <div className="flex flex-col">
+          <fieldset disabled={loadingEpics || !!loadError || submitting} className="flex flex-col">
             <OptionRow label={t("options.agent")}>
               <NamedAgentSelect
                 value={namedAgentId}
@@ -474,7 +381,7 @@ export function NightRunDialog({
                 onChange={(e) => setCircuitBreaker(e.target.value)}
               />
             </OptionRow>
-          </div>
+          </fieldset>
 
           <div
             data-testid="night-run-warning"
@@ -488,6 +395,20 @@ export function NightRunDialog({
             </span>
           </div>
 
+          {(loadError || previewError) && (
+            <div role="alert" className="text-[12.5px]">
+              <p>{loadError || previewError}</p>
+              <Button variant="outline" onClick={() => {
+                if (loadError) {
+                  setLoadingEpics(true);
+                  setLoadError(null);
+                  setReload((value) => value + 1);
+                }
+                setPreview(null);
+                setPreviewReload((value) => value + 1);
+              }}>{t("dialog.retry")}</Button>
+            </div>
+          )}
           {error && (
             <p
               className="text-[12.5px] text-destructive"
@@ -508,7 +429,7 @@ export function NightRunDialog({
           </Button>
           <Button
             onClick={handleConfirm}
-            disabled={submitting || scopeEpicIds.length === 0}
+            disabled={submitting || loadingEpics || !!loadError || previewLoading || !!previewError || scopeEpicIds.length === 0}
             data-testid="night-run-confirm"
             className="h-[31px] rounded-[8px] px-[13px] text-[13px] font-medium"
           >

@@ -14,6 +14,10 @@ import userEvent from "@testing-library/user-event";
 import { NowDesk } from "@/components/desk/NowDesk";
 import type { ControlDeskPayload } from "@/lib/control-desk/types";
 
+const openTicket = vi.hoisted(() => vi.fn());
+vi.mock("@/components/ticket/TicketOverlayProvider", () => ({
+  useTicketOverlay: () => ({ openTicket }),
+}));
 const push = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push, replace: vi.fn() }),
@@ -130,7 +134,60 @@ describe("desk mutations", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     push.mockClear();
+    openTicket.mockClear();
     namedAgents.current = [];
+  });
+
+  it.each([null, "p1"])("opens held-back tickets in the registry with project scope %s", async (projectId) => {
+    const desk = { ...payload, heldBackCount: 3 };
+    mockFetch(() => ({ body: { data: desk } }), desk);
+    render(<NowDesk projectId={projectId} />);
+    fireEvent.click(await screen.findByText("3 more blocked by open findings →"));
+    expect(push).toHaveBeenCalledWith(projectId
+      ? "/tickets?status=to_merge&project=p1"
+      : "/tickets?status=to_merge");
+  });
+
+  it("opens a ready-to-land ticket with its owner on the global desk", async () => {
+    mockFetch(() => ({ body: { data: {} } }));
+    render(<NowDesk />);
+    fireEvent.click(await screen.findByRole("button", { name: "Rail" }));
+    expect(openTicket).toHaveBeenCalledWith("e2", { projectId: "p1" });
+  });
+
+  it("opens a working ticket with its owner even when it is absent from Up Next", async () => {
+    mockFetch(() => ({ body: { data: {} } }), {
+      ...payload,
+      working: [{
+        sessionId: "live", epicId: "working-ticket", projectId: "p1",
+        readableId: "ARJ-1", title: "Live ticket", taskType: "BUILD",
+        agentName: null, startedAt: "2026-08-28T09:00:00.000Z",
+        lastLogLine: null, nightRun: false, stale: false,
+      }],
+    });
+    render(<NowDesk />);
+    fireEvent.click(await screen.findByText("Live ticket"));
+    expect(openTicket).toHaveBeenCalledWith("working-ticket", { projectId: "p1" });
+  });
+
+  it("does not launch a build when the answer could not be saved", async () => {
+    const fetchMock = mockFetch((url) => url.endsWith("/comments")
+      ? { status: 500, body: { error: "Reply could not be saved" } }
+      : { body: { data: {} } }, {
+      ...payload,
+      yourTurn: { failed: [], conflicts: [], awaitingReply: [{
+        epicId: "question", projectId: "p1", readableId: "ARJ-2", title: "Question",
+        question: "Which version?", author: "builder", askedAt: null, unreadAi: true,
+      }] },
+    });
+    render(<NowDesk />);
+    const input = await screen.findByPlaceholderText("Reply to the agent…");
+    fireEvent.change(input, { target: { value: "Use version two" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send to dev" }));
+    await waitFor(() => expect(calls(fetchMock, "/comments")).toHaveLength(1));
+    expect(await screen.findByText("Reply could not be saved")).toBeInTheDocument();
+    expect(calls(fetchMock, "/build")).toHaveLength(0);
+    expect(input).toHaveValue("Use version two");
   });
 
   it("retries through buildRetryDispatch — single-epic route, resumed session", async () => {

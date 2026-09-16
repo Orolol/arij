@@ -1,59 +1,9 @@
 import { describe, it, expect } from "vitest";
 import {
   parseEpicFromConversation,
-  extractJsonCandidates,
 } from "@/lib/epic-parsing";
 import { createEpicSchema } from "@/lib/validation/schemas";
 
-describe("extractJsonCandidates", () => {
-  it("extracts JSON from standard code fence", () => {
-    const content = '```json\n{"title": "Auth"}\n```';
-    const candidates = extractJsonCandidates(content);
-    expect(candidates).toContainEqual('{"title": "Auth"}');
-  });
-
-  it("extracts JSON from code fence without json tag", () => {
-    const content = '```\n{"title": "Auth"}\n```';
-    const candidates = extractJsonCandidates(content);
-    expect(candidates).toContainEqual('{"title": "Auth"}');
-  });
-
-  it("extracts JSON when surrounded by preamble text", () => {
-    const content =
-      'Here is the epic:\n\n```json\n{"title": "Auth", "userStories": [{"title": "As a user, I want login"}]}\n```\n\nLet me know if this looks good.';
-    const candidates = extractJsonCandidates(content);
-    expect(candidates.length).toBeGreaterThanOrEqual(1);
-    const parsed = JSON.parse(candidates[0]);
-    expect(parsed.title).toBe("Auth");
-  });
-
-  it("extracts raw JSON when entire content is a JSON object", () => {
-    const content = '{"title": "Auth", "userStories": []}';
-    const candidates = extractJsonCandidates(content);
-    expect(candidates).toContainEqual(content);
-  });
-
-  it("finds JSON object embedded in conversational text without code fences", () => {
-    const content =
-      'The plan is ready. Here it is:\n{"title": "Auth", "description": "desc", "userStories": [{"title": "As a dev, I want auth"}]}\nShould I proceed?';
-    const candidates = extractJsonCandidates(content);
-    expect(candidates.length).toBeGreaterThanOrEqual(1);
-    const hasTitle = candidates.some((c) => {
-      try {
-        return JSON.parse(c).title === "Auth";
-      } catch {
-        return false;
-      }
-    });
-    expect(hasTitle).toBe(true);
-  });
-
-  it("returns empty array for text with no JSON at all", () => {
-    const content = "The plan is ready for your review. Should I proceed?";
-    const candidates = extractJsonCandidates(content);
-    expect(candidates).toEqual([]);
-  });
-});
 
 describe("parseEpicFromConversation", () => {
   it("parses a well-formed JSON response", () => {

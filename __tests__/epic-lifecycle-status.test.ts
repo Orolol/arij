@@ -9,6 +9,10 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+// Prompt evidence is covered against a real database in audit-review-contracts.
+vi.mock("@/lib/review/prompt-context", () => ({ manualReviewEvidence: vi.fn(() => "") }));
+import { waitForBackground } from "./helpers/background";
+
 // ---------------------------------------------------------------------------
 // Shared mock state — tracks all DB update/insert calls
 // ---------------------------------------------------------------------------
@@ -191,15 +195,6 @@ vi.mock("@/lib/agent-config/agent-resolution", () => ({
   resolveAgentForDispatch: vi.fn(async () => ({ provider: "claude-code", namedAgentId: null })),
 }));
 
-vi.mock("@/lib/agent-config/constants", () => ({
-  REVIEW_TYPE_TO_AGENT_TYPE: {
-    security: "security_reviewer",
-    code_review: "code_reviewer",
-    compliance: "compliance_reviewer",
-    feature_review: "feature_reviewer",
-  },
-}));
-
 vi.mock("@/lib/claude/json-parser", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@/lib/claude/json-parser")>();
@@ -277,11 +272,6 @@ function mockRequest(body: Record<string, unknown>) {
   } as unknown as import("next/server").NextRequest;
 }
 
-async function flushBackground() {
-  await new Promise((r) => setTimeout(r, 100));
-  await new Promise((r) => setTimeout(r, 100));
-}
-
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -322,17 +312,23 @@ describe("Epic build — marks US & epic as review on success", () => {
     });
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    const usReview = dbUpdates.find(
-      (u) => u.table === "userStories" && u.setValues.status === "review"
+    // The build's completion handler runs in a background closure the route
+    // does not hand back, so the wait is on the writes it makes.
+    await waitForBackground(
+      () => {
+        expect(
+          dbUpdates.find(
+            (u) => u.table === "userStories" && u.setValues.status === "review"
+          )
+        ).toBeDefined();
+        expect(
+          dbUpdates.find(
+            (u) => u.table === "epics" && u.setValues.status === "review"
+          )
+        ).toBeDefined();
+      },
+      "the build completion marking the story and the epic for review",
     );
-    expect(usReview).toBeDefined();
-
-    const epicReview = dbUpdates.find(
-      (u) => u.table === "epics" && u.setValues.status === "review"
-    );
-    expect(epicReview).toBeDefined();
   });
 });
 
@@ -367,18 +363,21 @@ describe("Epic build — a SILENT build does NOT mark review", () => {
     });
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    expect(
-      dbUpdates.find(
-        (u) => u.table === "userStories" && u.setValues.status === "review"
-      )
-    ).toBeUndefined();
-    expect(
-      dbUpdates.find(
-        (u) => u.table === "epics" && u.setValues.status === "review"
-      )
-    ).toBeUndefined();
+    await waitForBackground(
+      () => {
+        expect(
+          dbUpdates.find(
+            (u) => u.table === "userStories" && u.setValues.status === "review"
+          )
+        ).toBeUndefined();
+        expect(
+          dbUpdates.find(
+            (u) => u.table === "epics" && u.setValues.status === "review"
+          )
+        ).toBeUndefined();
+      },
+      "the silent build leaving every status alone",
+    );
   });
 });
 
@@ -413,12 +412,13 @@ describe("Epic build — failure does NOT mark done", () => {
     });
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    const reviewUpdates = dbUpdates.filter(
-      (u) => u.setValues.status === "review"
+    await waitForBackground(
+      () =>
+        expect(
+          dbUpdates.filter((u) => u.setValues.status === "review")
+        ).toHaveLength(0),
+      "the run leaving no story in review",
     );
-    expect(reviewUpdates).toHaveLength(0);
   });
 });
 
@@ -454,12 +454,13 @@ describe("Epic build — question keeps in_progress", () => {
     });
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    const reviewUpdates = dbUpdates.filter(
-      (u) => u.setValues.status === "review"
+    await waitForBackground(
+      () =>
+        expect(
+          dbUpdates.filter((u) => u.setValues.status === "review")
+        ).toHaveLength(0),
+      "the run leaving no story in review",
     );
-    expect(reviewUpdates).toHaveLength(0);
   });
 });
 
@@ -483,7 +484,7 @@ describe("Epic review — negative verdict reverts to in_progress", () => {
   it("reverts epic and US to in_progress on negative review", async () => {
     processManagerResult = {
       success: true,
-      result: "Changes requested: the feature is not complete",
+      result: "The feature is not complete.\n**Overall Verdict: Changes Requested**",
       duration: 1000,
     };
 
@@ -497,17 +498,21 @@ describe("Epic review — negative verdict reverts to in_progress", () => {
     );
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    const epicRevert = dbUpdates.find(
-      (u) => u.table === "epics" && u.setValues.status === "in_progress"
+    await waitForBackground(
+      () => {
+        expect(
+          dbUpdates.find(
+            (u) => u.table === "epics" && u.setValues.status === "in_progress"
+          )
+        ).toBeDefined();
+        expect(
+          dbUpdates.find(
+            (u) => u.table === "userStories" && u.setValues.status === "in_progress"
+          )
+        ).toBeDefined();
+      },
+      "the negative verdict reverting the epic and its story",
     );
-    expect(epicRevert).toBeDefined();
-
-    const usRevert = dbUpdates.find(
-      (u) => u.table === "userStories" && u.setValues.status === "in_progress"
-    );
-    expect(usRevert).toBeDefined();
   });
 });
 
@@ -544,12 +549,13 @@ describe("Epic review — positive verdict keeps review status", () => {
     );
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    const revertUpdates = dbUpdates.filter(
-      (u) => u.setValues.status === "in_progress"
+    await waitForBackground(
+      () =>
+        expect(
+          dbUpdates.filter((u) => u.setValues.status === "in_progress")
+        ).toHaveLength(0),
+      "the positive verdict leaving every status alone",
     );
-    expect(revertUpdates).toHaveLength(0);
   });
 });
 
@@ -638,12 +644,15 @@ describe("Story build — marks story as review on success", () => {
     });
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    const storyReview = dbUpdates.find(
-      (u) => u.table === "userStories" && u.setValues.status === "review"
+    await waitForBackground(
+      () =>
+        expect(
+          dbUpdates.find(
+            (u) => u.table === "userStories" && u.setValues.status === "review"
+          )
+        ).toBeDefined(),
+      "the story build marking the story for review",
     );
-    expect(storyReview).toBeDefined();
   });
 });
 
@@ -679,12 +688,13 @@ describe("Story build — question keeps in_progress", () => {
     });
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    const reviewUpdates = dbUpdates.filter(
-      (u) => u.setValues.status === "review"
+    await waitForBackground(
+      () =>
+        expect(
+          dbUpdates.filter((u) => u.setValues.status === "review")
+        ).toHaveLength(0),
+      "the run leaving no story in review",
     );
-    expect(reviewUpdates).toHaveLength(0);
   });
 });
 
@@ -707,7 +717,7 @@ describe("Story review — negative verdict reverts story and epic", () => {
   it("reverts story and parent epic on negative review", async () => {
     processManagerResult = {
       success: true,
-      result: "This feature is not complete. Multiple criteria are missing.",
+      result: "Multiple criteria are missing.\n**Overall Verdict: Not Complete**",
       duration: 1000,
     };
 
@@ -721,17 +731,21 @@ describe("Story review — negative verdict reverts story and epic", () => {
     );
 
     expect(res.status).toBe(200);
-    await flushBackground();
-
-    const storyRevert = dbUpdates.find(
-      (u) => u.table === "userStories" && u.setValues.status === "in_progress"
+    await waitForBackground(
+      () => {
+        expect(
+          dbUpdates.find(
+            (u) => u.table === "userStories" && u.setValues.status === "in_progress"
+          )
+        ).toBeDefined();
+        expect(
+          dbUpdates.find(
+            (u) => u.table === "epics" && u.setValues.status === "in_progress"
+          )
+        ).toBeDefined();
+      },
+      "the negative story verdict reverting the story and its epic",
     );
-    expect(storyRevert).toBeDefined();
-
-    const epicRevert = dbUpdates.find(
-      (u) => u.table === "epics" && u.setValues.status === "in_progress"
-    );
-    expect(epicRevert).toBeDefined();
   });
 });
 

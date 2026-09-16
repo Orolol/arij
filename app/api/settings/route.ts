@@ -1,7 +1,6 @@
-import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
+import { inArray } from "drizzle-orm";
 import { GITHUB_PAT_SETTING_KEY } from "@/lib/github/client";
 import { abortDeviceFlow } from "@/lib/github/device-flow-store";
 import {
@@ -15,9 +14,11 @@ import {
   negotiateUiLocale,
 } from "@/lib/i18n/locales";
 import { OPENAI_API_KEY_SETTING_KEY } from "@/lib/openai/constants";
+import { defaultProjectsRoot } from "@/lib/projects/workspace";
 import { PROJECTS_ROOT_SETTING_KEY } from "@/lib/projects/workspace-constants";
 import { isWritableSettingKey } from "@/lib/settings/writable-keys";
-import { defaultProjectsRoot } from "@/lib/projects/workspace";
+import { upsertSetting } from "@/lib/settings/write";
+import { NextRequest, NextResponse } from "next/server";
 
 function parseValue(raw: string): unknown {
   try {
@@ -27,8 +28,18 @@ function parseValue(raw: string): unknown {
   }
 }
 
-export async function GET(request?: NextRequest) {
-  const rows = db.select().from(settings).all();
+export async function GET(request: Request) {
+  const url = new URL(request.url);
+  const keysParam = url.searchParams.get("keys");
+  const requestedKeys = keysParam
+    ? keysParam.split(",").map((k) => k.trim()).filter(Boolean)
+    : null;
+
+  const rows = requestedKeys
+    ? requestedKeys.length > 0
+      ? db.select().from(settings).where(inArray(settings.key, requestedKeys)).all()
+      : []
+    : db.select().from(settings).all();
   const data: Record<string, unknown> = {};
 
   for (const row of rows) {
@@ -77,7 +88,7 @@ export async function GET(request?: NextRequest) {
     defaults: {
       [PROJECTS_ROOT_SETTING_KEY]: defaultProjectsRoot(),
       [UI_LOCALE_SETTING_KEY]: negotiateUiLocale(
-        request?.headers.get("accept-language") ?? null,
+        request.headers.get("accept-language"),
       ),
     },
   });
@@ -196,23 +207,7 @@ export async function PATCH(request: NextRequest) {
 
   db.transaction((tx) => {
     for (const [key, value] of entries) {
-      const jsonValue = JSON.stringify(value);
-      const existing = tx
-        .select()
-        .from(settings)
-        .where(eq(settings.key, key))
-        .get();
-
-      if (existing) {
-        tx.update(settings)
-          .set({ value: jsonValue, updatedAt: now })
-          .where(eq(settings.key, key))
-          .run();
-      } else {
-        tx.insert(settings)
-          .values({ key, value: jsonValue, updatedAt: now })
-          .run();
-      }
+      upsertSetting(key, value, tx);
     }
   });
 

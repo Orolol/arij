@@ -43,40 +43,9 @@ import { OhMyPiProvider } from "@/lib/providers/oh-my-pi";
 import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
 import type { McpSpawnConfig, ProviderSpawnOptions } from "@/lib/providers/types";
 import type { BaseCliProvider } from "@/lib/providers/base-provider";
-
-type Listener = (...args: unknown[]) => void;
+import { createFakeChild, type FakeChild } from "./helpers/fake-child";
 
 /** Fake child process whose stdout/stderr/exit events tests can drive. */
-function createFakeChild() {
-  const listeners = new Map<string, Listener[]>();
-  const stdoutListeners: Array<(chunk: Buffer) => void> = [];
-
-  return {
-    stdout: {
-      on: (event: string, fn: (chunk: Buffer) => void) => {
-        if (event === "data") stdoutListeners.push(fn);
-      },
-    },
-    stderr: { on: () => {} },
-    on: (event: string, fn: Listener) => {
-      const arr = listeners.get(event) ?? [];
-      arr.push(fn);
-      listeners.set(event, arr);
-    },
-    kill: vi.fn(),
-    killed: false,
-    emitStdout(text: string) {
-      for (const fn of stdoutListeners) fn(Buffer.from(text));
-    },
-    emitClose(code: number | null) {
-      for (const fn of listeners.get("close") ?? []) fn(code);
-    },
-    emitError(err: Error) {
-      for (const fn of listeners.get("error") ?? []) fn(err);
-    },
-  };
-}
-
 function baseOptions(
   overrides: Partial<ProviderSpawnOptions> = {},
 ): ProviderSpawnOptions {
@@ -107,7 +76,7 @@ function assistantMessageEnd(
   });
 }
 
-let fakeChild: ReturnType<typeof createFakeChild>;
+let fakeChild: FakeChild;
 
 beforeEach(() => {
   fakeChild = createFakeChild();
@@ -130,6 +99,26 @@ afterEach(() => {
  */
 class TestPiProvider extends PiProvider {
   readonly type = "oh-my-pi" as const;
+  get binaryName(): string {
+    return "pi";
+  }
+  protected get cliDisplayName(): string {
+    return "Pi";
+  }
+  protected readonlyTools(): string[] {
+    return ["read", "grep", "find", "ls"];
+  }
+  protected resumeArgs(cliSessionId: string): string[] {
+    return ["--session", cliSessionId];
+  }
+  protected notAuthenticatedMessage(): string {
+    return "Pi is not authenticated.";
+  }
+  protected buildSpawnErrorMessage(err: Error): string {
+    return err.message.includes("ENOENT")
+      ? "Pi CLI not found."
+      : `Failed to spawn Pi CLI: ${err.message}`;
+  }
 }
 
 describe("Provider factory — Pi providers", () => {

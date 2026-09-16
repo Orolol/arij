@@ -17,7 +17,15 @@
 import type { StampTone } from "@/components/piscine";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
 
-/** Human name per dispatch role. Read by the header stamp and the NEXT chain. */
+/**
+ * Human name per dispatch role — THE table. Read by the live header stamp, the
+ * NEXT chain and the project sessions list (`app/projects/:id/sessions`).
+ *
+ * It used to exist twice with divergent words for the same type ("Ticket" on
+ * the list, "Ticket Build" on the live header) and without `release_notes` on
+ * the live side, where a release-notes session printed its raw type. One
+ * vocabulary now; the fuller name wins.
+ */
 export const AGENT_TYPE_LABEL_KEYS: Record<string, TranslationKey> = {
   build: "SessionLive.agentType.build",
   ticket_build: "SessionLive.agentType.ticketBuild",
@@ -30,10 +38,24 @@ export const AGENT_TYPE_LABEL_KEYS: Record<string, TranslationKey> = {
   grading: "SessionLive.agentType.grading",
   merge: "SessionLive.agentType.merge",
   tech_check: "SessionLive.agentType.techCheck",
+  release_notes: "SessionLive.agentType.releaseNotes",
   memory_distill: "SessionLive.agentType.memoryDistill",
   dreaming: "SessionLive.agentType.dreaming",
   forensic: "SessionLive.agentType.forensic",
   failure_digest: "SessionLive.agentType.failureDigest",
+};
+
+/**
+ * The word per session status — THE table, shared by the live header stamp and
+ * the project sessions list, which each used to carry their own keys in a
+ * different namespace (`SessionLive.status.*` vs `ProjectSessions.status.*`).
+ */
+export const STATUS_LABEL_KEYS: Record<string, TranslationKey> = {
+  running: "SessionLive.status.running",
+  queued: "SessionLive.status.queued",
+  completed: "SessionLive.status.completed",
+  failed: "SessionLive.status.failed",
+  cancelled: "SessionLive.status.cancelled",
 };
 
 /**
@@ -62,15 +84,12 @@ export interface StatusStamp {
   dot?: boolean;
 }
 
-const STAMP_BY_STATUS: Record<
-  string,
-  { tone: StampTone; wordKey: TranslationKey; dot?: boolean }
-> = {
-  running: { tone: "live", wordKey: "SessionLive.status.running", dot: true },
-  queued: { tone: "next", wordKey: "SessionLive.status.queued" },
-  completed: { tone: "land", wordKey: "SessionLive.status.completed" },
-  failed: { tone: "failed", wordKey: "SessionLive.status.failed" },
-  cancelled: { tone: "next", wordKey: "SessionLive.status.cancelled" },
+const STAMP_TONE_BY_STATUS: Record<string, { tone: StampTone; dot?: boolean }> = {
+  running: { tone: "live", dot: true },
+  queued: { tone: "next" },
+  completed: { tone: "land" },
+  failed: { tone: "failed" },
+  cancelled: { tone: "next" },
 };
 
 /**
@@ -79,9 +98,10 @@ const STAMP_BY_STATUS: Record<
  * a raw status is data, not copy, so it is never given a catalogue key.
  */
 export function statusStamp(status: string): StatusStamp {
-  const known = STAMP_BY_STATUS[status];
-  if (known) return { ...known, fallbackWord: status.toUpperCase() };
-  return { tone: "next", wordKey: null, fallbackWord: status.toUpperCase() };
+  const tone = STAMP_TONE_BY_STATUS[status];
+  const wordKey = STATUS_LABEL_KEYS[status] ?? null;
+  if (tone) return { ...tone, wordKey, fallbackWord: status.toUpperCase() };
+  return { tone: "next", wordKey, fallbackWord: status.toUpperCase() };
 }
 
 /**

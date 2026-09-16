@@ -46,5 +46,5 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  return NextResponse.json({ data: { id } }, { status: 201 });
+  return NextResponse.json({ data: { id, name, prompt, createdAt: now, updatedAt: now } }, { status: 201 });
 }

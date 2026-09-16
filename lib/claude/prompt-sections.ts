@@ -30,7 +30,7 @@ import type {
   PromptUserStory,
   PromptComment,
   ReviewType,
-} from "./prompt-builder";
+} from "./prompts/types";
 
 export type PromptContextSectionKey =
   | "spec"
@@ -103,7 +103,7 @@ export function documentsSection(documents: PromptDocument[]): string {
 /** Lists existing epic titles for deduplication context. */
 export function existingEpicsSection(existingEpics: PromptEpic[]): string {
   if (existingEpics.length === 0) return "";
-  const list = existingEpics.map((epic) => `- ${epic.title}`).join("\n");
+  const list = existingEpics.map((epic) => `- ${neutralizeControlMarkup(epic.title)}`).join("\n");
   return `## Existing Epics\n\n${list}\n`;
 }
 
@@ -144,11 +144,11 @@ export function descriptionSection(description: string | null | undefined): stri
   return section("Project Description", neutralizeControlMarkup(description));
 }
 
-export function specSection(spec: string | null | undefined): string {
+export function specSection(spec: string | null | undefined, maxChars = 60_000): string {
   if (!spec || spec.trim().length === 0) return "";
   // Fenced: the specification is rewritten by an agent session, so it is
   // stored content, not prompt the builder wrote. See lib/claude/untrusted.ts.
-  return section("Project Specification", fenceUntrusted(spec));
+  return section("Project Specification", fenceUntrusted(spec.length > maxChars ? spec.slice(0, maxChars) + "\n[… specification truncated …]" : spec));
 }
 
 /** Heading used for the learned project memory block in every agent prompt. */
@@ -162,11 +162,11 @@ export const PROJECT_MEMORY_HEADING =
  * Token-budgeted by construction: the content is hard-capped on write at
  * PROJECT_MEMORY_MAX_TOKENS estimated tokens (lib/documents/memory-constants.ts).
  */
-export function memorySection(memory: string | null | undefined): string {
+export function memorySection(memory: string | null | undefined, maxChars = 24_000): string {
   if (!memory || memory.trim().length === 0) return "";
   // Fenced for the same reason as the spec: distillation and Dreaming are
   // agent sessions, so the memory document is agent-written content.
-  return section(PROJECT_MEMORY_HEADING, fenceUntrusted(memory));
+  return section(PROJECT_MEMORY_HEADING, fenceUntrusted(memory.length > maxChars ? memory.slice(0, maxChars) + "\n[… memory truncated …]" : memory));
 }
 
 /** Heading under which a ticket's attached screenshots are listed. */
@@ -235,17 +235,19 @@ ${lines}
  * Returns the parts joined as a single string (empty sections omitted).
  */
 export function projectContextSections(
-  project: PromptProject,
-  documents: PromptDocument[],
+  project: PromptProject, documents: PromptDocument[],
+  collector?: PromptSectionCollector,
+  options: { description?: boolean; specMaxChars?: number; memoryMaxChars?: number } = {},
 ): string {
-  const parts = [
-    projectHeader(project.name),
-    descriptionSection(project.description),
-    specSection(project.spec),
-    memorySection(project.memory),
-    documentsSection(documents),
+  const parts: Array<[PromptContextSectionKey, string]> = [
+    ["spec", projectHeader(project.name)],
+    ["spec", options.description === false ? "" : descriptionSection(project.description)],
+    ["spec", specSection(project.spec, options.specMaxChars)],
+    ["memory", memorySection(project.memory, options.memoryMaxChars)],
+    ["documents", documentsSection(documents)],
   ];
-  return parts.filter(Boolean).join("\n");
+  for (const [key, text] of parts) if (text) collector?.(key, text);
+  return parts.map(([, text]) => text).filter(Boolean).join("\n");
 }
 
 /**
@@ -279,7 +281,9 @@ export function arijToolsSection(
   agentType: string | null,
   toolPrefix = "mcp__arij__",
   refinementActions: readonly RefinementAction[] = REFINEMENT_ACTION_IDS,
+  hasTicket = true,
 ): string {
+  if (!hasTicket && agentType !== REFINEMENT_AGENT_TYPE) return "";
   const naming = toolPrefix
     ? `through MCP tools named ${toolPrefix}*`
     : "through the arij MCP server's tools, mounted under their bare names";
@@ -298,7 +302,7 @@ export function arijToolsSection(
       "Use each tool's required fields and explain why you changed the board. " +
       "These actions apply to Backlog and To do only. " +
       (refinementActions.includes("readiness")
-        ? "promote_ticket is your column-move channel; sending work back requires a question. "
+        ? "promote_ticket is your status-change channel; sending work back requires a question. "
         : "Column moves are disabled for this pass. ") +
       (refinementActions.includes("merge") || refinementActions.includes("discard")
         ? "Retired tickets are deleted permanently with no undo; tickets with agent history cannot be retired. "
@@ -342,7 +346,7 @@ export function arijToolsSection(
   const reviewExtra =
     agentType && agentType.startsWith("review_")
       ? " submit_findings is the channel your review is read from: its " +
-        "verdict decides the ticket's next column — a passing verdict moves " +
+        "verdict decides the ticket's next status — a passing verdict moves " +
         "it to To Merge (ready for the user to merge), 'changes_requested' " +
         "sends it back to In Progress. Each finding you file (file+line " +
         "anchored) becomes a review comment on the ticket, and an " +
@@ -365,7 +369,7 @@ export function arijToolsSection(
 
   return section(
     "Arij tools",
-    base + buildExtra + reviewExtra + gradingExtra,
+    base + " Planning tools are also available when relevant: set_priority, reorder_tickets, add_dependency, remove_dependency, promote_ticket; their validated scope and transition rules still apply." + buildExtra + reviewExtra + gradingExtra,
   );
 }
 
@@ -481,15 +485,15 @@ export function userStoriesSection(
   const storyLines = userStories.map((us) => {
     const lines: string[] = [];
     const prefix = checkmark ? "- [ ] " : "- ";
-    lines.push(`${prefix}**${us.title}**`);
+    lines.push(`${prefix}**${neutralizeControlMarkup(us.title)}**`);
 
     if (us.description) {
-      lines.push(`  ${us.description.trim()}`);
+      lines.push(`  ${neutralizeControlMarkup(us.description.trim())}`);
     }
 
     if (us.acceptanceCriteria) {
       lines.push(`  **Acceptance criteria:**`);
-      const criteria = us.acceptanceCriteria
+      const criteria = neutralizeControlMarkup(us.acceptanceCriteria)
         .trim()
         .split("\n")
         .map((line) => `  ${line}`)

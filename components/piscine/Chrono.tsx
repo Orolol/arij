@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { cn } from "@/lib/utils";
-import { formatElapsed } from "@/lib/utils/format-elapsed";
+import { compactElapsed, formatElapsed } from "@/lib/utils/format-elapsed";
 
 /**
  * The ticking elapsed-time numeral (5a session cards 21px, 6a overlay header
@@ -13,25 +13,6 @@ import { formatElapsed } from "@/lib/utils/format-elapsed";
  * inline during a parent's render the way `components/dashboard/ProjectGrid.tsx`
  * does — such a chrono only advances on the parent's 10s poll.
  */
-
-/**
- * The elapsed maths lives in `lib/utils/format-elapsed.ts` and stays there; this
- * only reshapes its output to the compact form every frame draws.
- *
- * SPEC CONFLICT, resolved: the primitive spec says "format via the EXISTING
- * formatElapsed" and then quotes "4m12" / "1m03" / "47s" / "22m08" — but
- * `formatElapsed` returns "4m 12s" / "1m 3s" / "47s" / "22m 8s". Those two
- * cannot both be true. The frames (5a, 6a, 6c, 7a, 8a all render "4m12") win on
- * the string, and the un-padded "1m 3s" → "1m 12s" transition changes the glyph
- * COUNT, so it jitters even with tabular figures — exactly the defect the spec
- * calls out. So: keep one source for the arithmetic, normalise the presentation
- * here. Anything that does not match a known shape passes through untouched.
- */
-function compact(elapsed: string): string {
-  const match = /^(\d+)([mh])\s(\d+)[ms]$/.exec(elapsed);
-  if (!match) return elapsed; // "47s", and any future shape
-  return `${match[1]}${match[2]}${match[3].padStart(2, "0")}`;
-}
 
 export interface ChronoProps {
   /** ISO timestamp the session started at. */
@@ -48,11 +29,11 @@ export function Chrono({
   tone = "live",
   className,
 }: ChronoProps) {
-  const [label, setLabel] = useState(() => compact(formatElapsed(startedAt)));
+  const [label, setLabel] = useState(() => compactElapsed(formatElapsed(startedAt)));
 
   useEffect(() => {
     function tick() {
-      setLabel(compact(formatElapsed(startedAt)));
+      setLabel(compactElapsed(formatElapsed(startedAt)));
     }
 
     tick();

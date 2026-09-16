@@ -1,5 +1,6 @@
 import type { UiLocale } from "@/lib/i18n/locales";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
+import type { ProjectEpicListRow } from "@/lib/types/kanban";
 
 /**
  * Pure derivations for the Releases desk (frame 8c).
@@ -27,17 +28,18 @@ export interface ReleaseRow {
 }
 
 /** The subset of the epics payload this screen reads. */
-export interface ReleaseEpic {
-  id: string;
-  title: string;
-  status: string;
-  type?: string;
-  readableId?: string | null;
-  releaseId?: string | null;
-  usCount?: number;
-  usDone?: number;
-  updatedAt?: string | null;
-}
+export type ReleaseEpic = Pick<
+  ProjectEpicListRow,
+  | "id"
+  | "title"
+  | "status"
+  | "type"
+  | "readableId"
+  | "releaseId"
+  | "usCount"
+  | "usDone"
+  | "updatedAt"
+>;
 
 export type ReleaseState = "published" | "draft" | "local";
 
@@ -178,20 +180,4 @@ export function upperAge(relative: string, locale: UiLocale): string {
  */
 export function displayVersion(version: string): string {
   return /^v/i.test(version) ? version : `v${version}`;
-}
-
-/**
- * A stable tone index for a project that has no stored `colorIndex`.
- *
- * `projectTone()` wraps anything out of range, so a hash of the id gives every
- * project a fixed identity colour that survives reloads. The day a
- * `colorIndex` column lands, pass it instead — this is the documented fallback,
- * not a second source of truth.
- */
-export function projectToneIndex(projectId: string): number {
-  let hash = 0;
-  for (let i = 0; i < projectId.length; i += 1) {
-    hash = (hash * 31 + projectId.charCodeAt(i)) | 0;
-  }
-  return Math.abs(hash);
 }

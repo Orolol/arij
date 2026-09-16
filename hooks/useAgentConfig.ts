@@ -1,22 +1,25 @@
 "use client";
 
+import { usePolledResource } from "@/hooks/usePolledResource";
+
 import { useTranslations } from "next-intl";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import type { Dispatch, SetStateAction } from "react";
 import { usePolling } from "@/hooks/usePolling";
-import type { AgentType, AgentProvider } from "@/lib/agent-config/constants";
+import type { AgentProvider, AgentType } from "@/lib/agent-config/constants";
 import type { NamedAgentCliOptions } from "@/lib/providers/options-registry";
+import { useCallback, useEffect, useState } from "react";
+// Payload shapes owned by the server modules. `import type` only: these
+// modules reach `lib/db`, and a type-only import is erased before bundling.
+import type {
+AgentDaySeriesPoint,
+AgentDayStats,
+NamedAgentStats,
+} from "@/lib/agent-config/agent-stats";
+import type { ResolvedAgentPrompt } from "@/lib/agent-config/prompts";
 
-type PromptSource = "builtin" | "global" | "project";
+export type { AgentDaySeriesPoint, AgentDayStats, NamedAgentStats, ResolvedAgentPrompt };
+
 type AssignmentSource = "builtin" | "global" | "project";
-
-export interface ResolvedAgentPrompt {
-  agentType: AgentType;
-  systemPrompt: string;
-  source: PromptSource;
-  scope: string;
-}
 
 export interface ResolvedAgentAssignment {
   agentType: AgentType;
@@ -34,102 +37,22 @@ export interface ResolvedAgentAssignment {
   } | null;
 }
 
-
-export interface CustomReviewAgent {
-  id: string;
-  name: string;
-  systemPrompt: string;
-  scope: string;
-  position: number;
-  isEnabled: number;
-  createdAt: string | null;
-  updatedAt: string | null;
-  source?: "global" | "project";
-}
-
 const EMPTY_LIST: never[] = [];
 
-type KeyedList<T> = { key: string; data: T[] } | null;
-
-/**
- * Fetch `url` and record the rows against it. setState only ever runs from a
- * promise callback, so this never updates state synchronously — safe to call
- * straight from an effect body.
- *
- * `isStale` drops a reply nobody is waiting for any more. There is one slot
- * for one key, so recording an answer about a URL the hook has left does not
- * just keep something stale around — it evicts the current URL's rows and
- * puts the list back to `loading` over a URL that is not going to be fetched
- * again.
- */
-function fetchList<T>(
-  url: string,
-  setLoaded: Dispatch<SetStateAction<KeyedList<T>>>,
-  isStale: () => boolean = () => false
-) {
-  return fetch(url)
-    .then((res) => res.json())
-    .then((json) => {
-      if (!isStale()) setLoaded({ key: url, data: Array.isArray(json?.data) ? json.data as T[] : EMPTY_LIST });
-    })
-    .catch(() => {
-      // Record the failure against *this* URL and nothing else. Carrying the
-      // previous URL's rows across would re-label another scope's prompts,
-      // assignments and review agents as this scope's own — and the editors
-      // write back to whichever scope is selected now, so a stale row shown
-      // under the new scope is edited into the new scope.
-      if (!isStale()) setLoaded({ key: url, data: EMPTY_LIST });
-    });
-}
-
-/**
- * A GET-backed list keyed by its URL.
- *
- * `data` and `loading` both derive from whether the settled result belongs to
- * the URL being asked for *now*. That replaces the `setLoading(true)` these
- * hooks used to run synchronously at the top of their mount effect, and it also
- * stops the previous scope's rows from being shown while the new scope's
- * request is still in flight.
- */
-function useKeyedList<T>(url: string) {
-  const [loaded, setLoaded] = useState<KeyedList<T>>(null);
-  // The URL being asked for *now*. `refresh` is what every save awaits and it
-  // is not cancelled when the URL changes underneath it, so the request for
-  // the scope the user has just left can still be in flight when the new one
-  // has already answered.
-  const requestedUrl = useRef(url);
-
-  const data: T[] = loaded?.key === url ? loaded.data : EMPTY_LIST;
-  const loading = loaded?.key !== url;
-
-  const refresh = useCallback(
-    () => fetchList<T>(url, setLoaded, () => url !== requestedUrl.current),
-    [url]
-  );
-
-  useEffect(() => {
-    requestedUrl.current = url;
-    let cancelled = false;
-    void fetchList<T>(
-      url,
-      setLoaded,
-      () => cancelled || url !== requestedUrl.current
-    );
-    return () => {
-      cancelled = true;
-    };
-  }, [url]);
-
-  return { data, loading, refresh };
+const listError = () => "Unable to load agent configuration";
+const isList = <T,>(value: unknown): value is T[] => Array.isArray(value);
+function useKeyedList<T>(url: string | null) {
+  const resource = usePolledResource<T[]>(url, null, listError, { validateData: isList<T> });
+  return { ...resource, data: resource.data ?? EMPTY_LIST, error: url === null || Boolean(resource.error), refresh: resource.reload };
 }
 
 function buildUrl(
   basePath: string,
   scope: "global" | "project",
   projectId?: string
-): string {
-  if (scope === "project" && projectId) {
-    return `/api/projects/${projectId}${basePath}`;
+): string | null {
+  if (scope === "project") {
+    return projectId ? `/api/projects/${projectId}${basePath}` : null;
   }
   return `/api${basePath}`;
 }
@@ -139,7 +62,7 @@ export function useAgentPrompts(
   projectId?: string
 ) {
   const url = buildUrl("/agent-config/prompts", scope, projectId);
-  const { data, loading, refresh: load } = useKeyedList<ResolvedAgentPrompt>(url);
+  const { data, loading, error, refresh: load } = useKeyedList<ResolvedAgentPrompt>(url);
 
   const updatePrompt = useCallback(
     async (agentType: AgentType, systemPrompt: string) => {
@@ -148,29 +71,30 @@ export function useAgentPrompts(
         scope,
         projectId
       );
+      if (!url) return false;
       const res = await fetch(url, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ systemPrompt }),
       });
-      if (res.ok) await load();
-      return res.ok;
+      return res.ok && Boolean(await load());
     },
     [scope, projectId, load]
   );
 
   const resetPrompt = useCallback(
     async (agentType: AgentType) => {
-      if (scope !== "project" || !projectId) return false;
-      const url = `/api/projects/${projectId}/agent-config/prompts/${agentType}`;
+      const url =
+        scope === "project" && projectId
+          ? `/api/projects/${projectId}/agent-config/prompts/${agentType}`
+          : `/api/agent-config/prompts/${agentType}`;
       const res = await fetch(url, { method: "DELETE" });
-      if (res.ok) await load();
-      return res.ok;
+      return res.ok && Boolean(await load());
     },
     [scope, projectId, load]
   );
 
-  return { data, loading, refresh: load, updatePrompt, resetPrompt };
+  return { data, loading, error, refresh: load, updatePrompt, resetPrompt };
 }
 
 export function useAgentAssignments(
@@ -179,7 +103,7 @@ export function useAgentAssignments(
 ) {
   const tErrors = useTranslations("ClientErrors");
   const url = buildUrl("/agent-config/providers", scope, projectId);
-  const { data, loading, refresh: load } = useKeyedList<ResolvedAgentAssignment>(url);
+  const { data, loading, error, refresh: load } = useKeyedList<ResolvedAgentAssignment>(url);
 
   const assignAgent = useCallback(
     async (agentType: AgentType, namedAgentId: string | null) => {
@@ -188,6 +112,7 @@ export function useAgentAssignments(
         scope,
         projectId
       );
+      if (!url) return { ok: false, error: tErrors("couldNotUpdateThisAssignment") };
       const res = await fetch(url, {
         method: namedAgentId ? "PUT" : "DELETE",
         headers: namedAgentId
@@ -210,58 +135,7 @@ export function useAgentAssignments(
     [scope, projectId, load, tErrors]
   );
 
-  return { data, loading, refresh: load, assignAgent };
-}
-
-export function useReviewAgents(
-  scope: "global" | "project",
-  projectId?: string
-) {
-  const url = buildUrl("/agent-config/review-agents", scope, projectId);
-  const { data, loading, refresh: load } = useKeyedList<CustomReviewAgent>(url);
-
-  const createAgent = useCallback(
-    async (name: string, systemPrompt: string) => {
-      const url = buildUrl("/agent-config/review-agents", scope, projectId);
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, systemPrompt }),
-      });
-      if (res.ok) await load();
-      return res.ok;
-    },
-    [scope, projectId, load]
-  );
-
-  const updateAgent = useCallback(
-    async (
-      agentId: string,
-      updates: { name?: string; systemPrompt?: string; isEnabled?: boolean }
-    ) => {
-      const res = await fetch(`/api/agent-config/review-agents/${agentId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      if (res.ok) await load();
-      return res.ok;
-    },
-    [load]
-  );
-
-  const deleteAgent = useCallback(
-    async (agentId: string) => {
-      const res = await fetch(`/api/agent-config/review-agents/${agentId}`, {
-        method: "DELETE",
-      });
-      if (res.ok) await load();
-      return res.ok;
-    },
-    [load]
-  );
-
-  return { data, loading, refresh: load, createAgent, updateAgent, deleteAgent };
+  return { data, loading, error, refresh: load, assignAgent };
 }
 
 // ---------------------------------------------------------------------------
@@ -300,7 +174,9 @@ export interface NamedAgent {
 }
 
 export function useNamedAgents() {
-  const { data, loading, refresh: load } = useKeyedList<NamedAgent>(
+  const t = useTranslations("AgentsWorkshop");
+  const reloadFailed = t("common.loadFailed");
+  const { data, loading, error, refresh: load } = useKeyedList<NamedAgent>(
     "/api/agent-config/named-agents"
   );
 
@@ -342,11 +218,13 @@ export function useNamedAgents() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(updates),
       });
-      if (res.ok) await load();
       const json = await res.json();
-      return { ok: res.ok, error: json.error };
+      if (!res.ok) return { ok: false, error: json.error };
+      const reloaded = await load();
+      // The editor drops its draft only after the canonical saved row lands.
+      return { ok: reloaded, error: reloaded ? undefined : reloadFailed };
     },
-    [load],
+    [load, reloadFailed],
   );
 
   const deleteNamedAgent = useCallback(
@@ -401,6 +279,7 @@ export function useNamedAgents() {
   return {
     data,
     loading,
+    error,
     refresh: load,
     createNamedAgent,
     createCompositeAgent,
@@ -413,17 +292,6 @@ export function useNamedAgents() {
 // ---------------------------------------------------------------------------
 // Named-agent statistics (the /agents workshop)
 // ---------------------------------------------------------------------------
-
-/** Today's figures on a roster card. Mirrors lib/agent-config/agent-stats.ts. */
-export interface AgentDayStats {
-  namedAgentId: string;
-  runsToday: number;
-  /** completed / (completed + failed) today; null when nothing is terminal. */
-  cleanRate: number | null;
-  /** null when no session reported a cost — the card then shows an em-dash. */
-  costTodayUsd: number | null;
-  liveSessions: number;
-}
 
 /**
  * Whether the roster aggregate is usable at all.
@@ -499,27 +367,6 @@ export function useAgentRosterStats(): {
   usePolling(load, 10_000);
 
   return { data, status, refresh: load };
-}
-
-/** One calendar day of the 14-day sparkline. */
-export interface AgentDaySeriesPoint {
-  date: string;
-  runs: number;
-  failed: number;
-}
-
-/** The 14-day payload behind THE NUMBERS. */
-export interface NamedAgentStats {
-  windowDays: number;
-  runCount: number;
-  completedCount: number;
-  failedCount: number;
-  cleanRate: number | null;
-  medianDurationMs: number | null;
-  totalCostUsd: number | null;
-  /** Exactly `windowDays` entries, oldest first. */
-  days: AgentDaySeriesPoint[];
-  byRole: { role: string; runs: number }[];
 }
 
 /**

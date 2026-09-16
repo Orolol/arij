@@ -3,6 +3,8 @@
     "settings": "Réglages"
   },
   "entries": {
-    "integrations": "Intégrations"
+    "pipeline": "Pipeline et vérification",
+    "integrations": "Intégrations",
+    "appearance": "Apparence"
   }
 }

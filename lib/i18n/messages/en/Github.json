@@ -13,7 +13,8 @@
     "dismiss": "Dismiss",
     "detecting": "Detecting remote...",
     "detectError": "Could not detect a GitHub remote for this project.",
-    "connectError": "Failed to connect this project to the detected GitHub repository."
+    "connectError": "Failed to connect this project to the detected GitHub repository.",
+    "retry": "Retry"
   },
   "pr": {
     "draft": "Draft",
@@ -22,6 +23,7 @@
     "merged": "Merged"
   },
   "repo": {
+    "prsFailed": "Failed to load pull requests.",
     "label": "Repository",
     "notConnected": "not connected",
     "localRepo": "local repo",

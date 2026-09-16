@@ -40,7 +40,6 @@ export function validateResumeSession(
   const prevSession = db
     .select({
       cliSessionId: agentSessions.cliSessionId,
-      claudeSessionId: agentSessions.claudeSessionId,
       epicId: agentSessions.epicId,
       userStoryId: agentSessions.userStoryId,
       provider: agentSessions.provider,

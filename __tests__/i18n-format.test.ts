@@ -32,6 +32,13 @@ describe("parseTimestamp", () => {
     expect(parseTimestamp(new Date(NOW))).toBe(NOW);
     expect(parseTimestamp("2026-08-28 11:39:00")).toBe(NOW - 21 * MIN);
     expect(parseTimestamp("2026-08-28 11:39:00.500")).toBe(NOW - 21 * MIN + 500);
+    // The legacy T separator and the second-less shape are the same UTC contract.
+    expect(parseTimestamp("2026-08-28T11:39:00")).toBe(
+      Date.parse("2026-08-28T11:39:00Z"),
+    );
+    expect(parseTimestamp("2026-08-28 11:39")).toBe(
+      Date.parse("2026-08-28T11:39:00Z"),
+    );
   });
 
   it("is NaN for nothing, blanks and garbage", () => {

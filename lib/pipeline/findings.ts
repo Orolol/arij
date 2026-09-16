@@ -1,7 +1,10 @@
+import { ORDINARY_REVIEW_AGENT_TYPES, isOrdinaryReviewAgentType } from "@/lib/review/agent-types";
+import { parseProseVerdict } from "@/lib/review/verdict";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db as defaultDb, type ArijDatabase } from "@/lib/db";
 import { agentSessions, reviewComments } from "@/lib/db/schema";
 import { createId } from "@/lib/utils/nanoid";
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
 import { sessionAtSql } from "@/lib/agent-sessions/session-time";
 import {
   isMcpToolsEnabled,
@@ -80,7 +83,7 @@ import {
  * bit-for-bit as before this module gained channel 1. That is the whole
  * reason the prose fallback still exists.
  *
- * Timestamps are compared via Date.parse on BOTH sides so explicit ISO
+ * Timestamps are compared as UTC instants on BOTH sides so explicit ISO
  * strings (what submit_findings writes) and SQLite CURRENT_TIMESTAMP
  * defaults coexist. reviewComments is epic-keyed only, so the same queries
  * serve story-scoped runs.
@@ -105,8 +108,7 @@ export interface BlockingFinding {
 
 function parseTimestamp(value: string | null | undefined): number | null {
   if (!value) return null;
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
+  return parseStoredTimestamp(value);
 }
 
 interface AgentReviewCommentRow {
@@ -194,18 +196,6 @@ export function collectBlockingFindings(
 /* ------------------------------------------------------------------ */
 
 /**
- * The verdict vocabulary now lives in lib/review/verdict.ts, so the workflow
- * engine can read it without importing the pipeline. Re-exported here because
- * this module has been its published home since the structured verdict
- * landed.
- */
-export {
-  STRUCTURED_REVIEW_VERDICTS,
-  NEGATIVE_STRUCTURED_VERDICT,
-  type StructuredReviewVerdict,
-} from "@/lib/review/verdict";
-
-/**
  * Which channel produced a verdict, for the activity-log trail.
  *
  * `unverifiable` is not a channel the reviewer used — it is the ABSENCE of
@@ -213,27 +203,6 @@ export {
  */
 export type ReviewVerdictSource = "structured" | "prose" | "unverifiable";
 
-/**
- * The verdict a review session submitted through `submit_findings`, or null
- * when it never called the tool (no MCP channel, a crash before the call, or
- * a legacy row predating the column). The column is free text, so an
- * unrecognised value is treated as absent rather than trusted — a verdict the
- * decision table has no rule for must not silently pass as an approval.
- */
-export function readStructuredReviewVerdict(
-  sessionId: string | null | undefined,
-  database: ArijDatabase = defaultDb
-): StructuredReviewVerdict | null {
-  if (!sessionId) return null;
-  const row = database
-    .select({ reviewVerdict: agentSessions.reviewVerdict })
-    .from(agentSessions)
-    .where(eq(agentSessions.id, sessionId))
-    .get();
-  return isStructuredReviewVerdict(row?.reviewVerdict)
-    ? row.reviewVerdict
-    : null;
-}
 
 /* ------------------------------------------------------------------ */
 /* The silence rule — unverifiable reviews                             */
@@ -246,31 +215,11 @@ export function readStructuredReviewVerdict(
  * and deliberately without `review_second_opinion`, which is a merge gate
  * with its own prose fail-safe.
  */
-export const ORDINARY_REVIEW_AGENT_TYPES = [
-  "review_security",
-  "review_code",
-  "review_compliance",
-  "review_feature",
-] as const;
-
+export { ORDINARY_REVIEW_AGENT_TYPES, isOrdinaryReviewAgentType } from "@/lib/review/agent-types";
 /** `['a','b']` → `'a','b'`, for the SQL `IN (…)` lists below. */
 function sqlLiteralList(values: readonly string[]): string {
   return values.map((value) => `'${value}'`).join(",");
 }
-
-/** True for the four agent types the review gates count. */
-export function isOrdinaryReviewAgentType(
-  agentType: string | null | undefined
-): boolean {
-  return (
-    typeof agentType === "string" &&
-    (ORDINARY_REVIEW_AGENT_TYPES as readonly string[]).includes(agentType)
-  );
-}
-
-/** Structured verdicts that let a review pass on its own. */
-export const POSITIVE_STRUCTURED_VERDICTS: ReadonlyArray<StructuredReviewVerdict> =
-  ["approved", "approved_with_minor_issues"];
 
 /**
  * What the structured channel was worth for one review session.
@@ -747,10 +696,7 @@ export const NEGATIVE_VERDICT_SUBSTRINGS = [
 ] as const;
 
 export function isNegativeProseVerdict(output: string): boolean {
-  const lower = output.toLowerCase();
-  return NEGATIVE_VERDICT_SUBSTRINGS.some((substring) =>
-    lower.includes(substring)
-  );
+  return parseProseVerdict(output) === "changes_requested";
 }
 
 /**
@@ -967,11 +913,8 @@ export function assessReviewOutcome(input: {
   // Recover anchored findings from the report BEFORE collecting, so a
   // prose-only review still hands the next builder file+line context.
   //
-  // Ingestion deliberately does NOT move the verdict: when the tool channel
-  // stayed silent, the reviewer's own "**Overall Verdict: …**" line remains
-  // authoritative, exactly as before. Severity extraction is a heuristic, and
-  // letting it flip a run green (a report whose findings all parse as minor)
-  // would be a semantic change smuggled in behind a context fix.
+  // A negative verdict or an open critical/major finding blocks on every
+  // entry point. Recovering minor findings never overrides a negative verdict.
   const proseIngestedCount = usedProseFallback
     ? ingestProseFindings({
         epicId: input.epicId,
@@ -1026,7 +969,7 @@ export function assessReviewOutcome(input: {
   }
 
   return {
-    blocking: usedProseFallback ? proseNegative : blockingFindings.length > 0,
+    blocking: proseNegative || blockingFindings.length > 0,
     blockingFindings,
     agentCommentCount,
     usedProseFallback,
@@ -1082,6 +1025,8 @@ export function resolveReviewVerdict(input: {
   database?: ArijDatabase;
 }): ReviewVerdictDecision {
   const database = input.database ?? defaultDb;
+  const window = input.sinceIso ?? readSessionFindingsWindow(input.reviewSessionId, database);
+  if (window) ingestProseFindings({ epicId: input.epicId, sinceIso: window, sessionOutput: input.sessionOutput, sessionId: input.reviewSessionId, database });
   const proseNegative = isNegativeProseVerdict(input.sessionOutput);
   const channel = readReviewChannelState(input.reviewSessionId, database);
   const structuredVerdict = channel?.structuredVerdict ?? null;
@@ -1098,10 +1043,10 @@ export function resolveReviewVerdict(input: {
       };
     }
     return {
-      negative: proseNegative,
+      negative: proseNegative || (window ? collectBlockingFindings(input.epicId, window, database).length > 0 : false),
       source: "prose",
       structuredVerdict: null,
-      blockingFindings: [],
+      blockingFindings: window ? collectBlockingFindings(input.epicId, window, database) : [],
       proseNegative,
       unverifiable: false,
     };

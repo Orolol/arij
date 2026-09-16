@@ -6,14 +6,13 @@
  * predates the migration comes out of it unchanged: `{}` options (every CLI
  * flag at its default) and a NULL persona (nothing injected into its prompts).
  */
-import Database from "better-sqlite3";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getTableColumns } from "drizzle-orm";
 import { initDb } from "@/lib/db/init";
 import { agentSessions, namedAgents } from "@/lib/db/schema";
+import { cleanupTempDirs, columnNames, tempDbPath, withDb } from "./helpers/migration";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
 const MIGRATION_TAG = "0044_named_agent_options";
@@ -23,36 +22,9 @@ const journal = JSON.parse(
   fs.readFileSync(path.join(MIGRATIONS_FOLDER, "meta", "_journal.json"), "utf-8"),
 ) as { entries: { idx: number; when: number; tag: string }[] };
 
-const tempDirs: string[] = [];
-
 afterEach(() => {
-  while (tempDirs.length > 0) {
-    fs.rmSync(tempDirs.pop() as string, { recursive: true, force: true });
-  }
+  cleanupTempDirs();
 });
-
-function tempDbFile(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arij-agent-options-"));
-  tempDirs.push(dir);
-  return path.join(dir, "arij.db");
-}
-
-function withDb<T>(file: string, fn: (conn: Database.Database) => T): T {
-  const conn = new Database(file);
-  try {
-    return fn(conn);
-  } finally {
-    conn.close();
-  }
-}
-
-function columnNames(conn: Database.Database, table: string): string[] {
-  return (
-    conn.prepare("SELECT name FROM pragma_table_info(?)").all(table) as {
-      name: string;
-    }[]
-  ).map((row) => row.name);
-}
 
 describe("0044_named_agent_options — migration file", () => {
   it("is hand-written, with a journal entry whose timestamp only increases", () => {
@@ -118,7 +90,7 @@ describe("0044_named_agent_options — migration file", () => {
 
 describe("0044_named_agent_options — applied", () => {
   it("adds the columns on a virgin database", () => {
-    withDb(tempDbFile(), (conn) => {
+    withDb(tempDbPath(), (conn) => {
       initDb(conn);
 
       expect(
@@ -136,7 +108,7 @@ describe("0044_named_agent_options — applied", () => {
   });
 
   it("leaves a pre-existing agent at CLI defaults with no persona", () => {
-    const file = tempDbFile();
+    const file = tempDbPath();
 
     withDb(file, (conn) => {
       initDb(conn);
@@ -162,7 +134,7 @@ describe("0044_named_agent_options — applied", () => {
   });
 
   it("is idempotent across restarts of an already-migrated database", () => {
-    const file = tempDbFile();
+    const file = tempDbPath();
 
     withDb(file, (conn) => {
       initDb(conn);

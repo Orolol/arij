@@ -166,17 +166,17 @@ describe("RefinementButton", () => {
    * `disabled` or on the spinner reddens here rather than flaking later.
    */
   it("is inert while the dispatch is in flight, and only then claims a running pass", async () => {
-    mockFetchSequence([
-      idle(),
-      {
-        ok: true,
-        body: { data: { started: true, sessionId: "s-42", ticketCount: 5 } },
-        // Long enough to survive a microtask drain, so the in-flight state is
-        // observable instead of collapsing into the resolved one.
-        delayMs: 10,
-      },
-      running("s-42"),
-    ]);
+    let confirmed = false;
+    let confirmDispatch!: () => void;
+    const dispatchPending = new Promise<void>((resolve) => { confirmDispatch = resolve; });
+    global.fetch = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        await dispatchPending;
+        confirmed = true;
+        return { ok: true, json: async () => ({ data: { started: true, sessionId: "s-42", ticketCount: 5 } }) };
+      }
+      return { ok: true, json: async () => confirmed ? running("s-42").body : idle().body };
+    }) as unknown as typeof fetch;
 
     render(
       <RefinementButton
@@ -196,6 +196,8 @@ describe("RefinementButton", () => {
     expect(screen.getByTestId("refinement-button-spinner")).toBeTruthy();
     expect(screen.queryByTestId("refinement-button-badge")).toBeNull();
 
+    // Release the server explicitly; machine load cannot erase the pending window.
+    await act(async () => { confirmDispatch(); });
     // The server answers; now — and only now — the pass is declared running.
     await waitFor(() =>
       expect(screen.getByTestId("refinement-button-badge")).toHaveTextContent(

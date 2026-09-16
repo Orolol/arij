@@ -54,39 +54,26 @@
     "costTitle": "Session cost (when reported by the provider)",
     "open": "Open"
   },
-  "status": {
-    "queued": "Queued",
-    "pending": "Pending",
-    "running": "Running",
-    "completed": "Completed",
-    "failed": "Failed",
-    "cancelled": "Cancelled"
-  },
-  "agentType": {
-    "build": "Build",
-    "ticketBuild": "Ticket",
-    "teamBuild": "Team",
-    "reviewSecurity": "Security",
-    "reviewCode": "Code Review",
-    "reviewCompliance": "Compliance",
-    "reviewFeature": "Feature Review",
-    "reviewSecondOpinion": "Second Opinion",
-    "grading": "Acceptance Grading",
-    "merge": "Merge",
-    "techCheck": "Tech Check",
-    "releaseNotes": "Release Notes",
-    "memoryDistill": "Memory Distill",
-    "dreaming": "Dreaming",
-    "forensic": "Forensic",
-    "failureDigest": "Failure Digest"
-  },
   "conversation": {
     "loading": "Loading conversation...",
     "back": "Back to sessions",
     "notFound": "Conversation not found",
     "refresh": "Refresh",
+    "openInChat": "Open in chat",
     "created": "Created",
     "messages": "Messages",
-    "generating": "Generating..."
+    "generating": "Generating...",
+    "types": {
+      "brainstorm": "Brainstorm",
+      "epic": "Epic",
+      "chat": "Chat"
+    },
+    "statuses": {
+      "active": "Active",
+      "generating": "Generating",
+      "generated": "Generated",
+      "completed": "Completed",
+      "error": "Error"
+    }
   }
 }

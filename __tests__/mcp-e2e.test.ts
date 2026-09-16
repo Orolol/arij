@@ -37,7 +37,7 @@ import {
   getDefaultEnvironment,
 } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
-  ARIJ_MCP_ALLOWED_TOOL_NAMES,
+  allowedToolNamesForAgentType,
   ARIJ_MCP_SERVER_NAME,
   buildMcpSpawnConfig,
 } from "@/lib/claude/mcp-injection";
@@ -191,6 +191,7 @@ describe("spawn config seam", () => {
     expect(existsSync(arijChannel.args[0])).toBe(true);
     expect(Object.keys(arijChannel.env).sort()).toEqual([
       "ARIJ_BASE_URL",
+      "ARIJ_MCP_ALLOWED_TOOLS",
       "ARIJ_MCP_TOKEN",
     ]);
     expect(arijChannel.env.ARIJ_BASE_URL).toBe(stubBaseUrl);
@@ -219,7 +220,7 @@ describe("MCP handshake via the official SDK client", () => {
     // allowlist (ARIJ_MCP_ALLOWED_TOOL_NAMES) are maintained independently.
     expect(
       names.map((name) => `mcp__${ARIJ_MCP_SERVER_NAME}__${name}`).sort()
-    ).toEqual([...ARIJ_MCP_ALLOWED_TOOL_NAMES].sort());
+    ).toEqual(allowedToolNamesForAgentType(null).sort());
 
     for (const tool of tools) {
       expect(tool.inputSchema.type).toBe("object");
@@ -392,6 +393,6 @@ describe("tools/call → authed HTTP bridge → result round-trip", () => {
 
     // The connection survived the bad call — the registry still answers.
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(ARIJ_MCP_ALLOWED_TOOL_NAMES.length);
+    expect(tools).toHaveLength(allowedToolNamesForAgentType(null).length);
   });
 });

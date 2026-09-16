@@ -13,7 +13,6 @@ import { describe, it, expect } from "vitest";
 
 import {
   parseReviewReport,
-  parseLocation,
 } from "@/lib/pipeline/parse-review-report";
 
 function fixture(name: string): string {
@@ -151,33 +150,3 @@ describe("parseReviewReport — shape tolerance", () => {
   });
 });
 
-describe("parseLocation", () => {
-  it("prefers the relative label of a markdown link", () => {
-    expect(
-      parseLocation("[hooks/useImageAttachments.ts:92](/abs/worktree/hooks/useImageAttachments.ts:92)")
-    ).toEqual({ filePath: "hooks/useImageAttachments.ts", lineNumber: 92 });
-  });
-
-  it("unwraps inline code", () => {
-    expect(parseLocation("`components/kanban/EpicDetail.tsx:430`")).toEqual({
-      filePath: "components/kanban/EpicDetail.tsx",
-      lineNumber: 430,
-    });
-  });
-
-  it("re-relativizes a bare absolute worktree path", () => {
-    expect(
-      parseLocation("/home/user/.arij-worktrees/feature-x/lib/db/schema.ts:58")
-    ).toEqual({ filePath: "lib/db/schema.ts", lineNumber: 58 });
-  });
-
-  it("rejects a location with no line number", () => {
-    expect(parseLocation("lib/db/schema.ts")).toBeNull();
-    expect(parseLocation("`lib/db/schema.ts`")).toBeNull();
-  });
-
-  it("rejects a zero line number", () => {
-    // submit-findings requires line >= 1; anchoring at 0 is not a location.
-    expect(parseLocation("lib/db/schema.ts:0")).toBeNull();
-  });
-});

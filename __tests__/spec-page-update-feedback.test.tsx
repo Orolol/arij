@@ -51,7 +51,7 @@ vi.mock("@/components/spec/SpecUpdateDialog", () => ({
       </button>
     ) : null,
 }));
-import SpecPage from "@/app/projects/[projectId]/spec/page";
+import { SpecWorkspace as SpecPage } from "@/components/spec/SpecWorkspace";
 
 type SessionResponse = Record<string, unknown>;
 
@@ -69,6 +69,7 @@ let sessionQueue: (SessionResponse | Error | "HTTP_500" | "HTTP_404")[] = [];
  */
 let outputChunks: string[] = [];
 let patchCalls: unknown[] = [];
+let projectReadFails = false;
 
 function jsonResponse(body: unknown, ok = true, status = 200): Response {
   return { ok, status, json: async () => body } as Response;
@@ -134,6 +135,9 @@ vi.stubGlobal(
       return jsonResponse({ data: next });
     }
     if (urlStr.includes("/api/projects/proj-1")) {
+      if (urlStr === "/api/projects/proj-1" && projectReadFails) {
+        return jsonResponse({ error: "Specification temporarily unavailable" }, false, 503);
+      }
       return jsonResponse({
         data: { spec: projectSpec, updatedAt: "2026-01-01T00:00:00.000Z" },
       });
@@ -149,11 +153,12 @@ beforeEach(() => {
   pendingUpdateInfo = { pending: false, sessionId: null, status: null };
   sessionQueue = [];
   outputChunks = [];
+  projectReadFails = false;
 });
 
 describe("SpecPage spec-update feedback", () => {
   it("streams the running session, disables editor/save while running, then confirms with the agent response and reloads the spec", async () => {
-    render(<SpecPage pollIntervalMs={20} />);
+    render(<SpecPage projectId="proj-1" pollIntervalMs={20} />);
     const editor = await screen.findByTestId("spec-editor");
     expect(editor).toHaveValue("# Spec\n\nOld content.");
     expect(editor).not.toBeDisabled();
@@ -206,6 +211,31 @@ describe("SpecPage spec-update feedback", () => {
     );
   });
 
+  it("keeps the editor locked until the completed update's canonical spec can be loaded", async () => {
+    render(<SpecPage projectId="proj-1" pollIntervalMs={20} />);
+    const editor = await screen.findByTestId("spec-editor");
+    await waitFor(() => expect(editor).toHaveValue(projectSpec));
+    fireEvent.click(screen.getByTestId("spec-update-button"));
+    fireEvent.click(screen.getByText("start-update"));
+    await screen.findByTestId("spec-update-progress");
+
+    projectReadFails = true;
+    sessionQueue.push({ status: "completed", logs: { result: "Updated the spec." } });
+    expect(await screen.findByText("Specification temporarily unavailable")).toBeInTheDocument();
+    expect(screen.getByTestId("spec-update-progress")).toHaveAttribute("data-status", "running");
+    expect(editor).toHaveValue("# Spec\n\nOld content.");
+    expect(editor).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^save$/i })).toBeDisabled();
+
+    projectSpec = "# Spec\n\nCanonical agent result.";
+    projectReadFails = false;
+    sessionQueue.push({ status: "completed", logs: { result: "Updated the spec." } });
+    await waitFor(() => expect(screen.getByTestId("spec-update-progress")).toHaveAttribute("data-status", "done"));
+    expect(editor).toHaveValue(projectSpec);
+    expect(editor).toBeEnabled();
+    expect(screen.queryByText("Specification temporarily unavailable")).not.toBeInTheDocument();
+  });
+
   it("recovers an in-flight spec update session on page reload", async () => {
     pendingUpdateInfo = {
       pending: true,
@@ -213,7 +243,7 @@ describe("SpecPage spec-update feedback", () => {
       status: "running",
     };
 
-    render(<SpecPage pollIntervalMs={20} />);
+    render(<SpecPage projectId="proj-1" pollIntervalMs={20} />);
     expect(await screen.findByTestId("spec-update-progress")).toHaveAttribute(
       "data-status",
       "running",
@@ -222,7 +252,7 @@ describe("SpecPage spec-update feedback", () => {
   });
 
   it("does not report failure on a temporary non-200 poll response", async () => {
-    render(<SpecPage pollIntervalMs={20} />);
+    render(<SpecPage projectId="proj-1" pollIntervalMs={20} />);
     await screen.findByTestId("spec-editor");
 
     fireEvent.click(screen.getByTestId("spec-update-button"));
@@ -254,7 +284,7 @@ describe("SpecPage spec-update feedback", () => {
   });
 
   it("shows the failure reason and keeps the previous spec on error", async () => {
-    render(<SpecPage pollIntervalMs={20} />);
+    render(<SpecPage projectId="proj-1" pollIntervalMs={20} />);
     await screen.findByTestId("spec-editor");
 
     fireEvent.click(screen.getByTestId("spec-update-button"));
@@ -282,7 +312,7 @@ describe("SpecPage spec-update feedback", () => {
   });
 
   it("autosaves unsaved editor changes before dispatching the update session", async () => {
-    render(<SpecPage pollIntervalMs={20} />);
+    render(<SpecPage projectId="proj-1" pollIntervalMs={20} />);
     const editor = await screen.findByTestId("spec-editor");
     expect(editor).toHaveValue("# Spec\n\nOld content.");
 
@@ -303,7 +333,7 @@ describe("SpecPage spec-update feedback", () => {
   });
 
   it("stops polling and unlocks the editor immediately on 404 session error", async () => {
-    render(<SpecPage pollIntervalMs={20} />);
+    render(<SpecPage projectId="proj-1" pollIntervalMs={20} />);
     await screen.findByTestId("spec-editor");
 
     fireEvent.click(screen.getByTestId("spec-update-button"));

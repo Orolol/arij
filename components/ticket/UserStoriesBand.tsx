@@ -21,13 +21,15 @@
  * "No stories yet" copy anywhere in this design.
  */
 
+import { useState } from "react";
 import { useTranslations } from "next-intl";
 
+import { fetchJson } from "@/lib/api/client";
 import {
   BandHeader,
   CheckMark,
   Mono,
-  QuietLink,
+  PillButton,
   Stamp,
   StrataBand,
   type StampTone,
@@ -47,12 +49,14 @@ export interface UserStoryRow {
 
 export interface UserStoriesBandProps {
   stories: UserStoryRow[];
-  /** Needed to build the story-detail href; the band renders no link without it. */
+  /** Needed to perform story updates and deletions in place. */
   projectId?: string;
   /** Aggregate of the latest grading report. `null` = never graded. */
   gradingStatus?: GradingStatus | null;
   /** The grader's one-line verdict, shown under the header when there is one. */
   gradingSummary?: string | null;
+  /** Called after a story is updated or deleted in place. */
+  onStoryUpdated?: () => void;
 }
 
 /**
@@ -78,6 +82,7 @@ export function UserStoriesBand({
   projectId,
   gradingStatus = null,
   gradingSummary = null,
+  onStoryUpdated,
 }: UserStoriesBandProps) {
   const t = useTranslations("Ticket");
   // `GRADING_STAMP` holds full dotted paths, so the stamp resolves through the
@@ -124,7 +129,12 @@ export function UserStoriesBand({
         </div>
       ) : null}
       {stories.map((story) => (
-        <StoryRow key={story.id} story={story} projectId={projectId} />
+        <StoryRow
+          key={story.id}
+          story={story}
+          projectId={projectId}
+          onStoryUpdated={onStoryUpdated}
+        />
       ))}
     </StrataBand>
   );
@@ -133,45 +143,241 @@ export function UserStoriesBand({
 function StoryRow({
   story,
   projectId,
+  onStoryUpdated,
 }: {
   story: UserStoryRow;
   projectId?: string;
+  onStoryUpdated?: () => void;
 }) {
   const t = useTranslations("Ticket");
+  const [editing, setEditing] = useState(false);
+  const [title, setTitle] = useState(story.title);
+  const [status, setStatus] = useState(story.status);
+  const [criteria, setCriteria] = useState(story.acceptanceCriteria ?? "");
+  const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   const isDone = story.status === "done";
-  const criteria = countAcceptanceCriteria(story.acceptanceCriteria);
+  const criteriaCount = countAcceptanceCriteria(story.acceptanceCriteria);
+
+  async function handleToggleStatus() {
+    if (!projectId || saving) return;
+    const nextStatus = isDone ? "todo" : "done";
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetchJson<{ error?: string }>(
+        `/api/projects/${projectId}/stories/${story.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: nextStatus }),
+        },
+      );
+      if (!res || !res.ok || res.body?.error) {
+        setError(res?.body?.error || t("stories.updateFailed"));
+        setEditing(true);
+        setStatus(nextStatus);
+        setSaving(false);
+        return;
+      }
+      setSaving(false);
+      onStoryUpdated?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("stories.updateFailed"));
+      setEditing(true);
+      setSaving(false);
+    }
+  }
+
+  async function handleSave() {
+    if (!projectId || saving) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await fetchJson<{ error?: string }>(
+        `/api/projects/${projectId}/stories/${story.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: title.trim() || story.title,
+            status,
+            acceptanceCriteria: criteria.trim() || null,
+          }),
+        },
+      );
+      if (!res || !res.ok || res.body?.error) {
+        setError(res?.body?.error || t("stories.updateFailed"));
+        setSaving(false);
+        return;
+      }
+      setEditing(false);
+      setSaving(false);
+      onStoryUpdated?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("stories.updateFailed"));
+      setSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!projectId || deleting) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      const res = await fetchJson<{ error?: string }>(
+        `/api/projects/${projectId}/stories/${story.id}`,
+        {
+          method: "DELETE",
+        },
+      );
+      if (!res || !res.ok || res.body?.error) {
+        setError(res?.body?.error || t("stories.deleteFailed"));
+        setDeleting(false);
+        return;
+      }
+      setEditing(false);
+      setDeleting(false);
+      onStoryUpdated?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("stories.deleteFailed"));
+      setDeleting(false);
+    }
+  }
+
+  const STATUS_OPTIONS = ["todo", "in_progress", "review", "done"];
+
+  if (editing) {
+    return (
+      <div
+        data-testid="ticket-story-row"
+        className="flex flex-col gap-2 rounded-[10px] bg-card p-3 border border-border/40"
+      >
+        <div className="flex items-center justify-between gap-2">
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder={t("stories.titlePlaceholder")}
+            data-testid="ticket-story-edit-title"
+            className="flex-1 rounded-[6px] bg-background px-2.5 py-1 text-[13px] font-medium border border-border/50 outline-none focus:border-primary"
+          />
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5 py-1">
+          {STATUS_OPTIONS.map((opt) => (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => setStatus(opt)}
+              className={cn(
+                "rounded-full px-2.5 py-0.5 text-[11px] font-mono transition-colors",
+                status === opt
+                  ? "bg-foreground text-background font-semibold"
+                  : "bg-muted text-muted-foreground hover:text-foreground"
+              )}
+            >
+              {opt}
+            </button>
+          ))}
+        </div>
+
+        <textarea
+          value={criteria}
+          onChange={(e) => setCriteria(e.target.value)}
+          rows={3}
+          placeholder={t("stories.criteriaPlaceholder")}
+          data-testid="ticket-story-edit-criteria"
+          className="w-full rounded-[6px] bg-background p-2 text-[12px] font-mono border border-border/50 outline-none focus:border-primary resize-y"
+        />
+
+        {error ? (
+          <p
+            role="alert"
+            data-testid="ticket-story-error"
+            className="text-[11px] font-mono text-destructive"
+          >
+            {error}
+          </p>
+        ) : null}
+
+        <div className="flex items-center gap-2 pt-1">
+          <PillButton
+            size="sm"
+            onClick={handleSave}
+            disabled={saving || deleting}
+            data-testid="ticket-story-save"
+          >
+            {saving ? t("stories.saving") : t("stories.save")}
+          </PillButton>
+          <PillButton
+            size="sm"
+            variant="quiet"
+            onClick={() => {
+              setEditing(false);
+              setError(null);
+              setTitle(story.title);
+              setStatus(story.status);
+              setCriteria(story.acceptanceCriteria ?? "");
+            }}
+            disabled={saving || deleting}
+            data-testid="ticket-story-cancel"
+          >
+            {t("stories.cancel")}
+          </PillButton>
+          <button
+            type="button"
+            onClick={handleDelete}
+            disabled={saving || deleting}
+            data-testid="ticket-story-delete"
+            className="ml-auto text-[11px] text-destructive hover:underline disabled:opacity-50 cursor-pointer"
+          >
+            {deleting ? t("stories.deleting") : t("stories.delete")}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
       data-testid="ticket-story-row"
       className="flex items-center gap-[10px] rounded-[10px] bg-card px-3 py-[9px]"
     >
-      <CheckMark checked={isDone} shape="disc" tone="live" />
+      <button
+        type="button"
+        onClick={handleToggleStatus}
+        disabled={saving}
+        className="cursor-pointer bg-transparent border-0 p-0 flex items-center"
+        aria-label={t("stories.toggleStatus", { status: story.status })}
+      >
+        <CheckMark checked={isDone} shape="disc" tone="live" />
+      </button>
       <span
         className={cn(
-          "min-w-0 flex-1 line-clamp-1 text-[13px] font-medium",
+          "min-w-0 flex-1 line-clamp-1 text-[13px] font-medium cursor-pointer",
           isDone ? "text-muted-foreground" : "text-foreground",
         )}
+        onClick={() => setEditing(true)}
       >
         {story.title}
       </span>
-      {/* A story with no acceptance criteria has nothing to say: the chip is
-          omitted rather than rendered as "0 AC" or "— AC". */}
-      {criteria > 0 ? (
+      {criteriaCount > 0 ? (
         <Mono size={10} tone="muted" className="shrink-0">
-          {t("stories.criteria", { count: String(criteria) })}
+          {t("stories.criteria", { count: String(criteriaCount) })}
         </Mono>
       ) : null}
       {projectId ? (
-        <QuietLink
-          tone="next"
-          size={11.5}
-          href={`/projects/${projectId}/stories/${story.id}`}
-          testId="ticket-story-link"
-          className="shrink-0"
+        <button
+          type="button"
+          onClick={() => setEditing(true)}
+          data-testid="ticket-story-link"
+          className="shrink-0 text-[11.5px] text-muted-foreground hover:text-foreground cursor-pointer bg-transparent border-0 p-0"
         >
-          {t("stories.open")}
-        </QuietLink>
+          {t("stories.edit")}
+        </button>
       ) : null}
     </div>
   );

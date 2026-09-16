@@ -1,15 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { forwardRef, useCallback, useImperativeHandle, useState, type ReactNode } from "react";
+import { installMockEventSource } from "./helpers/event-source-mock";
 
 // Mock EventSource (used by useProjectEvents)
-class MockEventSource {
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  close() {}
-}
-(globalThis as Record<string, unknown>).EventSource = MockEventSource;
+installMockEventSource();
 
 vi.mock("next/navigation", () => ({
   useParams: () => ({ projectId: "proj-1" }),
@@ -87,9 +82,7 @@ vi.mock("@/components/desk/NowDesk", () => ({
   ),
 }));
 
-// The ticket is a modal overlay now (frame 6a), not a column inside the chat
-// panel — but the page contract is unchanged: the batch selection's active
-// ticket is what opens, and closing clears the selection.
+// The detail modal has its own lifetime; batch selection leaves the desk usable.
 vi.mock("@/components/ticket/TicketOverlay", () => ({
   TicketOverlay: ({
     epicId,
@@ -144,64 +137,43 @@ vi.mock("@/components/kanban/RefinementButton", () => ({
 
 import KanbanPage from "@/app/projects/[projectId]/page";
 
-describe("kanban ticket detail selection flow", () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
-  });
+describe("project desk ticket navigation and batch selection", () => {
+  beforeEach(() => { vi.restoreAllMocks(); });
 
-  it("primary click selects ticket and opens the ticket overlay in one action", () => {
+  it("opens a ticket without creating a batch selection", () => {
     render(<KanbanPage />);
-
     fireEvent.click(screen.getByTestId("primary-epic-1"));
-
-    expect(screen.getByText("1 epic selected")).toBeInTheDocument();
-    expect(screen.getByTestId("ticket-overlay")).toBeInTheDocument();
     expect(screen.getByText("Detail: epic-1")).toBeInTheDocument();
+    expect(screen.getByTestId("board-selected-count")).toHaveTextContent("0");
   });
 
-  it("additive selection keeps details anchored to the first-selected ticket", () => {
+  it("selects several tickets without a modal blocking the next click", () => {
     render(<KanbanPage />);
-
-    fireEvent.click(screen.getByTestId("primary-epic-1"));
-    fireEvent.click(screen.getByTestId("toggle-epic-2"));
-
-    expect(screen.getByText("2 epics selected")).toBeInTheDocument();
-    expect(screen.getByText("Detail: epic-1")).toBeInTheDocument();
-  });
-
-  it("promotes next-oldest selection when first-selected ticket is removed", () => {
-    render(<KanbanPage />);
-
-    fireEvent.click(screen.getByTestId("primary-epic-1"));
-    fireEvent.click(screen.getByTestId("toggle-epic-2"));
     fireEvent.click(screen.getByTestId("toggle-epic-1"));
+    expect(screen.queryByTestId("ticket-overlay")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("toggle-epic-2"));
+    expect(screen.getByText("2 epics selected")).toBeInTheDocument();
+    expect(screen.queryByTestId("ticket-overlay")).not.toBeInTheDocument();
+  });
 
-    expect(screen.getByText("1 epic selected")).toBeInTheDocument();
+  it("preserves a batch while inspecting and closing a different ticket", () => {
+    render(<KanbanPage />);
+    fireEvent.click(screen.getByTestId("toggle-epic-1"));
+    fireEvent.click(screen.getByTestId("primary-epic-2"));
     expect(screen.getByText("Detail: epic-2")).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("toggle-epic-2"));
-    expect(screen.queryByTestId("ticket-overlay")).not.toBeInTheDocument();
-    expect(screen.queryByText(/epic selected/)).not.toBeInTheDocument();
-  });
-
-  it("keeps desk controls interactive while the overlay is open", () => {
-    render(<KanbanPage />);
-
-    fireEvent.click(screen.getByTestId("primary-epic-1"));
-    fireEvent.click(screen.getByTestId("toggle-epic-2"));
-
-    expect(screen.getByTestId("board-selected-count")).toHaveTextContent("2");
-    expect(screen.getByText("Detail: epic-1")).toBeInTheDocument();
-  });
-
-  it("closing the overlay clears selection without navigating away from the desk", () => {
-    render(<KanbanPage />);
-
-    fireEvent.click(screen.getByTestId("primary-epic-1"));
+    expect(screen.getByText("1 epic selected")).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("ticket-overlay-close"));
-
     expect(screen.queryByTestId("ticket-overlay")).not.toBeInTheDocument();
-    expect(screen.queryByText(/epic selected/)).not.toBeInTheDocument();
+    expect(screen.getByText("1 epic selected")).toBeInTheDocument();
     expect(screen.getByTestId("board")).toBeInTheDocument();
+  });
+
+  it("clears a batch without closing the inspected ticket", () => {
+    render(<KanbanPage />);
+    fireEvent.click(screen.getByTestId("toggle-epic-1"));
+    fireEvent.click(screen.getByTestId("primary-epic-2"));
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    expect(screen.getByTestId("board-selected-count")).toHaveTextContent("0");
+    expect(screen.getByText("Detail: epic-2")).toBeInTheDocument();
   });
 });

@@ -26,6 +26,9 @@ vi.mock("@/lib/pipeline/stages", () => ({
   createPipelineStageDriver: vi.fn(() => ({
     checkGuards: driverMocks.checkGuards,
     launchStage: driverMocks.launchStage,
+    // A simple agent: null means "no composite ladder", so the dispatched
+    // attempt stays 1 whatever the ticket's failure streak is.
+    compositeMemberCount: vi.fn(async () => null),
     runDeterministicVerification: vi.fn(),
   })),
 }));
@@ -60,6 +63,7 @@ function dispatchBuild(scope: "epic" | "story") {
     buildNamedAgentId: null,
     reviewNamedAgentId: null,
     ownSessionIds: [],
+    consecutiveFailures: 0,
   });
 }
 

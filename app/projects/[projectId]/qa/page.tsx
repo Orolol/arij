@@ -6,12 +6,16 @@ import { useParams, useSearchParams } from "next/navigation";
 import { Activity, Plus, RefreshCw } from "lucide-react";
 import { ReportDetail } from "@/components/qa/ReportDetail";
 import { StartQaCheckDialog } from "@/components/qa/StartQaCheckDialog";
-import { Button } from "@/components/ui/button";
+import {
+  BreathingDot,
+  Mono,
+  PillButton,
+  SegmentedControl,
+  type SegmentedControlOption,
+  SurfaceCard,
+} from "@/components/piscine";
 import { useQaReports } from "@/hooks/useQaReports";
-// The same three badges the /qa QA CHECKS band draws. One answer, so a check
-// type cannot be labelled TECH here and DIGEST there — and an unrecognised
-// `check_type` prints itself rather than being folded into TECH.
-import { checkTypeLabel } from "@/lib/qa/aggregate";
+import { checkTypeLabel, checkStatusLabel, isCheckLive } from "@/lib/qa/aggregate";
 import { consumeQueryParam } from "@/lib/navigation/deep-link";
 import { cn } from "@/lib/utils";
 import { formatRelative } from "@/lib/i18n/format";
@@ -30,13 +34,6 @@ const CHECK_TYPE_FILTERS: { value: FilterCheckType; labelKey: TranslationKey }[]
   { value: "e2e_test", labelKey: "ProjectQaPage.filters.e2eTest" },
   { value: "failure_digest", labelKey: "ProjectQaPage.filters.failureDigest" },
 ];
-
-function statusTone(status: string): string {
-  if (status === "completed") return "text-agent";
-  if (status === "failed") return "text-destructive";
-  if (status === "running") return "text-primary";
-  return "text-meta";
-}
 
 export default function QAPage() {
   const locale = useLocale();
@@ -94,6 +91,11 @@ export default function QAPage() {
       ? selectedReportId
       : (filteredReports[0]?.id ?? null);
 
+  const selectedReport = useMemo(
+    () => reports.find((report) => report.id === effectiveSelectedReportId) ?? null,
+    [reports, effectiveSelectedReportId],
+  );
+
   const handleStarted = useCallback((data: {
     reportId: string;
     sessionId: string | null;
@@ -111,78 +113,84 @@ export default function QAPage() {
   }, [t]);
 
   const stats = useMemo(() => {
-    const running = reports.filter((report) => report.status === "running").length;
+    const running = reports.filter((report) => isCheckLive(report)).length;
     const completed = reports.filter((report) => report.status === "completed").length;
     const failed = reports.filter((report) => report.status === "failed").length;
-    return { running, completed, failed };
+    const interrupted = reports.filter((report) => checkStatusLabel(report) === "interrupted").length;
+    return { running, completed, failed, interrupted };
   }, [reports]);
+
+  const filterOptions = useMemo<SegmentedControlOption<string>[]>(
+    () =>
+      CHECK_TYPE_FILTERS.map((option) => ({
+        value: option.value ?? "all",
+        label: tKey(option.labelKey),
+      })),
+    [tKey],
+  );
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="flex flex-none items-start gap-[16px] px-[26px] pb-[18px] pt-[24px]">
-        <div className="flex flex-col gap-[5px]">
-          <h2 className="text-[19px] font-semibold">{t("page.heading")}</h2>
-          <p className="text-[13px] text-muted-foreground">
-            {t("page.description")}
-          </p>
-        </div>
+      <div className="flex flex-none flex-wrap items-center gap-[8px] px-[26px] pb-[16px] pt-[20px]">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-[11px] py-[3px] text-[12.5px] text-muted-foreground">
+          {stats.running > 0 ? <BreathingDot size={6} /> : null}
+          <Mono size={11} tone="muted">
+            {t("page.running", { count: stats.running })}
+          </Mono>
+        </span>
+        <span className="inline-flex items-center rounded-full border border-border px-[11px] py-[3px] text-[12.5px] text-muted-foreground">
+          <Mono size={11} tone="muted">
+            {t("page.completed", { count: stats.completed })}
+          </Mono>
+        </span>
+        <span className="inline-flex items-center rounded-full border border-border px-[11px] py-[3px] text-[12.5px] text-muted-foreground">
+          <Mono size={11} tone="muted">
+            {t("page.failed", { count: stats.failed })}
+          </Mono>
+        </span>
+        {stats.interrupted > 0 && (
+          <span className="inline-flex items-center rounded-full border border-border px-[11px] py-[3px] text-[12.5px] text-muted-foreground">
+            <Mono size={11} tone="muted">
+              {t("page.interrupted", { count: stats.interrupted })}
+            </Mono>
+          </span>
+        )}
+        <span className="mx-[6px] h-4 w-px bg-border" />
+        <SegmentedControl
+          options={filterOptions}
+          value={filterCheckType ?? "all"}
+          onChange={(v) => setFilterCheckType(v === "all" ? null : (v as FilterCheckType))}
+        />
+        {actionMessage && (
+          <span className="text-[12.5px] text-muted-foreground">
+            {actionMessage}
+          </span>
+        )}
         <div className="ml-auto flex items-center gap-[9px]">
-          <Button
+          <PillButton
             variant="outline"
-            className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
+            size="sm"
             onClick={() => void refresh()}
           >
             <RefreshCw className="h-[14px] w-[14px]" />
             {t("page.refresh")}
-          </Button>
-          <Button
-            className="h-[31px] rounded-[8px] px-[13px] text-[13px]"
+          </PillButton>
+          <PillButton
+            variant="filled"
+            size="sm"
             onClick={() => setStartDialogOpen(true)}
           >
             <Plus className="h-[14px] w-[14px]" />
             {t("page.newCheck")}
-          </Button>
+          </PillButton>
         </div>
-      </div>
-
-      <div className="flex flex-none flex-wrap items-center gap-[8px] px-[26px] pb-[16px]">
-        <span className="rounded-full border border-border px-[11px] py-[3px] text-[12.5px] text-agent">
-          {t("page.running", { count: stats.running })}
-        </span>
-        <span className="rounded-full border border-border px-[11px] py-[3px] text-[12.5px] text-muted-foreground">
-          {t("page.completed", { count: stats.completed })}
-        </span>
-        <span className="rounded-full border border-border px-[11px] py-[3px] text-[12.5px] text-destructive">
-          {t("page.failed", { count: stats.failed })}
-        </span>
-        <span className="mx-[6px] h-4 w-px bg-border" />
-        {CHECK_TYPE_FILTERS.map((option) => (
-          <button
-            key={option.labelKey}
-            type="button"
-            onClick={() => setFilterCheckType(option.value)}
-            className={cn(
-              "rounded-full px-[11px] py-[3px] text-[12.5px] transition-colors",
-              filterCheckType === option.value
-                ? "bg-foreground text-background"
-                : "border border-border text-muted-foreground hover:bg-band"
-            )}
-          >
-            {tKey(option.labelKey)}
-          </button>
-        ))}
-        {actionMessage && (
-          <span className="ml-auto text-[12.5px] text-agent">
-            {actionMessage}
-          </span>
-        )}
       </div>
 
       <div className="flex min-h-0 flex-1 gap-[22px] px-[26px] pb-[26px]">
         <div className="flex w-[340px] flex-none flex-col gap-[10px] overflow-y-auto">
-          <span className="text-[11.5px] uppercase tracking-[.08em] text-meta">
+          <Mono size={11} weight={700} tone="muted" className="uppercase tracking-[.08em]">
             {t("page.history")}
-          </span>
+          </Mono>
 
           {loading && (
             <div className="flex items-center gap-2 text-[12.5px] text-muted-foreground">
@@ -191,7 +199,7 @@ export default function QAPage() {
             </div>
           )}
           {!loading && error && (
-            <p className="text-[12.5px] text-destructive">{error}</p>
+            <p className="text-[12.5px] text-muted-foreground">{error}</p>
           )}
           {!loading && !error && filteredReports.length === 0 && (
             <p className="text-[12.5px] text-muted-foreground">
@@ -199,41 +207,55 @@ export default function QAPage() {
             </p>
           )}
 
-          {filteredReports.map((report) => (
-            <button
-              key={report.id}
-              type="button"
-              onClick={() => setSelectedReportId(report.id)}
-              className={cn(
-                "flex flex-col gap-[8px] rounded-[11px] border px-[16px] py-[14px] text-left transition-colors",
-                effectiveSelectedReportId === report.id
-                  ? "border-primary bg-card"
-                  : "border-border hover:bg-band"
-              )}
-            >
-              <div className="flex items-center gap-[8px]">
-                <span className="rounded-full bg-band px-[8px] py-[2px] font-mono text-[11.5px] text-muted-foreground">
-                  {checkTypeLabel(report.checkType)}
-                </span>
-                <span className={cn("text-[12.5px]", statusTone(report.status))}>
-                  {report.status}
-                </span>
-                <span className="ml-auto font-mono text-[11px] text-meta">
-                  {formatRelative(report.createdAt, { locale })}
-                </span>
-              </div>
-              <span className="line-clamp-2 text-[13.5px] font-medium leading-[1.35]">
-                {report.summary || `#${report.id.slice(0, 8)}`}
-              </span>
-            </button>
-          ))}
+          {filteredReports.map((report) => {
+            const isLive = isCheckLive(report);
+            const statusLabel = checkStatusLabel(report);
+            const isSelected = effectiveSelectedReportId === report.id;
+
+            return (
+              <button
+                key={report.id}
+                type="button"
+                onClick={() => setSelectedReportId(report.id)}
+                className={cn(
+                  "block w-full text-left outline-none rounded-[11px]",
+                  "focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring",
+                )}
+              >
+                <SurfaceCard
+                  radius={11}
+                  interactive
+                  selected={isSelected}
+                  className="flex flex-col gap-[8px] px-[16px] py-[14px]"
+                >
+                  <div className="flex items-center gap-[8px]">
+                    <Mono size={11} weight={700} tone="feed-deep" className="shrink-0">
+                      {checkTypeLabel(report.checkType)}
+                    </Mono>
+                    <span className="flex shrink-0 items-center gap-1.5">
+                      {isLive ? <BreathingDot size={6} /> : null}
+                      <Mono size={10} tone="muted">
+                        {statusLabel}
+                      </Mono>
+                    </span>
+                    <Mono size={11} tone="muted" className="ml-auto">
+                      {formatRelative(report.createdAt, { locale })}
+                    </Mono>
+                  </div>
+                  <span className="line-clamp-2 text-[13.5px] font-medium leading-[1.35] text-foreground">
+                    {report.summary || `#${report.id.slice(0, 8)}`}
+                  </span>
+                </SurfaceCard>
+              </button>
+            );
+          })}
         </div>
 
         <div className="min-w-0 flex-1">
           <ReportDetail
             projectId={projectId}
             reportId={effectiveSelectedReportId}
-            onReportUpdated={refresh}
+            live={selectedReport ? isCheckLive(selectedReport) : undefined}
             onCreateEpics={handleCreateEpics}
           />
         </div>

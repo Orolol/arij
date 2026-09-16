@@ -1,4 +1,8 @@
 {
+  "page": {
+    "loadFailed": "Impossible de charger cette session.",
+    "retry": "Réessayer"
+  },
   "log": {
     "metaTailing": "{provider} · session #{id} · suit le flux",
     "paneResponse": "Réponse"
@@ -27,5 +31,8 @@
     "stages": {
       "landIfClean": "Land si review clean"
     }
+  },
+  "actions": {
+    "unavailable": "L'analyse du flux brut a échoué — cette liste ne contient que la moitié durable."
   }
 }

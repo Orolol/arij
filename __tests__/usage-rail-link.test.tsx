@@ -62,6 +62,7 @@ vi.mock("@/hooks/useAutoModeArmed", () => ({
 
 // The menu owns the desk read; nothing here is about the desk payload.
 vi.mock("@/hooks/useControlDesk", () => ({
+  useDeskInboxSummary: () => ({ enabled: false, unreadCount: 0 }),
   useControlDesk: () => ({ data: null, loading: false, error: null, refresh: vi.fn() }),
 }));
 

@@ -545,7 +545,7 @@ describe("what GET /api/settings shows after a device-flow connection", () => {
     ).map((row) => ({ key: row.key, value: row.value }));
 
     const { GET } = await import("@/app/api/settings/route");
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/settings"));
     const json = await res.json();
 
     expect(res.status).toBe(200);

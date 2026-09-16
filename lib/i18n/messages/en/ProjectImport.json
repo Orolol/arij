@@ -51,6 +51,7 @@
     "submitPending": "Creating...",
     "cancel": "Cancel",
     "createFailedStatus": "Failed to create project (HTTP {status})",
-    "createFailed": "Failed to create project"
+    "createFailed": "Failed to create project",
+    "import": "Import from GitHub or a directory"
   }
 }

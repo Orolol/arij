@@ -54,7 +54,7 @@ describe("Agent provider default routes", () => {
     expect(json.data[0].agentType).toBe("build");
   });
 
-  it("PUT /api/agent-config/providers/[agentType] validates provider values", async () => {
+  it("PUT /api/agent-config/providers/[agentType] requires namedAgentId", async () => {
     const { PUT } = await import(
       "@/app/api/agent-config/providers/[agentType]/route"
     );
@@ -63,28 +63,20 @@ describe("Agent provider default routes", () => {
     const json = await res.json();
 
     expect(res.status).toBe(400);
-    expect(json.error).toContain("invalid provider");
+    expect(json.error).toContain("namedAgentId is required");
   });
 
-  it("PUT /api/agent-config/providers/[agentType] upserts global defaults", async () => {
+  it("PUT rejects unknown namedAgentId", async () => {
     const { PUT } = await import(
       "@/app/api/agent-config/providers/[agentType]/route"
     );
-    dbMockState.getQueue = [
-      null,
-      {
-        id: "apd-1",
-        agentType: "build",
-        provider: "codex",
-        scope: "global",
-      },
-    ];
+    dbMockState.getQueue = [null];
 
-    const res = await PUT(mockJsonRequest({ provider: "codex" }), mockRouteContext({ agentType: "build" }));
+    const res = await PUT(mockJsonRequest({ namedAgentId: "unknown-agent" }), mockRouteContext({ agentType: "build" }));
     const json = await res.json();
 
-    expect(res.status).toBe(200);
-    expect(json.data.provider).toBe("codex");
+    expect(res.status).toBe(400);
+    expect(json.error).toContain("namedAgentId not found");
   });
 
   it("PUT assigns a named agent to a global role", async () => {
@@ -161,16 +153,18 @@ describe("Agent provider default routes", () => {
     );
     dbMockState.getQueue = [
       { id: "proj-1" },
+      { id: "agent-1", provider: "codex" },
       null,
       {
         id: "apd-1",
         agentType: "chat",
         provider: "codex",
+        namedAgentId: "agent-1",
         scope: "proj-1",
       },
     ];
 
-    const res = await PUT(mockJsonRequest({ provider: "codex" }), mockRouteContext({ projectId: "proj-1", agentType: "chat" }));
+    const res = await PUT(mockJsonRequest({ namedAgentId: "agent-1" }), mockRouteContext({ projectId: "proj-1", agentType: "chat" }));
     const json = await res.json();
 
     expect(res.status).toBe(200);

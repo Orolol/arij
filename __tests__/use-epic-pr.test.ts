@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MockInstance } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useEpicPr } from "@/hooks/useEpicPr";
 
 /**
@@ -38,7 +38,7 @@ describe("useEpicPr", () => {
     const { result } = renderHook(() => useEpicPr("proj-1", "epic-1"));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    await result.current.createPr();
+    await act(async () => { await result.current.createPr(); });
 
     const bodies = postBodies();
     expect(bodies).toHaveLength(1);
@@ -48,13 +48,13 @@ describe("useEpicPr", () => {
 
   it("forwards an explicitly chosen base branch verbatim", async () => {
     fetchSpy.mockResolvedValue(
-      new Response(JSON.stringify({ data: { pr: null } }), { status: 200 })
+      new Response(JSON.stringify({ data: null }), { status: 200 })
     );
 
     const { result } = renderHook(() => useEpicPr("proj-1", "epic-1"));
     await waitFor(() => expect(result.current.loading).toBe(false));
 
-    await result.current.createPr({ baseBranch: "release-1.0", draft: true });
+    await act(async () => { await result.current.createPr({ baseBranch: "release-1.0", draft: true }); });
 
     const bodies = postBodies();
     expect(bodies[0]).toEqual({ baseBranch: "release-1.0", draft: true });

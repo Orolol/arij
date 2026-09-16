@@ -30,9 +30,8 @@ Read `components/piscine/index.ts` first — it is the shared vocabulary
 - `components/piscine/TopBar.tsx` is mounted once by `app/layout.tsx` and is the
   app's only chrome. A screen renders **no page header of its own** — no logo,
   no nav, no ⌘K. There is no left rail.
-- No drag and drop anywhere. `@dnd-kit/*` is still listed in `package.json`, but
-  no source file imports it; re-ordering happens in the ticket overlay or
-  Refinement.
+- No drag and drop for ticket ordering; re-ordering happens in the ticket
+  overlay or Refinement. The docs uploader uses a native HTML5 file target.
 
 ## File Structure
 - `app/` — Next.js routes and layouts. `/` is the cross-project control desk
@@ -49,9 +48,10 @@ Read `components/piscine/index.ts` first — it is the shared vocabulary
   controls (create, quick capture, refinement).
 - `lib/` — Server-side utilities (db, claude, converters). `lib/kanban/` is
   live logic, not dead code: queue ranks, merge readiness, status transitions,
-  filters. Ticket state still moves backlog → todo → in_progress → review →
-  to_merge → done → released; those statuses are data, they are just no longer
-  drawn as columns.
+  build work, unread-AI and awaiting-reply signals. Ticket state still moves
+  backlog → todo → in_progress → review → to_merge → done → released; those
+  statuses are data, they are just no longer drawn as columns. The board's
+  filter and column-order modules went with the board.
 - `hooks/` — Client-side React hooks
 - `data/` — Local data (SQLite DB, session logs) — gitignored
 - `projects/` — App-managed clones of repositories imported from GitHub
@@ -94,6 +94,7 @@ is far ahead, so generate would diff against stale state and emit wrong DDL.
 Add a numbered `.sql` file and append an entry to `meta/_journal.json` by hand.
 Journal order and the `when` timestamps must both increase — drizzle only
 applies a migration whose `when` exceeds the last one recorded in the database.
+The numeric file prefix does not dictate application order: only `when` matters.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

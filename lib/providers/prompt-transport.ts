@@ -61,7 +61,7 @@ export function oversizedArgMessage(cliName: string, bytes: number): string {
     `Prompt too large for the ${cliName} CLI: ${bytes.toLocaleString("en-US")} bytes ` +
     `in a single argument, over the ${MAX_ARG_STRLEN_BYTES.toLocaleString("en-US")}-byte ` +
     `kernel limit (E2BIG). Trim the ticket's comment history or the project ` +
-    `specification, or run the ticket on Claude Code, Codex, Pi or Oh My Pi, ` +
+    `specification, or run the ticket on Claude Code, Codex, Oh My Pi or agy, ` +
     `which pass long prompts out of band.`
   );
 }

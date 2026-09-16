@@ -1,8 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
+import { requestJson } from "@/lib/api/client";
+import { useStoredValue, writeStoredValue } from "@/hooks/useStoredValue";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { useScopedMutation } from "@/hooks/useScopedMutation";
+import { PillButton } from "@/components/piscine";
 
 interface DetectionPayload {
   detected: boolean;
@@ -22,116 +26,56 @@ function dismissStorageKey(projectId: string): string {
   return `github-connect-banner-dismissed:${projectId}`;
 }
 
-export function GitHubConnectBanner({
+export function GitHubConnectBanner(props: GitHubConnectBannerProps) {
+  return <GitHubConnectWorkspace key={JSON.stringify([props.projectId, props.gitRepoPath])} {...props} />;
+}
+
+function GitHubConnectWorkspace({
   projectId,
   gitRepoPath,
   githubOwnerRepo,
   onConnected,
 }: GitHubConnectBannerProps) {
   const t = useTranslations("Github");
+  const storedDismissal = useStoredValue(dismissStorageKey(projectId));
   const [dismissed, setDismissed] = useState(false);
-  const [detecting, setDetecting] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [candidate, setCandidate] = useState<DetectionPayload | null>(null);
-  const shouldAttemptDetect = Boolean(gitRepoPath) && !githubOwnerRepo && !dismissed;
-
-  const ownerRepo = useMemo(() => candidate?.ownerRepo ?? "", [candidate?.ownerRepo]);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setDismissed(window.localStorage.getItem(dismissStorageKey(projectId)) === "1");
-  }, [projectId]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function runDetection() {
-      if (!shouldAttemptDetect) {
-        setCandidate(null);
-        setError(null);
-        return;
-      }
-
-      setDetecting(true);
-      setError(null);
-      try {
-        const response = await fetch(`/api/projects/${projectId}/github/detect`);
-        const payload = await response.json().catch(() => ({}));
-
-        if (!response.ok) {
-          if (!cancelled) {
-            setError(payload?.error ?? t("connect.detectError"));
-          }
-          return;
-        }
-
-        const data = payload?.data as DetectionPayload | undefined;
-        if (!cancelled) {
-          if (data?.detected && data.ownerRepo) {
-            setCandidate(data);
-          } else {
-            setCandidate(null);
-          }
-        }
-      } catch {
-        if (!cancelled) {
-          setError(t("connect.detectError"));
-        }
-      } finally {
-        if (!cancelled) {
-          setDetecting(false);
-        }
-      }
-    }
-
-    runDetection();
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, shouldAttemptDetect, t]);
+  const [connected, setConnected] = useState(false);
+  const shouldAttemptDetect = Boolean(gitRepoPath) && !githubOwnerRepo && !dismissed && storedDismissal !== "1" && !connected;
+  const errorMessage = useCallback(() => t("connect.detectError"), [t]);
+  const { data: candidate, loading: detecting, error: loadError, refresh } = usePolledResource<DetectionPayload>(
+    shouldAttemptDetect ? `/api/projects/${projectId}/github/detect` : null, null, errorMessage,
+  );
+  const { run, pending: connecting, error: mutationError } = useScopedMutation(shouldAttemptDetect ? projectId : null);
+  const error = mutationError || loadError;
+  const ownerRepo = candidate?.detected ? candidate.ownerRepo ?? "" : "";
 
   function handleDismiss() {
-    if (typeof window !== "undefined") {
-      window.localStorage.setItem(dismissStorageKey(projectId), "1");
-    }
+    writeStoredValue(dismissStorageKey(projectId), "1");
     setDismissed(true);
-    setError(null);
   }
 
   async function handleConnect() {
     if (!ownerRepo) return;
-    setConnecting(true);
-    setError(null);
-
-    try {
-      const response = await fetch(`/api/projects/${projectId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ githubOwnerRepo: ownerRepo }),
+    const result = await run(async () => {
+      const response = await requestJson<{ id: string }>(`/api/projects/${projectId}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ githubOwnerRepo: ownerRepo }), errorMessage: t("connect.connectError"),
       });
-      const payload = await response.json().catch(() => ({}));
-
-      if (!response.ok) {
-        setError(payload?.error ?? t("connect.connectError"));
-        return;
-      }
-
-      if (typeof window !== "undefined") {
-        window.localStorage.removeItem(dismissStorageKey(projectId));
-      }
-
-      onConnected?.(ownerRepo);
-      setCandidate(null);
-    } catch {
-      setError(t("connect.connectError"));
-    } finally {
-      setConnecting(false);
-    }
+      if (response.error !== null) throw new Error(response.error);
+      return response.data;
+    }, t("connect.connectError"));
+    if (!result) return;
+    writeStoredValue(dismissStorageKey(projectId), null);
+    setConnected(true);
+    onConnected?.(ownerRepo);
   }
 
-  if (!shouldAttemptDetect || !candidate?.ownerRepo) {
-    return null;
+  if (!shouldAttemptDetect || (!ownerRepo && !error)) return null;
+  if (!ownerRepo) {
+    return <div role="alert" className="border-b border-border px-4 py-2 text-sm">
+      {error} <PillButton variant="outline" size="sm" onClick={() => void refresh()}>{t("connect.retry")}</PillButton>
+      <PillButton variant="outline" size="sm" onClick={handleDismiss}>{t("connect.dismiss")}</PillButton>
+    </div>;
   }
 
   return (
@@ -139,27 +83,26 @@ export function GitHubConnectBanner({
       <div className="flex flex-wrap items-center gap-2">
         <p className="text-sm">
           {t.rich("connect.question", {
-            ownerRepo: candidate.ownerRepo,
+            ownerRepo,
             repo: (chunks) => <span className="font-mono">{chunks}</span>,
           })}
         </p>
-        <Button
+        <PillButton
           size="sm"
-          className="h-7"
+          variant="filled"
           onClick={handleConnect}
           disabled={connecting || detecting}
         >
           {connecting ? t("connect.connecting") : t("connect.connect")}
-        </Button>
-        <Button
+        </PillButton>
+        <PillButton
           size="sm"
           variant="outline"
-          className="h-7"
           onClick={handleDismiss}
           disabled={connecting}
         >
           {t("connect.dismiss")}
-        </Button>
+        </PillButton>
         {detecting && (
           <span className="text-xs text-muted-foreground">
             {t("connect.detecting")}

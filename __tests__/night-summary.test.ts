@@ -30,7 +30,7 @@ const {
   isNightRunCostPartial,
 } = await import("@/lib/night/summary");
 const { nightRunRegistry } = await import("@/lib/night/registry");
-const { buildNightRunSummaryTitle } = await import("@/lib/notifications/create");
+const { buildNightRunSummaryTitle } = await import("@/lib/night/run-summary");
 const { buildWebhookPayload } = await import("@/lib/webhooks/send");
 const { GET: listRoute } = await import(
   "@/app/api/projects/[projectId]/build/night-runs/route"
@@ -77,6 +77,7 @@ function insertSession(input: {
   totalCostUsd?: number | null;
   createdAt?: string;
   completedAt?: string | null;
+  endedAt?: string | null;
   agentType?: string;
 }) {
   db.insert(agentSessions)
@@ -90,6 +91,7 @@ function insertSession(input: {
       totalCostUsd: input.totalCostUsd ?? null,
       createdAt: input.createdAt ?? "2026-08-17T02:00:00.000Z",
       completedAt: input.completedAt ?? null,
+      endedAt: input.endedAt ?? null,
       agentType: input.agentType ?? "build",
       mode: "code",
     })
@@ -185,7 +187,7 @@ describe("computeNightRunDetail", () => {
       epics: [
         {
           epicId: `ra-${counter}`,
-          pipelineRunId: "plr-1",
+          pipelineRunId: null,
           status: "running",
           reason: null,
         },
@@ -205,8 +207,6 @@ describe("computeNightRunDetail", () => {
       failurePolicy: "halt",
       totalWaves: 2,
       currentWave: 1,
-      breakerThreshold: 3,
-      costCapUsd: 10,
       totalCostUsd: 2,
       costIsPartial: false,
     });
@@ -217,8 +217,6 @@ describe("computeNightRunDetail", () => {
       title: `Title ra-${counter}`,
       status: "running",
       reason: null,
-      pipelineRunId: "plr-1",
-      sessionIds: [`reg-s1-${counter}`],
       costUsd: 2,
     });
 
@@ -305,8 +303,6 @@ describe("computeNightRunDetail", () => {
       failurePolicy: null,
       totalWaves: null,
       currentWave: null,
-      breakerThreshold: null,
-      costCapUsd: null,
       abortReason: null,
       counts: fullCounts({ done: 1, asked: 1, failed: 1 }),
       totalCostUsd: 1.75,
@@ -317,12 +313,43 @@ describe("computeNightRunDetail", () => {
     expect(byId.get(ea)).toMatchObject({
       status: "done",
       readableId: "E-d-1",
-      sessionIds: [`d1-${counter}`, `d2-${counter}`],
       costUsd: 1.5,
-      pipelineRunId: null,
     });
     expect(byId.get(eb)).toMatchObject({ status: "asked" });
     expect(byId.get(ec)).toMatchObject({ status: "failed", costUsd: null });
+  });
+
+  it("uses chronological dispatch order and terminal times after a restart", () => {
+    const projectId = seedProject();
+    const runId = `night_dates_${counter}`;
+    const epicId = `dates-${counter}`;
+    seedEpic(projectId, epicId, "E-dates");
+    insertSession({
+      id: `dates-old-${counter}`, projectId, epicId, batchRunId: runId,
+      status: "completed", createdAt: "2026-08-17T10:00:00+02:00",
+      completedAt: "2026-08-17T10:10:00+02:00", totalCostUsd: 1,
+    });
+    insertSession({
+      id: `dates-new-${counter}`, projectId, epicId, batchRunId: runId,
+      status: "failed", createdAt: "2026-08-17 09:00:00.125",
+      endedAt: "2026-08-17T10:00:00.500Z",
+    });
+
+    const detail = computeNightRunDetail(runId)!;
+
+    expect(detail).toMatchObject({
+      startedAt: "2026-08-17T08:00:00.000Z",
+      endedAt: "2026-08-17T10:00:00.500Z",
+      counts: fullCounts({ failed: 1 }), totalCostUsd: 1, costIsPartial: true,
+    });
+    // The epic's LAST tagged session by createdAt drives its status (the
+    // chronologically-newest row here is the failed one), and the cost comes
+    // from the other; the detail no longer carries the session ids.
+    expect(detail.epics[0]).toMatchObject({
+      epicId: expect.any(String),
+      status: "failed",
+      costUsd: 1,
+    });
   });
 
   it("returns null for unknown runs", () => {
@@ -331,6 +358,31 @@ describe("computeNightRunDetail", () => {
 });
 
 describe("listNightRuns", () => {
+  it("keeps the ten newest interrupted runs by instant before loading their details", () => {
+    const projectId = seedProject();
+    for (let index = 0; index < 10; index += 1) {
+      insertSession({
+        id: `list-current-${counter}-${index}`, projectId,
+        batchRunId: `night_current_${counter}_${index}`,
+        createdAt: `2026-08-17 09:${String(index).padStart(2, "0")}:00`,
+      });
+    }
+    insertSession({
+      id: `list-old-${counter}`, projectId, batchRunId: `night_old_${counter}`,
+      createdAt: "2026-08-17T10:59:00+02:00",
+    });
+    insertSession({
+      id: `list-false-positive-${counter}`, projectId,
+      batchRunId: `nightmare_newest_${counter}`, createdAt: "2026-08-18T00:00:00Z",
+    });
+
+    const entries = listNightRuns(projectId);
+
+    expect(entries.map((entry) => entry.runId)).toEqual(
+      Array.from({ length: 10 }, (_, index) => `night_current_${counter}_${9 - index}`),
+    );
+  });
+
   it("merges registry entries with DB-derived interrupted ones, excluding LIKE false positives", () => {
     const projectId = seedProject();
 
@@ -340,7 +392,7 @@ describe("listNightRuns", () => {
       runId: liveId,
       projectId,
       failurePolicy: "halt",
-      breakerThreshold: 3,
+      breakerThreshold: 0,
       costCapUsd: null,
       state: "running",
       startedAt: "2026-08-17T01:00:00.000Z",

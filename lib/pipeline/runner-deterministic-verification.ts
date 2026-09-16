@@ -99,7 +99,7 @@ export async function runDeterministicVerificationStep(
             attempt: 1,
             previousAttemptSessionId: null,
             lastCodeSessionId: state.lastCodeSessionId,
-            verificationFailure: failedCommand,
+            verificationFailure: { kind: "command", command: failedCommand },
           });
           return summary ? { kind: "terminal", summary } : { kind: "dispatched" };
         }

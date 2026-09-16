@@ -35,22 +35,15 @@ const testDb = vi.hoisted(() => ({
   > | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-  ensureDbReady: vi.fn(),
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb, {
+    ensureDbReady: vi.fn(),
+  }),
+);
 
 import {
   agentSessions,
   epics,
-  notifications,
   projects,
   reviewComments,
   settings,
@@ -302,10 +295,8 @@ describe("assessReviewOutcome — the vacuous clean review", () => {
     });
 
     expect(assessment).toMatchObject({
-      // Ingestion deliberately does not move the verdict: with the channel
-      // silent, the reviewer's own prose verdict line stays authoritative,
-      // and this report carries none.
-      blocking: false,
+      // Anchored major findings veto a missing or approving prose verdict.
+      blocking: true,
       unverifiable: false,
       verdictSource: "prose",
       proseIngestedCount: 1,
@@ -637,7 +628,7 @@ describe("submit_findings 401 tracing", () => {
       .filter((row) => row.epicId === EPIC_ID);
   }
 
-  it("logs activity and notifies when a revoked review token is rejected", async () => {
+  it("logs activity when a revoked review token is rejected", async () => {
     const sessionId = insertReviewSession({
       provider: "claude-code",
       status: "running",
@@ -658,10 +649,6 @@ describe("submit_findings 401 tracing", () => {
     expect(rows[0].sessionId).toBe(sessionId);
     expect(rows[0].reason).toMatch(/submit_findings/);
 
-    const notified = db().select().from(notifications).all();
-    expect(notified).toHaveLength(1);
-    expect(notified[0].sessionId).toBe(sessionId);
-    expect(notified[0].status).toBe("failed");
   });
 
   it("attributes an unknown token to the one review session still running", async () => {
@@ -690,7 +677,6 @@ describe("submit_findings 401 tracing", () => {
     await call("arij-mcp-never-minted");
 
     expect(activityRows()).toHaveLength(1);
-    expect(db().select().from(notifications).all()).toHaveLength(1);
   });
 
   it("does not blame a live review for a known non-review caller", async () => {
@@ -725,7 +711,6 @@ describe("submit_findings 401 tracing", () => {
     const response = await call(buildToken);
     expect(response.status).toBe(401);
     expect(activityRows()).toHaveLength(0);
-    expect(db().select().from(notifications).all()).toHaveLength(0);
     expect(reviewSessionId).toBeTruthy();
   });
 
@@ -733,7 +718,6 @@ describe("submit_findings 401 tracing", () => {
     const response = await call("arij-mcp-never-minted");
     expect(response.status).toBe(401);
     expect(activityRows()).toHaveLength(0);
-    expect(db().select().from(notifications).all()).toHaveLength(0);
   });
 
   it("leaves no trace on the happy path", async () => {
@@ -751,7 +735,6 @@ describe("submit_findings 401 tracing", () => {
     const response = await call(token);
     expect(response.status).toBe(200);
     expect(activityRows()).toHaveLength(0);
-    expect(db().select().from(notifications).all()).toHaveLength(0);
     expect(
       db().select().from(reviewComments).all()
     ).toHaveLength(0);

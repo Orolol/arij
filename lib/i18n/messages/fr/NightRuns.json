@@ -1,0 +1,7 @@
+{
+  "dialog": {
+    "loadFailed": "Impossible de charger le périmètre et les réglages du run",
+    "previewFailed": "Impossible de charger les prérequis du run",
+    "retry": "Réessayer"
+  }
+}

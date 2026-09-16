@@ -39,8 +39,8 @@ import {
  *
  * That is not a namespace problem (`react-compiler-namespaced-hooks.test.ts`
  * pins that one): every function here calls its hooks bare. It is a second
- * blind spot with the same symptom. MEASURED on this tip: 79 of the 485
- * functions the compiler takes for a component or hook were dark, in 77
+ * blind spot with the same symptom. The original probe found 79 of the 485
+ * functions the compiler took for a component or hook were dark, in 77
  * files, and neutralising the constructs in memory surfaced 44 real
  * violations behind them — 37 `set-state-in-effect`, 6 `refs`, 1
  * `immutability`.
@@ -71,76 +71,7 @@ import {
  * uncovers turns a silent component into a red `npm run lint`, so the two are
  * one change, filed as its own ticket.
  */
-const KNOWN_BAILED: Record<string, string> = {
-  "app/projects/[projectId]/documents/page.tsx#DocumentsPage":
-    "try/finally without catch; opening surfaces set-state-in-effect",
-  "app/projects/[projectId]/frictions/page.tsx#ProjectFrictionsPage":
-    "try/finally ×2, throw inside try/catch ×2; opening surfaces set-state-in-effect",
-  "app/projects/[projectId]/git-sync/page.tsx#GitSyncPage":
-    "try/finally ×3; opening surfaces set-state-in-effect",
-  "app/projects/[projectId]/github-issues/page.tsx#GitHubIssuesPage":
-    "try/finally ×3, try/finally without catch; opening surfaces set-state-in-effect",
-  "app/projects/[projectId]/layout.tsx#ProjectLayout":
-    "try/finally, throw inside try/catch; opening surfaces set-state-in-effect",
-  "app/projects/[projectId]/spec/page.tsx#SpecPage":
-    "try/finally; opening surfaces set-state-in-effect",
-  "components/auto-mode/AutoModeDialog.tsx#AutoModeDialog":
-    "try/finally; opening surfaces set-state-in-effect",
-  "components/chat-page/ChatPageView.tsx#ChatWorkspace":
-    "try/finally; opening surfaces set-state-in-effect ×2",
-  "components/documents/ScanProjectDialog.tsx#ScanProjectDialog":
-    "try/finally ×2; opening surfaces set-state-in-effect ×2",
-  "components/github/GitHubConnectBanner.tsx#GitHubConnectBanner":
-    "try/finally ×2; opening surfaces set-state-in-effect",
-  "components/kanban/EpicCreateDialog.tsx#EpicCreateDialog":
-    "try/finally; opening surfaces set-state-in-effect ×2",
-  "components/night/NightRunDialog.tsx#NightRunDialog":
-    "try/finally; opening surfaces set-state-in-effect ×3",
-  "components/qa/ReportDetail.tsx#ReportDetail":
-    "try/finally ×2; opening surfaces refs",
-  "components/qa/StartQaCheckDialog.tsx#StartQaCheckDialog":
-    "try/finally ×3; opening surfaces set-state-in-effect",
-  "components/routines/RoutinesSettings.tsx#RoutineEditor":
-    "try/finally ×3, throw inside try/catch ×3; opening surfaces set-state-in-effect ×2",
-  "components/routines/RoutinesSettings.tsx#RoutinesSettings":
-    "try/finally ×2, throw inside try/catch ×2; opening surfaces set-state-in-effect ×2",
-  "components/session-live/useSessionFiles.ts#useSessionFiles":
-    "try/finally, throw inside try/catch ×2; opening surfaces set-state-in-effect ×2",
-  "components/session-live/useSessionStreamPager.ts#useSessionStreamPager":
-    "eslint-disable of exhaustive-deps on the seed-reset effect; opening surfaces set-state-in-effect",
-  "components/sessions/SessionOutputStream.tsx#SessionOutputStream":
-    "eslint-disable of exhaustive-deps on the seed-reset effect; opening surfaces set-state-in-effect",
-  "components/settings/McpServersSection.tsx#McpServersSection":
-    "try/finally ×2; opening surfaces set-state-in-effect",
-  "components/shared/AgentActionsBar.tsx#AgentActionsBar":
-    "try/finally; opening surfaces set-state-in-effect",
-  "components/spec/MemoryPanel.tsx#MemoryPanel":
-    "try/finally ×3; opening surfaces refs ×3",
-  "hooks/useChat.ts#useChat":
-    "throw inside try/catch; opening surfaces refs",
-  "hooks/useDiff.ts#useDiff":
-    "try/finally; opening surfaces set-state-in-effect",
-  "hooks/useEpicDependencies.ts#useEpicDependencies":
-    "try/finally ×2; opening surfaces set-state-in-effect",
-  "hooks/useEpicPr.ts#useEpicPr":
-    "try/finally ×2; opening surfaces set-state-in-effect",
-  "hooks/useGitHubConfig.ts#useGitHubConfig":
-    "try/finally; opening surfaces set-state-in-effect",
-  "hooks/useGitStatus.ts#useGitStatus":
-    "try/finally ×2; opening surfaces set-state-in-effect",
-  "hooks/useKanban.ts#useKanban":
-    "throw inside try/catch; opening surfaces set-state-in-effect",
-  "hooks/useProjects.ts#useProjects":
-    "try/finally; opening surfaces set-state-in-effect",
-  "hooks/useQaReports.ts#useQaReports":
-    "try/finally; opening surfaces set-state-in-effect",
-  "hooks/useReviewComments.ts#useReviewComments":
-    "try/finally; opening surfaces set-state-in-effect",
-  "hooks/useUsage.ts#useUsage":
-    "try/finally; opening surfaces set-state-in-effect",
-  "hooks/useWorktrees.ts#useWorktrees":
-    "try/finally ×2; opening surfaces set-state-in-effect",
-};
+const KNOWN_BAILED: Record<string, string> = {};
 
 /** A reason has to name a construct; `try/finally` is the shortest that does. */
 const REASON_FLOOR = 8;

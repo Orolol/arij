@@ -57,7 +57,14 @@ export interface TicketOverlayProps {
   refreshTrigger?: number;
 }
 
-export function TicketOverlay({
+export function TicketOverlay(props: TicketOverlayProps) {
+  if (!props.open) return null;
+  // A ticket owns all its drafts, dialogs, selections and asynchronous loaders.
+  // Remount the complete tree when its identity changes, including its project.
+  return <TicketOverlayContent key={`${props.projectId}:${props.epicId}`} {...props} />;
+}
+
+function TicketOverlayContent({
   projectId,
   epicId,
   open,
@@ -70,6 +77,12 @@ export function TicketOverlay({
   const derivedCopy = useTicketDerivedCopy();
   const locale = useLocale();
   const t = useTranslations("Ticket");
+  const tErrors = useTranslations("ClientErrors");
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
@@ -131,6 +144,8 @@ export function TicketOverlay({
     deleteEpicError,
     pr,
     prLoading,
+    prReady,
+    refreshPr,
     prError,
     createPr,
     syncPr,
@@ -140,6 +155,9 @@ export function TicketOverlay({
     waitsOnOptions,
     toggleWaitsOn,
     dependencySaving,
+    dependencyLoading,
+    dependencyReady,
+    refreshDependencies,
     dependencyError,
     namedAgents,
     gradingStatus,
@@ -155,25 +173,6 @@ export function TicketOverlay({
     projectName,
     tone,
   } = data;
-
-  /**
-   * Switching tickets clears everything derived from the previous one.
-   * Render-phase, per React's documented reset pattern — an effect would
-   * paint one frame of the old ticket's rejection message over the new one,
-   * which is a bug users actually hit.
-   */
-  const [lastEpicId, setLastEpicId] = useState(epicId);
-  if (epicId !== lastEpicId) {
-    setLastEpicId(epicId);
-    setStatusError(null);
-    setDraft("");
-    setCommentError(null);
-    setRebuildOpen(false);
-    setBackToDevOpen(false);
-    setBackToDevSeed("");
-    setDiffView(false);
-    setMergeError(null);
-  }
 
   /* ---------------- close semantics --------------------------------- */
 
@@ -237,6 +236,7 @@ export function TicketOverlay({
 
   const reportConflict = useCallback(
     (error: unknown) => {
+      if (!mounted.current) return false;
       if (isAgentAlreadyRunningError(error)) {
         onAgentConflict?.({
           message: error.message,
@@ -269,27 +269,23 @@ export function TicketOverlay({
   ) {
     if (!epicId) return;
     setResolvingMerge(true);
-    try {
-      const result = await resolveMerge(namedAgentId, resumeSessionId);
-      if (result?.clean) {
-        // A conflict the agent resolved cleanly means the ticket landed;
-        // leaving the overlay open on a landed ticket is wrong.
-        setMergeError(null);
+    const outcome = await resolveMerge(namedAgentId, resumeSessionId).then(
+      (result) => ({ result }),
+      (error: unknown) => {
+        reportConflict(error);
+        setMergeError(error instanceof Error ? error.message : t("overlay.resolveMergeError"));
+        return null;
+      },
+    );
+    if (!mounted.current) return;
+    if (outcome) {
+      setMergeError(null);
+      if (outcome.result?.clean) {
         onMerged?.();
         onClose();
-      } else {
-        // A launched (non-clean) resolution is NOT an error state — the agent
-        // is working on it now, and the stale merge error must clear or the
-        // user reads a failure over a running fix.
-        setMergeError(null);
       }
       setResolveMergeOpen(false);
       setResolveMergeResumeSessionId(undefined);
-    } catch (e) {
-      reportConflict(e);
-      setMergeError(
-        e instanceof Error ? e.message : t("overlay.resolveMergeError"),
-      );
     }
     setResolvingMerge(false);
   }
@@ -300,7 +296,9 @@ export function TicketOverlay({
       await sendToReview(["feature_review"], selectedAgentId);
       refresh();
     } catch (error) {
-      reportConflict(error);
+      if (!reportConflict(error)) {
+        setStatusError(error instanceof Error ? error.message : tErrors("agentRequestFailed"));
+      }
     }
   }
 
@@ -317,7 +315,9 @@ export function TicketOverlay({
       await sendToGrading(selectedAgentId);
       refresh();
     } catch (error) {
-      reportConflict(error);
+      if (!reportConflict(error)) {
+        setStatusError(error instanceof Error ? error.message : tErrors("agentRequestFailed"));
+      }
     }
   }
 
@@ -344,7 +344,9 @@ export function TicketOverlay({
       setRebuildOpen(false);
       setBackToDevOpen(false);
     } catch (error) {
-      reportConflict(error);
+      if (!reportConflict(error)) {
+        setStatusError(error instanceof Error ? error.message : tErrors("agentRequestFailed"));
+      }
     }
   }
 
@@ -474,6 +476,7 @@ export function TicketOverlay({
                 projectId={projectId}
                 gradingStatus={gradingStatus}
                 gradingSummary={gradingSummary}
+                onStoryUpdated={refresh}
               />
               {/* The mechanical evidence, under the criteria it was run
                   against and above the prose the agent wrote about them. */}
@@ -519,6 +522,8 @@ export function TicketOverlay({
                 githubConfigured={githubConfigured}
                 pr={pr}
                 prLoading={prLoading}
+                prReady={prReady}
+                onRetryPr={() => void refreshPr()}
                 prError={prError}
                 onCreatePr={() => void createPr()}
                 onSyncPr={() => void syncPr()}
@@ -539,6 +544,9 @@ export function TicketOverlay({
                 options={waitsOnOptions}
                 onToggleWaitsOn={toggleWaitsOn}
                 saving={dependencySaving}
+                loading={dependencyLoading}
+                ready={dependencyReady}
+                onRetry={() => void refreshDependencies()}
                 error={dependencyError}
               />
               <AgentsBand
@@ -560,6 +568,7 @@ export function TicketOverlay({
               <QuietDangerAction
                 icon={Trash2}
                 size={11.5}
+                disabled={isRunning || dispatching}
                 onClick={() => setDeleteDialogOpen(true)}
                 className="mt-auto self-end"
               >
@@ -642,6 +651,7 @@ export function TicketOverlay({
         description={t("overlay.deleteDescription")}
         confirmLabel={t("overlay.deleteConfirm")}
         deleting={deletingEpic}
+        locked={isRunning || dispatching}
         onConfirm={deleteEpic}
       />
     </div>

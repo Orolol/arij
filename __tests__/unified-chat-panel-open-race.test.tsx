@@ -16,9 +16,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
-}));
+vi.mock("next/navigation", async () =>
+  (await import("@/__tests__/helpers/next-navigation-mock")).nextNavigationMock(),
+);
 
 interface MockConversation {
   id: string;

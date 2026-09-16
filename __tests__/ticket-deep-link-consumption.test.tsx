@@ -40,14 +40,9 @@ import {
   useSyncExternalStore,
   type ReactNode,
 } from "react";
+import { installMockEventSource } from "./helpers/event-source-mock";
 
-class MockEventSource {
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  close() {}
-}
-(globalThis as Record<string, unknown>).EventSource = MockEventSource;
+installMockEventSource();
 
 /* ------------------------------------------------------------------ */
 /* The address bar, and the hook's view of it                          */
@@ -156,7 +151,6 @@ vi.mock("@/components/auto-mode/AutoModeToggle", () => ({
 vi.mock("@/components/kanban/RefinementButton", () => ({
   RefinementButton: () => null,
 }));
-vi.mock("@/components/monitor/AgentMonitor", () => ({ AgentMonitor: () => null }));
 vi.mock("@/components/shared/NamedAgentSelect", () => ({
   NamedAgentSelect: () => null,
 }));

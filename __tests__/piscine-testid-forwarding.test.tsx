@@ -17,7 +17,6 @@ import { Trash2 } from "lucide-react";
 
 import {
   CheckMark,
-  DeskHeader,
   IdentityChip,
   QuietDangerAction,
   QuietLink,
@@ -283,26 +282,3 @@ describe("UnderlineTabNav testId", () => {
   });
 });
 
-describe("DeskHeader testId", () => {
-  it("puts the id on the title link when titleHref is provided", () => {
-    render(<DeskHeader title="Agents" titleHref="/agents" testId="header-title" />);
-
-    const found = screen.getByTestId("header-title");
-    expect(found.tagName).toBe("A");
-    expect(found).toHaveAttribute("href", "/agents");
-    expect(found.textContent).toBe("Agents");
-  });
-
-  it("puts the id on the title span when no titleHref is provided", () => {
-    render(<DeskHeader title="Now" testId="header-title-static" />);
-
-    const found = screen.getByTestId("header-title-static");
-    expect(found.tagName).toBe("SPAN");
-    expect(found.textContent).toBe("Now");
-  });
-
-  it("writes no attribute at all when no testId is passed", () => {
-    render(<DeskHeader title="Now" titleHref="/desk" />);
-    expect(screen.getByRole("link", { name: "Now" })).not.toHaveAttribute("data-testid");
-  });
-});

@@ -70,7 +70,7 @@ function isCopy(raw, allowPattern) {
   return true;
 }
 
-export default {
+const noBareJsxCopy = {
   meta: {
     type: "problem",
     docs: {
@@ -166,3 +166,5 @@ export default {
     };
   },
 };
+
+export default noBareJsxCopy;

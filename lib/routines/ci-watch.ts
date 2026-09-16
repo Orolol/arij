@@ -1,7 +1,7 @@
-import { and, eq, inArray, isNotNull } from "drizzle-orm";
+import { getRunningSessionForTarget } from "@/lib/agents/concurrency";
 import { db } from "@/lib/db";
 import { epics, projects, routines, type Routine } from "@/lib/db/schema";
-import { getRunningSessionForTarget } from "@/lib/agents/concurrency";
+import { parseOwnerRepo } from "@/lib/github/client";
 import {
   fetchPullRequestCiFailureEvidence,
   fetchPullRequestCiStatus,
@@ -9,21 +9,21 @@ import {
   type PullRequestCiState,
   type PullRequestCiStatus,
 } from "@/lib/github/pull-requests";
-import { parseOwnerRepo } from "@/lib/github/client";
-import { createCiWatchFailureNotification } from "@/lib/notifications/create";
 import type { RoutineActionResult } from "@/lib/routines/actions";
-import { parseRoutineConfig } from "@/lib/routines/constants";
 import {
   launchCiAutofixSession,
   type CiAutofixLaunchResult,
 } from "@/lib/routines/ci-autofix";
 import { boundCiAutofixEvidence } from "@/lib/routines/ci-autofix-limits";
+import { parseRoutineConfig } from "@/lib/routines/constants";
 import { isCiAutofixEnabled } from "@/lib/routines/settings";
+import { postTicketSystemComment } from "@/lib/workflow/system-comment";
+import { and, eq, inArray, isNotNull } from "drizzle-orm";
 
 export {
-  CI_AUTOFIX_ENABLED_SETTING_KEY,
-  ciAutofixEnabledSettingKey,
-  isCiAutofixEnabled,
+CI_AUTOFIX_ENABLED_SETTING_KEY,
+ciAutofixEnabledSettingKey,
+isCiAutofixEnabled
 } from "@/lib/routines/settings";
 
 export const DEFAULT_CI_WATCH_INTERVAL_MINUTES = 15;
@@ -155,7 +155,18 @@ export const defaultCiWatchDeps: CiWatchDeps = {
         .run();
     });
   },
-  notifyFailure: createCiWatchFailureNotification,
+  notifyFailure: (input) => {
+    // The epic's unread dot + the inbox are the surface; the notifications
+    // table this used to write had no reader.
+    const ticket = input.epicReadableId
+      ? `${input.epicReadableId}: ${input.epicTitle}`
+      : input.epicTitle;
+    const failedChecks = input.failedChecks.join(", ") || "unknown check";
+    postTicketSystemComment({
+      epicId: input.epicId,
+      content: `CI failed on PR #${input.prNumber} — ${ticket}\n\nFailing checks: ${failedChecks}. Head ${input.headSha.slice(0, 12)}.`,
+    });
+  },
   setEpicPullRequestState: (epicId, prStatus) => {
     db.update(epics)
       .set({ prStatus, updatedAt: new Date().toISOString() })
@@ -335,6 +346,7 @@ export async function runCiWatchRoutine(
   const autofixEnabled = deps.isAutofixEnabled(routine.projectId);
 
   for (const epic of openPullRequests) {
+    let claimedThisSweep = false;
     try {
       const snapshot = await deps.fetchPullRequestCi(
         owner,
@@ -400,6 +412,7 @@ export async function runCiWatchRoutine(
           ...decision.observation,
           autofixAttempted: true,
         };
+        claimedThisSweep = true;
         deps.persistState(routine.id, nextState, nextErrorState);
 
         let failures: PullRequestCiFailureEvidence[];
@@ -444,6 +457,10 @@ export async function runCiWatchRoutine(
 
       processedPullRequests += 1;
     } catch (error) {
+      if (claimedThisSweep && !nextState[epic.id]?.autofixSessionId) {
+        nextState[epic.id] = { ...nextState[epic.id], autofixAttempted: false, autofixSessionId: null };
+        deps.persistState(routine.id, nextState, nextErrorState);
+      }
       failedPullRequestNumbers.push(epic.prNumber);
       const signature = ciWatchErrorSignature(error);
       if (previousErrorState[epic.id] !== signature) newProcessingErrors += 1;

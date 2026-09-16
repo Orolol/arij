@@ -18,7 +18,7 @@ const bootMocks = vi.hoisted(() => ({
   startRoutineScheduler: vi.fn(),
   kickAutoModeForSession: vi.fn(),
   maybeAutoDistillAfterSessionTerminal: vi.fn(async () => {}),
-  createTerminalSessionNotification: vi.fn(),
+  sendTerminalSessionWebhook: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
@@ -54,9 +54,8 @@ vi.mock("@/lib/workflow/memory-distill", () => ({
     bootMocks.maybeAutoDistillAfterSessionTerminal,
 }));
 
-vi.mock("@/lib/agent-sessions/terminal-notification", () => ({
-  createTerminalSessionNotification:
-    bootMocks.createTerminalSessionNotification,
+vi.mock("@/lib/agent-sessions/session-outcome-webhook", () => ({
+  sendTerminalSessionWebhook: bootMocks.sendTerminalSessionWebhook,
 }));
 
 const { register } = await import("@/instrumentation");
@@ -91,12 +90,16 @@ describe("register()", () => {
     expect(bootMocks.startRoutineScheduler).toHaveBeenCalledTimes(1);
   });
 
-  it("registers ONE hook that runs both the auto-mode kick and auto-distill", async () => {
+  it("registers ONE hook that kicks the supervisor, fires the webhook and distills", async () => {
     await register();
 
     notifySessionTerminal({ sessionId: "s1", status: "completed" });
 
     expect(bootMocks.kickAutoModeForSession).toHaveBeenCalledWith("s1");
+    expect(bootMocks.sendTerminalSessionWebhook).toHaveBeenCalledWith({
+      sessionId: "s1",
+      status: "completed",
+    });
     expect(bootMocks.maybeAutoDistillAfterSessionTerminal).toHaveBeenCalledWith(
       "s1"
     );

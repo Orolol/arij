@@ -27,7 +27,6 @@ describe("createTestDb", () => {
     expect(tableNames).toContain("documents");
     expect(tableNames).toContain("named_agents");
     expect(tableNames).toContain("agent_prompts");
-    expect(tableNames).toContain("custom_review_agents");
     expect(tableNames).toContain("agent_provider_defaults");
     expect(tableNames).toContain("ticket_dependencies");
     expect(tableNames).toContain("git_sync_log");

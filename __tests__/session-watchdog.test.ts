@@ -27,7 +27,6 @@ const {
   projects,
   epics,
   agentSessions,
-  notifications,
   ticketActivityLog,
   settings,
 } = await import("@/lib/db/schema");
@@ -109,14 +108,6 @@ function seedChunk(sessionId: string, createdAt: string): void {
   });
 }
 
-function notificationsFor(sessionId: string) {
-  return db
-    .select()
-    .from(notifications)
-    .where(eq(notifications.sessionId, sessionId))
-    .all();
-}
-
 function activityFor(epicId: string) {
   return db
     .select()
@@ -140,7 +131,6 @@ beforeEach(() => {
   // its own world. Chunks/sequences cascade from agentSessions.
   db.delete(settings).run();
   db.delete(ticketActivityLog).run();
-  db.delete(notifications).run();
   db.delete(agentSessions).run();
   db.delete(epics).run();
   db.delete(projects).run();
@@ -159,16 +149,7 @@ describe("SessionWatchdog.sweep detection", () => {
       { sessionId, projectId: expect.any(String), epicId, staleMinutes: 6 },
     ]);
 
-    const notifs = notificationsFor(sessionId);
-    expect(notifs).toHaveLength(1);
-    expect(notifs[0]).toMatchObject({
-      status: "failed",
-      agentType: "build",
-      title: `Agent seems stalled on E-wd-${counter}: Epic ${counter} — no output for 6m`,
-    });
-    expect(notifs[0].targetUrl).toBe(
-      `/projects/${notifs[0].projectId}/sessions/${sessionId}`
-    );
+    expect(watchdog.hasNotified(sessionId)).toBe(true);
 
     const log = activityFor(epicId!);
     expect(log).toHaveLength(1);
@@ -188,7 +169,6 @@ describe("SessionWatchdog.sweep detection", () => {
     const flagged = new SessionWatchdog().sweep(NOW);
 
     expect(flagged).toEqual([]);
-    expect(notificationsFor(sessionId)).toHaveLength(0);
   });
 
   it("falls back to startedAt for sessions that never emitted a chunk", () => {
@@ -207,8 +187,6 @@ describe("SessionWatchdog.sweep detection", () => {
     const flagged = new SessionWatchdog().sweep(NOW);
 
     expect(flagged).toEqual([]);
-    expect(notificationsFor(queued.sessionId)).toHaveLength(0);
-    expect(notificationsFor(completed.sessionId)).toHaveLength(0);
   });
 
   it("exempts chat sessions no matter how silent they are", () => {
@@ -220,10 +198,9 @@ describe("SessionWatchdog.sweep detection", () => {
     const flagged = new SessionWatchdog().sweep(NOW);
 
     expect(flagged).toEqual([]);
-    expect(notificationsFor(sessionId)).toHaveLength(0);
   });
 
-  it("watches grading sessions and classifies their stalled notification", () => {
+  it("keeps watching grading sessions and logs the stall on their ticket", () => {
     const { sessionId, epicId } = seedSession({
       agentType: "grading",
       epicStatus: "review",
@@ -233,10 +210,6 @@ describe("SessionWatchdog.sweep detection", () => {
     const flagged = new SessionWatchdog().sweep(NOW);
 
     expect(flagged).toHaveLength(1);
-    expect(notificationsFor(sessionId)[0]).toMatchObject({
-      agentType: "grading",
-      title: `Agent seems stalled on E-wd-${counter}: Epic ${counter} — no output for 8m`,
-    });
     expect(activityFor(epicId!)[0]).toMatchObject({
       fromStatus: "review",
       toStatus: "review",
@@ -244,7 +217,7 @@ describe("SessionWatchdog.sweep detection", () => {
     });
   });
 
-  it("notifies without an activity-log entry for epic-less sessions", () => {
+  it("flags without an activity-log entry for epic-less sessions", () => {
     const { sessionId } = seedSession({
       withEpic: false,
       agentType: "team_build",
@@ -254,15 +227,13 @@ describe("SessionWatchdog.sweep detection", () => {
     const flagged = new SessionWatchdog().sweep(NOW);
 
     expect(flagged).toHaveLength(1);
-    const notifs = notificationsFor(sessionId);
-    expect(notifs).toHaveLength(1);
-    expect(notifs[0].title).toBe("Agent seems stalled — no output for 9m");
+    expect(flagged[0]).toMatchObject({ sessionId, staleMinutes: 9, epicId: null });
     expect(db.select().from(ticketActivityLog).all()).toHaveLength(0);
   });
 });
 
 describe("SessionWatchdog dedupe", () => {
-  it("notifies a session at most once across sweeps", () => {
+  it("flags a session at most once across sweeps", () => {
     const { sessionId, epicId } = seedSession({ startedAt: minutesAgo(20) });
 
     const watchdog = new SessionWatchdog();
@@ -272,7 +243,6 @@ describe("SessionWatchdog dedupe", () => {
       watchdog.sweep(new Date(NOW.getTime() + 10 * 60_000))
     ).toEqual([]);
 
-    expect(notificationsFor(sessionId)).toHaveLength(1);
     expect(activityFor(epicId!)).toHaveLength(1);
     expect(watchdog.hasNotified(sessionId)).toBe(true);
   });
@@ -292,7 +262,7 @@ describe("SessionWatchdog dedupe", () => {
 
     expect(watchdog.hasNotified(sessionId)).toBe(false);
     // ...and the terminal session was of course not re-flagged.
-    expect(notificationsFor(sessionId)).toHaveLength(1);
+    expect(watchdog.sweep(NOW)).toEqual([]);
   });
 });
 
@@ -409,14 +379,14 @@ describe("interval plumbing", () => {
 
     const watchdog = new SessionWatchdog();
     watchdog.start();
-    expect(notificationsFor(sessionId)).toHaveLength(0);
+    expect(watchdog.hasNotified(sessionId)).toBe(false);
 
     vi.advanceTimersByTime(WATCHDOG_SWEEP_INTERVAL_MS);
-    expect(notificationsFor(sessionId)).toHaveLength(1);
+    expect(watchdog.hasNotified(sessionId)).toBe(true);
 
     // Later ticks stay deduped.
     vi.advanceTimersByTime(WATCHDOG_SWEEP_INTERVAL_MS * 3);
-    expect(notificationsFor(sessionId)).toHaveLength(1);
+    expect(watchdog.sweep(NOW)).toEqual([]);
 
     watchdog.stop();
   });

@@ -20,10 +20,9 @@ import type { UsageMonthlyCap } from "@/lib/types/usage";
  * states a threshold and never enforces one.
  *
  * The cap lives in the generic `settings` key/value table under
- * `usage_budget_usd_month` (no migration, no new table) and is edited inline
- * here rather than on the settings page. An empty input CLEARS it — which is
- * why "no cap" and "a cap of zero" stay distinguishable all the way down to
- * the aggregate's defensive parse.
+ * `usage_budget_usd_month` and is edited inline here or via Settings. An empty
+ * input CLEARS it — which is why "no cap" and "a cap of zero" stay
+ * distinguishable all the way down to the aggregate's defensive parse.
  *
  * When no cap is configured the tile collapses toward its label line: the
  * month-to-date spend alone plus a link, and NO bar. A bar with no denominator
@@ -53,10 +52,9 @@ export function MonthlyCapTile({ cap, onSaved }: MonthlyCapTileProps) {
   }
 
   /**
-   * Mirrors `handleSaveUsageBudget` in app/settings/page.tsx: an empty string
-   * clears the cap (writes null), anything non-finite or non-positive is
-   * refused inline, and a failed PATCH leaves the previous cap on screen
-   * rather than blanking the tile.
+   * Validates the monthly cap: an empty string clears the cap (writes null),
+   * anything non-finite or non-positive is refused inline, and a failed PATCH
+   * leaves the previous cap on screen rather than blanking the tile.
    */
   async function commit() {
     const raw = draft.trim();

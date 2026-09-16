@@ -1,3 +1,4 @@
+import { neutralizeControlMarkup } from "@/lib/claude/untrusted";
 /**
  * Client-safe grading report helpers shared by the pipeline and ticket UI.
  *
@@ -120,14 +121,14 @@ export function buildGradingFixSection(
     "The acceptance grader marked the following criteria as missed. Fix each concrete gap, run focused tests, and commit the result.",
     "",
   ];
-  for (const entry of context.missed) {
+  for (const entry of context.missed.slice(0, 80)) {
     lines.push(`### Story \`${entry.storyId}\``);
-    lines.push(`- **Criterion:** ${entry.criterion}`);
-    lines.push(`- **Evidence / gap:** ${entry.evidence}`);
+    lines.push(`- **Criterion:** ${neutralizeControlMarkup(entry.criterion).slice(0, 1200)}`);
+    lines.push(`- **Evidence / gap:** ${neutralizeControlMarkup(entry.evidence).slice(0, 1200)}`);
     lines.push("");
   }
   if (context.summary.trim()) {
-    lines.push(`**Grader summary:** ${context.summary.trim()}`);
+    lines.push(`**Grader summary:** ${neutralizeControlMarkup(context.summary.trim()).slice(0, 2400)}`);
   }
   return lines.join("\n").trim();
 }

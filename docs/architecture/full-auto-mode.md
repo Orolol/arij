@@ -194,8 +194,8 @@ refinement pass calls `set_priority` and then `reorder_tickets`
 through the shared core `lib/workflow/reorder.ts` — the same core, with
 `reorderOnly`, so a ticket the server has moved on from is skipped rather than
 transitioned. The old "Sort by priority" column-header action is **gone**: it
-lived in `hooks/useKanban.sortColumnByPriority`, and no screen mounts that hook
-any more. `POST /api/projects/:projectId/epics/reorder` still exists and still
+lived in the legacy `hooks/useKanban.ts`, which has been removed.
+`POST /api/projects/:projectId/epics/reorder` still exists and still
 runs the same core, but it currently has no caller in the UI. A human who wants
 a different execution order re-ranks through Refinement, or changes the
 ticket's status/priority from the 6a overlay.
@@ -382,6 +382,18 @@ on it** or **toggle the mode off and on** (switching off clears all runtime
 state). A merge refused by a workflow guard is *not* a failure and never parks:
 it retries as soon as the review comments are resolved.
 
+**A composite agent parks at the length of its own list.** The mode dispatches
+each stage itself rather than entering the pipeline, so it reproduces the
+pipeline's retry ladder from the ticket's failure streak: attempt *N* of a
+**composite** runs the member at position *N-1*, and a `failed`, `silent` or
+`transition_refused` session is what spends a rank. A **simple agent** is
+retried as itself on attempt 1, unchanged. Because the member count *is* the
+ladder, it is also the cap — a two-member list parks at two rather than at
+three, and the rank-down is written to the ticket feed (`Auto mode composite
+fallback: build moved from X to Y (attempt 2/2) because …`) so a different
+agent on the ticket is never unexplained. Every member of the list is spent
+before the mode gives up, which is the whole point of configuring one.
+
 An unresolved merge conflict parks the epic **hard**. A soft streak is cleared
 by the next session that completes, and the merge-fix agent *does* complete
 successfully right before its retry fails — so without that distinction the
@@ -480,3 +492,7 @@ auto-distillation trigger are composed there rather than overwriting each other.
 | `components/settings-piscine/FullAutoBand.tsx` | `/settings` → FULL AUTO; writes the BARE (workspace-wide) keys only |
 
 Tests: `__tests__/auto-mode-{constants,select,engine,merge,route,dialog,instrumentation,e2e}.test.ts(x)`.
+
+### Diagnostic forensic
+
+Le post-mortem forensic est réservé au runner pipeline (build mono-ticket avec pipeline actif et night runs). Full Auto utilise directement le pilote de stages : un ticket parqué conserve ses traces et son motif d’échec, sans lancer de session forensic supplémentaire. Les builds sans pipeline et CI-autofix suivent la même limite.

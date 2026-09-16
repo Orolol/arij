@@ -481,7 +481,6 @@ describe("conversations route", () => {
       provider: "claude-code-persistent",
       namedAgentId: null,
       cliSessionId: null,
-      claudeSessionId: null,
     });
     expect(mockResolveDefaultChatMode).toHaveBeenCalledWith("proj-1");
     expect(mockResolveAgent).not.toHaveBeenCalled();
@@ -538,7 +537,6 @@ describe("conversations route", () => {
         provider: "codex",
         namedAgentId: "agent-7",
         cliSessionId: null,
-        claudeSessionId: null,
       }),
     );
   });

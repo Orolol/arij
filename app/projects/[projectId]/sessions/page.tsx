@@ -40,11 +40,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { parseStoredTimestamp } from "@/lib/agent-sessions/last-activity";
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
 import {
   fetchUnifiedSessions,
   UnifiedSessionListIncompleteError,
 } from "@/lib/agent-sessions/session-list";
+import { AGENT_TYPE_LABEL_KEYS, STATUS_LABEL_KEYS } from "@/components/session-live/labels";
 
 // --- Discriminated union types ---
 
@@ -93,65 +94,24 @@ interface ChatSession {
 type UnifiedSession = AgentSession | ChatSession;
 
 /**
- * TWO MODULE-SCOPE COPY TABLES, so both hold catalogue KEY REFERENCES and the
- * rows resolve them at render with the namespace-less translator
- * (`lib/i18n/catalogue.ts`, pattern 3). An unmapped `agentType` still falls
- * back to the raw id, which is DATA and never a key.
+ * The status ICON and colour this table draws. The WORDS are not here: they
+ * come from `STATUS_LABEL_KEYS` (components/session-live/labels.ts), the one
+ * table shared with the live header — the list and the live screen used to
+ * name the same statuses from two namespaces.
+ *
+ * An unmapped `agentType` or `status` still falls back to the raw value, which
+ * is DATA and never a key.
  */
-const AGENT_TYPE_LABEL_KEYS: Record<string, TranslationKey> = {
-  build: "ProjectSessions.agentType.build",
-  ticket_build: "ProjectSessions.agentType.ticketBuild",
-  team_build: "ProjectSessions.agentType.teamBuild",
-  review_security: "ProjectSessions.agentType.reviewSecurity",
-  review_code: "ProjectSessions.agentType.reviewCode",
-  review_compliance: "ProjectSessions.agentType.reviewCompliance",
-  review_feature: "ProjectSessions.agentType.reviewFeature",
-  review_second_opinion: "ProjectSessions.agentType.reviewSecondOpinion",
-  grading: "ProjectSessions.agentType.grading",
-  merge: "ProjectSessions.agentType.merge",
-  tech_check: "ProjectSessions.agentType.techCheck",
-  release_notes: "ProjectSessions.agentType.releaseNotes",
-  memory_distill: "ProjectSessions.agentType.memoryDistill",
-  dreaming: "ProjectSessions.agentType.dreaming",
-  forensic: "ProjectSessions.agentType.forensic",
-  failure_digest: "ProjectSessions.agentType.failureDigest",
+const STATUS_ICON: Record<string, { icon: LucideIcon; color: string }> = {
+  queued: { icon: Clock, color: "text-priority-yellow" },
+  running: { icon: LoaderCircle, color: "text-agent" },
+  completed: { icon: CircleCheck, color: "text-agent" },
+  failed: { icon: TriangleAlert, color: "text-destructive" },
+  cancelled: { icon: Ban, color: "text-meta" },
 };
 
-const STATUS_CONFIG: Record<
-  string,
-  { icon: LucideIcon; color: string; labelKey: TranslationKey }
-> = {
-  queued: {
-    icon: Clock,
-    color: "text-priority-yellow",
-    labelKey: "ProjectSessions.status.queued",
-  },
-  pending: {
-    icon: Circle,
-    color: "text-meta",
-    labelKey: "ProjectSessions.status.pending",
-  },
-  running: {
-    icon: LoaderCircle,
-    color: "text-agent",
-    labelKey: "ProjectSessions.status.running",
-  },
-  completed: {
-    icon: CircleCheck,
-    color: "text-agent",
-    labelKey: "ProjectSessions.status.completed",
-  },
-  failed: {
-    icon: TriangleAlert,
-    color: "text-destructive",
-    labelKey: "ProjectSessions.status.failed",
-  },
-  cancelled: {
-    icon: Ban,
-    color: "text-meta",
-    labelKey: "ProjectSessions.status.cancelled",
-  },
-};
+/** The icon for an unknown status, which keeps its own uppercased word. */
+const UNKNOWN_STATUS_ICON = { icon: Circle, color: "text-meta" };
 
 /** State chips (single-select) and provider chips (toggle) of the filter bar. */
 type StateFilter = "all" | "running" | "failed" | "night";
@@ -883,7 +843,8 @@ function AgentSessionRow({
   // The status and agent-type tables hold full dotted paths, so they resolve
   // through the namespace-less translator.
   const tKey = useTranslations();
-  const config = STATUS_CONFIG[session.status] || STATUS_CONFIG.pending;
+  const config = STATUS_ICON[session.status] ?? UNKNOWN_STATUS_ICON;
+  const statusKey = STATUS_LABEL_KEYS[session.status];
   const Icon = config.icon;
   const isRunning = session.status === "running";
 
@@ -931,7 +892,7 @@ function AgentSessionRow({
 
       <div className="flex min-w-0 flex-col gap-[3px]">
         <span className={cn("truncate text-[13px]", config.color)}>
-          {tKey(config.labelKey)}
+          {statusKey ? tKey(statusKey) : session.status.toUpperCase()}
         </span>
         {session.error ? (
           <span className="truncate font-mono text-[11px] text-destructive">

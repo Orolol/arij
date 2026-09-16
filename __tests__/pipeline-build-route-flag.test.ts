@@ -16,6 +16,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { mockJsonRequest, mockRouteContext } from "@/__tests__/helpers/db-mock";
 import type { PipelineStageResult, StartPipelineRunInput } from "@/lib/pipeline";
+import { waitForSessionTerminal, waitForBackground } from "./helpers/background";
 
 const processManagerState = vi.hoisted(() => ({
   result: undefined as Record<string, unknown> | undefined,
@@ -107,11 +108,6 @@ const { POST: batchBuildPost } = await import(
 
 let counter = 0;
 
-async function flushBackground() {
-  await new Promise((r) => setTimeout(r, 25));
-  await new Promise((r) => setTimeout(r, 25));
-}
-
 function seed() {
   counter += 1;
   const projectId = `proj-flag-${counter}`;
@@ -173,7 +169,7 @@ describe("epic build route — pipeline flag", () => {
     expect(json.data.sessionId).toBeTruthy();
     expect(pipelineMocks.resolvePipelineEnabled).toHaveBeenCalledWith(projectId);
     expect(pipelineMocks.startPipelineRun).not.toHaveBeenCalled();
-    await flushBackground();
+    await waitForSessionTerminal(json.data.sessionId as string);
   });
 
   it("pipeline: true starts a run with the pinned input and returns its runId", async () => {
@@ -201,7 +197,7 @@ describe("epic build route — pipeline flag", () => {
     expect(pipelineMocks.resolvePipelineEnabled).not.toHaveBeenCalled();
 
     // The settle wrapper resolves the build's terminal result.
-    await flushBackground();
+    // The build promise is awaited just below — that IS the settle wait.
     const settled: PipelineStageResult = await input.buildSettled;
     expect(settled).toEqual({
       sessionId: json.data.sessionId,
@@ -220,10 +216,13 @@ describe("epic build route — pipeline flag", () => {
       mockJsonRequest({ pipeline: true, namedAgentId: "agent-42" }),
       mockRouteContext({ projectId, epicId })
     );
-    await flushBackground();
-    expect(pipelineMocks.startPipelineRun.mock.calls[0][0]).toMatchObject({
-      buildNamedAgentId: "agent-42",
-    });
+    await waitForBackground(
+      () =>
+        expect(pipelineMocks.startPipelineRun.mock.calls[0]?.[0]).toMatchObject({
+          buildNamedAgentId: "agent-42",
+        }),
+      "the run being started with the request's named agent",
+    );
   });
 
   it("pipeline: false forces off even when the setting is on", async () => {
@@ -238,7 +237,7 @@ describe("epic build route — pipeline flag", () => {
     expect(json.data.pipeline).toBeNull();
     expect(pipelineMocks.startPipelineRun).not.toHaveBeenCalled();
     expect(pipelineMocks.resolvePipelineEnabled).not.toHaveBeenCalled();
-    await flushBackground();
+    await waitForSessionTerminal(json.data.sessionId as string);
   });
 
   it("setting on + absent flag starts the run", async () => {
@@ -252,7 +251,7 @@ describe("epic build route — pipeline flag", () => {
 
     expect(json.data.pipeline).toEqual({ runId: "run-test" });
     expect(pipelineMocks.startPipelineRun).toHaveBeenCalledTimes(1);
-    await flushBackground();
+    await waitForSessionTerminal(json.data.sessionId as string);
   });
 
   it("a failing build settles the pipeline promise with the failure triple", async () => {
@@ -267,7 +266,7 @@ describe("epic build route — pipeline flag", () => {
       mockRouteContext({ projectId, epicId })
     );
     const json = await res.json();
-    await flushBackground();
+    // The build promise is awaited just below — that IS the settle wait.
 
     const input = pipelineMocks.startPipelineRun.mock
       .calls[0][0] as unknown as StartPipelineRunInput;
@@ -299,7 +298,7 @@ describe("story build route — pipeline flag", () => {
       userStoryId: storyId,
       buildSessionId: json.data.sessionId,
     });
-    await flushBackground();
+    await waitForSessionTerminal(json.data.sessionId as string);
   });
 
   it("setting off: response carries pipeline: null", async () => {
@@ -311,7 +310,7 @@ describe("story build route — pipeline flag", () => {
     const json = await res.json();
     expect(json.data.pipeline).toBeNull();
     expect(pipelineMocks.startPipelineRun).not.toHaveBeenCalled();
-    await flushBackground();
+    await waitForSessionTerminal(json.data.sessionId as string);
   });
 });
 

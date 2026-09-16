@@ -81,7 +81,6 @@ const { db } = await import("@/lib/db");
 const {
   agentSessions,
   epics,
-  notifications,
   projects,
   reviewComments,
   ticketComments,
@@ -94,9 +93,6 @@ const {
 } = await import("@/lib/auto-mode/second-opinion");
 const { buildSecondOpinionPrompt } = await import(
   "@/lib/claude/prompt-builder"
-);
-const { createAutoModeSecondOpinionParkedNotification } = await import(
-  "@/lib/notifications/create"
 );
 const { findLastSuccessfulReviewProvider } = await import(
   "@/lib/agent-config/review-segregation"
@@ -188,6 +184,7 @@ function addSecondOpinion(input: {
       epicId: EPIC_ID,
       status: input.status ?? "completed",
       outcome: input.outcome === undefined ? "answered" : input.outcome,
+      reviewVerdict: input.verdict?.replaceAll(" ", "_") ?? null,
       agentType: "review_second_opinion",
       provider: "oh-my-pi",
       createdAt: at(input.minute),
@@ -226,7 +223,6 @@ beforeEach(() => {
   dispatchState.starts.length = 0;
   dispatchState.diffArgs.length = 0;
   vi.clearAllMocks();
-  db.delete(notifications).run();
   db.delete(reviewComments).run();
   db.delete(ticketComments).run();
   db.delete(agentSessions).run();
@@ -297,7 +293,7 @@ describe("second-opinion structured gate", () => {
     });
   });
 
-  it("treats every open finding as merge-blocking", () => {
+  it("allows open minor findings with an approval", () => {
     addOrdinaryReview("review-1", 1);
     addSecondOpinion({ id: "opinion-1", minute: 3, verdict: "approved" });
     db.insert(reviewComments)
@@ -314,9 +310,8 @@ describe("second-opinion structured gate", () => {
       .run();
 
     expect(readSecondOpinionState(PROJECT_ID, EPIC_ID)).toEqual({
-      status: "rejected",
+      status: "approved",
       sessionId: "opinion-1",
-      reason: "1 blocking finding",
     });
   });
 
@@ -334,6 +329,7 @@ describe("second-opinion structured gate", () => {
       })
       .run();
 
+    db.update(agentSessions).set({ reviewVerdict: "changes_requested" }).where(eq(agentSessions.id, "opinion-1")).run();
     expect(readSecondOpinionState(PROJECT_ID, EPIC_ID)).toEqual({
       status: "rejected",
       sessionId: "opinion-1",
@@ -396,7 +392,7 @@ describe("second-opinion structured gate", () => {
     });
   });
 
-  it("does not accept an Overall Verdict line that is not the final line", () => {
+  it("reads the last Overall Verdict declaration before trailing notes", () => {
     addOrdinaryReview("review-1", 1);
     addSecondOpinion({ id: "opinion-1", minute: 3 });
     db.insert(ticketComments)
@@ -411,9 +407,8 @@ describe("second-opinion structured gate", () => {
       .run();
 
     expect(readSecondOpinionState(PROJECT_ID, EPIC_ID)).toEqual({
-      status: "retry",
+      status: "approved",
       sessionId: "opinion-1",
-      reason: "no submit_findings or Overall Verdict evidence was recorded",
     });
   });
 
@@ -601,7 +596,7 @@ describe("second-opinion dispatch", () => {
   });
 });
 
-describe("second-opinion prompt and notification", () => {
+describe("second-opinion prompt", () => {
   it("orders a final-diff, read-only structured verdict", () => {
     const prompt = buildSecondOpinionPrompt(
       { name: "Arij", spec: "Keep merges safe", memory: null },
@@ -615,7 +610,7 @@ describe("second-opinion prompt and notification", () => {
     expect(prompt).toContain("git diff develop...HEAD");
     expect(prompt).toContain("+safe();");
     expect(prompt).toContain("read-only");
-    expect(prompt).toContain("mcp__arij__submit_findings");
+    expect(prompt).toContain("submit_findings");
     expect(prompt).toContain("exactly once");
     expect(prompt).toContain("The structured submission is authoritative");
     expect(prompt).toContain("missing Overall Verdict line is a failed gate");
@@ -632,33 +627,31 @@ describe("second-opinion prompt and notification", () => {
       false
     );
 
-    expect(prompt).not.toContain("Call `mcp__arij__submit_findings`");
+    expect(prompt).not.toContain("Call `submit_findings`");
     expect(prompt).toContain("no structured Arij findings channel");
     expect(prompt).toContain("make the exact Overall Verdict line below authoritative");
   });
 
-  it("creates one deduplicated notification deep-linked to the evidence session", () => {
-    addOrdinaryReview("opinion-no", 1);
-    createAutoModeSecondOpinionParkedNotification({
-      projectId: PROJECT_ID,
-      epicId: EPIC_ID,
-      sessionId: "opinion-no",
-      reason: "changes requested",
-    });
-    createAutoModeSecondOpinionParkedNotification({
-      projectId: PROJECT_ID,
-      epicId: EPIC_ID,
-      sessionId: "opinion-no",
-      reason: "changes requested",
-    });
+});
 
-    const rows = db.select().from(notifications).all();
-    expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({
-      sessionId: "opinion-no",
-      agentType: "review_second_opinion",
-      status: "failed",
-      targetUrl: `/projects/${PROJECT_ID}/sessions/opinion-no`,
-    });
+
+describe("second-opinion chronological selection", () => {
+  it("prefers a newer pending retry across fractional timestamp formats", () => {
+    addOrdinaryReview("ordinary", 0);
+    addSecondOpinion({ id: "older", minute: 2, verdict: "changes requested" });
+    addSecondOpinion({ id: "newer", minute: 3, status: "running" });
+    db.update(agentSessions).set({ createdAt: "2026-08-25T10:02:00Z", endedAt: "2026-08-25T10:02:00Z" }).where(eq(agentSessions.id, "older")).run();
+    db.update(agentSessions).set({ createdAt: "2026-08-25T10:02:00.100Z", endedAt: null }).where(eq(agentSessions.id, "newer")).run();
+    expect(readSecondOpinionState(PROJECT_ID, EPIC_ID)).toEqual({ status: "pending", sessionId: "newer" });
+  });
+
+  it("invalidates an old rejection after the newest user reply across offsets", () => {
+    addOrdinaryReview("ordinary", 0);
+    addSecondOpinion({ id: "gate", minute: 2, verdict: "changes requested" });
+    db.insert(ticketComments).values([
+      { id: "old-user", epicId: EPIC_ID, author: "user", content: "Before", createdAt: "2026-08-25T12:01:00+02:00" },
+      { id: "new-user", epicId: EPIC_ID, author: "user", content: "Please reconsider", createdAt: "2026-08-25 10:04:00" },
+    ]).run();
+    expect(readSecondOpinionState(PROJECT_ID, EPIC_ID)).toEqual({ status: "missing", sessionId: null });
   });
 });

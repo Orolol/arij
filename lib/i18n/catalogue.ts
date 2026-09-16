@@ -85,9 +85,8 @@
  *    logic.
  *
  * 5. NOT COPY, NOT HERE: agent-facing text (`lib/chat/board-tools.ts`, the
- *    prompt builders), persisted server text (notifications, activity rows,
- *    API error strings), code comments, user data, and the dev harness under
- *    `app/piscine-preview/`.
+ *    prompt builders), persisted server text (activity rows,
+ *    API error strings), code comments and user data.
  * ---------------------------------------------------------------------------
  */
 

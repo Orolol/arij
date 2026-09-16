@@ -213,7 +213,6 @@ const {
   ticketComments,
   reviewComments,
   ticketActivityLog,
-  notifications,
   settings,
 } = await import("@/lib/db/schema");
 const { POST: batchBuildPost } = await import(
@@ -537,13 +536,11 @@ async function fetchNightList(projectId: string): Promise<NightRunListEntry[]> {
   return (await res.json()).data as NightRunListEntry[];
 }
 
-function nightNotifications(projectId: string) {
-  return db
-    .select()
-    .from(notifications)
-    .where(eq(notifications.projectId, projectId))
-    .all()
-    .filter((n) => n.title?.startsWith("Night run finished"));
+/** The morning summary's one-line text, as it left via the webhook. */
+function nightSummaries(): string[] {
+  return nightWebhookCalls().map(
+    (call) => (call[1] as { summary?: string }).summary ?? ""
+  );
 }
 
 function nightWebhookCalls() {
@@ -597,7 +594,6 @@ beforeEach(() => {
 
   // Fresh tables (children before parents for the foreign keys).
   db.delete(ticketActivityLog).run();
-  db.delete(notifications).run();
   db.delete(reviewComments).run();
   db.delete(ticketComments).run();
   db.delete(agentSessions).run();
@@ -674,15 +670,7 @@ describe("night run e2e — clean diamond", () => {
     }
 
     // Terminal choke point: EXACTLY one summary notification...
-    const summaries = nightNotifications(projectId);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]).toMatchObject({
-      title: "Night run finished: 5 to merge",
-      status: "completed",
-      sessionId: null,
-      agentType: "build",
-      targetUrl: `/projects/${projectId}?nightRun=${runId}`,
-    });
+    expect(nightSummaries()).toEqual(["Night run finished: 5 to merge"]);
 
     // ...and EXACTLY one night_run.completed webhook.
     const hooks = nightWebhookCalls();
@@ -711,8 +699,6 @@ describe("night run e2e — clean diamond", () => {
       currentWave: 4,
       abortReason: null,
       abortedAtWave: null,
-      breakerThreshold: 3,
-      costCapUsd: null,
     });
     expect(detail.endedAt).toBeTruthy();
     expect(detail.counts).toEqual({
@@ -731,13 +717,9 @@ describe("night run e2e — clean diamond", () => {
       readableId: a.readableId,
       title: a.title,
     });
-    expect(entryA.sessionIds).toHaveLength(2);
-    expect(entryA.pipelineRunId).toBeTruthy();
-    // The run's pipeline is real and terminal.
-    expect(pipelineRegistry.get(entryA.pipelineRunId!)).toMatchObject({
-      state: "succeeded",
-      epicId: a.id,
-    });
+    // The tagged sessions are the durable trace of the epic's work (the
+    // entry no longer carries their ids or the pipeline handle).
+    expect(projectSessions(projectId).filter((row) => row.epicId === a.id)).toHaveLength(2);
 
     // No costs reported (envelopes carried none): 0 total, flagged partial.
     expect(detail.totalCostUsd).toBe(0);
@@ -754,7 +736,7 @@ describe("night run e2e — clean diamond", () => {
 
     // Client formatter renders the same headline as the server title.
     expect(`Night run finished: ${formatNightRunCounts(detail.counts, countsCopy)}`).toBe(
-      summaries[0].title
+      nightSummaries()[0]
     );
   });
 });
@@ -818,8 +800,6 @@ describe("night run e2e — single failure under halt", () => {
     const entryB = detail.epics.find((entry) => entry.epicId === b.id)!;
     expect(entryB.status).toBe("failed");
     expect(entryB.reason).toBe("stage build failed after 1 attempts");
-    // The forensic session is run-tagged but not epic-attached.
-    expect(entryB.sessionIds).toHaveLength(1);
 
     const entryD = detail.epics.find((entry) => entry.epicId === d.id)!;
     expect(entryD.status).toBe("skipped");
@@ -852,12 +832,9 @@ describe("night run e2e — single failure under halt", () => {
       bComments.some((row) => row.content.includes(FORENSIC_COMMENT_HEADING))
     ).toBe(true);
 
-    const summaries = nightNotifications(projectId);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]).toMatchObject({
-      title: "Night run finished: 2 to merge, 1 failed, 2 skipped",
-      status: "failed",
-    });
+    expect(nightSummaries()).toEqual([
+      "Night run finished: 2 to merge, 1 failed, 2 skipped",
+    ]);
     expect(nightWebhookCalls()).toHaveLength(1);
   });
 });
@@ -908,7 +885,7 @@ describe("night run e2e — circuit breaker", () => {
     const detail = await fetchNightDetail(projectId, runId);
     expect(detail.abortReason).toBe(breakerReason);
     expect(detail.abortedAtWave).toBe(1);
-    expect(detail.breakerThreshold).toBe(3);
+    expect(detail.abortReason).toContain("circuit breaker");
     expect(nightRunAbortKind(detail.abortReason)).toBe("breaker");
     expect(detail.counts).toEqual({
       pending: 0,
@@ -931,13 +908,9 @@ describe("night run e2e — circuit breaker", () => {
       projectSessions(projectId).filter((row) => row.agentType === "forensic")
     ).toHaveLength(3);
 
-    const summaries = nightNotifications(projectId);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]).toMatchObject({
-      title:
-        "Night run finished: 1 to merge, 3 failed, 1 skipped — circuit breaker tripped",
-      status: "failed",
-    });
+    expect(nightSummaries()).toEqual([
+      "Night run finished: 1 to merge, 3 failed, 1 skipped — circuit breaker tripped",
+    ]);
 
     const hooks = nightWebhookCalls();
     expect(hooks).toHaveLength(1);
@@ -1001,11 +974,6 @@ describe("night run e2e — asked question", () => {
 
     const entryQ = detail.epics.find((entry) => entry.epicId === q.id)!;
     expect(entryQ.status).toBe("asked");
-    // The night entry's pipelineRunId points at a REAL paused run.
-    expect(pipelineRegistry.get(entryQ.pipelineRunId!)).toMatchObject({
-      state: "paused_question",
-      epicId: q.id,
-    });
 
     const entryR = detail.epics.find((entry) => entry.epicId === r.id)!;
     expect(entryR.status).toBe("skipped");
@@ -1015,12 +983,9 @@ describe("night run e2e — asked question", () => {
     );
 
     // A question is not a failure: the run completes cleanly.
-    const summaries = nightNotifications(projectId);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]).toMatchObject({
-      title: "Night run finished: 1 to merge, 1 paused, 1 skipped",
-      status: "completed",
-    });
+    expect(nightSummaries()).toEqual([
+      "Night run finished: 1 to merge, 1 paused, 1 skipped",
+    ]);
     expect(nightWebhookCalls()).toHaveLength(1);
   });
 });
@@ -1071,7 +1036,6 @@ describe("night run e2e — cost cap", () => {
     const detail = await fetchNightDetail(projectId, runId);
     expect(detail.abortReason).toBe(abortReason);
     expect(detail.abortedAtWave).toBe(1);
-    expect(detail.costCapUsd).toBe(5);
     expect(nightRunAbortKind(detail.abortReason)).toBe("cost");
     expect(detail.totalCostUsd).toBeCloseTo(5.75, 10);
     // EVERY tagged session reported a cost → the total is exact, not "≥".
@@ -1087,18 +1051,15 @@ describe("night run e2e — cost cap", () => {
 
     // Title carries the exact cost and the cap marker; the client-side
     // formatters produce the same wording the server persisted.
-    const summaries = nightNotifications(projectId);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0].title).toBe(
-      "Night run finished: 1 to merge, 1 skipped — $5.75 — cost cap reached"
-    );
-    expect(summaries[0].status).toBe("failed");
+    expect(nightSummaries()).toEqual([
+      "Night run finished: 1 to merge, 1 skipped — $5.75 — cost cap reached",
+    ]);
     expect(
       `Night run finished: ${formatNightRunCounts(detail.counts, countsCopy)} — ${formatNightRunCost(
         detail.totalCostUsd,
         detail.costIsPartial
       )} — cost cap reached`
-    ).toBe(summaries[0].title);
+    ).toBe(nightSummaries()[0]);
 
     const hooks = nightWebhookCalls();
     expect(hooks).toHaveLength(1);
@@ -1226,8 +1187,6 @@ describe("night run e2e — interrupted run derived from the database", () => {
       totalWaves: null,
       currentWave: null,
       abortReason: null,
-      breakerThreshold: null,
-      costCapUsd: null,
       startedAt: "2026-08-16T22:00:00.000Z",
       endedAt: "2026-08-16T22:35:00.000Z",
     });
@@ -1240,9 +1199,7 @@ describe("night run e2e — interrupted run derived from the database", () => {
       status: "done",
       readableId: x.readableId,
       title: x.title,
-      pipelineRunId: null,
     });
-    expect(entryX.sessionIds).toEqual([`sx1-${counter}`, `sx2-${counter}`]);
     expect(entryX.costUsd).toBeCloseTo(1.5, 10);
 
     expect(
@@ -1354,11 +1311,9 @@ describe("night run e2e — user stop", () => {
 
     // Exactly one summary notification, in the stopped variant, and one
     // webhook — the terminal choke point behaves like any other abort.
-    const summaries = nightNotifications(projectId);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0].title).toBe(
-      `Night run finished: ${formatNightRunCounts(detail.counts, countsCopy)} — ${formatNightRunCost(detail.totalCostUsd, detail.costIsPartial)} — stopped by you`
-    );
+    expect(nightSummaries()).toEqual([
+      `Night run finished: ${formatNightRunCounts(detail.counts, countsCopy)} — ${formatNightRunCost(detail.totalCostUsd, detail.costIsPartial)} — stopped by you`,
+    ]);
     const hooks = nightWebhookCalls();
     expect(hooks).toHaveLength(1);
     expect(hooks[0][1]).toMatchObject({ error: "stopped by user" });

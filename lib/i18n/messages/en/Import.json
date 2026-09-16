@@ -19,6 +19,8 @@
     "importing": "Importing...",
     "alreadyImported": "Already imported",
     "validate": "Validate & Import",
+    "removeEpic": "Remove epic",
+    "removeStory": "Remove story",
     "cancel": "Cancel"
   },
   "progress": {

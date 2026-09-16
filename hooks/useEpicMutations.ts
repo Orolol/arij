@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 interface UseEpicMutationsOptions {
   /** Called after a successful merge (before merging state resets). */
@@ -28,61 +28,58 @@ export function useEpicMutations(
   const [conflictFiles, setConflictFiles] = useState<string[] | undefined>(undefined);
   const [deletingEpic, setDeletingEpic] = useState(false);
   const [deleteEpicError, setDeleteEpicError] = useState<string | null>(null);
-  const deleteInFlightRef = useRef(false);
+  const inFlight = useRef<"merge" | "delete" | null>(null);
+  const lifetime = useRef(0);
+  useEffect(() => {
+    lifetime.current += 1;
+    inFlight.current = null;
+    return () => { lifetime.current += 1; };
+  }, [projectId, epicId]);
 
   const merge = useCallback(async () => {
-    if (!epicId) return;
+    if (!epicId || inFlight.current) return;
+    const requestLifetime = lifetime.current;
+    inFlight.current = "merge";
     setMerging(true);
     setMergeError(null);
     setMergeConflict(false);
     setConflictFiles(undefined);
-    try {
-      const res = await fetch(
-        `/api/projects/${projectId}/epics/${epicId}/merge`,
-        { method: "POST" }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) {
-        setMergeError(data.error || tErrors("failedToMerge"));
-        const isConflict = data.reason === "conflict" || data.mergeFailed === true;
-        setMergeConflict(isConflict);
-        if (Array.isArray(data.conflictFiles) && data.conflictFiles.length > 0) {
-          setConflictFiles(data.conflictFiles);
-        }
-      } else {
-        onMergeSuccess?.();
+    const res = await fetch(`/api/projects/${projectId}/epics/${epicId}/merge`, {
+      method: "POST",
+    }).catch(() => null);
+    const data = res ? await res.json().catch(() => ({})) : {};
+    if (lifetime.current !== requestLifetime) return;
+    if (!res?.ok || data.error) {
+      setMergeError(data.error || tErrors("failedToMerge"));
+      setMergeConflict(data.reason === "conflict" || data.mergeFailed === true);
+      if (Array.isArray(data.conflictFiles) && data.conflictFiles.length > 0) {
+        setConflictFiles(data.conflictFiles);
       }
-    } catch {
-      setMergeError(tErrors("failedToMerge"));
-      setMergeConflict(false);
-      setConflictFiles(undefined);
+    } else {
+      onMergeSuccess?.();
     }
+    inFlight.current = null;
     setMerging(false);
   }, [projectId, epicId, onMergeSuccess, tErrors]);
 
   const deleteEpic = useCallback(async () => {
-    if (!epicId || deleteInFlightRef.current) return;
-    deleteInFlightRef.current = true;
+    if (!epicId || inFlight.current) return;
+    const requestLifetime = lifetime.current;
+    inFlight.current = "delete";
     setDeletingEpic(true);
     setDeleteEpicError(null);
 
-    try {
-      const res = await fetch(`/api/projects/${projectId}/epics/${epicId}`, {
-        method: "DELETE",
-      });
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok || data.error) {
-        setDeleteEpicError(data.error || tErrors("failedToDeleteEpic"));
-      } else {
-        onDeleteSuccess?.();
-      }
-    } catch {
-      setDeleteEpicError(tErrors("failedToDeleteEpic"));
+    const res = await fetch(`/api/projects/${projectId}/epics/${epicId}`, {
+      method: "DELETE",
+    }).catch(() => null);
+    const data = res ? await res.json().catch(() => ({})) : {};
+    if (lifetime.current !== requestLifetime) return;
+    if (!res?.ok || data.error) {
+      setDeleteEpicError(data.error || tErrors("failedToDeleteEpic"));
+    } else {
+      onDeleteSuccess?.();
     }
-    // Both branches land here — what the `finally` clause did before it; the
-    // React Compiler stops at a `finally` clause.
-    deleteInFlightRef.current = false;
+    inFlight.current = null;
     setDeletingEpic(false);
   }, [projectId, epicId, onDeleteSuccess, tErrors]);
 

@@ -1,7 +1,4 @@
-import {
-  getGitHubTokenFromSettings,
-  createGitHubClient,
-} from "@/lib/github/client";
+import { createOctokit } from "@/lib/github/client";
 import {
   CI_AUTOFIX_MAX_FAILURES,
   CI_AUTOFIX_MAX_LOGGED_FAILURES,
@@ -239,11 +236,7 @@ export function classifyPullRequestCi(input: {
 export async function createPullRequest(
   params: CreatePullRequestParams,
 ): Promise<PullRequestResult> {
-  const token = getGitHubTokenFromSettings();
-  if (!token) {
-    throw new Error("GitHub PAT not configured. Set it in Settings.");
-  }
-  const octokit = createGitHubClient(token);
+  const octokit = createOctokit();
 
   const { data } = await octokit.pulls.create({
     owner: params.owner,
@@ -273,11 +266,7 @@ export async function fetchPrStatus(
   repo: string,
   prNumber: number,
 ): Promise<{ status: "draft" | "open" | "closed" | "merged"; title: string }> {
-  const token = getGitHubTokenFromSettings();
-  if (!token) {
-    throw new Error("GitHub PAT not configured. Set it in Settings.");
-  }
-  const octokit = createGitHubClient(token);
+  const octokit = createOctokit();
 
   const { data } = await octokit.pulls.get({
     owner,
@@ -309,11 +298,7 @@ export async function fetchPullRequestCiStatus(
   repo: string,
   prNumber: number,
 ): Promise<PullRequestCiStatus> {
-  const token = getGitHubTokenFromSettings();
-  if (!token) {
-    throw new Error("GitHub PAT not configured. Set it in Settings.");
-  }
-  const octokit = createGitHubClient(token);
+  const octokit = createOctokit();
   const { data: pullRequest } = await octokit.pulls.get({
     owner,
     repo,
@@ -431,11 +416,7 @@ export async function fetchPullRequestCiFailureEvidence(
   repo: string,
   snapshot: PullRequestCiStatus,
 ): Promise<PullRequestCiFailureEvidence[]> {
-  const token = getGitHubTokenFromSettings();
-  if (!token) {
-    throw new Error("GitHub PAT not configured. Set it in Settings.");
-  }
-  const octokit = createGitHubClient(token);
+  const octokit = createOctokit();
   const failedCheckRuns = [...(snapshot.failedCheckRuns ?? [])].sort(
     compareFailedCheckRuns,
   );

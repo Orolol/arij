@@ -37,17 +37,6 @@ export interface ChatContextTokens {
   citedDocs: { id: string; originalFilename: string; tokens: number | null }[];
 }
 
-/**
- * `k`-suffixed token count, one decimal — the frame's `3.1k` / `1.1k` / `0.8k`.
- *
- * `null` (and only `null`) is the em-dash. A document that exists but is empty
- * still has no measurable content, so it is `null` too, upstream of here.
- */
-export function formatTokens(tokens: number | null): string {
-  if (tokens === null || !Number.isFinite(tokens) || tokens <= 0) return "—";
-  return `${(tokens / 1000).toFixed(1)}k`;
-}
-
 /** `estimateTokens`, but empty content is a data gap rather than a zero. */
 export function tokensOf(content: string | null | undefined): number | null {
   if (!content || !content.trim()) return null;

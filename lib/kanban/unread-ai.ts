@@ -1,3 +1,5 @@
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
+
 /**
  * "Unread AI comment" signal, shared by the kanban Board dot and the
  * cross-project inbox (`/api/inbox`).
@@ -25,28 +27,17 @@ export function isAiCommentAuthor(author: string | null | undefined): boolean {
   return author.toLowerCase() !== "user";
 }
 
-/**
- * Timestamps mix ISO-8601 (`2026-08-16T09:00:00.000Z`, written by routes)
- * and SQLite CURRENT_TIMESTAMP (`2026-08-16 09:00:00`, both UTC). Normalizing
- * the separator makes lexicographic comparison chronologically correct.
- * (Same normalization as lib/kanban/awaiting-reply.ts.)
- */
-function normalizeTimestamp(value: string | null | undefined): string | null {
-  if (!value) return null;
-  return value.includes("T") ? value : value.replace(" ", "T");
-}
-
 export function hasUnreadAiComment(signal: UnreadAiSignal): boolean {
   if (!signal.latestCommentId) return false;
   if (!isAiCommentAuthor(signal.latestCommentAuthor)) return false;
 
-  const commented = normalizeTimestamp(signal.latestCommentCreatedAt);
-  const read = normalizeTimestamp(signal.lastReadAt);
+  const commented = parseStoredTimestamp(signal.latestCommentCreatedAt ?? "");
+  const read = parseStoredTimestamp(signal.lastReadAt ?? "");
 
   // Never read anything on this epic -> the AI comment is unread.
-  if (!read) return true;
+  if (read === null) return true;
   // A comment without a timestamp cannot be ordered against the cursor;
   // treat it as read rather than flag it forever.
-  if (!commented) return false;
+  if (commented === null) return false;
   return commented > read;
 }

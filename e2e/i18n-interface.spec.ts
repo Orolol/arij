@@ -1,18 +1,23 @@
 import { test, expect, createEpic } from "./fixtures/arij-project";
 import { withDatabase } from "./fixtures/data-root";
 import { en } from "../lib/i18n/messages";
-import type { Page, TestInfo } from "@playwright/test";
+import type { Locator, Page, TestInfo } from "@playwright/test";
 
 const keyLeak = new RegExp(`\\b(?:${Object.keys(en).join("|")})\\.[A-Za-z][A-Za-z0-9]*(?:\\.[A-Za-z][A-Za-z0-9]*)*`);
 
-async function checkScreen(page: Page, url: string, text: string, info: TestInfo) {
+type ScreenCopy = string | ((page: Page) => Locator);
+
+async function checkScreen(page: Page, url: string, copy: ScreenCopy, info: TestInfo) {
   const errors: string[] = [];
   const record = (error: Error) => errors.push(error.message);
   page.on("pageerror", record);
   try {
     await page.goto(url);
     await expect(page.locator("html")).toHaveAttribute("lang", "en");
-    await expect(page.getByText(text, { exact: false }).first()).toBeVisible();
+    const marker = typeof copy === "string"
+      ? page.getByText(copy, { exact: false }).first()
+      : copy(page);
+    await expect(marker).toBeVisible();
     await expect(page.locator("main .animate-spin")).toHaveCount(0);
     await expect(page.locator("main")).not.toContainText("Loading...");
     // Project SSE streams deliberately stay open; visible content is the load signal.
@@ -33,15 +38,20 @@ for (const width of [1280, 390]) {
   test(`English global surfaces and server settings tabs at ${width}px`, async ({ page }, info) => {
     test.setTimeout(180_000);
     await page.setViewportSize({ width, height: 900 });
-    for (const [url, copy] of [
-      ["/", "Working"], ["/tickets", "Tickets"], ["/qa", "QA"],
+    const screens: Array<[string, ScreenCopy]> = [
+      ["/", "Working"],
+      // The registry has no visible "Tickets" heading. Its translated search
+      // control exists with zero, one or many rows from parallel fixtures.
+      ["/tickets", (screen) => screen.getByRole("textbox", { name: "Filter tickets", exact: true })],
+      ["/qa", "QA"],
       ["/chat", "Chat"], ["/agents", "Add agent"],
       ["/agents/assignments", "Assignments"], ["/agents/prompts", "Prompts"],
       ["/agents/limits", "Limits"], ["/usage", "Refresh"], ["/inbox", "Inbox"],
       ["/settings", "Workspace"], ["/settings/pipeline", "Pipeline"],
       ["/settings/integrations", "Integrations"], ["/settings/appearance", "Appearance"],
       ["/projects/new", "project"], ["/projects/import", "Import"], ["/tickets/new", "New"],
-    ]) await checkScreen(page, url, copy, info);
+    ];
+    for (const [url, copy] of screens) await checkScreen(page, url, copy, info);
   });
 
   test(`English project surfaces, ticket and session at ${width}px`, async ({ page, project, request }, info) => {

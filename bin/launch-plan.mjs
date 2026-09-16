@@ -46,8 +46,6 @@ const LOOPBACK_HOSTNAMES = new Set([
 /** Commands that start a listener, and therefore take a host. */
 const SERVING_COMMANDS = new Set(["dev", "start"]);
 
-const HOST_FLAGS = new Set(["-H", "--host", "--hostname"]);
-const PORT_FLAGS = new Set(["-p", "--port"]);
 
 const DEFAULT_PORT = "3000";
 

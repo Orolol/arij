@@ -153,7 +153,6 @@ export function resetDbMockState(state: DbMockState = dbMockState): void {
   Object.assign(state, emptyState());
 }
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
 export type DrizzleChainMock = Record<string, ReturnType<typeof vi.fn>> & any;
 
 /**
@@ -214,7 +213,6 @@ export function createDrizzleChainMock(
 
   return chain;
 }
-/* eslint-enable @typescript-eslint/no-explicit-any */
 
 let singletonChain: DrizzleChainMock | null = null;
 
@@ -239,6 +237,52 @@ export function dbModuleMock(): {
     db: getDbChainMock(),
     sqlite: {},
     ensureDbReady: vi.fn(),
+  };
+}
+
+/**
+ * Drop-in module factory for the tests that own a REAL migrated database
+ * (`createTestDb()`): it forwards `db` and `sqlite` to the live instance.
+ *
+ * ONE LINE PER TEST FILE, instead of the eight-line getter pair that sixteen
+ * files copied verbatim:
+ *
+ *     const testDb = vi.hoisted(() => ({
+ *       instance: null as ReturnType<typeof createTestDb> | null,
+ *     }));
+ *     vi.mock("@/lib/db", async () =>
+ *       (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+ *     );
+ *
+ * The `await import` is required, not stylistic: `vi.mock` is hoisted above
+ * the file's own imports, so the factory cannot close over a statically
+ * imported binding.
+ *
+ * The holder is read through its getters on EVERY access, so swapping the
+ * instance in `beforeEach` (the established pattern) keeps working.
+ */
+export function liveDbModule(
+  holder: { instance: { db: unknown; sqlite: unknown } | null },
+  /**
+   * Any other export the real module has and the test needs
+   * (`{ ensureDbReady: vi.fn() }`). Passed in rather than spread over the
+   * result by the caller: spreading would evaluate the getters above and
+   * throw before the test ever seeds its database.
+   */
+  extras: Record<string, unknown> = {},
+): Record<string, unknown> {
+  const live = (): { db: unknown; sqlite: unknown } => {
+    if (!holder.instance) throw new Error("test db not initialised");
+    return holder.instance;
+  };
+  return {
+    get db() {
+      return live().db;
+    },
+    get sqlite() {
+      return live().sqlite;
+    },
+    ...extras,
   };
 }
 

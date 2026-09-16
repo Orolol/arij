@@ -13,12 +13,12 @@
  * that matter here are the plan ones: the index existing proves nothing if
  * the planner still leaves it to read the table.
  */
-import Database from "better-sqlite3";
 import fs from "fs";
-import os from "os";
+import Database from "better-sqlite3";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { initDb } from "@/lib/db/init";
+import { indexColumns, indexList, tempDbPath, withDb } from "./helpers/migration";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
 const MIGRATION_TAG = "0056_agent_sessions_epic_cost_idx";
@@ -47,38 +47,6 @@ afterEach(() => {
     fs.rmSync(tempDirs.pop() as string, { recursive: true, force: true });
   }
 });
-
-function tempDbPath(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arij-cost-index-"));
-  tempDirs.push(dir);
-  return path.join(dir, "arij.db");
-}
-
-function withDb<T>(file: string, fn: (conn: Database.Database) => T): T {
-  const conn = new Database(file);
-  try {
-    return fn(conn);
-  } finally {
-    conn.close();
-  }
-}
-
-function indexList(conn: Database.Database, table: string): string[] {
-  return (
-    conn.prepare(`PRAGMA index_list(${table})`).all() as { name: string }[]
-  ).map((row) => row.name);
-}
-
-function indexColumns(conn: Database.Database, name: string): string[] {
-  return (
-    conn.prepare(`PRAGMA index_info(${name})`).all() as {
-      seqno: number;
-      name: string;
-    }[]
-  )
-    .sort((a, b) => a.seqno - b.seqno)
-    .map((row) => row.name);
-}
 
 function queryPlan(conn: Database.Database, sql: string): string {
   return (
@@ -210,6 +178,9 @@ describe("0056_agent_sessions_epic_cost_idx", () => {
       // this DDL and a legacy database would silently never get the index.
       conn.exec('DROP TABLE "__drizzle_migrations"');
       conn.exec(`DROP INDEX ${INDEX_NAME}`);
+      conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
+      // Restore the pre-0058 shape as well, so its column removal does not stamp away 0056.
+      conn.exec("ALTER TABLE named_agents ADD COLUMN readable_agent_name TEXT");
 
       initDb(conn);
 
@@ -254,6 +225,9 @@ describe("0056_agent_sessions_epic_cost_idx", () => {
       expect(withIndex).toEqual(["e2", "e1", "e3", "e4"]);
 
       conn.exec(`DROP INDEX ${INDEX_NAME}`);
+      conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
+      // Restore the pre-0058 shape as well, so its column removal does not stamp away 0056.
+      conn.exec("ALTER TABLE named_agents ADD COLUMN readable_agent_name TEXT");
       const withoutIndex = (conn.prepare(order).all() as { id: string }[]).map(
         (row) => row.id
       );

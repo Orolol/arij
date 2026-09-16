@@ -1,4 +1,3 @@
-import { and, eq, inArray } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { epics, type Routine } from "@/lib/db/schema";
 import {
@@ -6,8 +5,10 @@ import {
   syncProjectGitHubIssues,
 } from "@/lib/github/issues";
 import { runCiWatchRoutine } from "@/lib/routines/ci-watch";
-import { runRetentionRoutine } from "@/lib/routines/retention";
 import { parseRoutineConfig } from "@/lib/routines/constants";
+import { runRetentionRoutine } from "@/lib/routines/retention";
+import { batchBuildSchema, type NightRunRequest } from "@/lib/validation/build-schemas";
+import { and, eq, inArray } from "drizzle-orm";
 
 /** Result persisted and surfaced by the routine scheduler. */
 export interface RoutineActionResult {
@@ -22,15 +23,6 @@ export interface RoutineActionResult {
   shouldNotify?: boolean;
 }
 
-interface NightRunRequest {
-  epicIds: string[];
-  mode: "dag";
-  pipeline: true;
-  failurePolicy: "halt" | "stop";
-  namedAgentId: string | null;
-  circuitBreaker?: number;
-  costCapUsd?: number;
-}
 
 export interface RoutineActionDeps {
   listNightRunEpicIds(
@@ -52,30 +44,17 @@ export interface RoutineActionDeps {
 }
 
 /**
- * Invoke the existing batch-build route in its canonical Night Run mode.
+ * Invoke the shared batch-build service in its canonical Night Run mode.
  * Keeping the hand-off here means scheduled runs receive the exact same
  * repository, workflow, concurrency, dependency and active-run guards as a
  * run started from the dialog.
  */
-async function launchNightRunThroughBuildRoute(
+async function launchNightRun(
   projectId: string,
   requestBody: NightRunRequest,
 ): Promise<{ batchId: string; totalEpics: number; waves: number }> {
-  const [{ NextRequest }, { POST }] = await Promise.all([
-    import("next/server"),
-    import("@/app/api/projects/[projectId]/build/route"),
-  ]);
-  const request = new NextRequest(
-    `http://localhost/api/projects/${encodeURIComponent(projectId)}/build`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-    },
-  );
-  const response = await POST(request, {
-    params: Promise.resolve({ projectId }),
-  });
+  const { dispatchBatchBuild } = await import("@/lib/build/dispatch");
+  const response = await dispatchBatchBuild(projectId, requestBody);
   const payload = (await response.json().catch(() => ({}))) as {
     error?: string;
     data?: { batchId?: string; totalEpics?: number; waves?: number };
@@ -107,7 +86,7 @@ export const defaultRoutineActionDeps: RoutineActionDeps = {
       .orderBy(epics.position)
       .all()
       .map((row) => row.id),
-  launchNightRun: launchNightRunThroughBuildRoute,
+  launchNightRun: launchNightRun,
   isGitHubIssueSyncDue,
   syncProjectGitHubIssues,
   runCiWatch: runCiWatchRoutine,
@@ -139,49 +118,8 @@ function parseNightRunRequest(
   const epicIds = deps.listNightRunEpicIds(routine.projectId, statuses);
   if (epicIds.length === 0) return null;
 
-  const failurePolicy = config.failurePolicy ?? "halt";
-  if (failurePolicy !== "halt" && failurePolicy !== "stop") {
-    throw new Error("Routine config.failurePolicy must be 'halt' or 'stop'");
-  }
+  return batchBuildSchema.parse({ ...config, epicIds, mode: "dag", pipeline: true });
 
-  const namedAgentId = config.namedAgentId ?? null;
-  if (namedAgentId !== null && typeof namedAgentId !== "string") {
-    throw new Error("Routine config.namedAgentId must be a string or null");
-  }
-
-  const request: NightRunRequest = {
-    epicIds,
-    mode: "dag",
-    pipeline: true,
-    failurePolicy,
-    namedAgentId,
-  };
-
-  if (config.circuitBreaker !== undefined) {
-    if (
-      !Number.isInteger(config.circuitBreaker) ||
-      (config.circuitBreaker as number) < 0 ||
-      (config.circuitBreaker as number) > 10
-    ) {
-      throw new Error(
-        "Routine config.circuitBreaker must be an integer between 0 and 10",
-      );
-    }
-    request.circuitBreaker = config.circuitBreaker as number;
-  }
-
-  if (config.costCapUsd !== undefined) {
-    if (
-      typeof config.costCapUsd !== "number" ||
-      !Number.isFinite(config.costCapUsd) ||
-      config.costCapUsd <= 0
-    ) {
-      throw new Error("Routine config.costCapUsd must be a positive number");
-    }
-    request.costCapUsd = config.costCapUsd;
-  }
-
-  return request;
 }
 
 async function runNightRoutine(

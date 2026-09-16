@@ -11,10 +11,10 @@ import { createTranslator } from "next-intl";
 
 import {
   citedDocuments,
-  formatTokens,
   mentionedNames,
   tokensOf,
 } from "@/components/chat-page/chat-context-tokens";
+import { formatTokens } from "@/lib/utils/format-usage";
 import { shortPlacement } from "@/components/chat-page/placement";
 import { messagesFor } from "@/lib/i18n";
 import { formatRelative } from "@/lib/i18n/format";
@@ -73,14 +73,13 @@ describe("roster age (formatRelative, fr)", () => {
 });
 
 describe("token figures", () => {
-  it("formats the frame's `3.1k` / `0.8k`", () => {
+  it("formats the shared `3.1k` / `800` shapes", () => {
     expect(formatTokens(3100)).toBe("3.1k");
-    expect(formatTokens(800)).toBe("0.8k");
+    expect(formatTokens(800)).toBe("800");
   });
 
-  it("is an em-dash for a gap, never `0.0k`", () => {
-    expect(formatTokens(null)).toBe("—");
-    expect(formatTokens(0)).toBe("—");
+  it("is null for a gap — the rail itself prints the em-dash", () => {
+    expect(formatTokens(null)).toBeNull();
   });
 
   it("treats absent and empty content as the same data gap", () => {

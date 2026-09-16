@@ -36,7 +36,7 @@ function resolveDatabaseFile(): string {
   const override = process.env.ARIJ_DB_PATH;
   if (override && override.trim()) {
     const dir = path.dirname(override);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true });
     return override;
   }
 
@@ -48,9 +48,7 @@ function resolveDatabaseFile(): string {
   }
 
   const dataDir = path.join(process.cwd(), "data");
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
-  }
+  fs.mkdirSync(dataDir, { recursive: true });
   return path.join(dataDir, "arij.db");
 }
 

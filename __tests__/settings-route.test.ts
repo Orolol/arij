@@ -31,7 +31,7 @@ describe("Settings route", () => {
     ];
 
     const { GET } = await import("@/app/api/settings/route");
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/settings"));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -46,7 +46,7 @@ describe("Settings route", () => {
     ];
 
     const { GET } = await import("@/app/api/settings/route");
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/settings"));
     const json = await res.json();
 
     expect(json.data.github_pat).toEqual({ hasToken: false });
@@ -87,7 +87,7 @@ describe("Settings route", () => {
     dbMockState.allRows = [];
 
     const { GET } = await import("@/app/api/settings/route");
-    const json = await (await GET()).json();
+    const json = await (await GET(new Request("http://localhost/api/settings"))).json();
 
     expect(json.defaults.projects_root).toBe(
       path.join(process.cwd(), "projects")
@@ -173,7 +173,7 @@ describe("Settings route", () => {
     ];
 
     const { GET } = await import("@/app/api/settings/route");
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/settings"));
     const json = await res.json();
 
     expect(res.status).toBe(200);
@@ -190,7 +190,7 @@ describe("Settings route", () => {
     ];
 
     const { GET } = await import("@/app/api/settings/route");
-    const res = await GET();
+    const res = await GET(new Request("http://localhost/api/settings"));
     const json = await res.json();
 
     expect(json.data.openai_api_key).toEqual({ hasToken: false });
@@ -288,6 +288,20 @@ describe("Settings route — ui_locale", () => {
     }
     expect(dbMockState.insertCalls).toEqual([]);
     expect(dbMockState.updateCalls).toEqual([]);
+  });
+
+  it("GET ?keys= filters returned keys", async () => {
+    dbMockState.allRows = [
+      { key: "global_prompt", value: JSON.stringify("Prompt text") },
+      { key: "prompt_token_budget", value: JSON.stringify(50000) },
+      { key: "prompt_token_budget:p1", value: JSON.stringify(25000) },
+    ];
+    const { GET } = await import("@/app/api/settings/route");
+
+    const res = await GET(new Request("http://localhost/api/settings?keys=prompt_token_budget,prompt_token_budget:p1"));
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.data).toBeDefined();
   });
 });
 

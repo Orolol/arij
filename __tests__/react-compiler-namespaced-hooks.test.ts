@@ -1,8 +1,9 @@
 // @vitest-environment node
 import { describe, it, expect, beforeAll } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { ESLint } from "eslint";
+import { sourceFiles } from "@/__tests__/helpers/react-compiler-probe";
 
 /**
  * `eslint-plugin-react-hooks` 7.0.1 only recognises a hook called by its BARE
@@ -16,8 +17,7 @@ import { ESLint } from "eslint";
  * `topbar-react-compiler-bail.test.ts`, which pins TopBar alone). 26 further
  * files shared the blind spot across 161 call sites; converting them surfaced
  * five more violations that `npm run lint` had never reported, in
- * `ChatPageView`, `YourTurnBand`, `DeskCommandPalette`, `DismissDialog` and
- * `app/piscine-preview/page.tsx`.
+ * `ChatPageView`, `YourTurnBand`, `DeskCommandPalette` and `DismissDialog`.
  *
  * MEASURED on this plugin version, and the reason each probe below is shaped
  * the way it is:
@@ -39,7 +39,6 @@ import { ESLint } from "eslint";
  * cannot make these assertions pass.
  */
 
-const ROOTS = ["components", "app", "hooks", "lib"] as const;
 const NAMESPACED_HOOK = /React\.(use[A-Z]\w*)\s*[(<]/g;
 
 /**
@@ -68,7 +67,6 @@ const EFFECT_RULE = "react-hooks/set-state-in-effect";
  * The sweeps below are scoped to them, which is this change's blast radius.
  */
 const CONVERTED = [
-  "app/piscine-preview/page.tsx",
   "components/chat-page/ChatComposer.tsx",
   "components/chat-page/ChatPageView.tsx",
   "components/chat-page/ChatThread.tsx",
@@ -170,40 +168,7 @@ const REVERTS: ReadonlyArray<{ file: string; from: string; to: string }[]> = [
   }, [finding?.findingId, open]);`,
     },
   ],
-  // piscine-preview — client-only timestamp set from a mount effect.
-  [
-    {
-      file: "app/piscine-preview/page.tsx",
-      from: `import { useState, useSyncExternalStore } from "react";`,
-      to: `import { useEffect, useState } from "react";`,
-    },
-    {
-      file: "app/piscine-preview/page.tsx",
-      from: `  const startedAt = useSyncExternalStore(
-    subscribeChronoStartedAt,
-    readChronoStartedAt,
-    readNoChronoStartedAt,
-  );`,
-      to: `  const [startedAt, setStartedAt] = useState<string | null>(null);
-  useEffect(() => {
-    setStartedAt(new Date(Date.now() - 252_000).toISOString());
-  }, []);`,
-    },
-  ],
 ];
-
-function sourceFiles(): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(path.join(process.cwd(), dir), { withFileTypes: true })) {
-      const rel = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(rel);
-      else if (/\.tsx?$/.test(entry.name)) out.push(rel);
-    }
-  };
-  for (const root of ROOTS) walk(root);
-  return out.sort();
-}
 
 const read = (rel: string) => readFileSync(path.join(process.cwd(), rel), "utf8");
 

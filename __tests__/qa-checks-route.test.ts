@@ -99,8 +99,9 @@ function session(
     .run();
 }
 
-async function payload(): Promise<QaPayload> {
-  const res = await GET(new Request("http://localhost/api/qa/findings"));
+async function payload(projectId?: string): Promise<QaPayload> {
+  const query = projectId ? `?${new URLSearchParams({ projectId })}` : "";
+  const res = await GET(new Request(`http://localhost/api/qa/findings${query}`));
   const body = await res.json();
   return body.data as QaPayload;
 }
@@ -108,6 +109,20 @@ async function payload(): Promise<QaPayload> {
 beforeEach(reset);
 
 describe("GET /api/qa/findings — checks", () => {
+  it("uses the same liveness rule for unknown session statuses, rows and totals", async () => {
+    project("p1", "Arij");
+    session("live", "p1", "running");
+    session("unknown", "p1", "unknown");
+    report("live-report", "p1", { status: "running", agentSessionId: "live" });
+    report("stranded", "p1", { status: "running", agentSessionId: "unknown" });
+
+    const data = await payload();
+    expect(data.checks.map((check) => [check.reportId, check.live])).toEqual([
+      ["live-report", true], ["stranded", false],
+    ]);
+    expect(data.checkTotals.p1).toEqual({ total: 2, running: 1 });
+  });
+
   it("carries the QA-check history the /qa screen draws", async () => {
     project("p1", "Arij");
     // A live check needs a live SESSION: `status = 'running'` on the report
@@ -417,5 +432,36 @@ describe("GET /api/qa/findings — checkableProjectIds", () => {
 
     expect(data.checks).toEqual([]);
     expect(data.checkableProjectIds).toEqual([]);
+  });
+});
+
+
+describe("GET /api/qa/findings — scoped check history", () => {
+  it("selects and orders the newest checks across SQLite and ISO timestamps", async () => {
+    project("p1", "Project");
+    for (let i = 0; i < QA_CHECK_LIMIT; i++) {
+      report(`older-${i}`, "p1", { createdAt: "2026-08-01T09:00:00.000Z" });
+    }
+    report("newest-sqlite", "p1", { createdAt: "2026-08-01 10:00:00" });
+    const data = await payload();
+    expect(data.checks).toHaveLength(QA_CHECK_LIMIT);
+    expect(data.checks[0].reportId).toBe("newest-sqlite");
+  });
+
+  it("applies the scope before limiting checks and counting live reports", async () => {
+    project("busy", "Busy");
+    project("selected", "Selected");
+    report("selected-check", "selected");
+    for (let i = 0; i < QA_CHECK_LIMIT + 1; i++) {
+      session(`other-session-${i}`, "busy", "running");
+      report(`other-check-${i}`, "busy", {
+        status: "running", agentSessionId: `other-session-${i}`,
+        createdAt: "2026-08-02T09:00:00.000Z",
+      });
+    }
+    expect((await payload()).checks.map((row) => row.reportId)).not.toContain("selected-check");
+    const selected = await payload("selected");
+    expect(selected.checks.map((row) => row.reportId)).toEqual(["selected-check"]);
+    expect(selected.checkTotals).toEqual({ selected: { total: 1, running: 0 } });
   });
 });

@@ -1,11 +1,5 @@
 import { spawn as nodeSpawn, type ChildProcess } from "child_process";
-import {
-  createStreamLog,
-  appendStreamEvent,
-  appendStderrEvent,
-  endStreamLog,
-  type StreamLogContext,
-} from "./logger";
+import { StringDecoder } from "node:string_decoder";
 import { extractCliSessionIdFromOutput, hasAskUserQuestion } from "./json-parser";
 import { cleanupMcpConfigFile, writeMcpConfigFile } from "./mcp-injection";
 import { promptExceedsArgv } from "@/lib/providers/prompt-transport";
@@ -15,6 +9,7 @@ import {
   type NamedAgentCliOptions,
 } from "@/lib/providers/options-registry";
 import type { McpSpawnConfig } from "@/lib/providers/types";
+import { createChildKiller } from "@/lib/providers/process-signals";
 
 export interface ClaudeOptions {
   /**
@@ -30,7 +25,6 @@ export interface ClaudeOptions {
   cwd?: string;
   allowedTools?: string[];
   model?: string;
-  logIdentifier?: string;
   cliSessionId?: string;
   resumeSession?: boolean;
   /**
@@ -49,6 +43,18 @@ export interface ClaudeOptions {
    * empty leaves the argv exactly as it was before the option registry.
    */
   cliOptions?: NamedAgentCliOptions;
+  /** Grace period in ms before SIGTERM escalates to SIGKILL (defaults to 5000ms). */
+  killGraceMs?: number;
+  /**
+   * Live output. When set, the CLI runs with `--output-format stream-json`
+   * and every NDJSON line of its stdout is handed here as it arrives; the
+   * `result` envelope that closes the stream is what `ClaudeResult.result`
+   * then carries, so consumers see the same document as in json mode.
+   * Without it the spawn keeps `--output-format json`, which yields nothing
+   * until exit — the reason the LIVE LOG of claude-code sessions used to stay
+   * empty for their whole duration.
+   */
+  onRawLine?: (line: string) => void;
 }
 
 export interface ClaudeResult {
@@ -73,27 +79,8 @@ export interface SpawnedClaude {
   mcpConfigPath?: string;
 }
 
-export interface QuestionOption {
-  label: string;
-  description: string;
-}
-
-export interface QuestionData {
-  question: string;
-  header: string;
-  options: QuestionOption[];
-  multiSelect: boolean;
-}
-
-export type StreamChunk =
-  | { type: "text"; text: string }
-  | { type: "questions"; questions: QuestionData[] }
-  | { type: "status"; status: string };
-
-export interface SpawnedClaudeStream {
-  stream: ReadableStream<StreamChunk>;
-  kill: () => void;
-}
+export type { QuestionOption, QuestionData, StreamChunk, SpawnedClaudeStream } from "@/lib/providers/types";
+import type { StreamChunk, SpawnedClaudeStream } from "@/lib/providers/types";
 
 /**
  * Builds the `claude` CLI argument list shared by spawnClaude() and
@@ -196,11 +183,7 @@ export function buildClaudeArgs(
 
   // Named-agent options last, so they read as a suffix in the display command.
   // Emits nothing when every option sits at its default.
-  args.push(
-    ...buildProviderOptionArgs("claude-code", cliOptions, {
-      resume: !!(cliSessionId && resumeSession),
-    }),
-  );
+  args.push(...buildProviderOptionArgs("claude-code", cliOptions));
 
   return args;
 }
@@ -244,49 +227,58 @@ export function prepareClaudeSpawn(
  * The returned `kill` function can be called to abort the process early.
  */
 export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
-  const { prompt, cwd, cliSessionId, logIdentifier } = options;
+  const { prompt, cwd, cliSessionId, onRawLine } = options;
 
-  const { args, mcpConfigPath } = prepareClaudeSpawn(options, "json");
+  const { args, mcpConfigPath } = prepareClaudeSpawn(
+    options,
+    onRawLine ? "stream-json" : "json",
+  );
 
   const effectiveCwd = cwd || process.cwd();
   const promptOnStdin = promptExceedsArgv(prompt);
 
-  let logCtx: StreamLogContext | null = null;
-  if (logIdentifier) {
+  // stream-json: stdout is one event per line and the last `result` event is
+  // the same envelope json mode prints alone. Lines are relayed as they
+  // arrive; the envelope is what the caller gets as `result`.
+  const stdoutDecoder = new StringDecoder("utf8");
+  let lineBuffer = "";
+  let resultEnvelope: string | null = null;
+  const relayLine = (line: string): void => {
+    const trimmed = line.replace(/\r$/, "");
+    if (!trimmed) return;
     try {
-      logCtx = createStreamLog(logIdentifier, args, prompt);
+      if (JSON.parse(trimmed)?.type === "result") resultEnvelope = trimmed;
     } catch {
-      // logging is best-effort
+      // Non-JSON diagnostic lines still belong in the raw log.
     }
-  }
+    try {
+      onRawLine?.(trimmed);
+    } catch {
+      // A listener must never take the spawn down with it.
+    }
+  };
+  const relayStdout = (chunk: Buffer): void => {
+    lineBuffer += stdoutDecoder.write(chunk);
+    let newline = lineBuffer.indexOf("\n");
+    while (newline !== -1) {
+      relayLine(lineBuffer.slice(0, newline));
+      lineBuffer = lineBuffer.slice(newline + 1);
+      newline = lineBuffer.indexOf("\n");
+    }
+  };
 
   let child: ChildProcess | null = null;
-  let killed = false;
-  let logEnded = false;
 
   const promise = new Promise<ClaudeResult>((resolve) => {
     const startTime = Date.now();
     const stdoutChunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
 
-    const finishLog = (exitCode: number | null, error?: string): void => {
-      if (!logCtx || logEnded) return;
-      logEnded = true;
-      try {
-        const stdout = Buffer.concat(stdoutChunks).toString("utf-8").trim();
-        const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
-        if (stdout) appendStreamEvent(logCtx, stdout);
-        if (stderr) appendStderrEvent(logCtx, stderr);
-        endStreamLog(logCtx, { exitCode, ...(error ? { error } : {}) });
-      } catch {
-        // logging is best-effort
-      }
-    };
-
     child = nodeSpawn("claude", args, {
       cwd: effectiveCwd,
       env: { ...process.env },
       stdio: [promptOnStdin ? "pipe" : "ignore", "pipe", "pipe"],
+      detached: true,
     });
 
     if (promptOnStdin) {
@@ -298,6 +290,7 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
 
     child.stdout?.on("data", (chunk: Buffer) => {
       stdoutChunks.push(chunk);
+      if (onRawLine) relayStdout(chunk);
     });
 
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -309,7 +302,6 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
       // Spawn failure is terminal — the config file (and its token) must not
       // outlive the attempt.
       cleanupMcpConfigFile(mcpConfigPath);
-      finishLog(null, err.message);
 
       if (err.message.includes("ENOENT")) {
         resolve({
@@ -327,12 +319,29 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
       }
     });
 
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
+      if (killer.isKilled()) {
+        await killer.waitForTeardown();
+      } else {
+        killer.clear();
+      }
       const duration = Date.now() - startTime;
+      const killed = killer.isKilled();
       // Session end (normal exit, failure, or kill) — drop the token file.
       cleanupMcpConfigFile(mcpConfigPath);
-      finishLog(code, killed ? "Process was cancelled." : undefined);
-      const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
+      if (onRawLine) lineBuffer += stdoutDecoder.end();
+      if (onRawLine && lineBuffer.length > 0) {
+        relayLine(lineBuffer);
+        lineBuffer = "";
+      }
+      // In stream mode the whole event log is on stdout; the result envelope
+      // is the document every consumer expects. Fall back to the full stdout
+      // when no envelope arrived (a crash before the result), where the
+      // NDJSON-aware parsers still find what they can.
+      const stdout =
+        onRawLine && resultEnvelope
+          ? resultEnvelope
+          : Buffer.concat(stdoutChunks).toString("utf-8");
       const stderr = Buffer.concat(stderrChunks).toString("utf-8");
       const parsedCliSessionId =
         extractCliSessionIdFromOutput(stdout) ?? cliSessionId;
@@ -373,19 +382,8 @@ export function spawnClaude(options: ClaudeOptions): SpawnedClaude {
     });
   });
 
-  const kill = () => {
-    if (child && !child.killed) {
-      killed = true;
-      child.kill("SIGTERM");
-
-      // Force kill after 5 seconds if still running
-      setTimeout(() => {
-        if (child && !child.killed) {
-          child.kill("SIGKILL");
-        }
-      }, 5000);
-    }
-  };
+  const killer = createChildKiller(() => child, options.killGraceMs);
+  const kill = killer.kill;
 
   // Build display command (replace prompt with <prompt>; the --mcp-config
   // value is an ephemeral temp path that means nothing in the UI, so it is
@@ -440,25 +438,12 @@ function extractResultText(result: unknown): string {
  * The `assistant` event is always ignored (redundant).
  */
 export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
-  const { prompt, cwd, logIdentifier } = options;
+  const { prompt, cwd } = options;
 
   const { args, mcpConfigPath } = prepareClaudeSpawn(options, "stream-json");
 
   const effectiveCwd = cwd || process.cwd();
   const promptOnStdin = promptExceedsArgv(prompt);
-
-  // Debug logging removed for production
-
-  // Initialize log if identifier provided
-  let logCtx: StreamLogContext | null = null;
-  if (logIdentifier) {
-    try {
-      logCtx = createStreamLog(logIdentifier, args, prompt);
-      // Debug logging removed for production
-    } catch (err) {
-      console.warn("[stream-spawn] Failed to create log:", err);
-    }
-  }
 
   let child: ChildProcess | null = null;
   let textDeltasEmitted = false;
@@ -484,6 +469,7 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
         cwd: effectiveCwd,
         env: { ...process.env },
         stdio: [promptOnStdin ? "pipe" : "ignore", "pipe", "pipe"],
+        detached: true,
       });
 
       if (promptOnStdin) {
@@ -495,13 +481,6 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
 
       function processLine(trimmed: string) {
         if (!trimmed) return;
-
-        // Log raw line
-        if (logCtx) {
-          try {
-            appendStreamEvent(logCtx, trimmed);
-          } catch { /* ignore logging errors */ }
-        }
 
         try {
           const event = JSON.parse(trimmed);
@@ -607,25 +586,20 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
       child.stderr?.on("data", (chunk: Buffer) => {
         const text = chunk.toString("utf-8");
         console.error("[stream-spawn] stderr:", text.slice(0, 500));
-        if (logCtx) {
-          try {
-            appendStderrEvent(logCtx, text);
-          } catch { /* ignore */ }
-        }
       });
 
       child.on("error", (err) => {
         console.error("[stream-spawn] error:", err.message);
         cleanupMcpConfigFile(mcpConfigPath);
-        if (logCtx) {
-          try {
-            endStreamLog(logCtx, { exitCode: null, error: err.message });
-          } catch { /* ignore */ }
-        }
         controller.close();
       });
 
-      child.on("close", (code) => {
+      child.on("close", async () => {
+        if (killer.isKilled()) {
+          await killer.waitForTeardown();
+        } else {
+          killer.clear();
+        }
         cleanupMcpConfigFile(mcpConfigPath);
 
         // Process any remaining buffer
@@ -633,32 +607,16 @@ export function spawnClaudeStream(options: ClaudeOptions): SpawnedClaudeStream {
           processLine(buffer.trim());
         }
 
-        if (logCtx) {
-          try {
-            endStreamLog(logCtx, { exitCode: code });
-          } catch { /* ignore */ }
-        }
-
         controller.close();
       });
     },
     cancel() {
-      if (child && !child.killed) {
-        child.kill("SIGTERM");
-      }
+      killer.kill();
     },
   });
 
-  const kill = () => {
-    if (child && !child.killed) {
-      child.kill("SIGTERM");
-      setTimeout(() => {
-        if (child && !child.killed) {
-          child.kill("SIGKILL");
-        }
-      }, 5000);
-    }
-  };
+  const killer = createChildKiller(() => child, options.killGraceMs);
+  const kill = killer.kill;
 
   return { stream, kill };
 }

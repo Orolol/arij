@@ -1,35 +1,15 @@
+import { autoModeRegistry } from "@/lib/auto-mode/registry";
+import { readActiveSessionRows, readEpicComments, readMergeFacts } from "@/lib/control-desk/read-model";
+import { hasUnreadAiComment } from "@/lib/kanban/unread-ai";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { NextResponse } from "next/server";
-import { and, eq, inArray, or, sql } from "drizzle-orm";
 
-import { db } from "@/lib/db";
+import { getSessionLastActivityAt, isSessionStale } from "@/lib/agents/watchdog";
 import {
-  agentSessions,
-  epics,
-  projects,
-  reviewComments,
-  settings,
-  ticketActivityLog,
-  ticketComments,
-  ticketDependencies,
-  ticketReadCursors,
-  userStories,
-  deskDismissals,
-} from "@/lib/db/schema";
-import {
+  AUTO_MODE_ENABLED_SETTING_KEY,
   autoModeEnabledSettingKey,
   parseAutoModeEnabled,
-  AUTO_MODE_ENABLED_SETTING_KEY,
 } from "@/lib/auto-mode/constants";
-import { blocksMergeSql } from "@/lib/workflow/blocking-findings";
-import { epicSessionFactsCte } from "@/lib/workflow/review-freshness";
-import {
-  CONFLICT_MARKERS_REASON_LIKE_PATTERNS,
-  MERGE_CONFLICT_REASON_LIKE_PATTERNS,
-  MERGE_FAILURE_REASON_LIKE_PATTERNS,
-} from "@/lib/workflow/merge-failure";
-import { isSessionStale } from "@/lib/agents/watchdog";
-import { getSessionLastActivityAt } from "@/lib/agents/watchdog";
-import type { TicketDependencyEdge } from "@/lib/types/kanban";
 import {
   applyDeskDismissals,
   deriveAwaitingReply,
@@ -43,14 +23,26 @@ import {
   deriveWorking,
   type DeskDismissalRow,
   type EpicRow,
-  type FailureSessionRow,
   type SessionRow,
 } from "@/lib/control-desk/aggregate";
+import { lookbackCutoff, readEpicActivityFacts, readLatestFailureSessions } from "@/lib/control-desk/read-model";
 import {
   CONTROL_DESK_LOOKBACK_DAYS,
-  LOG_LINE_LIMIT,
-  type ControlDeskPayload,
+  type ControlDeskPayload
 } from "@/lib/control-desk/types";
+import { db } from "@/lib/db";
+import {
+  agentSessions,
+  deskDismissals,
+  epics,
+  projects,
+  settings,
+  ticketActivityLog,
+  ticketDependencies,
+  ticketReadCursors
+} from "@/lib/db/schema";
+import { BUILDABLE_EPIC_STATUSES } from "@/lib/kanban/build-work";
+import type { TicketDependencyEdge } from "@/lib/types/kanban";
 
 /**
  * GET /api/control-desk — everything the "Now" desk shows, for every project.
@@ -108,12 +100,6 @@ import {
  * dispatch role comes from `agent_type` / `orchestration_mode` / `mode`.
  */
 
-/** Lexicographic floor for both timestamp shapes stored in these columns. */
-function lookbackCutoff(now: Date): string {
-  const at = new Date(now.getTime() - CONTROL_DESK_LOOKBACK_DAYS * 86_400_000);
-  return at.toISOString();
-}
-
 /** 00:00 UTC of the current day, as a lexicographic floor. */
 function startOfTodayUtc(now: Date): string {
   return now.toISOString().slice(0, 10);
@@ -128,21 +114,10 @@ function startOfTodayUtc(now: Date): string {
  */
 const COMMENT_EXCERPT_SCAN = 400;
 
-/**
- * The `id DESC` half of an `ORDER BY created_at DESC, id DESC` tie-break.
- *
- * The per-epic fact queries take MAX(created_at) and join back, which can
- * return several rows when an epic's newest comment or session shares its
- * timestamp with a sibling. `true` when `candidate` outranks what is held.
- */
-function keepLatest(held: string | undefined, candidate: string): boolean {
-  return held === undefined || candidate > held;
-}
-
 export async function GET() {
   const queryStartedAt = Date.now();
   const now = new Date();
-  const cutoff = lookbackCutoff(now);
+  const cutoff = lookbackCutoff(now, CONTROL_DESK_LOOKBACK_DAYS);
   const todayFloor = startOfTodayUtc(now);
 
   /* ---- projects ---------------------------------------------------- */
@@ -173,37 +148,7 @@ export async function GET() {
   // boolean. The desk actually prints the line, so it takes a substring in SQL
   // and never selects the raw column. `prompt` has the same shape and is not
   // selected at all — see the NEVER SELECT `prompt` note above.
-  const activeRows = db
-    .select({
-      id: agentSessions.id,
-      projectId: agentSessions.projectId,
-      epicId: agentSessions.epicId,
-      userStoryId: agentSessions.userStoryId,
-      status: agentSessions.status,
-      mode: agentSessions.mode,
-      agentType: agentSessions.agentType,
-      orchestrationMode: agentSessions.orchestrationMode,
-      provider: agentSessions.provider,
-      namedAgentName: agentSessions.namedAgentName,
-      batchRunId: agentSessions.batchRunId,
-      startedAt: agentSessions.startedAt,
-      endedAt: agentSessions.endedAt,
-      completedAt: agentSessions.completedAt,
-      createdAt: agentSessions.createdAt,
-      lastLogLine: sql<
-        string | null
-      >`substr(${agentSessions.lastNonEmptyText}, 1, ${LOG_LINE_LIMIT})`.as(
-        "last_log_line",
-      ),
-      epicTitle: epics.title,
-      epicReadableId: epics.readableId,
-      storyTitle: userStories.title,
-    })
-    .from(agentSessions)
-    .leftJoin(epics, eq(agentSessions.epicId, epics.id))
-    .leftJoin(userStories, eq(agentSessions.userStoryId, userStories.id))
-    .where(inArray(agentSessions.status, ["running", "queued"]))
-    .all();
+  const activeRows = readActiveSessionRows(db);
 
   const sessionRows: SessionRow[] = activeRows.map((row) => ({
     ...row,
@@ -294,185 +239,9 @@ export async function GET() {
   // lets each carry `epic_id IN (<the ids above>)` and land on that table's
   // epic index. The join result is unchanged — the outer join kept only these
   // ids anyway.
-  const latestCommentByEpic = new Map<
-    string,
-    {
-      id: string;
-      author: string | null;
-      content: string | null;
-      createdAt: string | null;
-    }
-  >();
-  const latestSessionByEpic = new Map<
-    string,
-    { outcome: string | null; endedAt: string | null }
-  >();
-  const latestUserCommentByEpic = new Map<string, string | null>();
-  const storyCountsByEpic = new Map<string, { usCount: number; usDone: number }>();
-
-  if (epicIds.length > 0) {
-    // `ticket_comments.content` is uncapped user/agent text — 5.5 MB across
-    // 1657 rows on the developer's board — and the desk quotes at most
-    // QUESTION_LENGTH characters of it. So the clip happens in SQL, the way
-    // `last_non_empty_text` is already clipped above; the extra room is for the
-    // leading whitespace `excerpt()` collapses before it counts characters.
-    // A ROW_NUMBER window would rank every comment of every epic; this ranks
-    // none. MAX(created_at) per epic is an index-driven aggregate, the join
-    // then reads only the newest comment (or the handful sharing a timestamp),
-    // and `keepLatest` applies the window's `id DESC` tie-break to those few.
-    // Same answer, 6.2 ms -> 1.0 ms on the developer's board.
-    const newestCommentAt = db
-      .select({
-        epicId: ticketComments.epicId,
-        newestAt: sql<string>`MAX(${ticketComments.createdAt})`.as(
-          "newest_comment_at",
-        ),
-      })
-      .from(ticketComments)
-      .where(inArray(ticketComments.epicId, epicIds))
-      .groupBy(ticketComments.epicId)
-      .as("newest_comment_at");
-
-    const commentRows = db
-      .select({
-        epicId: ticketComments.epicId,
-        latestCommentId: ticketComments.id,
-        latestCommentAuthor: ticketComments.author,
-        latestCommentContent: sql<
-          string | null
-        >`substr(${ticketComments.content}, 1, ${COMMENT_EXCERPT_SCAN})`.as(
-          "latest_comment_content",
-        ),
-        latestCommentCreatedAt: ticketComments.createdAt,
-      })
-      .from(ticketComments)
-      .innerJoin(
-        newestCommentAt,
-        and(
-          eq(ticketComments.epicId, newestCommentAt.epicId),
-          eq(ticketComments.createdAt, newestCommentAt.newestAt),
-        ),
-      )
-      .where(inArray(ticketComments.epicId, epicIds))
-      .all();
-
-    for (const row of commentRows) {
-      if (!row.epicId) continue;
-      if (!keepLatest(latestCommentByEpic.get(row.epicId)?.id, row.latestCommentId)) {
-        continue;
-      }
-      latestCommentByEpic.set(row.epicId, {
-        id: row.latestCommentId,
-        author: row.latestCommentAuthor,
-        content: row.latestCommentContent,
-        createdAt: row.latestCommentCreatedAt,
-      });
-    }
-
-    // Latest session per epic, ANY age. No cutoff on purpose: `isAwaitingReply`
-    // reads the verdict of the newest session whatever its date, and a cutoff
-    // would drop a three-week-old unanswered question off ASKS YOU — and split
-    // the desk from `/api/inbox`, which asks the same question unbounded.
-    //
-    // Same MAX-then-join shape as the comments above, for the same reason: the
-    // ROW_NUMBER window ranked all 761 sessions and had to walk past each row's
-    // 77 KB prompt to reach `outcome`. 13.1 ms -> 0.4 ms.
-    const newestEpicSessionAt = db
-      .select({
-        epicId: agentSessions.epicId,
-        newestAt: sql<string>`MAX(${agentSessions.createdAt})`.as(
-          "newest_epic_session_at",
-        ),
-      })
-      .from(agentSessions)
-      .where(
-        and(
-          inArray(agentSessions.epicId, epicIds),
-          inArray(agentSessions.projectId, projectIds),
-        ),
-      )
-      .groupBy(agentSessions.epicId)
-      .as("newest_epic_session_at");
-
-    const sessionFactRows = db
-      .select({
-        epicId: agentSessions.epicId,
-        sessionId: agentSessions.id,
-        latestSessionOutcome: agentSessions.outcome,
-        latestSessionEndedAt: sql<string | null>`COALESCE(
-          ${agentSessions.endedAt}, ${agentSessions.completedAt}, ${agentSessions.createdAt}
-        )`.as("latest_session_ended_at"),
-      })
-      .from(agentSessions)
-      .innerJoin(
-        newestEpicSessionAt,
-        and(
-          eq(agentSessions.epicId, newestEpicSessionAt.epicId),
-          eq(agentSessions.createdAt, newestEpicSessionAt.newestAt),
-        ),
-      )
-      .where(
-        and(
-          inArray(agentSessions.epicId, epicIds),
-          inArray(agentSessions.projectId, projectIds),
-        ),
-      )
-      .all();
-
-    const latestSessionIdByEpic = new Map<string, string>();
-    for (const row of sessionFactRows) {
-      if (!row.epicId) continue;
-      if (!keepLatest(latestSessionIdByEpic.get(row.epicId), row.sessionId)) continue;
-      latestSessionIdByEpic.set(row.epicId, row.sessionId);
-      latestSessionByEpic.set(row.epicId, {
-        outcome: row.latestSessionOutcome,
-        endedAt: row.latestSessionEndedAt,
-      });
-    }
-
-    const userCommentRows = db
-      .select({
-        epicId: ticketComments.epicId,
-        latestUserCommentCreatedAt: sql<
-          string | null
-        >`MAX(${ticketComments.createdAt})`.as("latest_user_comment_created_at"),
-      })
-      .from(ticketComments)
-      .where(
-        and(
-          inArray(ticketComments.epicId, epicIds),
-          eq(ticketComments.author, "user"),
-        ),
-      )
-      .groupBy(ticketComments.epicId)
-      .all();
-
-    for (const row of userCommentRows) {
-      if (!row.epicId) continue;
-      latestUserCommentByEpic.set(row.epicId, row.latestUserCommentCreatedAt);
-    }
-
-    const storyCountRows = db
-      .select({
-        epicId: userStories.epicId,
-        usCount: sql<number>`COUNT(${userStories.id})`.as("us_count"),
-        usDone:
-          sql<number>`SUM(CASE WHEN ${userStories.status} = 'done' THEN 1 ELSE 0 END)`.as(
-            "us_done",
-          ),
-      })
-      .from(userStories)
-      .where(inArray(userStories.epicId, epicIds))
-      .groupBy(userStories.epicId)
-      .all();
-
-    for (const row of storyCountRows) {
-      storyCountsByEpic.set(row.epicId, {
-        usCount: Number(row.usCount ?? 0),
-        usDone: Number(row.usDone ?? 0),
-      });
-    }
-  }
+  const latestCommentByEpic = readEpicComments(db, epicIds, COMMENT_EXCERPT_SCAN);
+  const { latestSessionByEpic, latestUserCommentByEpic, storyCountsByEpic, buildQueueByEpic, awaitingReplyByEpic } =
+    readEpicActivityFacts(db, epicIds, projectIds, baseEpicRows.filter((epic) => BUILDABLE_EPIC_STATUSES.has(epic.status ?? "")));
 
   const epicRows = baseEpicRows.map((row) => {
     const comment = latestCommentByEpic.get(row.id);
@@ -482,6 +251,8 @@ export async function GET() {
       ...row,
       usCount: counts?.usCount ?? 0,
       usDone: counts?.usDone ?? 0,
+      buildQueue: buildQueueByEpic.get(row.id),
+      awaitingReply: awaitingReplyByEpic.get(row.id) ?? false,
       latestCommentId: comment?.id ?? null,
       latestCommentAuthor: comment?.author ?? null,
       latestCommentContent: comment?.content ?? null,
@@ -498,107 +269,7 @@ export async function GET() {
     .filter((row) => row.status === "to_merge")
     .map((row) => row.id);
 
-  const mergeFactsById = new Map<
-    string,
-    {
-      openFindings: number | null;
-      lastCleanReviewAt: string | null;
-      lastTerminalCodeAt: string | null;
-      lastNegativeVerdictReviewAt: string | null;
-      supersessionAt: string | null;
-      lastMergeConflictAt: string | null;
-      lastConflictMarkersAt: string | null;
-    }
-  >();
-
-  if (toMergeIds.length > 0) {
-    const epicSessionFacts = epicSessionFactsCte(db, null, { epicIds: toMergeIds });
-
-    const openFindingCounts = db
-      .select({
-        epicId: reviewComments.epicId,
-        openFindings: sql<number>`COUNT(*)`.as("open_findings"),
-      })
-      .from(reviewComments)
-      .leftJoin(epicSessionFacts, eq(epicSessionFacts.epicId, reviewComments.epicId))
-      .where(
-        and(
-          inArray(reviewComments.epicId, toMergeIds),
-          eq(reviewComments.status, "open"),
-          blocksMergeSql(epicSessionFacts.supersessionAt),
-        ),
-      )
-      .groupBy(reviewComments.epicId)
-      .as("open_finding_counts");
-
-    // A failed merge writes no column anywhere: this same-state activity row is
-    // the only durable trace (lib/workflow/merge-failure.ts). `reason` carries
-    // no index and the table is never pruned, so the `epic_id IN (...)` bound
-    // — served by `ticket_activity_log_epic_idx` — is what keeps the LIKEs off
-    // a full-table string match.
-    const latestMergeFailures = db
-      .select({
-        epicId: ticketActivityLog.epicId,
-        lastMergeConflictAt: sql<string | null>`MAX(CASE WHEN ${or(
-          ...MERGE_CONFLICT_REASON_LIKE_PATTERNS.map(
-            (pattern) => sql`${ticketActivityLog.reason} LIKE ${pattern} ESCAPE '\\'`,
-          ),
-        )} THEN REPLACE(${ticketActivityLog.createdAt}, ' ', 'T') END)`.as(
-          "last_merge_conflict_at",
-        ),
-        lastConflictMarkersAt: sql<string | null>`MAX(CASE WHEN ${or(
-          ...CONFLICT_MARKERS_REASON_LIKE_PATTERNS.map(
-            (pattern) => sql`${ticketActivityLog.reason} LIKE ${pattern} ESCAPE '\\'`,
-          ),
-        )} THEN REPLACE(${ticketActivityLog.createdAt}, ' ', 'T') END)`.as(
-          "last_conflict_markers_at",
-        ),
-      })
-      .from(ticketActivityLog)
-      .where(
-        and(
-          inArray(ticketActivityLog.epicId, toMergeIds),
-          or(
-            ...MERGE_FAILURE_REASON_LIKE_PATTERNS.map(
-              (pattern) => sql`${ticketActivityLog.reason} LIKE ${pattern} ESCAPE '\\'`,
-            ),
-          ),
-        ),
-      )
-      .groupBy(ticketActivityLog.epicId)
-      .as("latest_merge_failures");
-
-    const factRows = db
-      .with(epicSessionFacts)
-      .select({
-        id: epics.id,
-        openFindings: openFindingCounts.openFindings,
-        lastCleanReviewAt: epicSessionFacts.lastCleanReviewAt,
-        lastTerminalCodeAt: epicSessionFacts.lastTerminalCodeAt,
-        lastNegativeVerdictReviewAt: epicSessionFacts.lastNegativeVerdictReviewAt,
-        supersessionAt: epicSessionFacts.supersessionAt,
-        lastMergeConflictAt: latestMergeFailures.lastMergeConflictAt,
-        lastConflictMarkersAt: latestMergeFailures.lastConflictMarkersAt,
-      })
-      .from(epics)
-      .leftJoin(epicSessionFacts, eq(epics.id, epicSessionFacts.epicId))
-      .leftJoin(openFindingCounts, eq(epics.id, openFindingCounts.epicId))
-      .leftJoin(latestMergeFailures, eq(epics.id, latestMergeFailures.epicId))
-      .where(inArray(epics.id, toMergeIds))
-      .all();
-
-    for (const row of factRows) {
-      mergeFactsById.set(row.id, {
-        openFindings: row.openFindings ?? 0,
-        lastCleanReviewAt: row.lastCleanReviewAt ?? null,
-        lastTerminalCodeAt: row.lastTerminalCodeAt ?? null,
-        lastNegativeVerdictReviewAt: row.lastNegativeVerdictReviewAt ?? null,
-        supersessionAt: row.supersessionAt ?? null,
-        lastMergeConflictAt: row.lastMergeConflictAt ?? null,
-        lastConflictMarkersAt: row.lastConflictMarkersAt ?? null,
-      });
-    }
-  }
+  const mergeFactsById = readMergeFacts(db, toMergeIds);
 
   const deskEpics: EpicRow[] = epicRows.map((row) => {
     const facts = mergeFactsById.get(row.id);
@@ -617,88 +288,7 @@ export async function GET() {
 
   /* ---- FAILED rows -------------------------------------------------- */
 
-  // "Latest session wins" needs EVERY session sharing an epic's newest
-  // created_at — that same-second tie group is what lets a retry created in the
-  // same second as the failure clear the badge immediately. Older rows can
-  // never win, so bounding the scan by the lookback cutoff only ever hides
-  // failures the desk has no business shouting about.
-  //
-  // The `project_id IN` clause beside it changes no answer — it is the leading
-  // column of `agent_sessions(project_id, created_at)`, and without it the
-  // cutoff cannot be used as a range and the query degrades to a full scan
-  // (12.0 ms -> 0.26 ms on the developer's board).
-  const newestSessionAt = db
-    .select({
-      epicId: agentSessions.epicId,
-      newestAt: sql<string>`MAX(${agentSessions.createdAt})`.as("newest_at"),
-    })
-    .from(agentSessions)
-    .where(
-      and(
-        sql`${agentSessions.epicId} IS NOT NULL`,
-        inArray(agentSessions.projectId, projectIds),
-        sql`${agentSessions.createdAt} >= ${cutoff}`,
-      ),
-    )
-    .groupBy(agentSessions.epicId)
-    .as("newest_session_at");
-
-  const failureRows = db
-    .select({
-      id: agentSessions.id,
-      projectId: agentSessions.projectId,
-      epicId: agentSessions.epicId,
-      status: agentSessions.status,
-      error: agentSessions.error,
-      agentType: agentSessions.agentType,
-      provider: agentSessions.provider,
-      namedAgentId: agentSessions.namedAgentId,
-      namedAgentName: agentSessions.namedAgentName,
-      userStoryId: agentSessions.userStoryId,
-      // Never the raw column: the badge only needs "did it stream anything".
-      producedOutput: sql<number>`CASE WHEN length(COALESCE(${agentSessions.lastNonEmptyText}, '')) > 0 THEN 1 ELSE 0 END`.as(
-        "produced_output",
-      ),
-      createdAt: agentSessions.createdAt,
-      endedAt: agentSessions.endedAt,
-    })
-    .from(agentSessions)
-    .innerJoin(
-      newestSessionAt,
-      and(
-        eq(agentSessions.epicId, newestSessionAt.epicId),
-        eq(agentSessions.createdAt, newestSessionAt.newestAt),
-      ),
-    )
-    // Repeating the subquery's bound on the OUTER side changes no answer — the
-    // join already forces `created_at` to a value the subquery matched — but it
-    // is what lets the outer side use the same index range instead of probing
-    // `agent_sessions_epic_idx` and reading every session of every epic.
-    // 14.4 ms -> 0.65 ms on the developer's board.
-    .where(
-      and(
-        inArray(agentSessions.projectId, projectIds),
-        sql`${agentSessions.createdAt} >= ${cutoff}`,
-      ),
-    )
-    .all();
-
-  const failureSessions: FailureSessionRow[] = failureRows.map((row) => ({
-    id: row.id,
-    kind: "agent_session",
-    projectId: row.projectId,
-    status: row.status ?? "",
-    epicId: row.epicId,
-    error: row.error,
-    agentType: row.agentType,
-    provider: row.provider,
-    namedAgentId: row.namedAgentId,
-    namedAgentName: row.namedAgentName,
-    userStoryId: row.userStoryId,
-    producedOutput: row.producedOutput === 1,
-    createdAt: row.createdAt,
-    endedAt: row.endedAt,
-  }));
+  const failureSessions = readLatestFailureSessions(db, projectIds, cutoff);
 
   /* ---- TODAY -------------------------------------------------------- */
 
@@ -706,12 +296,13 @@ export async function GET() {
   // /api/dashboard/summary's `yesterday`: that one is a ROLLING 24h count of
   // SESSIONS, which is neither calendar-today nor shipped tickets.
   const shipped = db
-    .select({ shipped: sql<number>`COUNT(*)`.as("shipped") })
+    .select({ shipped: sql<number>`COUNT(DISTINCT ${ticketActivityLog.epicId})`.as("shipped") })
     .from(ticketActivityLog)
     .where(
       and(
         inArray(ticketActivityLog.projectId, projectIds),
         inArray(ticketActivityLog.toStatus, ["done", "released"]),
+        sql`${ticketActivityLog.fromStatus} IS NOT ${ticketActivityLog.toStatus}`,
         sql`${ticketActivityLog.createdAt} >= ${todayFloor}`,
       ),
     )
@@ -788,10 +379,17 @@ export async function GET() {
     failed: deriveFailures(failureSessions, epicsById, runningEpicIds),
     conflicts: deriveConflicts(deskEpics),
   };
-  const yourTurn = applyDeskDismissals(derived, dismissals);
+  const yourTurn = {
+    ...applyDeskDismissals(derived, dismissals),
+    parked: deskProjects.flatMap((project) => autoModeRegistry.listParked(project.id).flatMap((ticket) => {
+      const epic = epicsById.get(ticket.epicId);
+      return epic ? [{ ...ticket, projectId: project.id, title: epic.title, readableId: epic.readableId }] : [];
+    })),
+  };
 
   const payload: ControlDeskPayload = {
     generatedAt: now.toISOString(),
+    inboxUnreadCount: epicRows.filter((epic) => hasUnreadAiComment(epic) || awaitingReplyByEpic.get(epic.id)).length,
     projects: deskProjects,
     working,
     queued,

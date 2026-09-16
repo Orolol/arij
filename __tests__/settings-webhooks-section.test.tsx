@@ -57,6 +57,26 @@ describe("Settings page — Webhooks section", () => {
     );
   });
 
+  it("renders a failure note when loading webhooks fails instead of false empty state", async () => {
+    global.fetch = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/settings/webhooks") {
+        return Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ error: "DB error" }) });
+      }
+      return Promise.resolve({ ok: true, json: () => Promise.resolve({ data: {} }) });
+    });
+
+    render(<SettingsPage />);
+
+    await waitFor(() =>
+      expect(
+        screen.getByText("Failed to load projects. Refresh the page to retry.")
+      ).toBeInTheDocument()
+    );
+    expect(
+      screen.queryByText("No projects yet. Create a project to configure a webhook.")
+    ).not.toBeInTheDocument();
+  });
+
   it("lists one input per project prefilled with the stored URL", async () => {
     webhookRows = [
       { projectId: "p1", projectName: "Arij", url: "https://ntfy.sh/arij" },

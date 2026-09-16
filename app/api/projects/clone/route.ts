@@ -1,12 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
+import { projects, settings } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
   CloneConflictError,
   CloneFailedError,
   cloneGitHubRepository,
 } from "@/lib/git/clone";
+import { CLONE_TIMEOUT_SETTING_KEY, DEFAULT_CLONE_TIMEOUT_MS, parseCloneTimeoutSetting } from "@/lib/git/clone-constants";
 import { parseGitHubRepoInput } from "@/lib/git/remote";
 import { redactedErrorMessage } from "@/lib/git/redact";
 import { getGitHubTokenFromSettings } from "@/lib/github/client";
@@ -29,7 +30,7 @@ import { validateBody, isValidationError } from "@/lib/validation/validate";
  * is what makes resuming an interrupted import instant.
  *
  * Like the import route this is synchronous: a large clone holds the request
- * open for as long as it takes. No new job infrastructure.
+ * open until the clone completes or the configured deadline expires.
  */
 export async function POST(request: NextRequest) {
   const validated = await validateBody(cloneProjectSchema, request);
@@ -67,6 +68,8 @@ export async function POST(request: NextRequest) {
       input: url,
       destination,
       token,
+      timeoutMs: parseCloneTimeoutSetting(db.select({ value: settings.value }).from(settings)
+        .where(eq(settings.key, CLONE_TIMEOUT_SETTING_KEY)).get()?.value) ?? DEFAULT_CLONE_TIMEOUT_MS,
     });
 
     recordCloneOutcome(projectId, "success", {
@@ -92,7 +95,7 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     if (error instanceof CloneConflictError) {
-      recordCloneOutcome(projectId, "failure", {
+      recordCloneOutcome(projectId, "failed", {
         ownerRepo: parsed.ownerRepo,
         destination,
         destinationState: error.state,
@@ -117,7 +120,7 @@ export async function POST(request: NextRequest) {
         ? error.message
         : redactedErrorMessage(error, `Failed to clone ${parsed.ownerRepo}.`);
 
-    recordCloneOutcome(projectId, "failure", {
+    recordCloneOutcome(projectId, "failed", {
       ownerRepo: parsed.ownerRepo,
       destination,
       error: message,
@@ -138,7 +141,7 @@ export async function POST(request: NextRequest) {
  */
 function recordCloneOutcome(
   projectId: string | null | undefined,
-  status: "success" | "failure",
+  status: "success" | "failed",
   detail: Record<string, unknown>
 ): void {
   const owner = projectId

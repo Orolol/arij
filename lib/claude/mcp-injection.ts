@@ -15,9 +15,9 @@
  *   2. The provider supports per-spawn MCP config injection: claude-code
  *      (--mcp-config <file>), codex (-c mcp_servers.* overrides) and
  *      oh-my-pi (env vars expanded by its mcp.json entry at load time).
- *      gemini-cli is out for v1 — its CLI only reads MCP config from
- *      .gemini/settings.json files, which would mean writing config into
- *      user worktrees.
+ *      Any CLI that cannot be handed a per-session config is ineligible —
+ *      the 2026-08 cleanup dropped the rest of the field for exactly that
+ *      reason (see docs/architecture/mcp-provider-matrix.md).
  *   3. The session has an agent_sessions row (checked by the caller) — the
  *      row provides the project scope the token is bound to. Spawns without
  *      rows (generate-spec, import) get no injection by construction.
@@ -38,6 +38,7 @@ import { eq } from "drizzle-orm";
 import { db, type ArijDatabase } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 import { getAppBaseUrl } from "@/lib/webhooks/send";
+import { MCP_TOOLS_ENABLED_SETTING_KEY } from "@/lib/settings/keys";
 import type {
   McpServerSpec,
   McpSpawnConfig,
@@ -48,7 +49,7 @@ import type {
  * Settings key for the global toggle. Absent row = enabled; only an
  * explicitly-false value disables the channel.
  */
-export const MCP_TOOLS_ENABLED_SETTING_KEY = "mcp_tools_enabled";
+export { MCP_TOOLS_ENABLED_SETTING_KEY } from "@/lib/settings/keys";
 
 /**
  * MCP server name — the agent sees tools as `mcp__arij__<tool>` (claude,
@@ -422,6 +423,8 @@ export function buildMcpSpawnConfig({
     env: {
       ARIJ_BASE_URL: getAppBaseUrl(),
       ARIJ_MCP_TOKEN: token,
+      ...(agentType ? { ARIJ_MCP_AGENT_TYPE: agentType } : {}),
+      ARIJ_MCP_ALLOWED_TOOLS: JSON.stringify(allowedToolNamesForAgentType(agentType, "agy", refinementActions)),
       ...(toolset === "chat" ? { ARIJ_MCP_TOOLSET: "chat" as const } : {}),
     },
   };

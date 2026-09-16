@@ -49,7 +49,7 @@ vi.mock("@/lib/claude/spawn", () => ({
 }));
 
 vi.mock("@/lib/providers", () => ({
-  getProvider: mockGetProvider.mockImplementation(() => ({
+  getProvider: mockGetProvider.mockImplementation((provider) => provider === "claude-code" ? { spawn: mockSpawnHelpers.spawnClaude, spawnStream: mockSpawnHelpers.spawnClaudeStream } : ({
     spawn: mockDynamicProviderSpawn.mockImplementation(() => ({
       promise: Promise.resolve({ success: true, result: "Codex response" }),
       kill: vi.fn(),

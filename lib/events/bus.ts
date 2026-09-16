@@ -13,7 +13,6 @@ export type TicketEventType =
   | "session:started"
   | "session:completed"
   | "session:failed"
-  | "session:progress"
   | "artifact:created"
   | "release:created"
   /**

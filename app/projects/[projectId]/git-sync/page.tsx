@@ -1,13 +1,16 @@
 "use client";
 
+import { useProjects } from "@/hooks/useProjects";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { fetchJson, requestJson } from "@/lib/api/client";
 import { useLocale, useTranslations } from "next-intl";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useParams } from "next/navigation";
-import { Button } from "@/components/ui/button";
+import { PillButton } from "@/components/piscine";
 import { Input } from "@/components/ui/input";
-import { ToastStack } from "@/components/notifications/ToastStack";
-import { useToastStack } from "@/components/notifications/useToastStack";
+import { ToastStack } from "@/components/toast/ToastStack";
+import { useToastStack } from "@/components/toast/useToastStack";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
 import { RepoStrataBand } from "@/components/github/RepoStrataBand";
 import { SessionPicker } from "@/components/shared/SessionPicker";
@@ -84,48 +87,33 @@ function diffLineTone(line: string): string {
 }
 
 export default function GitSyncPage() {
+  const params = useParams();
+  const projectId = params.projectId as string;
+  return <GitSyncContent key={projectId} projectId={projectId} />;
+}
+
+function GitSyncContent({ projectId }: { projectId: string }) {
   const locale = useLocale();
   const t = useTranslations("GitSync");
   // The worktree-state table holds full dotted paths, so it resolves through
   // the namespace-less translator.
   const tKey = useTranslations();
-  const params = useParams();
-  const projectId = params.projectId as string;
 
   /**
-   * The project record, for the band below: ahead/behind must be measured
-   * against the STORED default branch (the one worktrees are cut from), not
-   * against whatever branch this page currently has typed in its input.
+   * The project record comes from the shared catalogue.
+   * The repository band consumes this
+   * page’s branch status snapshot.
    */
-  const [project, setProject] = useState<{
-    gitRepoPath: string | null;
-    githubOwnerRepo: string | null;
-    defaultBranch: string | null;
-  } | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/projects/${projectId}`)
-      .then((res) => res.json())
-      .then((json) => {
-        if (cancelled || !json?.data) return;
-        setProject({
-          gitRepoPath: json.data.gitRepoPath ?? null,
-          githubOwnerRepo: json.data.githubOwnerRepo ?? null,
-          defaultBranch: json.data.defaultBranch ?? null,
-        });
-      })
-      .catch(() => {
-        // The band renders its own "not connected" state; a failed project
-        // read must not blank the rest of the page.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
+  const { allProjects } = useProjects();
+  const project = allProjects.find((row) => row.id === projectId) ?? null;
+  const logs = usePolledResource<Array<{ id: string; operation: string; status: string; createdAt: string | null }>>(`/api/projects/${projectId}/git/log`, 10000, useCallback(() => t("history.failed"), [t]), { validateData: Array.isArray });
+  const [exporting, setExporting] = useState(false);
+  const exportPending = useRef(false);
 
   const [remote, setRemote] = useState("origin");
-  const [branch, setBranch] = useState("");
+  const [branchDraft, setBranchDraft] = useState<string | null>(null);
+  const [resolvedBranch, setResolvedBranch] = useState("");
+  const branch = branchDraft ?? resolvedBranch;
   const [ahead, setAhead] = useState(0);
   const [behind, setBehind] = useState(0);
   const [hasRemoteBranch, setHasRemoteBranch] = useState(true);
@@ -142,7 +130,8 @@ export default function GitSyncPage() {
   const [pushRemotes, setPushRemotes] = useState<string[]>([]);
   const [lastFetchedAt, setLastFetchedAt] = useState<number | null>(null);
   const [lastFetchError, setLastFetchError] = useState<string | null>(null);
-  const [loadingStatus, setLoadingStatus] = useState(true);
+  const [statusBusy, setLoadingStatus] = useState(true);
+  const [loadedStatusUrl, setLoadedStatusUrl] = useState<string | null>(null);
   const [pulling, setPulling] = useState(false);
   const [pushing, setPushing] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -180,59 +169,65 @@ export default function GitSyncPage() {
   const { toasts, raise: showToast, dismiss: dismissToast } = useToastStack();
   const [conflictDiffs, setConflictDiffs] = useState<ConflictDiff[]>([]);
   const [autoResolveConflicts, setAutoResolveConflicts] = useState(true);
+  const operationPending = useRef(false);
+  const statusRequest = useRef<AbortController | null>(null);
+  const activeStatusUrl = useRef<string | null>(null);
 
   const statusUrl = useMemo(() => {
     const q = new URLSearchParams();
     q.set("remote", remote);
-    if (branch.trim()) q.set("branch", branch.trim());
+    if (branchDraft?.trim()) q.set("branch", branchDraft.trim());
     return `/api/projects/${projectId}/git/status?${q.toString()}`;
-  }, [projectId, remote, branch]);
+  }, [projectId, remote, branchDraft]);
 
-  const refreshStatus = useCallback(async () => {
-    setLoadingStatus(true);
-    setError(null);
-    try {
-      const res = await fetch(statusUrl);
-      const json = (await res.json()) as StatusResponse;
-      if (!res.ok || !json.data) {
-        // `json.error` is the route's own text and ships as it came; only the
-        // fallback beside it is this screen's copy.
-        setStatusReadError(json.error || t("status.readFailed"));
+  const loadingStatus = statusBusy || loadedStatusUrl !== statusUrl;
+  const loadStatus = useCallback(() => {
+    if (activeStatusUrl.current !== statusUrl) return Promise.resolve();
+    statusRequest.current?.abort();
+    const controller = new AbortController();
+    statusRequest.current = controller;
+    const { signal } = controller;
+    return requestJson<NonNullable<StatusResponse["data"]>>(statusUrl, {
+      signal, errorMessage: t("status.readFailed"),
+    }).then((result) => {
+      if (signal.aborted) return;
+      setLoadingStatus(false);
+      setLoadedStatusUrl(statusUrl);
+      if (result.error !== null) {
+        setStatusReadError(result.error);
         return;
       }
-
-      setBranch(json.data.branch);
-      setAhead(json.data.ahead);
-      setBehind(json.data.behind);
-      setHasRemoteBranch(json.data.hasRemoteBranch);
-      setConfiguredRemotes(json.data.configuredRemotes ?? []);
-      setRemoteFetchConfigured(
-        json.data.remoteFetchConfigured ?? json.data.remoteConfigured ?? null
-      );
-      setRemotePushConfigured(
-        json.data.remotePushConfigured ?? json.data.remoteConfigured ?? null
-      );
-      setFetchRemotes(
-        json.data.fetchRemotes ?? json.data.configuredRemotes ?? []
-      );
-      setPushRemotes(
-        json.data.pushRemotes ?? json.data.configuredRemotes ?? []
-      );
-      setLastFetchedAt(json.data.lastFetchedAt ?? null);
-      setLastFetchError(json.data.lastFetchError ?? null);
-    } catch {
-      setStatusReadError(t("status.readFailed"));
-    } finally {
-      setLoadingStatus(false);
-    }
-    // Both setters are useCallback([]) and so never change; listed because the
-    // exhaustive-deps rule cannot see that, and a silenced warning here is how
-    // a real missing dependency gets in later.
+      setError(null);
+      const data = result.data;
+      setResolvedBranch(data.branch);
+      setAhead(data.ahead);
+      setBehind(data.behind);
+      setHasRemoteBranch(data.hasRemoteBranch);
+      setConfiguredRemotes(data.configuredRemotes ?? []);
+      setRemoteFetchConfigured(data.remoteFetchConfigured ?? data.remoteConfigured ?? null);
+      setRemotePushConfigured(data.remotePushConfigured ?? data.remoteConfigured ?? null);
+      setFetchRemotes(data.fetchRemotes ?? data.configuredRemotes ?? []);
+      setPushRemotes(data.pushRemotes ?? data.configuredRemotes ?? []);
+      setLastFetchedAt(data.lastFetchedAt ?? null);
+      setLastFetchError(data.lastFetchError ?? null);
+    });
   }, [statusUrl, setError, setStatusReadError, t]);
 
+  const refreshStatus = useCallback(() => {
+    if (activeStatusUrl.current !== statusUrl) return Promise.resolve();
+    setLoadingStatus(true);
+    setError(null);
+    return loadStatus();
+  }, [statusUrl, loadStatus, setError]);
+
   useEffect(() => {
-    refreshStatus();
-  }, [refreshStatus]);
+    activeStatusUrl.current = statusUrl;
+    void loadStatus();
+    return () => {
+      activeStatusUrl.current = null;
+      statusRequest.current?.abort();
+    };
+  }, [loadStatus, statusUrl]);
 
   // Declared after the status effect on purpose: the branch counters are the
   // page's headline, so their request must go out first.
@@ -241,124 +236,75 @@ export default function GitSyncPage() {
     orphanCount,
     loading: worktreesLoading,
     error: worktreeError,
+    refresh: refreshWorktrees,
     prune: pruneWorktrees,
     pruning: pruningWorktrees,
   } = useWorktrees(projectId);
 
-  /**
-   * The server's own 409 for "this repository has no usable remote" — the one
-   * condition on these routes that is a precondition rather than a fault.
-   */
-  function isRemoteMissingResponse(res: Response, json: { code?: string }) {
-    return res.status === 409 && json?.code === "remote_not_configured";
+  async function exportJson() {
+    if (exportPending.current) return;
+    exportPending.current = true;
+    setExporting(true);
+    const result = await requestJson(`/api/projects/${projectId}/sync`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "export" }), errorMessage: t("arji.exportFailed") });
+    setError(result.error);
+    if (!result.error) setMessage(t("arji.exported"));
+    exportPending.current = false;
+    setExporting(false);
   }
 
-  /**
-   * Re-reads the status endpoint so the missing-remote panel comes from the
-   * server's view of the repository, then restores the message: `refreshStatus`
-   * clears `error` on entry, so setting it first would lose it.
-   */
-  async function reportMissingRemote(json: { error?: string }) {
-    showToast("error", t("remoteMissing.toast"));
-    await refreshStatus();
-    // The user pressed Push; this is their answer, not the status read's, and
-    // `setError` marks it as such.
-    setError(json?.error || t("remoteMissing.error"));
-  }
-
-  async function handlePull() {
-    setPulling(true);
+  async function synchronize(direction: "pull" | "push") {
+    if (operationPending.current) return;
+    operationPending.current = true;
+    statusRequest.current?.abort();
+    setLoadingStatus(false);
+    setPulling(direction === "pull");
+    setPushing(direction === "push");
     setError(null);
     setMessage(null);
-    setConflictDiffs([]);
-
-    try {
-      const res = await fetch(`/api/projects/${projectId}/git/pull`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          remote,
-          branch: branch.trim() || undefined,
-          autoResolveConflicts,
-          namedAgentId,
-          resumeSessionId,
-        }),
-      });
-
-      const json = await res.json();
-      if (res.status === 202) {
-        setMessage(t("pull.agentStarted", { sessionId: json.data?.sessionId }));
-        showToast("success", t("pull.agentStartedToast"));
-        await refreshStatus();
-        return;
-      }
-
-      if (res.status === 409 && json.conflicted) {
-        setError(json.error || t("pull.conflicts"));
-        showToast("error", t("pull.conflicts"));
-        setConflictDiffs(Array.isArray(json.conflictDiffs) ? json.conflictDiffs : []);
-        return;
-      }
-
-      if (isRemoteMissingResponse(res, json)) {
-        await reportMissingRemote(json);
-        return;
-      }
-
-      if (!res.ok) {
-        setError(json.error || t("pull.failed"));
-        showToast("error", json.error || t("pull.failed"));
-        return;
-      }
-
-      setMessage(t("pull.done"));
-      showToast("success", t("pull.doneToast"));
-      await refreshStatus();
-    } catch {
-      setError(t("pull.failed"));
-      showToast("error", t("pull.failed"));
-    } finally {
-      setPulling(false);
+    if (direction === "pull") setConflictDiffs([]);
+    const fallback = direction === "pull" ? t("pull.failed") : t("push.failed");
+    const response = await fetchJson<{
+      data?: { sessionId?: string }; error?: string; code?: string;
+      conflicted?: boolean; conflictDiffs?: ConflictDiff[];
+    }>(`/api/projects/${projectId}/git/${direction}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        remote, branch: branch.trim() || undefined,
+        ...(direction === "pull" ? { autoResolveConflicts, namedAgentId, resumeSessionId } : {}),
+      }),
+    });
+    if (activeStatusUrl.current === null) {
+      operationPending.current = false;
+      return;
     }
+    const json = response?.body;
+    if (response?.status === 409 && json?.code === "remote_not_configured") {
+      showToast("error", t("remoteMissing.toast"));
+      await refreshStatus();
+      setError(json.error || t("remoteMissing.error"));
+    } else if (direction === "pull" && response?.status === 409 && json?.conflicted) {
+      setError(json.error || t("pull.conflicts"));
+      showToast("error", t("pull.conflicts"));
+      setConflictDiffs(Array.isArray(json.conflictDiffs) ? json.conflictDiffs : []);
+    } else if (!response?.ok || !json || json.error) {
+      const message = json?.error || fallback;
+      setError(message);
+      showToast("error", message);
+    } else {
+      const agentStarted = direction === "pull" && response.status === 202;
+      setMessage(agentStarted ? t("pull.agentStarted", { sessionId: json.data?.sessionId ?? "" })
+        : direction === "pull" ? t("pull.done") : t("push.done"));
+      showToast("success", agentStarted ? t("pull.agentStartedToast")
+        : direction === "pull" ? t("pull.doneToast") : t("push.doneToast"));
+      await refreshStatus();
+    }
+    operationPending.current = false;
+    setPulling(false);
+    setPushing(false);
   }
 
-  async function handlePush() {
-    setPushing(true);
-    setError(null);
-    setMessage(null);
-
-    try {
-      const res = await fetch(`/api/projects/${projectId}/git/push`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          remote,
-          branch: branch.trim() || undefined,
-        }),
-      });
-
-      const json = await res.json();
-      if (isRemoteMissingResponse(res, json)) {
-        await reportMissingRemote(json);
-        return;
-      }
-
-      if (!res.ok) {
-        setError(json.error || t("push.failed"));
-        showToast("error", json.error || t("push.failed"));
-        return;
-      }
-
-      setMessage(t("push.done"));
-      showToast("success", t("push.doneToast"));
-      await refreshStatus();
-    } catch {
-      setError(t("push.failed"));
-      showToast("error", t("push.failed"));
-    } finally {
-      setPushing(false);
-    }
-  }
+  function handlePull() { return synchronize("pull"); }
+  function handlePush() { return synchronize("push"); }
 
   // `null` means the server could not read the remote list — unknown, not
   // missing, so the actions stay available.
@@ -429,11 +375,11 @@ export default function GitSyncPage() {
           </p>
         </div>
         <div className="ml-auto flex items-center gap-[9px]">
-          <Button
+          <PillButton
             variant="outline"
-            className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
+            size="md"
             onClick={refreshStatus}
-            disabled={loadingStatus}
+            disabled={loadingStatus || pulling || pushing}
           >
             {loadingStatus ? (
               <Loader2 className="h-[14px] w-[14px] animate-spin" />
@@ -441,7 +387,7 @@ export default function GitSyncPage() {
               <RefreshCw className="h-[14px] w-[14px]" />
             )}
             {t("header.refresh")}
-          </Button>
+          </PillButton>
         </div>
       </div>
 
@@ -457,9 +403,15 @@ export default function GitSyncPage() {
             ownerRepo={project.githubOwnerRepo}
             gitRepoPath={project.gitRepoPath}
             defaultBranch={project.defaultBranch}
+            snapshot={{ branch, ahead, behind, lastFetchedAt, loading: loadingStatus, error, refresh: () => { void refreshStatus(); }, push: () => { void handlePush(); }, pushing, worktreeCount: worktreesLoading || worktreeError ? null : worktrees.length, refreshWorktrees: () => { void refreshWorktrees(); } }}
           />
         ) : null}
 
+        <section className="space-y-2" aria-label={t("history.title")}>
+          <h3>{t("history.title")}</h3>
+          {logs.error && <p role="alert">{logs.error}</p>}
+          {logs.data?.map((log) => <p key={log.id} className="text-sm"><time>{log.createdAt}</time> · {log.operation} · {log.status}</p>)}
+        </section>
         <div className="flex min-h-0 gap-[22px]">
         <div className="flex min-w-0 flex-1 flex-col gap-[18px]">
           <div className="flex flex-col gap-[18px] rounded-[12px] border border-border bg-card p-[20px]">
@@ -475,6 +427,7 @@ export default function GitSyncPage() {
                   id="git-sync-remote"
                   value={remote}
                   onChange={(e) => setRemote(e.target.value)}
+                  disabled={pulling || pushing}
                   className="h-[34px] w-[160px] rounded-[8px] font-mono text-[12.5px]"
                 />
               </div>
@@ -488,7 +441,8 @@ export default function GitSyncPage() {
                 <Input
                   id="git-sync-branch"
                   value={branch}
-                  onChange={(e) => setBranch(e.target.value)}
+                  onChange={(e) => setBranchDraft(e.target.value)}
+                  disabled={pulling || pushing}
                   className="h-[34px] w-[160px] rounded-[8px] font-mono text-[12.5px]"
                 />
               </div>
@@ -579,15 +533,16 @@ export default function GitSyncPage() {
                       {t("remoteMissing.available")}
                     </span>
                     {recoveryRemotes.map((name) => (
-                      <Button
+                      <PillButton
                         key={name}
                         variant="outline"
+                        size="sm"
                         data-testid={`use-remote-${name}`}
-                        className="h-[27px] rounded-[8px] px-[10px] font-mono text-[12px]"
+                        className="font-mono"
                         onClick={() => setRemote(name)}
                       >
                         {t("remoteMissing.use", { remote: name })}
-                      </Button>
+                      </PillButton>
                     ))}
                   </div>
                 ) : (
@@ -610,10 +565,11 @@ export default function GitSyncPage() {
             )}
 
             <div className="flex gap-[10px]">
-              <Button
-                className="h-[31px] rounded-[8px] px-[13px] text-[13px]"
+              <PillButton
+                variant="filled"
+                size="md"
                 onClick={handlePull}
-                disabled={pulling || loadingStatus || fetchMissing}
+                disabled={pulling || pushing || loadingStatus || fetchMissing}
               >
                 {pulling ? (
                   <Loader2 className="h-[14px] w-[14px] animate-spin" />
@@ -621,12 +577,12 @@ export default function GitSyncPage() {
                   <ArrowDownToLine className="h-[14px] w-[14px]" />
                 )}
                 {t("actions.pull")}
-              </Button>
-              <Button
+              </PillButton>
+              <PillButton
                 variant="outline"
-                className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
+                size="md"
                 onClick={handlePush}
-                disabled={pushing || loadingStatus || pushMissing}
+                disabled={pushing || pulling || loadingStatus || pushMissing}
               >
                 {pushing ? (
                   <Loader2 className="h-[14px] w-[14px] animate-spin" />
@@ -634,7 +590,7 @@ export default function GitSyncPage() {
                   <ArrowUpToLine className="h-[14px] w-[14px]" />
                 )}
                 {t("actions.push")}
-              </Button>
+              </PillButton>
             </div>
 
             {message && <p className="text-[13px] text-agent">{message}</p>}
@@ -700,9 +656,10 @@ export default function GitSyncPage() {
             </span>
 
             {worktreeError ? (
-              <span className="text-[13px] leading-[1.55] text-muted-foreground">
-                {worktreeError}
-              </span>
+              <div role="alert" className="flex items-center gap-2 text-[13px] leading-[1.55] text-muted-foreground">
+                <span>{worktreeError}</span>
+                <PillButton variant="outline" size="sm" onClick={() => void refreshWorktrees()}>{t("header.refresh")}</PillButton>
+              </div>
             ) : worktrees.length === 0 ? (
               <span className="text-[13px] leading-[1.55] text-muted-foreground">
                 {worktreesLoading
@@ -760,6 +717,7 @@ export default function GitSyncPage() {
             <span className="text-[13.5px] leading-[1.55] text-muted-foreground">
               {t("arji.body")}
             </span>
+            <PillButton variant="filled" size="md" onClick={exportJson} disabled={exporting}>{t("arji.export")}</PillButton>
           </div>
         </aside>
         </div>

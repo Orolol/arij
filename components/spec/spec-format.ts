@@ -18,44 +18,7 @@ import type { PromptAnatomySegment } from "@/lib/tokens/estimator";
 /** The em dash every "unavailable numeral" collapses to. Never a zero. */
 export const EM_DASH = "—";
 
-/**
- * One row of the ANATOMIE DU PROMPT band: a named agent × role, sampled from
- * that pair's most recent session that stored a prompt breakdown.
- *
- * Shared between `app/api/projects/[projectId]/prompt-anatomy/route.ts` (which
- * produces it) and `components/spec/PromptAnatomyBand.tsx` (which draws it).
- */
-export interface PromptAnatomyRow {
-  /** `named_agents.id` when the session recorded one. */
-  agentId: string | null;
-  /** Display name, e.g. "Opus Builder". */
-  agentName: string;
-  /** BUILD | BUG FIX | REVIEW | MERGE FIX | CHAT & SPEC | <uppercased type>. */
-  role: string;
-  /** Token counts per drawn segment, already folded. Zero = draw nothing. */
-  segments: Record<PromptAnatomySegment, number>;
-  /** Best-effort labels appended inside a segment. Never fabricated. */
-  annotations: Partial<Record<"system" | "ticket", string>>;
-  /** Sum of the six segments — NOT the stored `estimatedPromptTokens`. */
-  total: number;
-  /** The sampled session's `createdAt`, for the row tooltip. */
-  sampledAt: string | null;
-  sessionId: string | null;
-}
-
-/**
- * Token counts as the frame prints them: `999`, `1.1k`, `14.2k`, `10k`.
- *
- * Anything unknown is an em dash — never `0k`, never a bare `0` standing in
- * for "we did not measure this".
- */
-export function formatTokens(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return EM_DASH;
-  if (value < 1000) return String(Math.round(value));
-  const thousands = (value / 1000).toFixed(1);
-  // "10.0k" reads as false precision; the frame writes "10k".
-  return `${thousands.endsWith(".0") ? thousands.slice(0, -2) : thousands}k`;
-}
+export type { PromptAnatomyRow } from "@/lib/types/prompt-anatomy";
 
 /**
  * The word count as the frame prints it: `1 240` in French (plain space),

@@ -9,7 +9,7 @@ import { catalogueValue } from "@/lib/i18n/catalogue";
  * options exist and how they are labelled — not the portal.
  */
 import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ComponentProps, ReactNode } from "react";
 
 import { TicketOverlay } from "@/components/ticket/TicketOverlay";
@@ -374,6 +374,17 @@ describe("TicketOverlay status control", () => {
 /* ------------------------------------------------------------------ */
 
 describe("TicketOverlay derived state", () => {
+  it("shows a refused review dispatch rather than silently swallowing it", async () => {
+    const sendToReview = vi.fn().mockRejectedValue(new Error("Provider unavailable"));
+    setDispatch({ sendToReview });
+    renderSubject();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Review now" }));
+    });
+    expect(sendToReview).toHaveBeenCalledWith(["feature_review"], null);
+    expect(screen.getByTestId("ticket-status-error")).toHaveTextContent("Provider unavailable");
+  });
+
   it("clears the status error and the reply draft when the ticket changes", async () => {
     updateEpic.mockResolvedValue({ ok: false, error: "Nope" });
     const { rerender } = renderSubject();

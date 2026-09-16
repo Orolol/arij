@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 
 /**
@@ -11,15 +11,17 @@ import { useGitHubConfig } from "@/hooks/useGitHubConfig";
  */
 function mockSettings(githubPat: unknown, ownerRepo: string | null = "owner/repo") {
   global.fetch = vi.fn().mockImplementation((url: string) => {
-    if (url.includes("/api/projects/")) {
+    if (url === "/api/projects") {
       return Promise.resolve({
-        json: () => Promise.resolve({ data: { githubOwnerRepo: ownerRepo } }),
+        ok: true,
+        json: () => Promise.resolve({ data: [{ id: "proj-1", githubOwnerRepo: ownerRepo }, { id: "p", githubOwnerRepo: ownerRepo }] }),
       });
     }
     return Promise.resolve({
+      ok: true,
       json: () =>
         Promise.resolve({
-          data: githubPat === undefined ? {} : { github_pat: githubPat },
+          data: { tokenSet: typeof githubPat === "object" && githubPat !== null && "hasToken" in githubPat && githubPat.hasToken === true },
         }),
     });
   });
@@ -99,13 +101,15 @@ describe("useGitHubConfig", () => {
 
   it("handles API errors gracefully", async () => {
     global.fetch = vi.fn().mockImplementation((url: string) => {
-      if (url.includes("/api/projects/")) {
+      if (url === "/api/projects") {
         return Promise.resolve({
+          ok: true,
           json: () => Promise.resolve({ error: "Project not found" }),
         });
       }
       return Promise.resolve({
-        json: () => Promise.resolve({ data: { github_pat: { hasToken: true } } }),
+        ok: true,
+        json: () => Promise.resolve({ data: { tokenSet: true } }),
       });
     });
 
@@ -147,5 +151,23 @@ describe("useGitHubConfig", () => {
     // Give it a tick to potentially fire
     await new Promise((r) => setTimeout(r, 50));
     expect(global.fetch).not.toHaveBeenCalled();
+  });
+
+  it("clears a previously configured project immediately when the project is removed", async () => {
+    mockSettings({ hasToken: true });
+    const view = renderHook(({ id }: { id?: string }) => useGitHubConfig(id), { initialProps: { id: "p" } as { id?: string } });
+    await waitFor(() => expect(view.result.current.isConfigured).toBe(true));
+    view.rerender({ id: undefined });
+    expect(view.result.current.isConfigured).toBe(false);
+    expect(view.result.current.ownerRepo).toBeNull();
+    expect(view.result.current.loading).toBe(false);
+  });
+
+  it("exposes an HTTP failure as unknown configuration even when the body resembles settings", async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ data: { githubOwnerRepo: "o/r", tokenSet: true } }), { status: 503 }));
+    const { result } = renderHook(() => useGitHubConfig("p"));
+    await act(async () => {});
+    expect(result.current.error).toBe(true);
+    expect(result.current.isConfigured).toBe(false);
   });
 });

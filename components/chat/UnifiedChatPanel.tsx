@@ -5,12 +5,8 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
-  useMemo,
-  useRef,
-  useState,
   type ReactNode,
 } from "react";
-import { useRouter } from "next/navigation";
 import { useTranslations } from "next-intl";
 import {
   MessageSquare,
@@ -25,27 +21,16 @@ import {
   ChatProposalCard,
   ChatWorkspaceHeader,
 } from "@/components/chat/ChatWorkspaceHeader";
-import { agentSelectionPatch } from "@/components/chat-page/agent-selection";
-import type { AgentSelection } from "@/components/shared/AgentSelectPill";
 import { MessageList } from "@/components/chat/MessageList";
 import { MessageInput } from "@/components/chat/MessageInput";
 import { QuestionCards } from "@/components/chat/QuestionCards";
-import { OPENAI_COMPATIBLE_PROVIDER } from "@/lib/agent-config/constants";
-import { useConversations } from "@/hooks/useConversations";
 import { usePanelLayout, DIVIDER_WIDTH, type UnifiedPanelState } from "@/hooks/usePanelLayout";
 import { usePolling } from "@/hooks/usePolling";
-import { useChat } from "@/hooks/useChat";
-import { useEpicCreate } from "@/hooks/useEpicCreate";
-import { useSpecGeneration } from "@/hooks/useSpecGeneration";
-import {
-  isBrainstormConversationAgentType,
-  isEpicCreationConversationAgentType,
-} from "@/lib/chat/conversation-agent";
 import {
   isLegacyConversationGenerating,
-  sortConversationsForLegacyParity,
 } from "@/lib/chat/parity-contract";
 import { cn } from "@/lib/utils";
+import { useChatWorkspace } from "@/hooks/useChatWorkspace";
 
 export type { UnifiedPanelState };
 
@@ -73,31 +58,17 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
     ref,
   ) {
     const t = useTranslations("ChatLegacy");
-    const router = useRouter();
-    const [, forceConversationRefresh] = useState(0);
-
     const {
-      conversations,
-      activeId,
-      setActiveId,
-      loading: conversationsLoading,
-      createConversation,
-      deleteConversation,
-      updateConversation,
-      restartPersistentSession,
-      refresh: refreshConversations,
-    } = useConversations(projectId);
-
-    const {
-      messages,
-      loading,
-      sending,
-      error: chatError,
-      pendingQuestions,
-      streamStatus,
-      sendMessage: rawSendMessage,
-      answerQuestions,
-    } = useChat(projectId, activeId);
+      conversations, activeId, setActiveId, conversationsLoading,
+      createConversation, deleteConversation, restartPersistentSession, refreshConversations,
+      messages, loading, error, pendingQuestions, streamStatus,
+      sendMessage, answerQuestions, activeConversation, activeProvider,
+      hasMessages, hasUserMessage, isBrainstorm, isEpicCreation,
+      busy: isCurrentConversationBusy, actionsDisabled, attachmentsDisabled,
+      selectAgent: handleSelectAgentOrProvider, createEpic: handleCreateEpic,
+      epicCreating, generateSpec, generatingSpec,
+    } = useChatWorkspace(projectId, onEpicCreated);
+    const tabConversations = conversations;
 
     const {
       containerRef,
@@ -115,67 +86,13 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       setActiveId,
     });
 
-    const activeConversation = useMemo(
-      () => conversations.find((conversation) => conversation.id === activeId) || null,
-      [conversations, activeId],
-    );
-
-    const tabConversations = useMemo(
-      () => sortConversationsForLegacyParity(conversations),
-      [conversations],
-    );
-
-    const { createEpic, isLoading: epicCreating, error: epicError } = useEpicCreate({
-      projectId,
-      conversationId: activeId,
-      sendMessage: rawSendMessage,
-    });
-
-    const activeProvider = activeConversation?.provider || "claude-code";
-
-    const {
-      generateSpec,
-      generating: generatingSpec,
-      error: specError,
-    } = useSpecGeneration(projectId, activeProvider);
-
-    const hasMessages = messages.length > 0;
-    const isBrainstorm = isBrainstormConversationAgentType(activeConversation?.type);
-    const isEpicCreation = isEpicCreationConversationAgentType(activeConversation?.type);
-    const hasUserMessage = messages.some((message) => message.role === "user");
     const canCreateEpic = isEpicCreation && hasUserMessage;
     const hasActiveAgents = conversations.some(
       (conversation) => isLegacyConversationGenerating(conversation.status),
     );
-    // The *current* conversation is busy when useChat is actively streaming
-    // OR when the DB status says "generating" (e.g. the user switched away and back).
-    const isCurrentConversationBusy =
-      sending || isLegacyConversationGenerating(activeConversation?.status);
-
-    const previousSending = useRef(sending);
-    useEffect(() => {
-      if (previousSending.current && !sending) {
-        const timer = setTimeout(() => refreshConversations(), 3000);
-        return () => clearTimeout(timer);
-      }
-      previousSending.current = sending;
-    }, [sending, refreshConversations]);
 
     // Only poll conversation status while the panel is visible.
     usePolling(refreshConversations, 3000, panelState !== "hidden", { immediate: false });
-
-    useEffect(() => {
-      if (!tabConversations.length) return;
-
-      if (!activeId) {
-        setActiveId(tabConversations[0].id);
-        return;
-      }
-
-      if (!tabConversations.some((conversation) => conversation.id === activeId)) {
-        setActiveId(tabConversations[0].id);
-      }
-    }, [activeId, setActiveId, tabConversations]);
 
     // The default `label` below is PERSISTED on the conversation row and read
     // back on every later render, so it stays out of the catalogue: a
@@ -189,7 +106,6 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
 
         if (created) {
           setActiveId(created.id);
-          forceConversationRefresh((value) => value + 1);
         }
 
         return created;
@@ -266,41 +182,11 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       onExpandedChange?.(panelState === "expanded" && !isMobile);
     }, [panelState, isMobile, onExpandedChange]);
 
-    const sendMessage = useCallback(
-      async (content: string, attachmentIds: string[]) => {
-        if (!activeId) return;
-        await rawSendMessage(content, attachmentIds);
-      },
-      [activeId, rawSendMessage],
-    );
-
-
-    async function handleSelectAgentOrProvider(selection: AgentSelection) {
-      if (!activeId || hasMessages) {
-        return;
-      }
-      // Shared with the chat page: a named agent owns its provider, and a raw
-      // provider has to clear the link explicitly or the stale agent keeps
-      // winning server-side.
-      const patch = agentSelectionPatch(selection);
-      if (!patch) return;
-      await updateConversation(activeId, patch);
-    }
-
-    async function handleCreateEpic() {
-      const epicId = await createEpic();
-      if (epicId) {
-        onEpicCreated?.();
-        router.refresh();
-      }
-    }
-
     async function closeTab(conversationId: string) {
       if (tabConversations.length <= 1) {
         return;
       }
       await deleteConversation(conversationId);
-      forceConversationRefresh((value) => value + 1);
     }
 
     const chatWorkspace = (
@@ -325,9 +211,9 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
           }
         />
 
-        {(epicError || specError || chatError) && (
-          <div className="mx-[18px] mt-2 rounded-[8px] border border-destructive/50 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
-            {epicError || specError || chatError}
+        {error && (
+          <div role="alert" className="mx-[18px] mt-2 rounded-[8px] border border-destructive/50 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
+            {error}
           </div>
         )}
 
@@ -356,6 +242,7 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
             showGenerateSpec={isBrainstorm}
             generatingSpec={generatingSpec}
             onGenerateSpec={generateSpec}
+            disabled={actionsDisabled}
             showCreateEpic={canCreateEpic}
             epicCreating={epicCreating}
             onCreateEpic={handleCreateEpic}
@@ -364,12 +251,13 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
 
         <MessageInput
           projectId={projectId}
+          conversationId={activeId}
           onSend={sendMessage}
           disabled={isCurrentConversationBusy || !activeConversation}
           placeholder={
             isEpicCreation ? t("input.epicPlaceholder") : t("input.placeholder")
           }
-          attachmentsDisabled={activeProvider === OPENAI_COMPATIBLE_PROVIDER}
+          attachmentsDisabled={attachmentsDisabled}
         />
       </div>
     );

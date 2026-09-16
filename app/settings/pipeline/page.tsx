@@ -50,7 +50,7 @@ export default function PipelineSettingsPage() {
         onDiscard={draft.discard}
         message={draft.message}
         messageTone={draft.messageTone}
-        disabled={draft.loadFailed}
+        disabled={!draft.loaded || draft.loadFailed}
       />
     </div>
   );

@@ -4,7 +4,6 @@ import {
   agentSessions,
   epics,
   reviewComments,
-  ticketActivityLog,
   ticketComments,
   userStories,
 } from "@/lib/db/schema";
@@ -14,6 +13,8 @@ import {
 } from "@/lib/dependencies/validation";
 import { isAwaitingReply } from "@/lib/kanban/awaiting-reply";
 import { compareExecutionOrder } from "@/lib/kanban/queue";
+import { BUILDABLE_STORY_STATUSES, selectBuildWork } from "@/lib/kanban/build-work";
+export { BUILDABLE_EPIC_STATUSES, BUILDABLE_STORY_STATUSES, STORY_PARENT_BUILDABLE_STATUSES } from "@/lib/kanban/build-work";
 import {
   evaluateMergeReadiness,
   hasFreshCleanReview,
@@ -22,13 +23,12 @@ import {
 import { epicSessionFactsCte } from "@/lib/workflow/review-freshness";
 import { blocksMergeSql } from "@/lib/workflow/blocking-findings";
 import { isDeliveredStatus } from "@/lib/types/kanban";
-import { normalizeAt } from "@/lib/agent-sessions/session-time";
-import { isPipelineRunActive } from "@/lib/pipeline/constants";
-import { listPipelineRunsByProject } from "@/lib/pipeline/registry";
-import { dagBatchRegistry } from "@/lib/agents/dag-batch-registry";
-import { nightRunRegistry } from "@/lib/night/registry";
+import { latestActivityTimestamp } from "@/lib/utils/timestamps";
+import { loadRegistryExclusions, epicDispatchHold } from "./exclusions";
+import { readReviewRejections } from "./review-rejections";
 import { autoModeRegistry } from "./registry";
 import { AUTO_MODE_MAX_REVIEW_REJECTIONS } from "./constants";
+import { processManager } from "@/lib/claude/process-manager";
 
 /**
  * Candidate selection for Full Auto Mode: which tickets may be built,
@@ -73,65 +73,6 @@ import { AUTO_MODE_MAX_REVIEW_REJECTIONS } from "./constants";
 /* ------------------------------------------------------------------ */
 
 const ACTIVE_SESSION_STATUSES = ["queued", "running"];
-
-/**
- * Epic statuses the supervisor may dispatch a build for. Backlog is NOT
- * buildable: the board's To Do / In Progress columns are the only execution
- * queue, and a backlog ticket is not in the queue. Position — not priority —
- * is the queue's order (see compareEpics); "Sort by priority" makes
- * priority visible in the order by rewriting positions in bulk.
- */
-export const BUILDABLE_EPIC_STATUSES: ReadonlySet<string> = new Set([
-  "todo",
-  "in_progress",
-]);
-
-/**
- * Story statuses the supervisor may dispatch a build for.
- *
- * Exported for the same reason as the epic set: `defaultDispatch`'s
- * last-moment guard (lib/auto-mode/engine.ts) re-checks the very statuses the
- * selector matched on, and a second copy of that vocabulary would drift.
- */
-export const BUILDABLE_STORY_STATUSES: ReadonlySet<string> = new Set([
-  "todo",
-  "in_progress",
-]);
-
-// The review/code freshness aggregates moved to lib/workflow/review-freshness.ts
-// so the board list query derives "ready to merge" from the very same SQL —
-// see lib/kanban/merge-readiness.ts for why one definition matters.
-
-/**
- * Epic statuses under which a STORY may still be built. Wider than
- * `BUILDABLE_EPIC_STATUSES` by one value, `review`, and deliberately so.
- *
- * A story added while an epic-scoped build was running stays `todo` while
- * the epic advances to `review` (docs/architecture/ticket-state-machine.md),
- * and so does a story added to an epic that already sits in Review. That
- * story still has to be written. `review → in_progress` is an allowed epic
- * transition (lib/workflow/engine.ts), so the shared dispatch transition
- * reopens the epic and the leftover story gets built — which is what the
- * supervisor did before the Backlog narrowing, and what
- * `selectMergeCandidates` counts on: it refuses to land an epic that still
- * has an unbuilt story, so the two rules together mean the story is finished
- * rather than merged around.
- *
- * Backlog stays excluded here: a Backlog epic is out of the execution queue
- * whether or not one of its stories looks ready.
- */
-export const STORY_PARENT_BUILDABLE_STATUSES: ReadonlySet<string> = new Set([
-  "todo",
-  "in_progress",
-  "review",
-  "to_merge",
-]);
-
-// normalizeAt lives in lib/agent-sessions/session-time.ts alongside the SQL
-// expression it mirrors — see that module for why the REPLACE is not
-// optional. Re-exported because this file's callers have always imported it
-// from here.
-export { normalizeAt };
 
 /* ------------------------------------------------------------------ */
 /* Public shapes                                                       */
@@ -285,34 +226,6 @@ export interface AutoModeBoard {
 }
 
 /**
- * Live in-memory owners of a ticket. Pipeline runs and night runs carry the
- * epics they own, so exclusion is per epic. A DAG wave batch does not
- * (DagBatchSnapshot has counts, not an epic list), so an active one blocks
- * the whole project — the same project-wide stance the batch route takes
- * when it refuses to start a night run over a live batch.
- */
-function loadRegistryExclusions(projectId: string): {
-  blockedEpicIds: Set<string>;
-  projectBlocked: boolean;
-} {
-  const blockedEpicIds = new Set<string>();
-
-  for (const run of listPipelineRunsByProject(projectId)) {
-    if (isPipelineRunActive(run.state)) blockedEpicIds.add(run.epicId);
-  }
-
-  const night = nightRunRegistry.getActiveByProject(projectId);
-  if (night) {
-    for (const entry of night.epics) blockedEpicIds.add(entry.epicId);
-  }
-
-  return {
-    blockedEpicIds,
-    projectBlocked: dagBatchRegistry.listByProject(projectId).length > 0,
-  };
-}
-
-/**
  * One board snapshot per sweep. Ten queries, all bounded by the project —
  * never one per ticket.
  */
@@ -351,9 +264,6 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
     list.push(story);
     storiesByEpic.set(story.epicId, list);
   }
-  for (const list of storiesByEpic.values()) {
-    list.sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-  }
 
   // 3. Active sessions — the bulk form of getRunningSessionForTarget.
   const activeRows = db
@@ -375,6 +285,13 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
   for (const row of activeRows) {
     if (row.epicId) busyEpicIds.add(row.epicId);
     if (row.userStoryId) busyStoryIds.add(row.userStoryId);
+  }
+
+  // Also include epics and stories occupied by sessions whose child processes
+  // have not completed teardown (e.g. cancelled sessions during SIGTERM grace / SIGKILL).
+  for (const occupying of processManager.listOccupyingSessions?.(projectId) ?? []) {
+    if (occupying.epicId) busyEpicIds.add(occupying.epicId);
+    if (occupying.userStoryId) busyStoryIds.add(occupying.userStoryId);
   }
 
   // 4 + 9. Review/code freshness facts per epic, and the blocking open
@@ -464,7 +381,7 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
       )`.as("latest_session_ended_at"),
       rowNum: sql<number>`ROW_NUMBER() OVER (
         PARTITION BY ${agentSessions.epicId}
-        ORDER BY ${agentSessions.createdAt} DESC, ${agentSessions.id} DESC
+        ORDER BY julianday(${agentSessions.createdAt}) DESC, ${agentSessions.id} DESC
       )`.as("session_row_num"),
     })
     .from(agentSessions)
@@ -496,7 +413,7 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
       )`.as("latest_story_session_ended_at"),
       rowNum: sql<number>`ROW_NUMBER() OVER (
         PARTITION BY ${agentSessions.userStoryId}
-        ORDER BY ${agentSessions.createdAt} DESC, ${agentSessions.id} DESC
+        ORDER BY julianday(${agentSessions.createdAt}) DESC, ${agentSessions.id} DESC
       )`.as("story_session_row_num"),
     })
     .from(agentSessions)
@@ -522,7 +439,7 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
   const latestEpicUserComments = db
     .select({
       epicId: ticketComments.epicId,
-      at: sql<string | null>`MAX(${ticketComments.createdAt})`,
+      at: sql<string | null>`strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(${ticketComments.createdAt})))`,
     })
     .from(ticketComments)
     .innerJoin(epics, eq(ticketComments.epicId, epics.id))
@@ -535,7 +452,7 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
   const latestStoryUserComments = db
     .select({
       userStoryId: ticketComments.userStoryId,
-      at: sql<string | null>`MAX(${ticketComments.createdAt})`,
+      at: sql<string | null>`strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(${ticketComments.createdAt})))`,
     })
     .from(ticketComments)
     .innerJoin(userStories, eq(ticketComments.userStoryId, userStories.id))
@@ -581,10 +498,7 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
     awaitingByStory.set(row.userStoryId, {
       latestSessionOutcome: row.outcome ?? null,
       latestSessionEndedAt: row.endedAt ?? null,
-      latestUserCommentCreatedAt:
-        replies.length > 0
-          ? replies.reduce((a, b) => (normalizeAt(a) >= normalizeAt(b) ? a : b))
-          : null,
+      latestUserCommentCreatedAt: latestActivityTimestamp(...replies),
     });
   }
 
@@ -594,52 +508,11 @@ export function loadAutoModeBoard(projectId: string): AutoModeBoard {
   // candidate.
   const dependencyGraph = loadProjectGraph(projectId);
 
-  // 11. Rejected reviews per epic — the review→in_progress bounces that the
-  // failure ladder cannot see, because each one is a cleanly completed
-  // session. Only entries newer than the epic's last user comment count, so a
-  // human replying to the ticket resets the budget (same un-park convention as
-  // lastUserCommentByEpic serves for the failure ladder).
-  const reviewRejectionRows = db
-    .select({
-      epicId: ticketActivityLog.epicId,
-      createdAt: ticketActivityLog.createdAt,
-    })
-    .from(ticketActivityLog)
-    .innerJoin(epics, eq(ticketActivityLog.epicId, epics.id))
-    .where(
-      and(
-        eq(epics.projectId, projectId),
-        eq(ticketActivityLog.fromStatus, "review"),
-        eq(ticketActivityLog.toStatus, "in_progress")
-      )
-    )
-    .all();
-
-  const reviewRejectionsByEpic = new Map<string, number>();
-  const lastReviewRejectionAtByEpic = new Map<string, string>();
-  for (const row of reviewRejectionRows) {
-    if (!row.epicId || !row.createdAt) continue;
-    const at = normalizeAt(row.createdAt);
-    const resetAt = epicUserCommentAt.get(row.epicId);
-    if (resetAt && at <= normalizeAt(resetAt)) continue;
-    reviewRejectionsByEpic.set(
-      row.epicId,
-      (reviewRejectionsByEpic.get(row.epicId) ?? 0) + 1
-    );
-    const previous = lastReviewRejectionAtByEpic.get(row.epicId);
-    if (!previous || at > previous) {
-      lastReviewRejectionAtByEpic.set(row.epicId, at);
-    }
-  }
+  const { reviewRejectionsByEpic, lastReviewRejectionAtByEpic } = readReviewRejections(
+    db, epicRows.map((epic) => epic.id), epicUserCommentAt,
+  );
 
   const { blockedEpicIds, projectBlocked } = loadRegistryExclusions(projectId);
-
-  // An epic with merge work outstanding is off-limits to EVERY selector: git
-  // is not transactional, and a merge (plus any conflict-agent retry) owns the
-  // branch until it settles.
-  for (const epicId of autoModeRegistry.mergingEpicIds(projectId)) {
-    blockedEpicIds.add(epicId);
-  }
 
   return {
     projectId,
@@ -687,12 +560,7 @@ export function isReviewRejectionBudgetSpent(
 
 /** Epic-level exclusions every selector applies before looking at status. */
 function isEpicSelectable(board: AutoModeBoard, epic: EpicRow): boolean {
-  if (board.projectBlocked) return false;
-  if (isDeliveredStatus(epic.status)) return false;
-  if (board.blockedEpicIds.has(epic.id)) return false;
-  if (board.busyEpicIds.has(epic.id)) return false;
-  if (board.parkedTicketIds.has(epic.id)) return false;
-  if (isReviewRejectionBudgetSpent(board, epic.id)) return false;
+  if (isDeliveredStatus(epic.status) || epicDispatchHold(board, epic.id)) return false;
   const awaiting = board.awaitingByEpic.get(epic.id);
   if (awaiting && isAwaitingReply(awaiting)) return false;
   return true;
@@ -784,47 +652,24 @@ export function selectBuildCandidates(
     if (!isEpicSelectable(board, epic)) continue;
     if (blockedByDeps.has(epic.id)) continue;
 
-    const stories = board.storiesByEpic.get(epic.id) ?? [];
-
-    if (stories.length === 0) {
-      // A storyless epic IS the unit of work, so it must be in the execution
-      // queue itself: Backlog is out, and so is `review`, where the epic is
-      // waiting for a verdict rather than for code.
-      if (!BUILDABLE_EPIC_STATUSES.has(epic.status ?? "")) continue;
-      candidates.push({
-        scope: "epic",
-        epicId: epic.id,
-        userStoryId: null,
-        ticketId: epic.id,
-        title: epic.title,
-        readableId: epic.readableId,
-      });
-      continue;
-    }
-
-    // Story scope: the first buildable story by position. The parent may sit
-    // in todo, in_progress or review (see STORY_PARENT_BUILDABLE_STATUSES);
-    // the shared dispatch transition moves both parent and story to
-    // in_progress before the queued session row is created. A story-scoped
-    // dispatch must never pull a Backlog epic into the queue that way.
-    if (!STORY_PARENT_BUILDABLE_STATUSES.has(epic.status ?? "")) continue;
-
-    const next = stories.find((story) => {
-      if (!BUILDABLE_STORY_STATUSES.has(story.status ?? "")) return false;
-      if (board.busyStoryIds.has(story.id)) return false;
-      if (board.parkedTicketIds.has(story.id)) return false;
-      const awaiting = board.awaitingByStory.get(story.id);
-      if (awaiting && isAwaitingReply(awaiting)) return false;
-      return true;
-    });
-    if (!next) continue;
-
+    const work = selectBuildWork(
+      epic.status,
+      board.storiesByEpic.get(epic.id) ?? [],
+      (story) => {
+        if (board.busyStoryIds.has(story.id)) return true;
+        if (board.parkedTicketIds.has(story.id)) return true;
+        const awaiting = board.awaitingByStory.get(story.id);
+        return awaiting !== undefined && isAwaitingReply(awaiting);
+      },
+    );
+    if (!work) continue;
+    const story = work.scope === "story" ? work.story : null;
     candidates.push({
-      scope: "story",
+      scope: work.scope,
       epicId: epic.id,
-      userStoryId: next.id,
-      ticketId: next.id,
-      title: next.title,
+      userStoryId: story?.id ?? null,
+      ticketId: story?.id ?? epic.id,
+      title: story?.title ?? epic.title,
       readableId: epic.readableId,
     });
   }

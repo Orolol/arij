@@ -52,7 +52,7 @@ export const CHAT_BOARD_TOOL_DEFINITIONS: OpenAiToolDefinition[] = [
     function: {
       name: "list_tickets",
       description:
-        "List the tickets (epics) on this project's kanban board: id, readable id, title, status column, type, priority and user-story progress. Use it to read the board before answering questions about it.",
+        "List the tickets (epics) on this project's ticket registry: id, readable id, title, status column, type, priority and user-story progress. Use it to read the board before answering questions about it.",
       parameters: {
         type: "object",
         properties: {
@@ -511,22 +511,9 @@ async function updateTicketStatus(
 /** Comment length cap, mirroring the mcp__arij__post_comment contract. */
 const COMMENT_CHAR_LIMIT = 8000;
 
-/**
- * Agent-authored comment insert. Uses the epic comments route rather than
- * /api/mcp/post-comment: the MCP route links the comment to its session id,
- * and the chat turn's minted session has no agent_sessions row to satisfy
- * the ticket_comments FK. Agent authorship skips mention validation there
- * exactly like the MCP route does.
- */
-async function postAgentComment(
-  ctx: ChatBoardToolContext,
-  epicId: string,
-  content: string,
-): Promise<ApiResult> {
-  return apiFetch(ctx, "POST", `/api/projects/${ctx.projectId}/epics/${epicId}/comments`, {
-    author: "agent",
-    content,
-  });
+/** Same authenticated MCP path as CLI chat; synthetic sessions are supported. */
+async function postAgentComment(ctx: ChatBoardToolContext, epicId: string, content: string): Promise<ApiResult> {
+  return apiFetch(ctx, "POST", "/api/mcp/post-comment", { ticket_id: epicId, body: content }, true);
 }
 
 async function postComment(

@@ -124,11 +124,12 @@ line, the `git_sync_log` row — goes through `redactGitError()`, which strips
 the injected `Basic` header, URL userinfo, bearer tokens, raw GitHub token
 shapes, and any exact secret the caller passes in.
 
-> **Known gap.** `pushGitBranch()`, `pullGitBranchWithConflictSupport()` and
-> the release tagging in `lib/git/remote.ts` / `lib/git/release.ts` still run
-> unauthenticated. They predate the import flow and are unaffected by it, but a
-> private repository imported this way will need a credential helper for push
-> until they route through the same authenticated transport.
+`pushGitBranch()`, `pullGitBranchWithConflictSupport()`, remote fetches and
+release tag pushes use `runAuthenticatedGit()`: a per-invocation GitHub HTTPS
+header, a non-interactive environment and credential-redacted failures. The
+status refresh passes an abort signal with a four-second timeout, terminating
+the fetch instead of leaving a child process behind. No credential is written
+to the repository configuration.
 
 ## Default branch
 
@@ -150,7 +151,7 @@ imports cleanly and builds its first epic on the right branch.
 | Property | Where it is enforced |
 |---|---|
 | A pasted string can never escape the clone root | `parseGitHubRepoInput()` (`lib/git/github-url.ts`) re-validates owner and repo against `^[A-Za-z0-9._-]+$` and rejects `.`, a leading `-`, and any embedded `..` — stricter than filesystem-level need, matching the belt-and-braces posture of `validatePath()` |
-| …even if it did | `assertInsideRoot()` (`lib/projects/workspace-path.ts`) resolves the destination and refuses anything that is not a strict descendant of the root |
+| …even if it did | `resolveCloneDestination()` (`lib/projects/workspace.ts`) re-checks the segment then `isInsideProjectsRoot()` refuses anything that is not a strict descendant of the root |
 | An existing directory is never overwritten | matching repository → fetch and reuse; anything else → `409 conflict` naming what is in the way. The clone itself is assembled in a private staging directory and renamed into place only on success |
 | A failed clone leaves nothing behind | the staging directory is removed on every failure path; a destination that appeared mid-clone is left untouched |
 | Two concurrent imports of one repo do not race | clones are serialized per destination (`lib/git/clone-lock.ts`) |
@@ -185,7 +186,7 @@ can be added without touching the clone service.
 | URL grammar, traversal payloads, parser properties | `__tests__/github-repo-input-parsing.test.ts` |
 | Client-side parser stays importable without simple-git | `__tests__/github-url-client-parser.test.ts` |
 | Server and client parse with one grammar | `__tests__/github-remote-grammar-parity.test.ts` |
-| Clone root, destination, containment | `__tests__/clone-lifecycle-guards.test.ts`, `__tests__/workspace-path-guard.test.ts` |
+| Clone root, destination, containment | `__tests__/clone-lifecycle-guards.test.ts` |
 | git argv, staging, reuse fetch, error classification (simple-git mocked) | `__tests__/git-clone-command.test.ts` |
 | Real clones against local `file://` repositories | `__tests__/git-clone-service.test.ts` |
 | Redaction | `__tests__/git-clone-redaction.test.ts` |

@@ -103,7 +103,7 @@ export function ReleaseHeaderCluster({
         variant="filled"
         size="md"
         icon={GitMerge}
-        disabled={pushing || ahead === 0}
+        disabled={pushing || loading || Boolean(error) || ahead === 0}
         pending={pushing}
         pendingLabel={t("controls.pushing")}
         onClick={() => void push()}

@@ -95,7 +95,7 @@ const PROJECT_NAME_CLASS: Record<ProjectTone, string> = {
 };
 
 export function ProjectBarRow({ bar }: { bar: UsageProjectBar }) {
-  const tone = resolveProjectTone(bar.colorIndex, bar.projectId);
+  const tone = resolveProjectTone(bar.projectId);
 
   return (
     <Row

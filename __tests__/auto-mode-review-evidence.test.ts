@@ -26,6 +26,9 @@ vi.mock("@/lib/pipeline/stages", () => ({
   createPipelineStageDriver: vi.fn(() => ({
     checkGuards: driverMocks.checkGuards,
     launchStage: driverMocks.launchStage,
+    // A simple agent: null means "no composite ladder", so the dispatched
+    // attempt stays 1 whatever the ticket's failure streak is.
+    compositeMemberCount: vi.fn(async () => null),
     runDeterministicVerification: vi.fn(),
   })),
 }));
@@ -78,6 +81,7 @@ function dispatchReview() {
     buildNamedAgentId: null,
     reviewNamedAgentId: null,
     ownSessionIds: [],
+    consecutiveFailures: 0,
   });
 }
 
@@ -197,6 +201,7 @@ describe("Full Auto review dispatch — verification evidence", () => {
       buildNamedAgentId: null,
       reviewNamedAgentId: null,
       ownSessionIds: [],
+      consecutiveFailures: 0,
     });
 
     // The report is for the reviewer's prompt; a build has nothing to do

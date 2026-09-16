@@ -1,6 +1,6 @@
 import { db } from "@/lib/db";
 import { ticketDependencies, epics } from "@/lib/db/schema";
-import { eq, and, or } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { isBuildableStatus, isDeliveredStatus } from "@/lib/types/kanban";
 
 export class CycleError extends Error {
@@ -10,6 +10,13 @@ export class CycleError extends Error {
     super(`Dependency cycle detected: ${chain}`);
     this.name = "CycleError";
     this.cycle = cycle;
+  }
+}
+
+export class DependencyTargetNotFoundError extends Error {
+  constructor(ticketId: string) {
+    super(`Ticket "${ticketId}" not found`);
+    this.name = "DependencyTargetNotFoundError";
   }
 }
 
@@ -168,7 +175,7 @@ export function validateSameProject(
       .get();
 
     if (!epic) {
-      throw new Error(`Ticket "${id}" not found`);
+      throw new DependencyTargetNotFoundError(id);
     }
 
     if (epic.projectId !== projectId) {

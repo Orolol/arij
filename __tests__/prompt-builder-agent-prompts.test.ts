@@ -79,7 +79,7 @@ describe("Prompt builders with resolved system prompts", () => {
     expect(techCheck).toContain("Comprehensive Tech Check");
   });
 
-  it("buildReviewPrompt supports built-in and custom review agents", () => {
+  it("buildReviewPrompt renders the built-in checklist for a review type", () => {
     const builtIn = buildReviewPrompt(
       project,
       docs,
@@ -88,23 +88,9 @@ describe("Prompt builders with resolved system prompts", () => {
       "security",
       "Built-in system prompt"
     );
-    const custom = buildReviewPrompt(
-      project,
-      docs,
-      { title: "Epic 1" },
-      story,
-      {
-        name: "UI Review",
-        systemPrompt: "Review layout consistency and visual hierarchy.",
-      },
-      "Custom system prompt"
-    );
 
     expect(builtIn).toContain("Security Audit Checklist");
     expect(builtIn).toContain("Built-in system prompt");
-    expect(custom).toContain("Custom Review Agent Instructions");
-    expect(custom).toContain("UI Review");
-    expect(custom).toContain("layout consistency");
   });
 
   it("reuses shared project/doc/story sections in epic-level review prompts", () => {

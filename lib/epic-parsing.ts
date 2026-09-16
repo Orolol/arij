@@ -3,7 +3,7 @@
  * Extracted from useEpicCreate.ts so it can be tested independently.
  */
 
-export interface ParsedUserStory {
+interface ParsedUserStory {
   title: string;
   description: string | null;
   acceptanceCriteria: string | null;
@@ -15,7 +15,7 @@ export interface ParsedEpic {
   userStories: ParsedUserStory[];
 }
 
-export interface ConversationMessage {
+interface ConversationMessage {
   role: string;
   content: string;
 }
@@ -24,7 +24,7 @@ function cleanLine(input: string): string {
   return input.replace(/\*\*/g, "").replace(/^["'`]+|["'`]+$/g, "").trim();
 }
 
-export function extractJsonCandidates(content: string): string[] {
+function extractJsonCandidates(content: string): string[] {
   const candidates: string[] = [];
 
   // 1. Code-fenced JSON blocks

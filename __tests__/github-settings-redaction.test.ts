@@ -30,7 +30,7 @@ describe("GET /api/settings - GitHub PAT redaction", () => {
     ];
 
     const { GET } = await import("@/app/api/settings/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/settings"));
     const json = await response.json();
 
     // The API returns { hasToken: true } instead of the raw token
@@ -50,7 +50,7 @@ describe("GET /api/settings - GitHub PAT redaction", () => {
     ];
 
     const { GET } = await import("@/app/api/settings/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/settings"));
     const json = await response.json();
 
     expect(json.data.global_prompt).toBe("My custom prompt");
@@ -67,7 +67,7 @@ describe("GET /api/settings - GitHub PAT redaction", () => {
     ];
 
     const { GET } = await import("@/app/api/settings/route");
-    const response = await GET();
+    const response = await GET(new Request("http://localhost/api/settings"));
     const json = await response.json();
 
     // Short tokens also return { hasToken: true }

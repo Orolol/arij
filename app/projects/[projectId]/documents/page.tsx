@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams } from "next/navigation";
 import { UploadZone } from "@/components/documents/UploadZone";
 import { ScanProjectDialog } from "@/components/documents/ScanProjectDialog";
@@ -15,7 +15,7 @@ import { isInternalMemoryDocKind } from "@/lib/documents/memory-constants";
 interface Doc {
   id: string;
   originalFilename: string;
-  kind: "text" | "image";
+  kind: "text" | "image" | "spec_proposal";
   markdownContent: string | null;
   imagePath: string | null;
   mimeType: string | null;
@@ -24,67 +24,71 @@ interface Doc {
 }
 
 export default function DocumentsPage() {
-  const locale = useLocale();
-  const t = useTranslations("ProjectDocuments");
   const params = useParams();
   const projectId = params.projectId as string;
+  return <ProjectDocuments key={projectId} projectId={projectId} />;
+}
+
+function ProjectDocuments({ projectId }: { projectId: string }) {
+  const locale = useLocale();
+  const t = useTranslations("ProjectDocuments");
   const [documents, setDocuments] = useState<Doc[]>([]);
-  const [selectedDoc, setSelectedDoc] = useState<Doc | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selectedDoc = documents.find((doc) => doc.id === selectedId) ?? null;
+  const readSequence = useRef(0);
+  const deleteInFlight = useRef(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const loadDocs = useCallback(async () => {
-    setError(null);
-    const res = await fetch(`/api/projects/${projectId}/documents`);
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      setError(data.error || t("page.loadFailed"));
-      return;
+    const request = ++readSequence.current;
+    try {
+      const res = await fetch(`/api/projects/${projectId}/documents`);
+      const payload = await res.json().catch(() => ({}));
+      if (request !== readSequence.current) return;
+      if (!res.ok || !Array.isArray(payload.data)) {
+        setError(payload.error || t("page.loadFailed"));
+        return;
+      }
+      // Learned memory has a separate editor; never offer it as an upload.
+      const docs = payload.data.filter((doc: { kind: string }) => !isInternalMemoryDocKind(doc.kind));
+      setDocuments(docs);
+      setError(null);
+    } catch {
+      if (request === readSequence.current) setError(t("page.loadFailed"));
     }
-    // The learned project memory and its pre-dream snapshot live in the same
-    // table but have their own editor card in the Spec & Memory section — keep
-    // them out of the uploads list so they cannot be casually deleted like a
-    // reference document. The GET route filters them too; this is the same rule
-    // applied at both ends.
-    const docs = (
-      (data.data || []) as Array<Omit<Doc, "kind"> & { kind: string }>
-    ).filter((doc) => !isInternalMemoryDocKind(doc.kind)) as Doc[];
-    setDocuments(docs);
-    setSelectedDoc((prev) => (prev && !docs.some((doc) => doc.id === prev.id) ? null : prev));
   }, [projectId, t]);
 
   useEffect(() => {
-    loadDocs();
+    let active = true;
+    void Promise.resolve().then(() => { if (active) void loadDocs(); });
+    return () => { active = false; readSequence.current += 1; };
   }, [loadDocs]);
 
-  function handleUploaded() {
-    loadDocs();
-  }
+  const handleUploaded = useCallback(() => { void loadDocs(); }, [loadDocs]);
 
   async function handleDelete(doc: Doc) {
+    if (deleteInFlight.current) return;
+    deleteInFlight.current = true;
     setDeletingId(doc.id);
     setError(null);
-
     try {
-      const res = await fetch(
-        `/api/projects/${projectId}/documents/${doc.id}`,
-        { method: "DELETE" }
-      );
-      const data = await res.json().catch(() => ({}));
+      const res = await fetch(`/api/projects/${projectId}/documents/${doc.id}`, { method: "DELETE" });
+      const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(
-          data.error || t("page.deleteFailed", { name: doc.originalFilename })
-        );
-        return;
+        setError(payload.error || t("page.deleteFailed", { name: doc.originalFilename }));
+      } else {
+        // Invalidate pending reads before updating the list; a late initial read
+        // must not resurrect this document, including after a failed refresh.
+        readSequence.current += 1;
+        setDocuments((current) => current.filter((row) => row.id !== doc.id));
+        setSelectedId((current) => current === doc.id ? null : current);
       }
-
-      if (selectedDoc?.id === doc.id) {
-        setSelectedDoc(null);
-      }
-      await loadDocs();
-    } finally {
-      setDeletingId(null);
+    } catch {
+      setError(t("page.deleteFailed", { name: doc.originalFilename }));
     }
+    deleteInFlight.current = false;
+    setDeletingId(null);
   }
 
   // The figures stay exactly as `toFixed` prints them — they are passed as
@@ -125,7 +129,7 @@ export default function DocumentsPage() {
                 )}
               >
                 <button
-                  onClick={() => setSelectedDoc(doc)}
+                  onClick={() => setSelectedId(doc.id)}
                   className="flex flex-col gap-[10px] text-left"
                 >
                   <FileText className="h-[17px] w-[17px] text-meta" />
@@ -138,7 +142,7 @@ export default function DocumentsPage() {
                   </span>
                 </button>
                 <span className="w-fit rounded-full bg-band px-[9px] py-[3px] text-[11.5px] text-muted-foreground">
-                  {doc.kind}
+                  {doc.kind === "spec_proposal" ? t("page.specProposal") : doc.kind}
                 </span>
                 <Button
                   variant="ghost"
@@ -151,7 +155,7 @@ export default function DocumentsPage() {
                   }
                   className="absolute right-[10px] top-[10px] h-[26px] w-[26px] p-0 text-meta hover:text-destructive"
                   onClick={() => handleDelete(doc)}
-                  disabled={deletingId === doc.id}
+                  disabled={deletingId !== null}
                 >
                   <Trash2 className="h-[13px] w-[13px]" />
                 </Button>
@@ -166,7 +170,7 @@ export default function DocumentsPage() {
               {t("page.empty")}
             </p>
           )}
-          {error && <p className="text-[13px] text-destructive">{error}</p>}
+          {error && <p role="alert" className="text-[13px] text-destructive">{error}</p>}
 
           {selectedDoc && (
             <div className="flex flex-col gap-[10px]">
@@ -182,15 +186,16 @@ export default function DocumentsPage() {
                   size="sm"
                   aria-label={t("page.closePreview")}
                   className="ml-auto h-[26px] w-[26px] p-0 text-meta"
-                  onClick={() => setSelectedDoc(null)}
+                  onClick={() => setSelectedId(null)}
                 >
                   <X className="h-[14px] w-[14px]" />
                 </Button>
               </div>
               <DocumentViewer
-                kind={selectedDoc.kind}
+                kind={selectedDoc.kind === "image" ? "image" : "text"}
                 markdownContent={selectedDoc.markdownContent}
                 imagePath={selectedDoc.imagePath}
+                imageUrl={`/api/projects/${projectId}/documents/${selectedDoc.id}/image`}
               />
             </div>
           )}

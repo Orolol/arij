@@ -1,17 +1,18 @@
-import { and, asc, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { routines, type Routine } from "@/lib/db/schema";
 import {
-  isDailyRoutineKind,
   isAvailableRoutineKind,
+  isDailyRoutineKind,
   isSameLocalDay,
   RETENTION_CHUNKS_RECLAIM_PENDING_AT_CONFIG_KEY,
   RETENTION_PROMPTS_VACUUMED_AT_CONFIG_KEY,
   RETENTION_VACUUMED_AT_CONFIG_KEY,
-  type AvailableRoutineKind,
   TIME_OF_DAY_PATTERN,
+  type AvailableRoutineKind,
 } from "@/lib/routines/constants";
 import { createId } from "@/lib/utils/nanoid";
+import { nightRoutineConfigSchema } from "@/lib/validation/build-schemas";
+import { and, asc, eq } from "drizzle-orm";
 
 const INTERNAL_CONFIG_KEYS = new Set([
   "ciWatchState",
@@ -142,49 +143,8 @@ function validateConfig(
   assertConfigObject(config);
 
   if (kind === "night_run") {
-    optionalBoolean(config, "includeBacklog");
-    const failurePolicy = config.failurePolicy;
-    if (
-      failurePolicy !== undefined &&
-      failurePolicy !== "halt" &&
-      failurePolicy !== "stop"
-    ) {
-      throw new RoutineInputError(
-        "`config.failurePolicy` must be `halt` or `stop`.",
-      );
-    }
-    const circuitBreaker = config.circuitBreaker;
-    if (
-      circuitBreaker !== undefined &&
-      (!Number.isInteger(circuitBreaker) ||
-        (circuitBreaker as number) < 0 ||
-        (circuitBreaker as number) > 10)
-    ) {
-      throw new RoutineInputError(
-        "`config.circuitBreaker` must be an integer between 0 and 10.",
-      );
-    }
-    const costCapUsd = config.costCapUsd;
-    if (
-      costCapUsd !== undefined &&
-      (typeof costCapUsd !== "number" ||
-        !Number.isFinite(costCapUsd) ||
-        costCapUsd <= 0)
-    ) {
-      throw new RoutineInputError(
-        "`config.costCapUsd` must be a positive number.",
-      );
-    }
-    const namedAgentId = config.namedAgentId;
-    if (
-      namedAgentId !== undefined &&
-      namedAgentId !== null &&
-      typeof namedAgentId !== "string"
-    ) {
-      throw new RoutineInputError(
-        "`config.namedAgentId` must be a string or null.",
-      );
-    }
+    const parsed = nightRoutineConfigSchema.safeParse(config);
+    if (!parsed.success) throw new RoutineInputError(parsed.error.issues.map((issue) => `config.${issue.path.join(".")}: ${issue.message}`).join("; "));
     return;
   }
 

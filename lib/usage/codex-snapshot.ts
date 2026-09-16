@@ -13,12 +13,10 @@ import type { CodexLiveQuota } from "@/lib/types/usage";
 /**
  * Filesystem side of the codex quota capture.
  *
- * Arij's OWN stream logs (`data/logs/*.ndjson`) never contain `rate_limits` —
- * verified by grep over both log trees. The only place codex records account
- * quota is its own rollout transcript under `~/.codex/sessions`, which every
- * codex run persists (Arij's `buildArgs` passes neither `--json` nor
- * `--ephemeral`, so Arij-spawned runs land there too, alongside the user's
- * interactive sessions).
+ * The only place codex records account quota is its own rollout transcript
+ * under `~/.codex/sessions`, which every codex run persists (Arij's `buildArgs`
+ * passes neither `--json` nor `--ephemeral`, so Arij-spawned runs land there
+ * too, alongside the user's interactive sessions).
  *
  * Reads only. Spawning a CLI to ask for quota is forbidden: it would burn the
  * user's subscription to render a dashboard.
@@ -113,7 +111,6 @@ export function findRecentRolloutFiles(
  */
 function storeSnapshot(
   snapshot: ParsedRateLimitSnapshot,
-  sourceFile: string,
 ): void {
   const existing = db
     .select()
@@ -133,7 +130,6 @@ function storeSnapshot(
     secondaryUsedPercent: snapshot.secondary?.usedPercent ?? null,
     secondaryWindowMinutes: snapshot.secondary?.windowMinutes ?? null,
     secondaryResetsAt: snapshot.secondary?.resetsAt ?? null,
-    sourceFile,
     rawJson: snapshot.rawJson,
     updatedAt: new Date().toISOString(),
   };
@@ -189,8 +185,6 @@ export function storeCodexLiveSnapshot(
           : null,
         rawJson: rawRateLimitsJson,
       },
-      // Provenance marker, not a path — the column is free text.
-      "live:codex-app-server",
     );
   } catch (error) {
     console.warn("[usage] codex live snapshot store failed:", error);
@@ -219,7 +213,7 @@ export function refreshCodexUsageSnapshot(root?: string): void {
       if (!snapshot) continue;
       // Absolute so the stored provenance stays meaningful regardless of the
       // process cwd at scan time.
-      storeSnapshot(snapshot, path.resolve(filePath));
+      storeSnapshot(snapshot);
       return;
     }
   } catch (error) {

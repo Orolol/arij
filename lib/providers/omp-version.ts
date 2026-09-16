@@ -38,7 +38,7 @@
  * See docs/architecture/mcp-provider-matrix.md.
  */
 
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
 
 /**
  * First omp release measured to honour `--tools` for the tools Arij withholds.
@@ -101,21 +101,45 @@ export function ompAllowlistIsEnforced(
 }
 
 /**
- * Only a trusted verdict is memoised. A refusal is re-probed on the next spawn
- * so that a user who reacts to the error by running `omp update` is unblocked
- * without restarting the Arij server.
+ * A trusted verdict is memoised for the life of the process. A refusal is
+ * memoised only briefly (REFUSAL_MEMO_MS): long enough that a burst of
+ * restricted spawns on a too-old install does not repeat the asynchronous
+ * `omp --version` (≈300 ms, up to the 5 s timeout when the binary hangs) on
+ * every one of them, short enough that a user who reacts to the error by
+ * running `omp update` is unblocked without restarting the Arij server.
  */
+let pendingProbe: Promise<OmpVersionProbe> | null = null;
 let trustedVersion: string | null = null;
+let refusal: { probe: OmpVersionProbe; until: number } | null = null;
+
+/** How long a refusal (absent, unreadable or too-old omp) is remembered. */
+export const OMP_REFUSAL_MEMO_MS = 5000;
 
 /** Reads `omp --version`. Never throws. */
-export function probeOmpVersion(): OmpVersionProbe {
+export async function probeOmpVersion(): Promise<OmpVersionProbe> {
   if (trustedVersion) return { status: "ok", version: trustedVersion };
+  if (refusal && refusal.until > Date.now()) return refusal.probe;
+  refusal = null;
+  if (pendingProbe) return pendingProbe;
+  pendingProbe = readOmpVersion();
+  const probe = await pendingProbe;
+  pendingProbe = null;
+  if (probe.status === "ok" && ompAllowlistIsEnforced(probe.version)) {
+    trustedVersion = probe.version;
+  } else {
+    refusal = { probe, until: Date.now() + OMP_REFUSAL_MEMO_MS };
+  }
+  return probe;
+}
+
+async function readOmpVersion(): Promise<OmpVersionProbe> {
   let output: string;
   try {
-    output = execFileSync("omp", ["--version"], {
-      encoding: "utf-8",
-      timeout: 5000,
-      stdio: ["ignore", "pipe", "pipe"],
+    output = await new Promise<string>((resolve, reject) => {
+      execFile("omp", ["--version"], { encoding: "utf-8", timeout: 5000 }, (error, stdout) => {
+        if (error) reject(error);
+        else resolve(stdout ?? "");
+      });
     });
   } catch (error) {
     const code = (error as NodeJS.ErrnoException | undefined)?.code;
@@ -132,7 +156,6 @@ export function probeOmpVersion(): OmpVersionProbe {
       detail: shown ? `unrecognised output ${JSON.stringify(shown)}` : "no output",
     };
   }
-  if (ompAllowlistIsEnforced(version)) trustedVersion = version;
   return { status: "ok", version };
 }
 
@@ -143,8 +166,8 @@ export function probeOmpVersion(): OmpVersionProbe {
  * it: one-shot plan/chat/analyze sessions and the persistent RPC chat runner.
  * Code-mode spawns pass no allowlist, claim no isolation, and are not gated.
  */
-export function ompRestrictedToolsBlockReason(): string | null {
-  const probe = probeOmpVersion();
+export async function ompRestrictedToolsBlockReason(): Promise<string | null> {
+  const probe = await probeOmpVersion();
 
   // Not installed: let the spawn fail with its own "CLI not found" message.
   if (probe.status === "absent") return null;
@@ -174,7 +197,9 @@ export function ompRestrictedToolsBlockReason(): string | null {
   return null;
 }
 
-/** Test-only: drop the memoised trusted version. */
+/** Test-only: drop the memoised trusted version and any remembered refusal. */
 export function resetOmpVersionProbeForTests(): void {
   trustedVersion = null;
+  pendingProbe = null;
+  refusal = null;
 }

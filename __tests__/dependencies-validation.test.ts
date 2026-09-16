@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   detectCycle,
-  topologicalSort,
-  getTransitiveDependencies,
   findTicketsBlockedByDependencies,
 } from "@/lib/dependencies/validation";
 

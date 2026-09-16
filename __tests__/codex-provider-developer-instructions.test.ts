@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
-const { mockSpawn, mockCreateStreamLog } = vi.hoisted(() => ({
+const { mockSpawn } = vi.hoisted(() => ({
   mockSpawn: vi.fn(),
-  mockCreateStreamLog: vi.fn(),
 }));
 
 vi.mock("child_process", () => {
@@ -25,63 +24,12 @@ vi.mock("fs", () => ({
   },
 }));
 
-vi.mock("@/lib/claude/logger", () => ({
-  createStreamLog: mockCreateStreamLog,
-  appendStreamEvent: vi.fn(),
-  appendStderrEvent: vi.fn(),
-  endStreamLog: vi.fn(),
-}));
-
 import { CodexProvider } from "@/lib/providers/codex";
 import { CODEX_SUBAGENT_DEVELOPER_INSTRUCTIONS } from "@/lib/codex/constants";
 import type { ProviderSpawnOptions } from "@/lib/providers/types";
-
-type Listener = (...args: unknown[]) => void;
+import { createFakeChild, type FakeChild } from "./helpers/fake-child";
 
 /** Fake child process whose stdout/stderr/exit events tests can drive. */
-function createFakeChild() {
-  const listeners = new Map<string, Listener[]>();
-  const stdoutListeners: Array<(chunk: Buffer) => void> = [];
-  const stderrListeners: Array<(chunk: Buffer) => void> = [];
-
-  return {
-    stdout: {
-      on: (event: string, fn: (chunk: Buffer) => void) => {
-        if (event === "data") stdoutListeners.push(fn);
-      },
-    },
-    stderr: {
-      on: (event: string, fn: (chunk: Buffer) => void) => {
-        if (event === "data") stderrListeners.push(fn);
-      },
-    },
-    on: (event: string, fn: Listener) => {
-      const arr = listeners.get(event) ?? [];
-      arr.push(fn);
-      listeners.set(event, arr);
-    },
-    kill: vi.fn(),
-    killed: false,
-    // Real ChildProcess fields the kill path reads: a live child reports a
-    // pid and null exit fields, which is what routes the signal to the group.
-    pid: 4242,
-    exitCode: null as number | null,
-    signalCode: null as NodeJS.Signals | null,
-    emitStdout(text: string) {
-      for (const fn of stdoutListeners) fn(Buffer.from(text));
-    },
-    emitStderr(text: string) {
-      for (const fn of stderrListeners) fn(Buffer.from(text));
-    },
-    emitClose(code: number | null) {
-      for (const fn of listeners.get("close") ?? []) fn(code);
-    },
-    emitError(err: Error) {
-      for (const fn of listeners.get("error") ?? []) fn(err);
-    },
-  };
-}
-
 function baseOptions(overrides: Partial<ProviderSpawnOptions> = {}): ProviderSpawnOptions {
   return {
     sessionId: "test-session",
@@ -92,7 +40,7 @@ function baseOptions(overrides: Partial<ProviderSpawnOptions> = {}): ProviderSpa
   };
 }
 
-let fakeChild: ReturnType<typeof createFakeChild>;
+let fakeChild: FakeChild;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -118,7 +66,7 @@ describe("CodexProvider.spawn", () => {
     expect(args[args.indexOf("-c") + 1]).toContain("developer_instructions=");
   });
 
-  it("uses the codex exec resume subcommand for cliSessionId + resumeSession", () => {
+  it("ignores resumeSession — codex is excluded from every resume path", () => {
     const provider = new CodexProvider();
     provider.spawn(
       baseOptions({
@@ -131,15 +79,12 @@ describe("CodexProvider.spawn", () => {
     expect(mockSpawn).toHaveBeenCalledOnce();
     expect(mockSpawn.mock.calls[0][0]).toBe("codex");
     const args = mockSpawn.mock.calls[0][1] as string[];
-    expect(args.slice(0, 3)).toEqual(["exec", "resume", "cli-abc-123"]);
-    expect(args).toContain("--dangerously-bypass-approvals-and-sandbox");
-    expect(args).toContain("--skip-git-repo-check");
-    // resume mode does not support -C / -o / --color / -s
-    expect(args).not.toContain("-C");
-    expect(args).not.toContain("-o");
-    expect(args).not.toContain("--color");
-    expect(args).not.toContain("-s");
-    // Prompt is the trailing positional argument
+    // The `exec resume <ID>` branch is gone: codex never reports its thread
+    // id, so `isResumableProvider` excludes it and this argv cannot be built
+    // from any dispatch path. A plain exec is what comes out.
+    expect(args[0]).toBe("exec");
+    expect(args).not.toContain("resume");
+    expect(args).not.toContain("cli-abc-123");
     expect(args[args.length - 1]).toBe("continue working");
   });
 
@@ -162,10 +107,7 @@ describe("CodexProvider.spawn", () => {
   it("still passes all other options through", () => {
     const provider = new CodexProvider();
     provider.spawn(
-      baseOptions({
-        model: "gpt-5.3-codex",
-        logIdentifier: "test-log",
-      })
+      baseOptions({ model: "gpt-5.3-codex" })
     );
 
     expect(mockSpawn).toHaveBeenCalledOnce();
@@ -174,12 +116,6 @@ describe("CodexProvider.spawn", () => {
     expect(args[args.length - 1]).toBe("implement feature");
     // Spawn cwd comes from options
     expect(mockSpawn.mock.calls[0][2]).toMatchObject({ cwd: "/tmp/test" });
-    // NDJSON logging keeps the codex-<logIdentifier> naming
-    expect(mockCreateStreamLog).toHaveBeenCalledWith(
-      "codex-test-log",
-      ["codex", ...args],
-      "implement feature"
-    );
   });
 
   it("returns a session with codex-<sessionId> handle and redacted command", () => {
@@ -267,6 +203,16 @@ describe("CodexProvider exit handling", () => {
   it("reports cancellation when killed before close", async () => {
     // Fake setTimeout so the 5s SIGKILL escalation timer never lingers
     vi.useFakeTimers({ toFake: ["setTimeout"] });
+    // Never signal a real process group from a test: the fake child's pid is
+    // made up. The liveness probe answers "alive", the group signal answers
+    // ESRCH, so the cancel falls back to the child handle.
+    vi.spyOn(process, "kill").mockImplementation((_pid, signal) => {
+      const alive = fakeChild.exitCode === null && fakeChild.signalCode === null;
+      if (signal === 0 && alive) return true;
+      const error = new Error("ESRCH") as NodeJS.ErrnoException;
+      error.code = "ESRCH";
+      throw error;
+    });
     try {
       const provider = new CodexProvider();
       const session = provider.spawn(baseOptions());
@@ -274,6 +220,9 @@ describe("CodexProvider exit handling", () => {
       session.kill();
       expect(fakeChild.kill).toHaveBeenCalledWith("SIGTERM");
 
+      // The child dies on SIGTERM: the close handler's teardown wait sees a
+      // signalled handle and a gone group, and resolves at once.
+      fakeChild.signalCode = "SIGTERM";
       fakeChild.emitClose(null);
       const result = await session.promise;
       expect(result.success).toBe(false);

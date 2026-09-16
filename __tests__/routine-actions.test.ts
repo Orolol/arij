@@ -5,8 +5,8 @@ const buildRouteMocks = vi.hoisted(() => ({
   post: vi.fn(),
 }));
 
-vi.mock("@/app/api/projects/[projectId]/build/route", () => ({
-  POST: buildRouteMocks.post,
+vi.mock("@/lib/build/dispatch", () => ({
+  dispatchBatchBuild: buildRouteMocks.post,
 }));
 
 import {
@@ -80,6 +80,7 @@ describe("executeRoutineAction", () => {
     expect(actionDeps.launchNightRun).toHaveBeenCalledWith("project-1", {
       epicIds: ["epic-1", "epic-2"],
       mode: "dag",
+      team: false,
       pipeline: true,
       failurePolicy: "stop",
       namedAgentId: "agent-1",
@@ -119,19 +120,17 @@ describe("executeRoutineAction", () => {
     const result = await executeRoutineAction(routine(), realHandoffDeps);
 
     expect(buildRouteMocks.post).toHaveBeenCalledTimes(1);
-    const [request, context] = buildRouteMocks.post.mock.calls[0] as [
-      Request,
-      { params: Promise<{ projectId: string }> },
-    ];
-    expect(await request.json()).toEqual({
+    const [projectId, body] = buildRouteMocks.post.mock.calls[0];
+    expect(projectId).toBe("project-1");
+    expect(body).toEqual({
       epicIds: ["epic-1"],
       mode: "dag",
+      team: false,
       pipeline: true,
       failurePolicy: "halt",
       namedAgentId: null,
     });
-    await expect(context.params).resolves.toEqual({ projectId: "project-1" });
-    expect(result.targetUrl).toContain("night-canonical");
+
   });
 
   it("uses the existing GitHub issue-sync TTL before forcing a sync", async () => {

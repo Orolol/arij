@@ -22,13 +22,6 @@ vi.mock("fs", () => ({
 }));
 
 // Mock the logger to avoid side effects
-vi.mock("@/lib/claude/logger", () => ({
-  createStreamLog: vi.fn(),
-  appendStreamEvent: vi.fn(),
-  appendStderrEvent: vi.fn(),
-  endStreamLog: vi.fn(),
-}));
-
 // Mock the json-parser to avoid side effects
 vi.mock("@/lib/claude/json-parser", () => ({
   hasAskUserQuestion: vi.fn(() => false),

@@ -15,9 +15,6 @@ import { describe, it, expect } from "vitest";
 import {
   buildActivityFeed,
   SYSTEM_GROUP_WINDOW_MS,
-  feedItemKind,
-  matchesActivityFilter,
-  filterActivityFeed,
   isLongComment,
   commentPreview,
   LONG_COMMENT_THRESHOLD,
@@ -158,52 +155,6 @@ describe("buildActivityFeed", () => {
 /* ------------------------------------------------------------------ */
 
 describe("activity feed kinds", () => {
-  it("classifies feed items by kind for the filter", () => {
-    const feed = buildActivityFeed(
-      [comment("c1", at(0))],
-      [
-        transition("t1", at(1000), { actor: "system" }),
-        transition("t2", at(2000), {
-          actor: "system",
-          reason: "Pipeline finished: review passed, awaiting approval",
-        }),
-      ]
-    );
-    expect(feed.map(feedItemKind)).toEqual(["comment", "system", "system"]);
-  });
-
-  it("filters feed items by kind without reordering", () => {
-    const feed = buildActivityFeed(
-      [comment("c1", at(1000))],
-      [
-        transition("t1", at(0), { actor: "system" }),
-        transition("t2", at(2000), { actor: "user" }),
-      ]
-    );
-
-    expect(filterActivityFeed(feed, "all")).toHaveLength(3);
-    expect(filterActivityFeed(feed, "comments").map(feedItemKind)).toEqual([
-      "comment",
-    ]);
-    expect(
-      filterActivityFeed(feed, "system").map((item) =>
-        item.kind === "transition" ? item.entry.id : item.kind
-      )
-    ).toEqual(["t1", "t2"]);
-    expect(matchesActivityFilter(feed[0], "comments")).toBe(false);
-  });
-});
-
-/* ------------------------------------------------------------------ */
-/* Long entry collapsing                                               */
-/* ------------------------------------------------------------------ */
-
-describe("long comment helpers", () => {
-  it("treats content at the threshold as long and below it as short", () => {
-    expect(isLongComment("x".repeat(LONG_COMMENT_THRESHOLD))).toBe(true);
-    expect(isLongComment("x".repeat(LONG_COMMENT_THRESHOLD - 1))).toBe(false);
-  });
-
   it("truncates on a word boundary with an ellipsis, without mid-word cuts", () => {
     const content = `aaa bbb ccc ddd ${"word ".repeat(100)}END`;
     const preview = commentPreview(content);

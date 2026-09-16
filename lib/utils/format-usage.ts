@@ -19,8 +19,13 @@ export function formatCostUsd(value: number | null | undefined): string | null {
 }
 
 /**
- * Formats a token count compactly: 830 -> "830", 12480 -> "12.5k",
+ * THE token-count formatter: 830 -> "830", 12480 -> "12.5k",
  * 3400000 -> "3.4M".
+ *
+ * One rule for every surface. The spec anatomy bar and the chat context rail
+ * used to carry their own copy with different suffixes ("10k", "0.8k") and a
+ * hard-coded em-dash; they now import this and supply their own placeholder,
+ * which is what `null` is for.
  */
 export function formatTokens(value: number | null | undefined): string | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;

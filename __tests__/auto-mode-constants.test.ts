@@ -127,7 +127,9 @@ describe("auto-mode setting keys", () => {
 
     const emitted = Object.values(AUTO_MODE_REASONS).map((reason) =>
       typeof reason === "function"
-        ? reason(1 as never, "x" as never, 1 as never, 1 as never)
+        ? // Cast rather than matched arity: this proves the PREFIX, and a
+          // reason with more parameters must not fail the check.
+          (reason as (...args: unknown[]) => string)(...Array(6).fill("x"))
         : reason
     );
     for (const reason of emitted) {

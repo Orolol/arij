@@ -48,12 +48,13 @@ function readStoredValue(key: string): string | null {
 const noStoredValue = () => null;
 
 /** Write `key` and notify this tab; `storage` events only reach *other* tabs. */
-export function writeStoredValue(key: string, value: string) {
+export function writeStoredValue(key: string, value: string | null) {
   if (typeof window === "undefined") {
     return;
   }
   try {
-    window.localStorage.setItem(key, value);
+    if (value === null) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, value);
   } catch {
     // ignore storage write failures
   }

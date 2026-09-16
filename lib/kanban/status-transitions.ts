@@ -136,18 +136,3 @@ export function ticketStatusOptions(
     return { status, labelKey, isCurrent: false, enabled: true, disabledReasonKey: null };
   });
 }
-
-/**
- * Whether a given target is selectable from `current` — the single question
- * the status control answers per option. Exported for tests and for callers
- * that only need the boolean.
- */
-export function isTicketTransitionSelectable(
-  current: string,
-  to: string,
-  ctx: TicketStatusContext = {}
-): boolean {
-  return ticketStatusOptions(current, ctx).find(
-    (option) => option.status === to
-  )?.enabled ?? false;
-}

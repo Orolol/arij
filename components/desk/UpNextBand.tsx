@@ -1,5 +1,7 @@
 "use client";
 
+import type { BuildQueueHold } from "@/lib/kanban/build-work";
+import type { TranslationKey } from "@/lib/i18n/catalogue";
 import * as React from "react";
 import { useTranslations } from "next-intl";
 
@@ -18,19 +20,12 @@ import type {
 import { cn } from "@/lib/utils";
 
 /**
- * UP NEXT — the pool-blue stratum: the order Full Auto will pick from.
+ * UP NEXT — parent tickets in execution order.
  *
- * The header's meta is a HINT, not a counter ("the order Full Auto picks
- * from"), and the band has no count at all. That is deliberate in the frame
- * and it is also honest here: the ranks come from `compareExecutionOrder` in
- * lib/kanban/queue.ts, which IS `compareEpics` in lib/auto-mode/select.ts —
- * one function, so the column shows the supervisor's own order rather than a
- * lookalike. Dependency-blocked and awaiting-reply tickets are skipped by both
- * sides too.
- *
- * The one thing this column still cannot see: the in-process registry's parked
- * tickets and pipeline/night-run claims. They are not in the database and no
- * API exposes them, so a parked ticket keeps its rank here.
+ * Ranks share parent/story availability, questions, dependencies, runtime
+ * ownership, parking and review rejection budgets with the supervisor. Its
+ * dispatch also considers stories under review/to_merge parents and available
+ * capacity. This band opens tickets; it does not promise immediate execution.
  *
  * NO DRAG-AND-DROP. Order is execution order; re-prioritising happens in the
  * ticket overlay or in Refinement, which rewrite `epics.position` deliberately.
@@ -90,10 +85,19 @@ export function chipRank(ticket: DeskQueueTicket): QueueChipRank {
  * `chipLabel` composes, it does not hold copy. A ticket with no readable id
  * passes an empty one, which is why every branch still trims.
  */
+const HOLD_COPY: Record<BuildQueueHold, TranslationKey> = {
+  owned: "Desk.upNext.holds.owned",
+  busy: "Desk.upNext.holds.busy",
+  parked: "Desk.upNext.holds.parked",
+  review_rejections: "Desk.upNext.holds.reviewRejections",
+};
+
 export interface ChipLabelCopy {
   blocked: (id: string) => string;
   awaiting: (id: string) => string;
   spec: (label: string) => string;
+  noBuildable?: (label: string) => string;
+  held?: (label: string, hold: BuildQueueHold) => string;
 }
 
 export function chipLabel(ticket: DeskQueueTicket, copy: ChipLabelCopy): string {
@@ -105,6 +109,8 @@ export function chipLabel(ticket: DeskQueueTicket, copy: ChipLabelCopy): string 
     return copy.awaiting(id).trim();
   }
   const base = `${id} ${ticket.title}`.trim();
+  if (ticket.hold) return copy.held?.(base, ticket.hold) ?? base;
+  if (ticket.noBuildableStories) return copy.noBuildable?.(base) ?? base;
   return ticket.specOnly ? copy.spec(base) : base;
 }
 
@@ -145,11 +151,14 @@ export function UpNextBand({
   className,
 }: UpNextBandProps) {
   const t = useTranslations("Desk");
+  const tKey = useTranslations();
   const rows = upNext.filter((row) => row.tickets.length > 0);
   const chipCopy: ChipLabelCopy = {
     blocked: (id) => t("upNext.chipBlocked", { id }),
     awaiting: (id) => t("upNext.chipAwaiting", { id }),
     spec: (label) => t("upNext.chipSpec", { label }),
+    noBuildable: (label) => t("upNext.chipNoBuildable", { label }),
+    held: (label, hold) => t("upNext.chipHeld", { label, reason: tKey(HOLD_COPY[hold]) }),
   };
 
   return (
@@ -226,7 +235,10 @@ export function UpNextBand({
                   title={
                     ticket.blockedBy.length > 0
                       ? t("upNext.blockedBy", { ids: ticket.blockedBy.join(", ") })
-                      : ticket.title
+                      : ticket.hold ? tKey(HOLD_COPY[ticket.hold])
+                      : ticket.noBuildableStories
+                        ? t("upNext.noBuildableStories")
+                        : ticket.title
                   }
                   className={cn(
                     CHIP_BASE,

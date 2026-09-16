@@ -26,7 +26,7 @@ vi.mock("@/lib/git/remote", async () => {
 });
 
 vi.mock("@/lib/github/sync-log", () => ({
-  writeGitSyncLog: mockWriteGitSyncLog,
+  logSyncOperation: mockWriteGitSyncLog,
 }));
 
 describe("GET /api/projects/[projectId]/github/detect", () => {

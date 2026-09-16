@@ -1,49 +1,25 @@
-import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { epics, agentSessions, ticketComments } from "@/lib/db/schema";
-import { eq, and } from "drizzle-orm";
+import {
+  createAgentAlreadyRunningPayload,
+  getRunningSessionForTarget,
+} from "@/lib/agents/concurrency";
 import {
   getEpicOr404,
   getProjectOr404,
   isErrorResponse,
 } from "@/lib/api/route-helpers";
+import { autoModeRegistry } from "@/lib/auto-mode/registry";
+import { db } from "@/lib/db";
+import { agentSessions, epics, ticketComments } from "@/lib/db/schema";
 import { mergeWorktree, type MergeWorktreeResult } from "@/lib/git/manager";
 import { tryExportArjiJson } from "@/lib/sync/export";
-import { createId } from "@/lib/utils/nanoid";
-import { processManager } from "@/lib/claude/process-manager";
-import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
-import {
-  classifySessionOutcome,
-  extractSessionUsage,
-  resolveSessionOutput,
-} from "@/lib/claude/resolve-session-output";
-import {
-  createQueuedSession,
-  markSessionRunning,
-  markSessionTerminal,
-  isSessionLifecycleConflictError,
-} from "@/lib/agent-sessions/lifecycle";
-import {
-  createAgentAlreadyRunningPayload,
-  getRunningSessionForTarget,
-} from "@/lib/agents/concurrency";
-import { autoModeRegistry } from "@/lib/auto-mode/registry";
-import { agentScheduler } from "@/lib/agents/scheduler";
-import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completion";
-import { applyTransition } from "@/lib/workflow/transition-service";
-import { resolveOpenReviewComments } from "@/lib/workflow/merge-approval";
-import { logTransition } from "@/lib/workflow/log";
-import {
-  buildMergeBlockedReason,
-  buildMergeConflictMarkersBlockedReason,
-} from "@/lib/workflow/merge-failure";
-import {
-  createApproveMergeFailedNotification,
-  createMergeRetryFailedNotification,
-} from "@/lib/notifications/create";
 import type { KanbanStatus } from "@/lib/types/kanban";
-import fs from "fs";
-import path from "path";
+import { createId } from "@/lib/utils/nanoid";
+import { logTransition } from "@/lib/workflow/log";
+import { resolveOpenReviewComments } from "@/lib/workflow/merge-approval";
+import { buildMergeBlockedReason, buildMergeConflictMarkersBlockedReason } from "@/lib/workflow/merge-failure";
+import { applyTransition } from "@/lib/workflow/transition-service";
+import { and, eq } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(
   request: NextRequest,
@@ -51,13 +27,7 @@ export async function POST(
 ) {
   const { projectId, epicId } = await params;
 
-  let autoAgent = false;
-  try {
-    const body = await request.json();
-    autoAgent = body?.autoAgent === true;
-  } catch {
-    // No body or invalid JSON — defaults to false
-  }
+
 
   const foundProject = getProjectOr404(projectId, { requireGitRepo: true });
   if (isErrorResponse(foundProject)) return foundProject;
@@ -204,193 +174,6 @@ export async function POST(
     });
   }
 
-  // Merge failed — if autoAgent is enabled, launch a merge-fix agent
-  if (autoAgent && worktreePath) {
-    // Check concurrency guard
-    const conflict = getRunningSessionForTarget({
-      scope: "epic",
-      projectId,
-      epicId,
-    });
-    if (conflict) {
-      return NextResponse.json(
-        {
-          error: `${result.error || "Merge failed"} — an agent is already running for this epic, so no merge-fix agent was launched.`,
-        },
-        { status: 500 }
-      );
-    }
-
-    const mergeSystemPrompt = await resolveAgentPrompt("merge", projectId);
-    const prompt = [
-      mergeSystemPrompt,
-      `The branch "${epic.branchName}" failed to merge into main.`,
-      `Error: ${result.error || "Unknown merge conflict"}`,
-      "",
-      "Resolve the merge conflicts and complete the merge. Steps:",
-      `1. In the worktree at ${worktreePath}, run: git merge main`,
-      "2. Resolve all conflicts in the affected files",
-      "3. Stage and commit the resolution",
-      "4. Verify the build still passes",
-    ].filter(Boolean).join("\n");
-
-    const sessionId = createId();
-    const now = new Date().toISOString();
-    const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-    fs.mkdirSync(logsDir, { recursive: true });
-    const logsPath = path.join(logsDir, "logs.json");
-
-    const cliSessionId = crypto.randomUUID();
-
-    createQueuedSession({
-      id: sessionId,
-      projectId,
-      epicId,
-      mode: "code",
-      orchestrationMode: "solo",
-      provider: "claude-code",
-      prompt,
-      logsPath,
-      branchName: epic.branchName,
-      worktreePath,
-      cliSessionId,
-      agentType: "merge",
-      namedAgentName: null,
-      model: null,
-      createdAt: now,
-    });
-
-    // Scheduled merge-fix launch: spawn when a slot frees, wait for
-    // completion, then attempt the merge again (no retry cap).
-    agentScheduler.submit(projectId, sessionId, async () => {
-      markSessionRunning(sessionId);
-      processManager.start(sessionId, {
-        mode: "code",
-        prompt,
-        cwd: worktreePath,
-        allowedTools: ["Edit", "Write", "Bash", "Read", "Glob", "Grep"],
-        cliSessionId,
-      });
-
-      const info = await waitForProcessCompletion(sessionId);
-
-      const completedAt = new Date().toISOString();
-      const agentResult = info?.result;
-
-      try {
-        fs.writeFileSync(logsPath, JSON.stringify(agentResult, null, 2));
-      } catch {
-        // ignore
-      }
-
-      try {
-        markSessionTerminal(
-          sessionId,
-          {
-            success: !!agentResult?.success,
-            error: agentResult?.error || null,
-            outcome: classifySessionOutcome(agentResult, sessionId),
-            usage: extractSessionUsage(agentResult),
-          },
-          completedAt
-        );
-      } catch (error) {
-        if (!isSessionLifecycleConflictError(error)) {
-          console.error("[merge/auto-agent] Failed to finalize session", error);
-        }
-      }
-
-      // If agent succeeded, attempt merge again
-      if (agentResult?.success) {
-        const retryResult = await mergeWorktree(
-          project.gitRepoPath!,
-          epic.branchName!,
-          worktreePath,
-          { defaultBranch: project.defaultBranch }
-        );
-        if (retryResult.merged) {
-          const currentStatus = (db
-            .select({ status: epics.status })
-            .from(epics)
-            .where(eq(epics.id, epicId))
-            .get()?.status ?? "to_merge") as KanbanStatus;
-          const transition = applyTransition({
-            projectId,
-            epicId,
-            fromStatus: currentStatus,
-            toStatus: "done",
-            actor: "agent",
-            source: "merge",
-            reason: "Merge-fix agent resolved conflicts and merged",
-            sessionId,
-          });
-          if (transition.valid) {
-            // After the transition, never before (lib/workflow/merge-approval.ts).
-            resolveOpenReviewComments(epicId);
-            db.update(epics)
-              .set({ branchName: null, updatedAt: new Date().toISOString() })
-              .where(eq(epics.id, epicId))
-              .run();
-          }
-          tryExportArjiJson(projectId);
-        } else {
-          // The agent claimed success but the retry merge STILL failed —
-          // e.g. it committed the conflict markers, tripping the marker
-          // guard. This closure has no HTTP response left to carry the
-          // failure, so leave a trail or the user never learns why the epic
-          // did not close.
-          const retryError = retryResult.error || "Merge failed";
-          try {
-            db.insert(ticketComments)
-              .values({
-                id: createId(),
-                epicId,
-                author: "agent",
-                content: `**Merge-fix agent finished, but the merge still failed.** ${retryError}\n\nThe epic keeps its current status. Use Resolve Merge to land the branch.`,
-                agentSessionId: sessionId,
-                createdAt: completedAt,
-              })
-              .run();
-
-            createMergeRetryFailedNotification({
-              projectId,
-              epicId,
-              sessionId,
-              error: retryError,
-            });
-          } catch (trailError) {
-            console.error(
-              "[merge/auto-agent] Failed to record the merge-failure trail:",
-              trailError
-            );
-          }
-        }
-      }
-
-      // Post output as epic comment
-      const mergeOutput = resolveSessionOutput(agentResult, sessionId);
-
-      db.insert(ticketComments)
-        .values({
-          id: createId(),
-          epicId,
-          author: "agent",
-          content: mergeOutput,
-          agentSessionId: sessionId,
-          createdAt: completedAt,
-        })
-        .run();
-    });
-
-    return NextResponse.json({
-      data: {
-        merged: false,
-        autoAgent: true,
-        sessionId,
-        error: result.error || "Merge failed — agent launched to resolve",
-      },
-    });
-  }
 
   const mergeError = result.error || "Merge failed";
   const isConflict = result.reason === "conflict";
@@ -412,11 +195,6 @@ export async function POST(
       })
       .run();
 
-    createApproveMergeFailedNotification({
-      projectId,
-      epicId,
-      error: mergeError,
-    });
 
     logTransition({
       projectId,
@@ -448,6 +226,7 @@ export async function POST(
       {
         error: `Merge failed: ${mergeError}. The ticket stays in ${epic.status} — resolve the conflict (Resolve with Agent) and merge again.`,
         reason: "conflict",
+        code: "MERGE_CONFLICT",
         conflictFiles: result.conflictFiles,
         mergeFailed: true,
       },
@@ -470,6 +249,7 @@ export async function POST(
     {
       error: result.error || "Merge failed",
       reason: result.reason ?? "error",
+      code: result.reason === "conflict" ? "MERGE_CONFLICT" : "MERGE_FAILED",
     },
     { status: 500 }
   );

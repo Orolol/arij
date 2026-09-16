@@ -640,19 +640,3 @@ export async function* streamOpenAiChatEvents(
   }
 }
 
-/**
- * Text-only view over streamOpenAiChatEvents: yields content deltas as
- * plain strings. Kept for callers that never advertise tools.
- */
-export async function* streamOpenAiChatCompletion(
-  config: OpenAiConfig,
-  messages: OpenAiChatMessage[],
-  signal?: AbortSignal,
-  timeoutMs = 60000,
-): AsyncGenerator<string, void, unknown> {
-  for await (const event of streamOpenAiChatEvents(config, messages, { signal, timeoutMs })) {
-    if (event.type === "text") {
-      yield event.text;
-    }
-  }
-}

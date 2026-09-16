@@ -1,3 +1,4 @@
+import { fenceAgentOutput } from "@/lib/claude/untrusted";
 /**
  * Autonomous pipeline — forensic prompt content matrix.
  *
@@ -91,10 +92,10 @@ describe("buildForensicPrompt — evidence blocks", () => {
       })
     );
 
-    expect(prompt).toContain("### Recorded error\n\n```\nCommand failed with exit code 1\n```");
-    expect(prompt).toContain("### Raw stream (tail)\n\n```\nnpm ERR! ELIFECYCLE\n```");
-    expect(prompt).toContain("### Output stream (tail)\n\n```\nRunning tests...\n```");
-    expect(prompt).toContain("### Last text produced\n\n```\nI could not find the module\n```");
+    expect(prompt).toContain(`### Recorded error\n\n${fenceAgentOutput("Command failed with exit code 1")}`);
+    expect(prompt).toContain(`### Raw stream (tail)\n\n${fenceAgentOutput("npm ERR! ELIFECYCLE")}`);
+    expect(prompt).toContain(`### Output stream (tail)\n\n${fenceAgentOutput("Running tests...")}`);
+    expect(prompt).toContain(`### Last text produced\n\n${fenceAgentOutput("I could not find the module")}`);
   });
 
   it("renders every missing or blank piece of evidence as (none)", () => {

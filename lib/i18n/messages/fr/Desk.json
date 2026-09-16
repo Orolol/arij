@@ -4,7 +4,8 @@
   },
   "yourTurn": {
     "hint": "↹ parcourir · ⏎ répondre",
-    "overflow": "+{count} de plus"
+    "overflow": "+{count} de plus",
+    "parked": "EN PAUSE"
   },
   "rows": {
     "replyPlaceholder": "Répondre à l'agent…",
@@ -20,14 +21,33 @@
     "heldBack": "{count, plural, one {# autre bloqué par des findings ouverts →} other {# autres bloqués par des findings ouverts →}}"
   },
   "upNext": {
-    "hint": "l'ordre où Full Auto va piocher",
+    "hint": "ordre de la file d’exécution",
     "chipBlocked": "{id} bloqué",
     "chipAwaiting": "{id} en attente",
-    "blockedBy": "Bloqué par {ids}"
+    "blockedBy": "Bloqué par {ids}",
+    "chipNoBuildable": "{label} · aucun build en attente",
+    "noBuildableStories": "Aucune story n’est actuellement à faire ou en cours",
+    "holds": {
+      "owned": "Pris en charge par un autre run",
+      "busy": "Agent déjà actif",
+      "parked": "En pause après des échecs répétés",
+      "reviewRejections": "Limite de rejets de review atteinte"
+    }
   },
   "composer": {
     "label": "Décris une feature",
     "placeholder": "Décris une feature — ⏎ rédige l'epic et ses stories, ⇧⏎ l'envoie direct en dev"
+  },
+  "sessionTitle": {
+    "release": "Génération des notes de version",
+    "memory": "Distillation de la mémoire du projet",
+    "refinement": "Raffinement du tableau",
+    "grading": "Évaluation des critères d'acceptation",
+    "qa": "Exécution des vérifications",
+    "merge": "Fusion en cours",
+    "review": "Revue en cours",
+    "build": "Construction en cours",
+    "chat": "Discussion en cours"
   },
   "palette": {
     "dialogLabel": "Rechercher",

@@ -10,7 +10,7 @@ const githubMocks = vi.hoisted(() => ({
 
 vi.mock("@/lib/github/client", () => ({
   getGitHubTokenFromSettings: vi.fn(() => "token"),
-  createGitHubClient: vi.fn(() => ({
+  createOctokit: vi.fn(() => ({
     pulls: { get: githubMocks.pullsGet },
     checks: { listForRef: githubMocks.checksListForRef },
     repos: { listCommitStatusesForRef: githubMocks.listCommitStatuses },

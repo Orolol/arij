@@ -400,11 +400,16 @@ describe("executeChatBoardTool", () => {
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
       const call = fetchCallAt(fetchMock);
-      expect(call.headers.Authorization).toBeUndefined();
-      expect(call.url).not.toContain("/api/mcp/");
+      if (tool === "post_comment") {
+        expect(call.headers.Authorization).toBe("Bearer mcp-token-1");
+        expect(call.url).toContain("/api/mcp/post-comment");
+      } else {
+        expect(call.headers.Authorization).toBeUndefined();
+        expect(call.url).not.toContain("/api/mcp/");
+      }
     });
 
-    it("post_comment posts an agent-authored comment via the epic comments route", async () => {
+    it("post_comment posts an agent-authored comment via the shared MCP route", async () => {
       seedTicket({ id: "epic1" });
       fetchMock.mockResolvedValue(jsonResponse({ data: { id: "c1" } }));
 
@@ -419,9 +424,9 @@ describe("executeChatBoardTool", () => {
       // The MCP comment route would link the chat turn's session id, which
       // has no agent_sessions row (FK) — the comments route is the target.
       expect(call.url).toBe(
-        "http://localhost:3000/api/projects/proj1/epics/epic1/comments",
+        "http://localhost:3000/api/mcp/post-comment",
       );
-      expect(call.body).toEqual({ author: "agent", content: "hello" });
+      expect(call.body).toEqual({ ticket_id: "epic1", body: "hello" });
       expect(result).toEqual({ posted: true, ticket_id: "E-arij-042" });
     });
 
@@ -441,9 +446,9 @@ describe("executeChatBoardTool", () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
       const commentCall = fetchCallAt(fetchMock, 0);
       expect(commentCall.url).toBe(
-        "http://localhost:3000/api/projects/proj1/epics/epic1/comments",
+        "http://localhost:3000/api/mcp/post-comment",
       );
-      expect(commentCall.body).toEqual({ author: "agent", content: "focus on the API" });
+      expect(commentCall.body).toEqual({ ticket_id: "epic1", body: "focus on the API" });
       const buildCall = fetchCallAt(fetchMock, 1);
       expect(buildCall.url).toBe(
         "http://localhost:3000/api/projects/proj1/epics/epic1/build",

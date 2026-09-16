@@ -5,8 +5,7 @@ import { lastSessionChunkAt } from "@/lib/agent-sessions/chunks";
 import {
   latestActivityTimestamp,
   parseStoredTimestamp,
-} from "@/lib/agent-sessions/last-activity";
-import { createStalledSessionNotification } from "@/lib/notifications/create";
+} from "@/lib/utils/timestamps";
 import { logTransition } from "@/lib/workflow/log";
 import {
   DEFAULT_WATCHDOG_THRESHOLD_MINUTES,
@@ -227,16 +226,9 @@ export class SessionWatchdog {
         (now.getTime() - lastActivityMs) / 60_000
       );
 
+      // At most once per session: the monitor's amber state and the ticket's
+      // stall entry are the signal, and neither has a delivery receipt.
       this.notifiedSessionIds.add(row.id);
-
-      try {
-        createStalledSessionNotification(row.id, staleMinutes);
-      } catch (error) {
-        console.warn(
-          "[watchdog] Failed to create stalled notification:",
-          (error as Error).message
-        );
-      }
 
       if (row.epicId) {
         // logTransition is itself best-effort (catches internally). A

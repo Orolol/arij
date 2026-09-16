@@ -34,28 +34,6 @@ export type MonoTone =
   | "feed-deep"
   | "danger";
 
-/**
- * Mono tone → palette token, as `var(--token)` STRINGS.
- *
- * Exported for the cases a class name cannot reach: an SVG `fill`, a canvas
- * context, a chart library that wants a colour string. Inside a DOM tree,
- * prefer {@link MONO_TONE_CLASS} / the component itself.
- */
-export const MONO_TONE: Record<MonoTone, string> = {
-  ink: "var(--foreground)",
-  muted: "var(--muted-foreground)",
-  "live-deep": "var(--strata-live-deep)",
-  "live-mid": "var(--strata-live-mid)",
-  "you-deep": "var(--strata-you-deep)",
-  "you-mid": "var(--strata-you-mid)",
-  "land-mid": "var(--strata-land-mid)",
-  "land-deep": "var(--strata-land-deep)",
-  "next-deep": "var(--strata-next-deep)",
-  "next-mid": "var(--strata-next-mid)",
-  "feed-deep": "var(--strata-feed-deep)",
-  danger: "var(--destructive)",
-};
-
 /** The same map as Tailwind text utilities — what the component actually emits. */
 export const MONO_TONE_CLASS: Record<MonoTone, string> = {
   ink: "text-foreground",

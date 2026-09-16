@@ -10,7 +10,6 @@ import {
 } from "@/lib/claude/prompt-builder";
 
 const project: PromptProject = { name: "Test Project" };
-const docs = [{ name: "README", contentMd: "# README" }];
 
 const stories: PromptUserStory[] = [
   { title: "Story A", description: "Do A", acceptanceCriteria: "- [ ] A" },

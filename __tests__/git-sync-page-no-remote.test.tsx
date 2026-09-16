@@ -262,11 +262,11 @@ describe("GitSyncPage with no usable remote", () => {
         json: async () => ({ error: "Project has no git repository path" }),
       } as Response;
     }
-    if (/\/api\/projects\/[^/]+$/.test(url)) {
+    if (url === "/api/projects") {
       return {
         ok: true,
         json: async () => ({
-          data: { gitRepoPath: null, githubOwnerRepo: null, defaultBranch: null },
+          data: [{ id: "proj-1", gitRepoPath: null, githubOwnerRepo: null, defaultBranch: null }],
         }),
       } as Response;
     }

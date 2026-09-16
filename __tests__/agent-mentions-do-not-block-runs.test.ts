@@ -7,7 +7,7 @@
  *
  * Two rules, both exercised here against the epic build route:
  *   1. Only user-written text feeds mention resolution.
- *   2. An unresolved mention never blocks the run — it notifies.
+ *   2. An unresolved mention never blocks the run — it comments on the ticket.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mockJsonRequest, mockRouteContext } from "@/__tests__/helpers/db-mock";
@@ -19,9 +19,10 @@ const allCalls = vi.hoisted(() => ({ count: 0 }));
 const commentState = vi.hoisted(() => ({
   rows: [] as Array<{ author: string; content: string; createdAt: string }>,
 }));
-const mockCreateUnresolvedMentionsNotification = vi.hoisted(() => vi.fn());
 /** Arij has no documents at all, so every mention is unresolvable. */
 const mockListProjectDocuments = vi.hoisted(() => vi.fn(() => []));
+/** Rows the route inserted (the ticket comments it writes). */
+const inserts = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 
 vi.mock("@/lib/db", async () => {
   const { dbModuleMock } = await import("@/__tests__/helpers/db-mock");
@@ -43,6 +44,18 @@ vi.mock("@/lib/db", async () => {
     // 1. user stories, 2. ticket comments, 3+. open review comments
     return allCalls.count === 2 ? commentState.rows : [];
   });
+  // The factory runs again after `vi.resetModules()`, so the recorder has to
+  // live on the hoisted state rather than on a module-scope import.
+  const originalInsert = mod.db.insert;
+  mod.db.insert = vi.fn((table: unknown) => {
+    const chain = originalInsert(table);
+    const originalValues = chain.values;
+    chain.values = (row: Record<string, unknown>) => {
+      inserts.push(row);
+      return originalValues(row);
+    };
+    return chain;
+  });
   return mod;
 });
 
@@ -54,17 +67,6 @@ vi.mock("@/lib/pipeline", () => ({
 vi.mock("@/lib/documents/query", () => ({
   listProjectDocuments: mockListProjectDocuments,
 }));
-
-vi.mock("@/lib/notifications/create", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/notifications/create")
-  >("@/lib/notifications/create");
-  return {
-    ...actual,
-    createUnresolvedMentionsNotification:
-      mockCreateUnresolvedMentionsNotification,
-  };
-});
 
 vi.mock("@/lib/workflow/log", () => ({ logTransition: vi.fn() }));
 
@@ -155,7 +157,7 @@ describe("Agent-written @mentions never block a run", () => {
     getCalls.count = 0;
     allCalls.count = 0;
     commentState.rows = [];
-    mockCreateUnresolvedMentionsNotification.mockClear();
+    inserts.length = 0;
     vi.resetModules();
   });
 
@@ -173,21 +175,17 @@ describe("Agent-written @mentions never block a run", () => {
     expect(res.status).toBe(200);
     // Nothing to look up: the only mentions came from an agent.
     expect(mockListProjectDocuments).not.toHaveBeenCalled();
-    expect(mockCreateUnresolvedMentionsNotification).toHaveBeenCalledWith(
-      expect.objectContaining({ missing: [] })
-    );
   });
 
-  it("launches anyway and notifies when a user mention cannot be resolved", async () => {
+  it("launches anyway, and says so on the ticket, when a user mention cannot be resolved", async () => {
     const res = await postBuild({ comment: "follow @missing.md please" });
 
     expect(res.status).toBe(200);
-    expect(mockCreateUnresolvedMentionsNotification).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: "proj-1",
-        missing: ["missing.md"],
-        agentType: "build",
-      })
+    // The run starts; the unresolved mention is a ticket comment now, not a
+    // notification — the inbox is the surface that renders it.
+    const mentionComment = inserts.find((row) =>
+      String(row.content).includes("@missing.md")
     );
+    expect(mentionComment).toBeDefined();
   });
 });

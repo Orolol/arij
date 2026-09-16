@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { BandHeader, Mono, StrataBand } from "@/components/piscine";
+import Link from "next/link";
+import { BandHeader, Mono, StrataBand, SurfaceCard, Stamp } from "@/components/piscine";
 import type { DeskDismissalKind } from "@/lib/control-desk/aggregate";
 import type {
   DeskAwaitingReply,
   DeskConflict,
   DeskFailure,
+  DeskParkedTicket,
   DeskProject,
 } from "@/lib/control-desk/types";
 import { cn } from "@/lib/utils";
@@ -45,9 +47,10 @@ export interface YourTurnBandProps {
   awaitingReply: readonly DeskAwaitingReply[];
   failed: readonly DeskFailure[];
   conflicts: readonly DeskConflict[];
+  parked?: readonly DeskParkedTicket[];
   projectsById: ReadonlyMap<string, DeskProject>;
   pendingIds?: ReadonlySet<string>;
-  onReply: (item: DeskAwaitingReply, message: string) => void | Promise<void>;
+  onReply: (item: DeskAwaitingReply, message: string) => boolean | void | Promise<boolean | void>;
   onSendToDev: (item: DeskAwaitingReply, message: string) => void | Promise<void>;
   onRetry: (item: DeskFailure) => void | Promise<void>;
   onOpenLog: (item: DeskFailure) => void;
@@ -69,6 +72,7 @@ export function YourTurnBand({
   awaitingReply,
   failed,
   conflicts,
+  parked = [],
   projectsById,
   pendingIds,
   onReply,
@@ -81,7 +85,7 @@ export function YourTurnBand({
   className,
 }: YourTurnBandProps) {
   const t = useTranslations("Desk");
-  const count = awaitingReply.length + failed.length + conflicts.length;
+  const count = awaitingReply.length + failed.length + conflicts.length + parked.length;
 
   const listRef = useRef<HTMLDivElement | null>(null);
   const [hiddenCount, setHiddenCount] = useState(0);
@@ -93,6 +97,7 @@ export function YourTurnBand({
     awaitingReply.map((row) => row.epicId).join(","),
     failed.map((row) => row.epicId).join(","),
     conflicts.map((row) => row.epicId).join(","),
+    parked.map((row) => row.ticketId).join(","),
   ].join("|");
 
   /**
@@ -132,7 +137,7 @@ export function YourTurnBand({
       if (child.getBoundingClientRect().bottom > fold + 1) hidden += 1;
     }
     setHiddenCount(hidden);
-  }, []);
+  }, [setHiddenCount]);
 
   // Before paint, so a corrected count never flickers on screen — and on EVERY
   // render, deliberately without a dependency array.
@@ -272,6 +277,14 @@ export function YourTurnBand({
               }
               pending={pendingIds?.has(item.epicId)}
             />
+          ))}
+          {parked.map((item) => (
+            <SurfaceCard key={`parked-${item.ticketId}`} className="flex flex-wrap items-center gap-3 px-[14px] py-[10px]">
+              <Stamp tone="failed">{t("yourTurn.parked")}</Stamp>
+              <Link href={`/projects/${item.projectId}?ticket=${item.epicId}`} className="min-w-0 flex-1 underline">
+                {item.readableId ?? item.title} · {item.reason}
+              </Link>
+            </SurfaceCard>
           ))}
           {conflicts.map((item) => (
             <ConflictRow

@@ -8,7 +8,8 @@
     "delete": "Delete {name}",
     "deleting": "Deleting...",
     "loadFailed": "Failed to load documents.",
-    "deleteFailed": "Failed to delete \"{name}\"."
+    "deleteFailed": "Failed to delete \"{name}\".",
+    "specProposal": "Spec proposal"
   },
   "size": {
     "unknown": "n/a",

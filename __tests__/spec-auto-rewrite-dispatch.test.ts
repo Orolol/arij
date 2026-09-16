@@ -15,6 +15,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { claudeEnvelope } from "./helpers/provider-fixtures";
 
 const processManagerState = vi.hoisted(() => ({
   result: undefined as Record<string, unknown> | undefined,
@@ -76,19 +77,6 @@ const {
 const { tryExportArjiJson } = await import("@/lib/sync/export");
 
 let counter = 0;
-
-async function flushBackground() {
-  await new Promise((r) => setTimeout(r, 25));
-  await new Promise((r) => setTimeout(r, 25));
-}
-
-function claudeEnvelope(text: string): string {
-  return JSON.stringify({
-    type: "result",
-    subtype: "success",
-    result: text,
-  });
-}
 
 interface SeedResult {
   projectId: string;
@@ -181,11 +169,11 @@ describe("dispatchSpecAutoRewriteSession", () => {
   it("runs a spec_generation session and replaces the spec on answered completion", async () => {
     const { projectId, releaseId } = seedProjectWithRelease();
 
-    const { sessionId } = await dispatchSpecAutoRewriteSession({
+    const { sessionId, settled } = await dispatchSpecAutoRewriteSession({
       projectId,
       releaseId,
     });
-    await flushBackground();
+    await settled;
 
     const session = db
       .select()
@@ -226,8 +214,7 @@ describe("dispatchSpecAutoRewriteSession", () => {
       duration: 1000,
     };
 
-    await dispatchSpecAutoRewriteSession({ projectId, releaseId });
-    await flushBackground();
+    await (await dispatchSpecAutoRewriteSession({ projectId, releaseId })).settled;
 
     expect(getSpec(projectId)).toBe("# Fenced spec");
   });
@@ -241,11 +228,11 @@ describe("dispatchSpecAutoRewriteSession", () => {
       duration: 1000,
     };
 
-    const { sessionId } = await dispatchSpecAutoRewriteSession({
+    const { sessionId, settled } = await dispatchSpecAutoRewriteSession({
       projectId,
       releaseId,
     });
-    await flushBackground();
+    await settled;
 
     const session = db
       .select()
@@ -306,7 +293,7 @@ describe("maybeAutoRewriteSpecAfterRelease", () => {
     const decision = await maybeAutoRewriteSpecAfterRelease(projectId, releaseId);
     expect(decision.allowed).toBe(true);
 
-    await flushBackground();
+    await decision.settled;
 
     expect(specSessions(projectId)).toHaveLength(1);
     expect(getSpec(projectId)).toBe("# Rewritten spec\n\nCheckout flow is live.");

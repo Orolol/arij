@@ -10,7 +10,6 @@ import { PIPELINE_STAGE_LABEL_KEYS } from "@/lib/pipeline/constants";
 import { ticketStatusOptions } from "@/lib/kanban/status-transitions";
 import { createEmptyEpicDraft, validateManualEpicDraft, EPIC_TITLE_MAX_LENGTH } from "@/lib/epics/manual-epic-form";
 import { EditorFooterBar } from "@/components/agents-workshop/EditorFooterBar";
-import { PriorityBadge } from "@/components/shared/PriorityBadge";
 import { StatusControl } from "@/components/ticket/StatusControl";
 import { useTicketDerivedCopy } from "@/components/ticket/copy";
 import { descriptionMeta } from "@/components/ticket/derive";
@@ -47,9 +46,8 @@ describe("lib copy resolves at the rendering boundary", () => {
     }
   });
 
-  it("renders translated priority badges and the ticket's current status", () => {
-    render(<><PriorityBadge priority={2} /><StatusControl status="todo" priority={2} hasRunningSession={false} onStatusChange={() => {}} onPriorityChange={() => {}} /></>, { wrapper: Wrapper });
-    expect(screen.getByText("Haute")).toBeVisible();
+  it("renders the ticket's translated current status", () => {
+    render(<StatusControl status="todo" priority={2} hasRunningSession={false} onStatusChange={() => {}} onPriorityChange={() => {}} />, { wrapper: Wrapper });
     expect(screen.getByText("À faire")).toBeVisible();
   });
 

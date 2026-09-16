@@ -70,13 +70,11 @@ const MESSAGES_DIR = path.join(ROOT, "lib", "i18n", "messages", "en");
 const SOURCE_ROOTS = ["components", "app", "lib", "hooks"];
 
 /**
- * Paths the catalogue header lists as NOT COPY. The dev harness is marked for
- * deletion, the agent-facing files are read by models rather than users, and
- * `lib/i18n` is the runtime itself — its own keys are data, not references.
+ * Paths the catalogue header lists as NOT COPY. The agent-facing files are
+ * read by models rather than users, and `lib/i18n` is the runtime itself — its
+ * own keys are data, not references.
  */
 const EXCLUDED = [
-  path.join("app", "piscine-preview"),
-  path.join("app", "_piscine-preview"),
   path.join("lib", "i18n", "messages"),
 ];
 

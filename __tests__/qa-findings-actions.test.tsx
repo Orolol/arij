@@ -53,7 +53,7 @@ function payload(overrides: Partial<QaPayload> = {}): QaPayload {
     queued: [],
     findings: [finding()],
     verdicts: [],
-    rubric: { items: ["Tests"], projectRuleCount: 0 },
+    rubric: { items: ["Tests"] },
     reviewable: [
       {
         epicId: "e7",
@@ -207,13 +207,8 @@ describe("QaScreen — Dismiss", () => {
     const patch = writesTo("review-comments")[0];
     expect(patch.method).toBe("PATCH");
     expect(patch.url).toBe("/api/projects/p1/epics/e1/review-comments");
-    expect(patch.body).toMatchObject({ id: "f1", status: "resolved" });
-    // The reason lives in `body` because no column exists for it, appended to
-    // the TAIL so the leading severity prefix — and therefore the row's
-    // classification — is untouched.
-    expect(String(patch.body?.body)).toBe(
-      "[critical] Le token MCP est loggé en clair quand la session échoue\n\n[dismissed] déjà corrigé ailleurs",
-    );
+    expect(patch.body).toMatchObject({ id: "f1", status: "dismissed", dismissedReason: "déjà corrigé ailleurs" });
+    expect(patch.body).not.toHaveProperty("body");
 
     await waitFor(() => expect(writesTo("/comments")).toHaveLength(1));
     const echo = writesTo("/comments")[0];

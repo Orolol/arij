@@ -15,9 +15,9 @@ import {
   countWords,
   formatCount,
   formatSaveState,
-  formatTokens,
   type SpecFooterCopy,
 } from "@/components/spec/spec-format";
+import { formatTokens } from "@/lib/utils/format-usage";
 import { messagesFor } from "@/lib/i18n/catalogue";
 import { formatRelative } from "@/lib/i18n/format";
 import type { UiLocale } from "@/lib/i18n/locales";
@@ -54,17 +54,19 @@ describe("formatTokens", () => {
     expect(formatTokens(0)).toBe("0");
   });
 
-  it("prints one decimal of thousands and strips a trailing .0", () => {
+  it("prints one decimal of thousands and millions", () => {
     expect(formatTokens(1100)).toBe("1.1k");
     expect(formatTokens(14200)).toBe("14.2k");
-    expect(formatTokens(10000)).toBe("10k");
+    expect(formatTokens(10000)).toBe("10.0k");
+    expect(formatTokens(3_400_000)).toBe("3.4M");
   });
 
-  it("renders an em dash — never a zero — for an unknown count", () => {
-    expect(formatTokens(null)).toBe(EM_DASH);
-    expect(formatTokens(undefined)).toBe(EM_DASH);
-    expect(formatTokens(Number.NaN)).toBe(EM_DASH);
-    expect(formatTokens(null)).not.toBe("0k");
+  it("returns null for an unknown count, never a zero", () => {
+    // The em dash is the CALLER's placeholder — the spec bar passes EM_DASH.
+    expect(formatTokens(null)).toBeNull();
+    expect(formatTokens(undefined)).toBeNull();
+    expect(formatTokens(Number.NaN)).toBeNull();
+    expect(formatTokens(null) ?? EM_DASH).toBe(EM_DASH);
   });
 });
 

@@ -1,3 +1,4 @@
+import { VALID_REVIEW_TYPES } from "@/lib/agent-config/constants";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { userStories } from "@/lib/db/schema";
@@ -35,12 +36,7 @@ interface EstimateRequestInput {
   comment?: string | null;
 }
 
-const VALID_REVIEW_TYPES: ReviewType[] = [
-  "security",
-  "code_review",
-  "compliance",
-  "feature_review",
-];
+
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId } = await params;

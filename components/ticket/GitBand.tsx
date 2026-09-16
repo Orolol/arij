@@ -42,6 +42,8 @@ export interface GitBandProps {
   githubConfigured: boolean;
   pr: GitBandPr | null;
   prLoading: boolean;
+  prReady?: boolean;
+  onRetryPr?: () => void;
   prError: string | null;
   onCreatePr: () => void;
   onSyncPr: () => void;
@@ -63,6 +65,8 @@ export function GitBand({
   githubConfigured,
   pr,
   prLoading,
+  prReady = true,
+  onRetryPr,
   prError,
   onCreatePr,
   onSyncPr,
@@ -142,7 +146,8 @@ export function GitBand({
                   icon={GitPullRequest}
                   onClick={onCreatePr}
                   pending={prLoading}
-                  pendingLabel={t("git.creatingPr")}
+                  disabled={!prReady}
+                  pendingLabel={prReady ? t("git.creatingPr") : t("git.loadingPr")}
                   data-testid="ticket-create-pr"
                 >
                   {t("git.createPr")}
@@ -168,7 +173,8 @@ export function GitBand({
                 size="sm"
                 onClick={onSyncPr}
                 pending={prLoading}
-                pendingLabel={t("git.syncing")}
+                disabled={!prReady}
+                pendingLabel={prReady ? t("git.syncing") : t("git.loadingPr")}
                 data-testid="ticket-sync-pr"
               >
                 {t("git.sync")}
@@ -177,9 +183,12 @@ export function GitBand({
           </div>
 
           {prError ? (
+            <div role="alert" className="space-y-2">
             <p className="m-0 text-[12px] leading-[1.5] text-destructive">
               {prError}
             </p>
+            {onRetryPr && <PillButton variant="outline" size="sm" onClick={onRetryPr}>{t("git.retryPr")}</PillButton>}
+            </div>
           ) : null}
 
           {/* The land action: its own row, so the one-filled-button-per-row

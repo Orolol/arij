@@ -4,9 +4,11 @@ import { epics, pullRequests } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
 import {
   getProjectOr404,
+  getEpicOr404,
   isErrorResponse,
   errorResponse,
 } from "@/lib/api/route-helpers";
+import { GitHubNotConfiguredError } from "@/lib/github/client";
 import { fetchPrStatus } from "@/lib/github/pull-requests";
 import { logSyncOperation } from "@/lib/github/sync-log";
 
@@ -18,6 +20,8 @@ type RouteParams = { params: Promise<{ projectId: string; epicId: string }> };
  */
 export async function POST(_request: NextRequest, { params }: RouteParams) {
   const { projectId, epicId } = await params;
+  const foundEpic = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
 
   // Get project
   const found = getProjectOr404(projectId);
@@ -92,10 +96,16 @@ export async function POST(_request: NextRequest, { params }: RouteParams) {
       projectId,
       operation: "pr_sync",
       branch: pr.headBranch,
-      status: "failure",
+      status: "failed",
       detail,
     });
 
+    // A project without a stored PAT is an ordinary, recoverable state, not a
+    // server fault: 400 with a `code` the UI branches on, matching triage and
+    // epics/:epicId/pr.
+    if (e instanceof GitHubNotConfiguredError) {
+      return NextResponse.json({ error: e.message, code: e.code }, { status: 400 });
+    }
     return errorResponse(e, "Failed to sync pull request status from GitHub.");
   }
 }

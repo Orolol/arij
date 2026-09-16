@@ -271,21 +271,6 @@ export function isPipelineActivityReason(
   return typeof reason === "string" && reason.startsWith(PIPELINE_REASON_PREFIX);
 }
 
-/**
- * Coarse tone for a pipeline trace line, used to colour the feed row.
- * Deliberately derived from the reason text (the trace is a string contract)
- * so the feed never needs the run object to render history.
- */
-export type PipelineReasonTone = "failure" | "paused" | "success" | "progress";
-
-export function pipelineReasonTone(reason: string): PipelineReasonTone {
-  if (reason.startsWith("Pipeline failed:")) return "failure";
-  if (reason.startsWith("Pipeline stopped:")) return "paused";
-  if (reason.startsWith("Pipeline paused:")) return "paused";
-  if (reason.startsWith("Pipeline finished:")) return "success";
-  return "progress";
-}
-
 /* ------------------------------------------------------------------ */
 /* Run snapshot shape (mirrors the registry's read API)                */
 /* ------------------------------------------------------------------ */

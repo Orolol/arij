@@ -1,3 +1,4 @@
+import { resolveStoredPath } from "@/lib/storage/stored-path";
 /**
  * The one place that turns an upload's stored path into an absolute one.
  *
@@ -60,15 +61,6 @@ export function uploadFileAbsolutePath(
  * The root itself is not: nothing legitimate stores it, and letting it through
  * would hand a directory to `readFileSync` or `unlinkSync`.
  */
-function isInsideUploadsRoot(absolutePath: string): boolean {
-  const relativeToRoot = path.relative(uploadsRoot(), absolutePath);
-
-  return (
-    relativeToRoot.length > 0 &&
-    !relativeToRoot.startsWith("..") &&
-    !path.isAbsolute(relativeToRoot)
-  );
-}
 
 /**
  * The absolute path a stored `data/uploads/<projectId>/<file>` value names, or
@@ -86,23 +78,5 @@ function isInsideUploadsRoot(absolutePath: string): boolean {
  * stored path means.
  */
 export function storedUploadAbsolutePath(storedPath: unknown): string | null {
-  if (typeof storedPath !== "string") return null;
-
-  const trimmed = storedPath.trim();
-  const withoutDotSlash = trimmed.startsWith("./") ? trimmed.slice(2) : trimmed;
-
-  const prefix = `${UPLOADS_RELATIVE_ROOT}/`;
-  if (!withoutDotSlash.startsWith(prefix)) return null;
-
-  const withinRoot = withoutDotSlash.slice(prefix.length);
-  if (withinRoot.length === 0) return null;
-
-  // Resolved against the literal-anchored root rather than against the working
-  // directory, so the analyzer can see the `data/uploads` scope. `resolve`
-  // rather than `join`, so an absolute remainder escapes into the check below
-  // instead of being silently re-rooted.
-  const uploadsDirectory = path.join(process.cwd(), "data", "uploads");
-  const absolute = path.resolve(uploadsDirectory, withinRoot);
-
-  return isInsideUploadsRoot(absolute) ? absolute : null;
+  return resolveStoredPath(path.join(process.cwd(), "data", "uploads"), UPLOADS_RELATIVE_ROOT, storedPath);
 }

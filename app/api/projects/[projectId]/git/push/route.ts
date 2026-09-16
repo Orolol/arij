@@ -1,3 +1,5 @@
+import { pushProjectSchema } from "@/lib/validation/git-schemas";
+import { validateOptionalBody, isValidationError } from "@/lib/validation/validate";
 import { NextRequest, NextResponse } from "next/server";
 import {
   getProjectOr404,
@@ -14,7 +16,7 @@ import {
   PushValidationError,
   validatePushPreconditions,
 } from "@/lib/git/remote";
-import { writeGitSyncLog } from "@/lib/github/sync-log";
+import { logSyncOperation } from "@/lib/github/sync-log";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -24,7 +26,7 @@ export async function POST(request: NextRequest, { params }: Params) {
   const found = getProjectOr404(projectId, { requireGitRepo: true });
   if (isErrorResponse(found)) {
     if (found.status === 400) {
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
         operation: "push",
         status: "failed",
@@ -36,7 +38,9 @@ export async function POST(request: NextRequest, { params }: Params) {
   }
   const { project } = found;
 
-  const body = await request.json().catch(() => ({}));
+  const validated = await validateOptionalBody(pushProjectSchema, request);
+  if (isValidationError(validated)) return validated;
+  const body = validated.data;
   const remote = typeof body?.remote === "string" ? body.remote : "origin";
   const setUpstream = typeof body?.setUpstream === "boolean" ? body.setUpstream : true;
   const requestedBranch = typeof body?.branch === "string" ? body.branch : "";
@@ -68,11 +72,11 @@ export async function POST(request: NextRequest, { params }: Params) {
       setUpstream
     );
     const summary = {
-      pushed: result.pushed.length,
-      update: result.update ? 1 : 0,
+      pushed: result.length,
+      update: result ? 1 : 0,
     };
 
-    writeGitSyncLog({
+    logSyncOperation({
       projectId,
       operation: "push",
       status: "success",
@@ -95,7 +99,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     // state as the unconfigured remote below — audited the same way, refused
     // with the same 400 and code the two detect routes already publish.
     if (error instanceof GitRepositoryUnavailableError) {
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
         operation: "push",
         status: "failed",
@@ -118,7 +122,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     // 409 with the code and the repository's real remotes so the client can
     // offer them, matching git/detect-remote's 4xx for the same state.
     if (error instanceof GitRemoteNotConfiguredError) {
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
         operation: "push",
         status: "failed",
@@ -145,7 +149,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     }
 
     if (error instanceof PushValidationError) {
-      writeGitSyncLog({
+      logSyncOperation({
         projectId,
         operation: "push",
         status: "failed",
@@ -164,7 +168,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       );
     }
 
-    writeGitSyncLog({
+    logSyncOperation({
       projectId,
       operation: "push",
       status: "failed",

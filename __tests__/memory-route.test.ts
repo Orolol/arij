@@ -49,7 +49,6 @@ const { POST: RESTORE } = await import(
   "@/app/api/projects/[projectId]/memory/restore/route"
 );
 const { eq } = await import("drizzle-orm");
-const { notifications } = await import("@/lib/db/schema");
 const { archiveProjectMemory } = await import("@/lib/documents/memory");
 
 let counter = 0;
@@ -224,8 +223,7 @@ describe("POST /api/projects/[projectId]/memory/restore", () => {
   /**
    * The one-click restore (Story 5): the snapshot content goes back to the
    * live document, the write is recorded as manual, the snapshot stays
-   * available, and the feed gets a first-class "restored" entry deep-linking
-   * to the memory panel.
+   * available, and the provenance record says the write was manual.
    */
   it("restores the snapshot and records a manual provenance", async () => {
     const projectId = seedProject();
@@ -243,17 +241,6 @@ describe("POST /api/projects/[projectId]/memory/restore", () => {
     expect(json.data.provenance).toMatchObject({ source: "manual", sessionId: null });
     // The snapshot is not consumed by a restore: restore is repeatable.
     expect(json.data.archive?.content).toBe("v1");
-
-    const rows = db
-      .select()
-      .from(notifications)
-      .where(eq(notifications.projectId, projectId))
-      .all();
-    const restored = rows.find(
-      (row) => row.title === "Project memory restored from the pre-dream snapshot"
-    );
-    expect(restored).toBeDefined();
-    expect(restored!.targetUrl).toBe(`/projects/${projectId}/spec#memory-panel`);
   });
 });
 

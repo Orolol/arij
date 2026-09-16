@@ -1,8 +1,6 @@
-import fs from "node:fs";
+import { latestVerifyReport } from "@/lib/verify/freshness";
+import { planEpicVerification } from "@/lib/verify/plan";
 import { NextRequest, NextResponse } from "next/server";
-import { and, desc, eq, isNotNull } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { agentSessions, verifyReports } from "@/lib/db/schema";
 import {
   createAgentAlreadyRunningPayload,
   getRunningSessionForTarget,
@@ -15,99 +13,14 @@ import {
 } from "@/lib/api/route-helpers";
 import { emitTicketUpdated } from "@/lib/events/emit";
 import { logTransition } from "@/lib/workflow/log";
-import { resolveVerifyConfigForProject } from "@/lib/verify/config";
 import {
   isVerificationAlreadyRunningError,
   withVerificationWorktreeLock,
 } from "@/lib/verify/execution-lock";
 import { runVerification } from "@/lib/verify/runner";
-import { isManagedEpicWorktreePath } from "@/lib/verify/worktree";
-import {
-  isVerifyCommandResult,
-  type VerificationReport,
-  type VerifyCommandResult,
-} from "@/lib/verify/verify-constants";
+
 
 type Params = { params: Promise<{ projectId: string; epicId: string }> };
-
-const NO_WORKTREE_ERROR =
-  "Verification requires an existing epic worktree. Build or review this ticket first.";
-
-/**
- * All-or-nothing on purpose: this payload is mechanical EVIDENCE, and
- * dropping the malformed entries would render a half-corrupt row as a
- * *shorter* report listing only the commands that happened to parse — a
- * failing run could show up as "all checks passed". Null (the same shape as
- * "never verified") is the honest answer, and it is what the client-side
- * `isVerificationReport` guard already does with the same value.
- */
-function parseCommandResults(value: string): VerifyCommandResult[] | null {
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (!Array.isArray(parsed)) return null;
-    if (!parsed.every(isVerifyCommandResult)) return null;
-
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function toResponseReport(
-  row: typeof verifyReports.$inferSelect
-): VerificationReport | null {
-  const commands = parseCommandResults(row.commands);
-  if (!commands) return null;
-
-  return {
-    id: row.id,
-    projectId: row.projectId,
-    epicId: row.epicId,
-    agentSessionId: row.agentSessionId,
-    status: row.status === "pass" ? "pass" : "fail",
-    startedAt: row.startedAt,
-    finishedAt: row.finishedAt,
-    commands,
-  };
-}
-
-/**
- * Resolve an already-created Arij epic worktree from durable session state.
- * This deliberately never calls createWorktree and never falls back to the
- * project's main checkout. Stale and out-of-root paths are ignored.
- */
-function findExistingWorktree(
-  projectId: string,
-  epicId: string,
-  repoPath: string
-): string | null {
-  const candidates = db
-    .select({ worktreePath: agentSessions.worktreePath })
-    .from(agentSessions)
-    .where(
-      and(
-        eq(agentSessions.projectId, projectId),
-        eq(agentSessions.epicId, epicId),
-        isNotNull(agentSessions.worktreePath)
-      )
-    )
-    .orderBy(desc(agentSessions.createdAt), desc(agentSessions.id))
-    .all();
-
-  for (const candidate of candidates) {
-    if (!candidate.worktreePath) continue;
-    if (!isManagedEpicWorktreePath(candidate.worktreePath, repoPath)) continue;
-    try {
-      if (fs.statSync(candidate.worktreePath).isDirectory()) {
-        return candidate.worktreePath;
-      }
-    } catch {
-      // A session may outlive a pruned or merged worktree. Try older rows.
-    }
-  }
-
-  return null;
-}
 
 /** Latest persisted deterministic verification report for the ticket overlay. */
 export async function GET(_request: NextRequest, { params }: Params) {
@@ -116,19 +29,7 @@ export async function GET(_request: NextRequest, { params }: Params) {
   const found = getEpicOr404(projectId, epicId);
   if (isErrorResponse(found)) return found;
 
-  const latest = db
-    .select()
-    .from(verifyReports)
-    .where(
-      and(
-        eq(verifyReports.projectId, projectId),
-        eq(verifyReports.epicId, epicId)
-      )
-    )
-    .orderBy(desc(verifyReports.finishedAt), desc(verifyReports.id))
-    .get();
-
-  return NextResponse.json({ data: latest ? toResponseReport(latest) : null });
+  return NextResponse.json({ data: latestVerifyReport(projectId, epicId) });
 }
 
 /** Run human-configured commands synchronously in an existing epic worktree. */
@@ -156,28 +57,9 @@ export async function POST(_request: NextRequest, { params }: Params) {
     );
   }
 
-  const worktreePath = findExistingWorktree(
-    projectId,
-    epicId,
-    foundProject.project.gitRepoPath
-  );
-  if (!worktreePath) {
-    return NextResponse.json(
-      { error: NO_WORKTREE_ERROR },
-      { status: 409 }
-    );
-  }
-
-  const config = resolveVerifyConfigForProject(projectId);
-  if (!config.enabled) {
-    return NextResponse.json(
-      {
-        error:
-          "Verification is not configured for this project. Add at least one verify command in Settings.",
-      },
-      { status: 409 }
-    );
-  }
+  const planned = planEpicVerification(projectId, epicId);
+  if (!planned.plan) return NextResponse.json({ error: planned.reason ?? "Verification is not configured for this project. Add at least one verify command in Settings." }, { status: 409 });
+  const { worktreePath, commands, timeoutMs, codeSessionId } = planned.plan;
 
   try {
     const report = await withVerificationWorktreeLock(
@@ -186,10 +68,10 @@ export async function POST(_request: NextRequest, { params }: Params) {
         runVerification({
           projectId,
           epicId,
-          agentSessionId: null,
+          agentSessionId: codeSessionId,
           worktreePath,
-          commands: config.commands,
-          timeoutMs: config.timeoutMs,
+          commands,
+          timeoutMs,
         }),
       { wait: false }
     );

@@ -39,10 +39,10 @@ export async function POST(request: NextRequest) {
 
   // Chat turns have project-scoped tokens but no grader session or launch
   // ticket. This mirrors submit_findings' agent-only boundary.
-  if (auth.agentType === "chat") {
+  if (auth.agentType !== "grading") {
     return NextResponse.json(
       {
-        error: "submit_grading is only available to agent sessions.",
+        error: "submit_grading is only available to grading sessions.",
         code: "FORBIDDEN",
       },
       { status: 403 }

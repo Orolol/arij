@@ -1,3 +1,4 @@
+import { fenceAgentOutput, neutralizeControlMarkup } from "@/lib/claude/untrusted";
 /**
  * Autonomous pipeline — forensic diagnostic prompt.
  *
@@ -54,7 +55,7 @@ function evidenceBlock(heading: string, body: string | null): string {
   if (!trimmed) {
     return `### ${heading}\n\n${NONE}\n`;
   }
-  return `### ${heading}\n\n\`\`\`\n${trimmed}\n\`\`\`\n`;
+  return `### ${heading}\n\n${fenceAgentOutput(trimmed)}\n`;
 }
 
 /**
@@ -71,7 +72,7 @@ export function buildForensicPrompt(input: ForensicPromptInput): string {
 
   parts.push(`## Failed Agent Session\n`);
   const facts: string[] = [
-    `- **Ticket:** ${input.ticketTitle?.trim() || "(unknown ticket)"}`,
+    `- **Ticket:** ${neutralizeControlMarkup(input.ticketTitle?.trim() || "(unknown ticket)")}`,
     `- **Pipeline stage:** ${input.stage}`,
     `- **Attempts before giving up:** ${input.attempts}`,
     `- **Provider:** ${input.provider || "(unknown)"}`,

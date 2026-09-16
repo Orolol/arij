@@ -26,7 +26,7 @@ import type {
  *     all not-yet-launched tickets are marked skipped.
  *
  * The engine is deliberately side-effect free: DB writes (activity log,
- * notifications, registry updates) happen in the caller-provided callbacks.
+ * registry updates) happen in the caller-provided callbacks.
  * Callbacks are invoked synchronously in deterministic order and must not
  * throw (the route wraps its own side effects).
  */

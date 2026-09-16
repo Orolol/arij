@@ -9,7 +9,7 @@ const mockGetReleaseApi = vi.fn();
 
 vi.mock("@/lib/github/client", () => ({
   getGitHubTokenFromSettings: vi.fn(() => "ghp_test_token"),
-  createGitHubClient: vi.fn(() => ({
+  createOctokit: vi.fn(() => ({
     rest: {
       repos: {
         createRelease: mockCreateRelease,

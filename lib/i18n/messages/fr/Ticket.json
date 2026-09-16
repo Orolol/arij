@@ -1,5 +1,8 @@
 {
+  "dependencies": { "retry": "Réessayer" },
   "git": {
+    "retryPr": "Réessayer",
+    "loadingPr": "Chargement de la pull request…",
     "diffstat": "· {files} files · worktree isolé",
     "diffstatUnknown": "— · — files · worktree isolé",
     "creatingPr": "Création…"

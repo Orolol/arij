@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { Infinity as InfinityIcon, Loader2, TriangleAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { NamedAgentSelect } from "@/components/shared/NamedAgentSelect";
-import { cn } from "@/lib/utils";
+import { requestJson } from "@/lib/api/client";
+import { OptionRow } from "@/components/shared/OptionRow";
 import {
   AUTO_MODE_CONCURRENCY_RANGE,
   DEFAULT_AUTO_BUILD_CONCURRENCY,
@@ -35,51 +36,6 @@ interface AutoModeDialogProps {
 }
 
 /**
- * One key/value line of the options block — the NightRunDialog grammar
- * (11px vertical rhythm on a soft hairline), reused verbatim so the two
- * unattended-mode dialogs read as one family.
- */
-function OptionRow({
-  label,
-  htmlFor,
-  hint,
-  last = false,
-  children,
-}: {
-  label: string;
-  htmlFor?: string;
-  hint?: string;
-  last?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <div
-      className={cn(
-        "flex flex-col gap-1 border-t border-border-soft py-[11px]",
-        last && "border-b"
-      )}
-    >
-      <div className="flex items-center justify-between gap-3">
-        {htmlFor ? (
-          <label
-            htmlFor={htmlFor}
-            className="text-[12.5px] text-muted-foreground"
-          >
-            {label}
-          </label>
-        ) : (
-          <span className="text-[12.5px] text-muted-foreground">{label}</span>
-        )}
-        <div className="flex shrink-0 items-center gap-[6px] text-[13px]">
-          {children}
-        </div>
-      </div>
-      {hint && <p className="text-[11.5px] text-meta">{hint}</p>}
-    </div>
-  );
-}
-
-/**
  * Configuration dialog for Full Auto Mode: an enable switch, a build agent +
  * build concurrency row, a review agent + review concurrency row, and a live
  * count of what the supervisor would pick up right now.
@@ -89,18 +45,30 @@ function OptionRow({
  * nothing else. Silently raising the scheduler budget would let an unattended
  * mode rewrite a global safety setting the user chose.
  */
-export function AutoModeDialog({
+export function AutoModeDialog(props: AutoModeDialogProps) {
+  return props.open ? <AutoModeForm key={props.projectId} {...props} /> : null;
+}
+
+function AutoModeForm({
   projectId,
   open,
   onOpenChange,
-  defaultNamedAgentId = null,
+  defaultNamedAgentId: initialNamedAgentId = null,
   onSaved,
   onError,
 }: AutoModeDialogProps) {
   const t = useTranslations("AutoMode");
+  // Capture the default for this opening so later project refreshes cannot replace the draft.
+  const [defaultNamedAgentId] = useState(initialNamedAgentId);
   const [status, setStatus] = useState<AutoModeStatus | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false);
+  const active = useRef(true);
+  useEffect(() => {
+    active.current = true;
+    return () => { active.current = false; };
+  }, []);
   const [error, setError] = useState<string | null>(null);
 
   const [enabled, setEnabled] = useState(false);
@@ -132,28 +100,14 @@ export function AutoModeDialog({
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    setLoading(true);
-    setError(null);
-    setStatus(null);
-    fetch(`/api/projects/${projectId}/auto-mode`)
-      .then(async (r) => {
-        // A 404/500 still carries a JSON body, so status has to be checked
-        // explicitly — otherwise the dialog would sit on its defaults and let
-        // Save write them over the real configuration.
-        const body = await r.json().catch(() => null);
-        if (cancelled) return;
-        if (!r.ok || !body?.data) {
-          setError(body?.error || t("errors.load"));
-          return;
-        }
-        applyStatus(body.data as AutoModeStatus, defaultNamedAgentId);
-      })
-      .catch(() => {
-        if (!cancelled) setError(t("errors.load"));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    requestJson<AutoModeStatus>(`/api/projects/${projectId}/auto-mode?candidates=1`, {
+      errorMessage: t("errors.load"),
+    }).then((result) => {
+      if (cancelled) return;
+      setError(result.error);
+      if (result.data) applyStatus(result.data, defaultNamedAgentId);
+      setLoading(false);
+    });
     return () => {
       cancelled = true;
     };
@@ -169,39 +123,31 @@ export function AutoModeDialog({
     schedulerBudget !== null && buildBudget + reviewBudget > schedulerBudget;
 
   async function handleSave() {
+    if (!status || loading || savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     setError(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/auto-mode`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          enabled,
-          buildAgent,
-          reviewAgent,
-          buildConcurrency: buildBudget,
-          reviewConcurrency: reviewBudget,
-          smartDispatch,
-          secondOpinion,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data?.error) {
-        const message = data?.error || t("errors.save");
-        setError(message);
-        onError?.(message);
-        return;
-      }
-      applyStatus(data.data as AutoModeStatus, defaultNamedAgentId);
-      onSaved?.(data.data as AutoModeStatus);
-      onOpenChange(false);
-    } catch {
-      const message = t("errors.save");
-      setError(message);
-      onError?.(message);
-    } finally {
-      setSaving(false);
+    const result = await requestJson<AutoModeStatus>(`/api/projects/${projectId}/auto-mode`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        enabled, buildAgent, reviewAgent,
+        buildConcurrency: buildBudget, reviewConcurrency: reviewBudget,
+        smartDispatch, secondOpinion,
+      }),
+      errorMessage: t("errors.save"),
+    });
+    savingRef.current = false;
+    if (!active.current) return;
+    setSaving(false);
+    setError(result.error);
+    if (result.error !== null) {
+      onError?.(result.error);
+      return;
     }
+    applyStatus(result.data, defaultNamedAgentId);
+    onSaved?.(result.data);
+    onOpenChange(false);
   }
 
   return (
@@ -221,7 +167,7 @@ export function AutoModeDialog({
           </DialogClose>
         </DialogHeader>
 
-        <div className="flex flex-col gap-[20px] px-[24px] py-[22px]">
+        <fieldset disabled={loading || saving || !status} className="flex min-w-0 flex-col gap-[20px] px-[24px] py-[22px]">
           <DialogDescription className="text-[13.5px] leading-[1.6] text-muted-foreground">
             {t("dialog.description")}
           </DialogDescription>
@@ -238,6 +184,11 @@ export function AutoModeDialog({
               />
               {t("dialog.runContinuously")}
             </label>
+            {status?.parked?.map((ticket) => (
+              <a key={ticket.ticketId} href={`/projects/${projectId}?ticket=${ticket.epicId}`} className="block text-sm underline">
+                {ticket.ticketId}: {ticket.reason}
+              </a>
+            ))}
             <span
               className="text-[12.5px] text-muted-foreground"
               data-testid="auto-mode-candidates"
@@ -393,7 +344,7 @@ export function AutoModeDialog({
               {error}
             </p>
           )}
-        </div>
+        </fieldset>
 
         <DialogFooter className="gap-[10px] px-[24px] pb-[22px] sm:justify-end">
           <Button

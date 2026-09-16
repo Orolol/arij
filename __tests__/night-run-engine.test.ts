@@ -57,7 +57,7 @@ vi.mock("@/lib/webhooks/send", async (importOriginal) => {
 });
 
 const { db } = await import("@/lib/db");
-const { projects, epics, agentSessions, notifications, settings, ticketActivityLog } =
+const { projects, epics, agentSessions, settings, ticketActivityLog } =
   await import("@/lib/db/schema");
 const {
   startNightRun,
@@ -72,8 +72,6 @@ const {
   NIGHT_CIRCUIT_BREAKER_SETTING_KEY,
   NIGHT_COST_CAP_SETTING_KEY,
   NIGHT_STOPPED_ABORT_REASON,
-  nightCircuitBreakerSettingKey,
-  nightCostCapSettingKey,
 } = await import("@/lib/night/constants");
 const { nightRunAbortKind } = await import(
   "@/components/night/night-run-format"
@@ -163,13 +161,14 @@ function finishPipeline(
   });
 }
 
-function nightNotifications(projectId: string) {
-  return db
-    .select()
-    .from(notifications)
-    .where(eq(notifications.projectId, projectId))
-    .all()
-    .filter((n) => n.title?.startsWith("Night run finished"));
+/**
+ * The morning summary now leaves the process as the `night_run.completed`
+ * webhook payload; the durable run rows are the in-app surface.
+ */
+function nightSummaries(): string[] {
+  return webhookMock.send.mock.calls
+    .map((call) => (call[1] as { summary?: string }).summary ?? "")
+    .filter((summary) => summary.startsWith("Night run finished"));
 }
 
 beforeEach(() => {
@@ -188,7 +187,6 @@ beforeEach(() => {
   // Fresh tables per test so the short epic ids ("a", "b") never collide
   // (children before parents for the foreign keys).
   db.delete(ticketActivityLog).run();
-  db.delete(notifications).run();
   db.delete(agentSessions).run();
   db.delete(epics).run();
   db.delete(projects).run();
@@ -289,7 +287,7 @@ describe("NightCircuitBreaker", () => {
 });
 
 describe("night setting resolution", () => {
-  it("breaker: request override → project → global → default 3, clamped", () => {
+  it("breaker: request override → global → default 3, clamped", () => {
     const projectId = seedProject([]);
     expect(resolveNightCircuitBreaker(projectId)).toBe(3);
 
@@ -299,15 +297,15 @@ describe("night setting resolution", () => {
     expect(resolveNightCircuitBreaker(projectId)).toBe(5);
 
     db.insert(settings)
-      .values({ key: nightCircuitBreakerSettingKey(projectId), value: "0" })
+      .values({ key: `${NIGHT_CIRCUIT_BREAKER_SETTING_KEY}:${projectId}`, value: "0" })
       .run();
-    expect(resolveNightCircuitBreaker(projectId)).toBe(0);
+    expect(resolveNightCircuitBreaker(projectId)).toBe(5);
 
     expect(resolveNightCircuitBreaker(projectId, 7)).toBe(7);
     expect(resolveNightCircuitBreaker(projectId, 99)).toBe(10);
   });
 
-  it("cost cap: request override → project → global → unlimited; junk is unlimited", () => {
+  it("cost cap: request override → global → unlimited; junk is unlimited", () => {
     const projectId = seedProject([]);
     expect(resolveNightCostCap(projectId)).toBeNull();
 
@@ -317,12 +315,12 @@ describe("night setting resolution", () => {
     expect(resolveNightCostCap(projectId)).toBe(20);
 
     db.insert(settings)
-      .values({ key: nightCostCapSettingKey(projectId), value: "2.5" })
+      .values({ key: `${NIGHT_COST_CAP_SETTING_KEY}:${projectId}`, value: "2.5" })
       .run();
-    expect(resolveNightCostCap(projectId)).toBe(2.5);
+    expect(resolveNightCostCap(projectId)).toBe(20);
 
     expect(resolveNightCostCap(projectId, 9)).toBe(9);
-    expect(resolveNightCostCap(projectId, -1)).toBe(2.5);
+    expect(resolveNightCostCap(projectId, -1)).toBe(20);
   });
 });
 
@@ -397,15 +395,7 @@ describe("startNightRun — composition", () => {
     });
     expect(dagBatchRegistry.get(runId)).toBeNull();
 
-    const summaryRows = nightNotifications(projectId);
-    expect(summaryRows).toHaveLength(1);
-    expect(summaryRows[0]).toMatchObject({
-      title: "Night run finished: 2 to merge",
-      status: "completed",
-      sessionId: null,
-      agentType: "build",
-      targetUrl: `/projects/${projectId}?nightRun=${runId}`,
-    });
+    expect(nightSummaries()).toEqual(["Night run finished: 2 to merge"]);
 
     expect(webhookMock.send).toHaveBeenCalledTimes(1);
     expect(webhookMock.send).toHaveBeenCalledWith(projectId, {
@@ -450,12 +440,9 @@ describe("startNightRun — composition", () => {
     expect(skipLog).toHaveLength(1);
     expect(skipLog[0].reason).toContain("asked a question");
 
-    const summaryRows = nightNotifications(projectId);
-    expect(summaryRows).toHaveLength(1);
-    expect(summaryRows[0]).toMatchObject({
-      title: "Night run finished: 1 paused, 1 skipped",
-      status: "completed",
-    });
+    expect(nightSummaries()).toEqual([
+      "Night run finished: 1 paused, 1 skipped",
+    ]);
   });
 
   it("a failed pipeline blocks dependents with its reason and fails the summary", async () => {
@@ -484,11 +471,7 @@ describe("startNightRun — composition", () => {
     );
     expect(plan.ticketStatus.get("b")).toBe("skipped");
 
-    const summaryRows = nightNotifications(projectId);
-    expect(summaryRows[0]).toMatchObject({
-      title: "Night run finished: 1 failed, 1 skipped",
-      status: "failed",
-    });
+    expect(nightSummaries()).toEqual(["Night run finished: 1 failed, 1 skipped"]);
   });
 
   it("a cancelled pipeline blocks dependents as 'stopped by user'", async () => {
@@ -564,12 +547,9 @@ describe("startNightRun — composition", () => {
       abortedAtWave: 1,
     });
 
-    const summaryRows = nightNotifications(projectId);
-    expect(summaryRows).toHaveLength(1);
-    expect(summaryRows[0].title).toBe(
-      "Night run finished: 2 failed, 1 skipped — circuit breaker tripped"
-    );
-    expect(summaryRows[0].status).toBe("failed");
+    expect(nightSummaries()).toEqual([
+      "Night run finished: 2 failed, 1 skipped — circuit breaker tripped",
+    ]);
   });
 
   it("a success between failures keeps the breaker quiet (interleaved)", async () => {
@@ -670,12 +650,10 @@ describe("startNightRun — composition", () => {
       abortReason: "cost cap reached: $7.00 of $5.00",
     });
 
-    const summaryRows = nightNotifications(projectId);
-    expect(summaryRows).toHaveLength(1);
     // One session reported no cost → the total is a lower bound.
-    expect(summaryRows[0].title).toBe(
-      "Night run finished: 1 to merge, 1 skipped — ≥$7.00 — cost cap reached"
-    );
+    expect(nightSummaries()).toEqual([
+      "Night run finished: 1 to merge, 1 skipped — ≥$7.00 — cost cap reached",
+    ]);
   });
 
   it("an epic that fails to launch counts as a breaker failure", async () => {
@@ -768,11 +746,9 @@ describe("startNightRun — user stop", () => {
     });
 
     // Summary: the stopped variant, and the client formatter agrees.
-    const summaryRows = nightNotifications(projectId);
-    expect(summaryRows).toHaveLength(1);
-    expect(summaryRows[0].title).toBe(
-      "Night run finished: 1 to merge, 2 skipped — stopped by you"
-    );
+    expect(nightSummaries()).toEqual([
+      "Night run finished: 1 to merge, 2 skipped — stopped by you",
+    ]);
     expect(nightRunAbortKind(NIGHT_STOPPED_ABORT_REASON)).toBe("stopped");
 
     // Exactly one webhook, carrying the stop reason.

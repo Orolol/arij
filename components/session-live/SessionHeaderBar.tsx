@@ -11,10 +11,12 @@ import {
   PillButton,
   Stamp,
   pillButtonVariants,
+  projectTone,
+  projectToneIndex,
 } from "@/components/piscine";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
 import { formatCostUsd } from "@/lib/utils/format-usage";
-import { formatElapsed } from "@/lib/utils/format-elapsed";
+import { compactElapsed, formatElapsed } from "@/lib/utils/format-elapsed";
 import { cn } from "@/lib/utils";
 
 import { AGENT_TYPE_LABEL_KEYS, projectShortLabel, statusStamp } from "./labels";
@@ -113,20 +115,20 @@ export function SessionHeaderBar({
       </Link>
 
       {/* Colour here is PROJECT IDENTITY, never the stratum that shares the
-          hex. TODO(foundation): swap the fixed tone for
-          `projectTone(project.colorIndex)` once `lib/projects/color.ts`
-          exists — the projects table carries no colour column yet. */}
+          hex. The projects table carries no colour column yet, so
+          `projectToneIndex` falls back to the id-stable hash — the same rule
+          every other surface uses. */}
       {project && (
         <IdentityChip
           size="sm"
-          tone={1}
+          tone={projectTone(projectToneIndex(project.id))}
           label={projectShortLabel(project.name)}
         />
       )}
       {ticket && (
         <IdentityChip
           size="sm"
-          tone={1}
+          tone={projectTone(projectToneIndex(projectId))}
           label={ticket.readableId ?? ticket.id.slice(0, 8).toUpperCase()}
         />
       )}
@@ -191,20 +193,6 @@ export function SessionHeaderBar({
       </div>
     </div>
   );
-}
-
-/**
- * The compact elapsed glyph every frame draws: "4m12", not "4m 12s".
- *
- * `Chrono` makes exactly this transformation, but it keeps `compact()` private
- * and mounting `Chrono` for a session that has ENDED would start a 1s ticker
- * counting past the end. Duplicated here rather than forked: if the primitive
- * ever exports `compact`, delete this and import it.
- */
-function compactElapsed(elapsed: string): string {
-  const match = /^(\d+)([mh])\s(\d+)[ms]$/.exec(elapsed);
-  if (!match) return elapsed; // "47s", and any future shape
-  return `${match[1]}${match[2]}${match[3].padStart(2, "0")}`;
 }
 
 /**

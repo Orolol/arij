@@ -2,13 +2,20 @@
 
 import { useLocale, useTranslations } from "next-intl";
 import { formatDateTime } from "@/lib/i18n/format";
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useState, useCallback } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import {
+  BreathingDot,
+  IdentityChip,
+  Mono,
+  PillButton,
+  Stamp,
+  type StampTone,
+  SurfaceCard,
+} from "@/components/piscine";
 import { MessageList } from "@/components/chat/MessageList";
+import { useSessionPolling } from "@/components/session-live/useSessionPolling";
 import {
   ArrowLeft,
   MessageSquare,
@@ -19,6 +26,7 @@ import {
 } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
 import { cn } from "@/lib/utils";
+import type { TranslationKey } from "@/lib/i18n/catalogue";
 
 interface ConversationMeta {
   id: string;
@@ -46,91 +54,86 @@ interface ChatMessage {
   createdAt: string;
 }
 
+const TYPE_LABEL_KEYS: Record<string, TranslationKey> = {
+  brainstorm: "ProjectSessions.conversation.types.brainstorm",
+  epic: "ProjectSessions.conversation.types.epic",
+  chat: "ProjectSessions.conversation.types.chat",
+};
+
+const STATUS_LABEL_KEYS: Record<string, TranslationKey> = {
+  active: "ProjectSessions.conversation.statuses.active",
+  generating: "ProjectSessions.conversation.statuses.generating",
+  generated: "ProjectSessions.conversation.statuses.generated",
+  completed: "ProjectSessions.conversation.statuses.completed",
+  error: "ProjectSessions.conversation.statuses.error",
+};
+
+function statusStampTone(status: string): StampTone {
+  if (status === "generating") return "live";
+  if (status === "error") return "failed";
+  if (status === "active") return "next";
+  if (status === "generated" || status === "completed") return "land";
+  return "next";
+}
+
 export default function ChatDetailPage() {
-  const locale = useLocale();
-  const t = useTranslations("ProjectSessions");
   const params = useParams();
   const projectId = params.projectId as string;
   const conversationId = params.conversationId as string;
+  return <ChatDetailContent key={`${projectId}:${conversationId}`} projectId={projectId} conversationId={conversationId} />;
+}
 
+function ChatDetailContent({ projectId, conversationId }: { projectId: string; conversationId: string }) {
+  const locale = useLocale();
+  const t = useTranslations("ProjectSessions");
+  const tKey = useTranslations();
+  const tErrors = useTranslations("ClientErrors");
+  const readFailed = tErrors("unableToLoadTheConversationTryAgain");
   const [meta, setMeta] = useState<ConversationMeta | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  // Split so the effect can fetch without the state writes being visible in
-  // its body: `fetchConversation` is pure I/O, `applyConversation` is the
-  // state update, and both the mount effect and `fetchData` compose them.
-  const fetchConversation = useCallback(
-    () =>
-      Promise.all([
-        fetch(`/api/projects/${projectId}/conversations/${conversationId}`).then(
-          (r) => r.json()
-        ),
-        fetch(
-          `/api/projects/${projectId}/chat?conversationId=${conversationId}`
-        ).then((r) => r.json()),
-      ]),
-    [projectId, conversationId]
-  );
-
-  const applyConversation = useCallback(
-    (metaJson: { data?: ConversationMeta }, msgsJson: { data?: ChatMessage[] }) => {
-      if (metaJson.data) setMeta(metaJson.data);
-      if (msgsJson.data) setMessages(msgsJson.data);
-    },
-    []
-  );
-
-  const fetchData = useCallback(async () => {
-    const [metaJson, msgsJson] = await fetchConversation();
-    applyConversation(metaJson, msgsJson);
-  }, [fetchConversation, applyConversation]);
-
-  // `loading` derives from "no payload has arrived for this conversation yet",
-  // which is what the synchronous `setLoading(true)` at the top of the effect
-  // used to express — and it also stops the previous conversation's messages
-  // from showing while the new one is still in flight.
-  const [loadedConversationId, setLoadedConversationId] = useState<string | null>(
-    null
-  );
-  const loading = loadedConversationId !== conversationId;
-
-  useEffect(() => {
-    let cancelled = false;
-    void fetchConversation()
-      .then(([metaJson, msgsJson]) => {
-        if (!cancelled) applyConversation(metaJson, msgsJson);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadedConversationId(conversationId);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchConversation, applyConversation, conversationId]);
-
-  // Auto-poll every 3s when status is "generating"
-  useEffect(() => {
-    if (meta?.status === "generating") {
-      pollRef.current = setInterval(() => {
-        fetchData();
-      }, 3000);
-    }
-
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
-      }
-    };
-  }, [meta?.status, fetchData]);
-
-  async function handleRefresh() {
+  const load = useCallback(async (signal: AbortSignal) => {
     setRefreshing(true);
-    await fetchData();
+    let nextMeta: ConversationMeta | null = null;
+    let nextMessages: ChatMessage[] | null = null;
+    let notFound = false;
+    try {
+      const [metaRes, messagesRes] = await Promise.all([
+        fetch(`/api/projects/${projectId}/conversations/${conversationId}`, { signal }),
+        fetch(`/api/projects/${projectId}/chat?conversationId=${conversationId}`, { signal }),
+      ]);
+      notFound = metaRes.status === 404;
+      if (metaRes.ok) {
+        const body = await metaRes.json();
+        nextMeta = body.data;
+      }
+      if (messagesRes.ok) {
+        const body = await messagesRes.json();
+        nextMessages = body.data;
+      }
+    } catch {
+      // Keep a previously loaded transcript available while the read is retried.
+    }
+    if (signal.aborted) return;
+    if (notFound) {
+      setMeta(null);
+      setMessages([]);
+      setError(null);
+    } else if (nextMeta && Array.isArray(nextMessages)) {
+      setMeta(nextMeta);
+      setMessages(nextMessages);
+      setError(null);
+    } else {
+      setError(readFailed);
+    }
+    setLoading(false);
     setRefreshing(false);
-  }
+  }, [projectId, conversationId, readFailed]);
+
+  const handleRefresh = useSessionPolling(`${projectId}:${conversationId}`, load, meta?.status === "generating", 3000, { immediate: true });
 
   if (loading) {
     return (
@@ -149,15 +152,30 @@ export default function ChatDetailPage() {
         >
           <ArrowLeft className="h-3 w-3" /> {t("conversation.back")}
         </Link>
-        <p className="text-muted-foreground text-sm">
-          {t("conversation.notFound")}
+        <p role={error ? "alert" : undefined} className="text-muted-foreground text-sm">
+          {error ?? t("conversation.notFound")}
         </p>
+        {error && (
+          <PillButton
+            variant="outline"
+            size="sm"
+            className="mt-3"
+            onClick={handleRefresh}
+            disabled={refreshing}
+          >
+            {t("conversation.refresh")}
+          </PillButton>
+        )}
       </div>
     );
   }
 
   const TypeIcon = meta.type === "epic" ? Sparkles : MessageSquare;
   const isGenerating = meta.status === "generating";
+  const typeKey = TYPE_LABEL_KEYS[meta.type];
+  const typeLabel = typeKey ? tKey(typeKey) : meta.type;
+  const statusKey = meta.status ? STATUS_LABEL_KEYS[meta.status] : null;
+  const statusLabel = statusKey ? tKey(statusKey) : meta.status;
 
   return (
     <div className="mx-auto flex max-w-[900px] flex-col gap-[16px] p-[24px]">
@@ -168,64 +186,53 @@ export default function ChatDetailPage() {
       >
         <ArrowLeft className="h-3 w-3" /> {t("conversation.back")}
       </Link>
+      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
 
       {/* Identity line */}
       <div className="flex flex-wrap items-center gap-[10px]">
         {isGenerating ? (
-          <span className="breathing-dot h-[7px] w-[7px]" />
+          <BreathingDot size={6} />
         ) : (
           <TypeIcon className="h-4 w-4 text-meta" />
         )}
-        <Badge
-          variant="outline"
-          className="rounded-full px-[8px] py-[1px] text-[11px] font-normal text-meta"
-        >
-          {meta.type}
-        </Badge>
-        {meta.status && (
-          <Badge
-            variant="outline"
-            className={cn(
-              "rounded-full px-[8px] py-[1px] text-[11px] font-normal",
-              isGenerating
-                ? "text-agent border-agent-border"
-                : meta.status === "error"
-                  ? "text-destructive border-destructive/30"
-                  : "text-meta"
-            )}
-          >
-            {meta.status}
-          </Badge>
+        <Mono size={11} weight={700} tone="feed-deep" className="shrink-0 uppercase">
+          {typeLabel}
+        </Mono>
+        {statusLabel && (
+          <Stamp tone={statusStampTone(meta.status ?? "")} dot={isGenerating}>
+            {statusLabel}
+          </Stamp>
         )}
         {meta.namedAgentName ? (
-          <Badge
-            variant="outline"
-            className="rounded-full px-[8px] py-[1px] text-[11px] font-normal text-meta"
-          >
-            {meta.namedAgentName}
-          </Badge>
+          <IdentityChip label={meta.namedAgentName} size="sm" />
         ) : meta.provider && meta.provider !== "claude-code" ? (
-          <Badge
-            variant="outline"
-            className="rounded-full px-[8px] py-[1px] text-[11px] font-normal uppercase tracking-wide text-meta"
-          >
-            {PROVIDER_LABELS[meta.provider as keyof typeof PROVIDER_LABELS] ??
-              meta.provider}
-          </Badge>
+          <IdentityChip
+            label={
+              PROVIDER_LABELS[meta.provider as keyof typeof PROVIDER_LABELS] ??
+              meta.provider
+            }
+            size="sm"
+          />
         ) : null}
 
-        <Button
-          variant="outline"
-          size="sm"
-          className="ml-auto h-[31px] rounded-[8px] px-[12px] text-[13px]"
-          onClick={handleRefresh}
-          disabled={refreshing}
-        >
-          <RefreshCw
-            className={`h-3 w-3 mr-1 ${refreshing ? "animate-spin" : ""}`}
-          />
-          {t("conversation.refresh")}
-        </Button>
+        <div className="ml-auto flex items-center gap-[8px]">
+          <Link href={`/chat?conversation=${conversationId}`}>
+            <PillButton variant="outline" size="sm">
+              {t("conversation.openInChat")}
+            </PillButton>
+          </Link>
+          <PillButton
+            variant="outline"
+            size="sm"
+            onClick={handleRefresh}
+            disabled={refreshing}
+          >
+            <RefreshCw
+              className={cn("h-3 w-3", refreshing && "animate-spin")}
+            />
+            {t("conversation.refresh")}
+          </PillButton>
+        </div>
       </div>
 
       <h2 className="text-[18px] font-medium leading-[1.3]">{meta.label}</h2>
@@ -251,13 +258,13 @@ export default function ChatDetailPage() {
       </div>
 
       {/* Message history */}
-      <Card className="overflow-hidden rounded-[12px]">
+      <SurfaceCard radius={12} className="overflow-hidden p-0">
         <MessageList
           messages={messages}
           loading={false}
           streamStatus={isGenerating ? t("conversation.generating") : null}
         />
-      </Card>
+      </SurfaceCard>
     </div>
   );
 }

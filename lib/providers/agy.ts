@@ -56,7 +56,6 @@ import type {
   BaseProviderChunkCallbacks,
   ProviderExitInfo,
 } from "./base-provider";
-import type { StreamLogContext } from "@/lib/claude/logger";
 import type {
   ProviderResult,
   ProviderSpawnOptions,
@@ -139,9 +138,7 @@ export class AgyProvider extends BaseCliProvider {
     }
 
     args.push(
-      ...buildProviderOptionArgs("agy", cliOptions, {
-        resume: !!(cliSessionId && resumeSession),
-      }),
+      ...buildProviderOptionArgs("agy", cliOptions),
     );
 
     args.push("-p", prompt);
@@ -220,9 +217,8 @@ export class AgyProvider extends BaseCliProvider {
   protected handleExit(
     info: ProviderExitInfo,
     callbacks: BaseProviderChunkCallbacks,
-    logCtx: StreamLogContext | null,
   ): ProviderResult {
-    const result = super.handleExit(info, callbacks, logCtx);
+    const result = super.handleExit(info, callbacks);
     if (!result.success) return result;
 
     const envelope = parseAgyEnvelope(info.stdout);

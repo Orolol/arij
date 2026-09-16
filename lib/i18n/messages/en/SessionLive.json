@@ -14,7 +14,8 @@
     "memoryDistill": "Memory Distill",
     "dreaming": "Dreaming",
     "forensic": "Forensic",
-    "failureDigest": "Failure Digest"
+    "failureDigest": "Failure Digest",
+    "releaseNotes": "Release Notes"
   },
   "outcome": {
     "answered": "Answered",
@@ -148,6 +149,11 @@
   },
   "page": {
     "loading": "Loading...",
+    "loadFailed": "Could not load this session.",
+    "retry": "Retry",
     "agentFallback": "Agent"
+  },
+  "actions": {
+    "unavailable": "The raw-stream scan failed — this list is the durable half only."
   }
 }

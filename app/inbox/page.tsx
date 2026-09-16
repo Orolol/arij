@@ -1,4 +1,5 @@
 "use client";
+import { sendToDev } from "@/lib/inbox/client";
 
 import { useLocale, useTranslations } from "next-intl";
 import { useMemo, useState } from "react";
@@ -51,6 +52,7 @@ function InboxRow({
   item,
   onReply,
   onMarkRead,
+  onRefresh,
 }: {
   item: InboxItem;
   onReply: (
@@ -58,6 +60,7 @@ function InboxRow({
     content: string
   ) => Promise<void>;
   onMarkRead: (epicId: string) => Promise<void>;
+  onRefresh: () => Promise<void>;
 }) {
   const locale = useLocale();
   const tKey = useTranslations();
@@ -65,6 +68,8 @@ function InboxRow({
   const [replyText, setReplyText] = useState("");
   const [busy, setBusy] = useState<"reply" | "dispatch" | "read" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [dispatchedComment, setDispatchedComment] = useState<{ at: string | null } | null>(null);
+  const alreadyDispatched = dispatchedComment !== null && dispatchedComment.at === item.latestCommentCreatedAt;
 
   const canSendToDev = isBuildableStatus(item.status);
   // A row is a REPORT unless an agent is actually held on an answer. Reports
@@ -110,25 +115,25 @@ function InboxRow({
   // 409 concurrency) — no AgentActionsBar machinery needed. Any typed reply
   // rides along as the dispatch comment.
   async function handleSendToDev() {
-    if (busy) return;
+    if (busy || alreadyDispatched) return;
     setBusy("dispatch");
     setError(null);
     try {
       const comment = replyText.trim();
-      const res = await fetch(
-        `/api/projects/${item.projectId}/epics/${item.epicId}/build`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(comment ? { comment } : {}),
-        }
-      );
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || body.error) {
-        setError(body.error || t("row.dispatchError"));
+      const result = await sendToDev(item, null, t("row.dispatchError"), comment);
+      if (result.error) {
+        setError(result.error);
       } else {
         setReplyText("");
-        await onMarkRead(item.epicId);
+        setDispatchedComment({ at: item.latestCommentCreatedAt });
+        // The agent was launched. A failed cursor update must not make that
+        // launch look unsuccessful or invite an immediate duplicate dispatch.
+        try {
+          await onMarkRead(item.epicId);
+        } catch {
+          setError(t("row.markReadError"));
+          await onRefresh();
+        }
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : t("row.dispatchError"));
@@ -198,6 +203,7 @@ function InboxRow({
       <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
         <Textarea
           value={replyText}
+          disabled={busy !== null}
           onChange={(e) => setReplyText(e.target.value)}
           placeholder={
             isPendingQuestion
@@ -239,7 +245,7 @@ function InboxRow({
             <Button
               size="sm"
               onClick={handleSendToDev}
-              disabled={busy !== null}
+              disabled={busy !== null || alreadyDispatched}
               data-testid={`inbox-send-to-dev-${item.epicId}`}
             >
               <Hammer className="h-3.5 w-3.5 mr-1" />
@@ -264,7 +270,7 @@ function InboxRow({
 
 export default function InboxPage() {
   const t = useTranslations("Inbox");
-  const { items, unreadMessageCount, awaitingReplyCount, loading, markRead, reply } =
+  const { items, page, totalPages, setPage, unreadMessageCount, awaitingReplyCount, loading, error, refresh, markRead, reply } =
     useInbox();
 
   const groups = useMemo(() => groupByProject(items), [items]);
@@ -311,11 +317,18 @@ export default function InboxPage() {
         </div>
       </div>
 
+      {error && (
+        <div role="alert" className="flex items-center gap-3 text-sm text-destructive">
+          <span>{error}</span>
+          <Button size="sm" variant="ghost" onClick={() => void refresh()}>{t("retry")}</Button>
+        </div>
+      )}
+
       {loading ? (
         <div className="py-12 text-center text-sm text-muted-foreground">
           {t("loading")}
         </div>
-      ) : items.length === 0 ? (
+      ) : items.length === 0 ? !error && (
         <div
           className="py-12 text-center text-sm text-muted-foreground"
           data-testid="inbox-empty"
@@ -344,10 +357,18 @@ export default function InboxPage() {
                 item={item}
                 onReply={reply}
                 onMarkRead={markRead}
+                onRefresh={refresh}
               />
             ))}
           </section>
         ))
+      )}
+      {totalPages > 1 && (
+        <nav aria-label={t("pagination.label")} className="flex items-center justify-between gap-3">
+          <Button variant="outline" disabled={loading || page <= 1} onClick={() => setPage(page - 1)}>{t("pagination.previous")}</Button>
+          <span className="text-sm">{t("pagination.page", { page, totalPages })}</span>
+          <Button variant="outline" disabled={loading || page >= totalPages} onClick={() => setPage(page + 1)}>{t("pagination.next")}</Button>
+        </nav>
       )}
     </div>
   );

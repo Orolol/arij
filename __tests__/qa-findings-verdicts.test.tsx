@@ -120,31 +120,15 @@ describe("RubricBand", () => {
   it("renders the checklist headings as chips", () => {
     render(
       <RubricBand
-        rubric={{ items: ["Tests", "Integration"], projectRuleCount: 0 }}
+        rubric={{ items: ["Tests", "Integration"] }}
       />,
     );
     const chips = screen.getAllByTestId("qa-rubric-chip");
     expect(chips.map((chip) => chip.textContent)).toEqual(["Tests", "Integration"]);
-    expect(screen.queryByTestId("qa-rubric-project-rules")).toBeNull();
-  });
-
-  it("adds the project-rules chip only when there are project rules", () => {
-    const { unmount } = render(
-      <RubricBand rubric={{ items: ["Tests"], projectRuleCount: 4 }} />,
-    );
-    expect(screen.getByTestId("qa-rubric-project-rules").textContent).toBe(
-      "+ 4 project rules",
-    );
-    unmount();
-
-    render(<RubricBand rubric={{ items: ["Tests"], projectRuleCount: 1 }} />);
-    expect(screen.getByTestId("qa-rubric-project-rules").textContent).toBe(
-      "+ 1 project rule",
-    );
   });
 
   it("keeps the helper, the link and the footnote when the checklist is empty", () => {
-    render(<RubricBand rubric={{ items: [], projectRuleCount: 0 }} />);
+    render(<RubricBand rubric={{ items: [] }} />);
     expect(screen.queryByTestId("qa-rubric-chip")).toBeNull();
     expect(screen.getByTestId("qa-rubric-helper").textContent).toBe(
       "what every reviewer checks — injected into their prompt",
@@ -159,7 +143,7 @@ describe("RubricBand", () => {
   });
 
   it("keeps the frame's reading order: label, helper, then the link", () => {
-    render(<RubricBand rubric={{ items: [], projectRuleCount: 0 }} />);
+    render(<RubricBand rubric={{ items: [] }} />);
     const header = screen.getByText("The rubric").parentElement as HTMLElement;
     const text = header.textContent ?? "";
     expect(text.indexOf("The rubric")).toBeLessThan(

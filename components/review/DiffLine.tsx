@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { useTranslations } from "next-intl";
 import { MessageSquarePlus } from "lucide-react";
 import type { DiffLine as DiffLineType } from "@/lib/git/diff";
 import type { ReviewComment } from "@/hooks/useReviewComments";
@@ -9,6 +9,7 @@ import { InlineCommentForm } from "./InlineCommentForm";
 import { InlineCommentThread } from "./InlineCommentThread";
 
 interface DiffLineProps {
+  disabled?: boolean;
   line: DiffLineType;
   filePath: string;
   comments: ReviewComment[];
@@ -24,8 +25,10 @@ export function DiffLine({
   onAddComment,
   onUpdateComment,
   onDeleteComment,
+  disabled,
 }: DiffLineProps) {
   const [showCommentForm, setShowCommentForm] = useState(false);
+  const t = useTranslations("Review");
   const lineNumber = line.newLineNumber ?? line.oldLineNumber;
   const lineComments = comments.filter(
     (c) => c.filePath === filePath && c.lineNumber === lineNumber
@@ -33,16 +36,16 @@ export function DiffLine({
 
   const bgClass =
     line.type === "add"
-      ? "bg-green-500/10"
+      ? "bg-action/10"
       : line.type === "del"
-        ? "bg-red-500/10"
+        ? "bg-destructive/10"
         : "";
 
   const textClass =
     line.type === "add"
-      ? "text-green-400"
+      ? "text-foreground"
       : line.type === "del"
-        ? "text-red-400"
+        ? "text-destructive"
         : "text-muted-foreground";
 
   const prefix =
@@ -63,14 +66,15 @@ export function DiffLine({
         </span>
         <span className="w-8 shrink-0 flex items-center justify-center">
           {lineNumber != null && (
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity"
+            <button
+              type="button"
+              className="h-5 w-5 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center rounded text-muted-foreground hover:text-foreground cursor-pointer bg-transparent border-0 disabled:opacity-0"
               onClick={() => setShowCommentForm(!showCommentForm)}
+              disabled={disabled}
+              aria-label={t("thread.add")}
             >
               <MessageSquarePlus className="h-3 w-3" />
-            </Button>
+            </button>
           )}
         </span>
       </div>
@@ -81,6 +85,7 @@ export function DiffLine({
             comments={lineComments}
             onUpdate={onUpdateComment}
             onDelete={onDeleteComment}
+            disabled={disabled}
           />
         </div>
       )}
@@ -88,9 +93,11 @@ export function DiffLine({
       {showCommentForm && lineNumber != null && (
         <div className="ml-24 mr-8 my-1">
           <InlineCommentForm
+            disabled={disabled}
             onSubmit={async (body) => {
-              await onAddComment(lineNumber, body);
-              setShowCommentForm(false);
+              const result = await onAddComment(lineNumber, body);
+              if (result !== null && result !== false) setShowCommentForm(false);
+              return result;
             }}
             onCancel={() => setShowCommentForm(false)}
           />

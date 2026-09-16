@@ -2,9 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
-vi.mock("next/navigation", () => ({
-  useParams: () => ({ projectId: "p1" }),
-}));
+const navigation = vi.hoisted(() => ({ projectId: "p1" }));
+vi.mock("next/navigation", () => ({ useParams: () => navigation }));
 
 const ghConfig = vi.hoisted(() => ({
   isConfigured: false,
@@ -226,6 +225,7 @@ async function renderPage() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  navigation.projectId = "p1";
   state.releases = [LATEST_RELEASE];
   state.epics = [CLEAN_EPIC, DIRTY_EPIC, RELEASED_EPIC];
   state.project = PROJECT;
@@ -272,6 +272,21 @@ describe("Releases screen — candidate tickets", () => {
 });
 
 describe("Releases screen — Create release", () => {
+  it("keeps the draft usable after a network failure and allows retry", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+    await user.click(screen.getByTestId("release-create-button"));
+    expect(await screen.findByTestId("release-toast")).toHaveTextContent("Failed to create release");
+    expect(screen.getByTestId("release-create-button")).toBeEnabled();
+    expect(within(screen.getByTestId("release-ticket-row-e1")).getByRole("checkbox"))
+      .toHaveAttribute("aria-checked", "true");
+    await user.click(screen.getByTestId("release-create-button"));
+    await waitFor(() => expect(screen.getAllByTestId("release-toast").some(
+      (toast) => toast.textContent === "Release v0.4.3 created",
+    )).toBe(true));
+  });
+
   it("is disabled with zero checked tickets and enabled with one", async () => {
     const user = userEvent.setup();
     await renderPage();
@@ -417,6 +432,26 @@ describe("Releases screen — changelog agent", () => {
 });
 
 describe("Releases screen — stat tiles", () => {
+  it("reports an initial load failure and recovers through Retry", async () => {
+    fetchMock.mockRejectedValueOnce(new Error("offline"));
+    const user = userEvent.setup();
+    render(<ReleasesPage />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Failed to load releases");
+    await user.click(screen.getByRole("button", { name: "Retry" }));
+    await screen.findByTestId("release-ticket-row-e1");
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("drops the previous project's tickets and draft on project navigation", async () => {
+    const view = await renderPage();
+    expect(screen.getByTestId("release-ticket-row-e1")).toBeInTheDocument();
+    navigation.projectId = "p2";
+    state.hang = true;
+    view.rerender(<ReleasesPage />);
+    expect(screen.queryByTestId("release-ticket-row-e1")).toBeNull();
+    expect(screen.getByTestId("release-stat-current").textContent).toContain("—");
+  });
+
   it("shows em-dashes while loading", async () => {
     state.hang = true;
     render(<ReleasesPage />);

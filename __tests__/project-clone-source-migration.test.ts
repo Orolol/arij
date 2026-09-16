@@ -4,14 +4,13 @@
  * journal entry, and the guarantee that existing rows are untouched.
  */
 
-import Database from "better-sqlite3";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getTableColumns } from "drizzle-orm";
 import { initDb } from "@/lib/db/init";
 import { projects } from "@/lib/db/schema";
+import { columnNames, tempDbPath, withDb } from "./helpers/migration";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
 const MIGRATION_TAG = "0028_project_clone_source";
@@ -31,29 +30,6 @@ afterEach(() => {
     fs.rmSync(tempDirs.pop() as string, { recursive: true, force: true });
   }
 });
-
-function tempDbPath(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arij-clone-source-test-"));
-  tempDirs.push(dir);
-  return path.join(dir, "arij.db");
-}
-
-function withDb<T>(file: string, fn: (conn: Database.Database) => T): T {
-  const conn = new Database(file);
-  try {
-    return fn(conn);
-  } finally {
-    conn.close();
-  }
-}
-
-function columnNames(conn: Database.Database, table: string): string[] {
-  return (
-    conn.prepare("SELECT name FROM pragma_table_info(?)").all(table) as {
-      name: string;
-    }[]
-  ).map((row) => row.name);
-}
 
 describe("0028_project_clone_source — migration file", () => {
   it("adds the three columns with ALTER TABLE statements", () => {
@@ -80,17 +56,8 @@ describe("0028_project_clone_source — migration file", () => {
     expect([...whens].sort((a, b) => a - b)).toEqual(whens);
   });
 
-  it("leaves the drizzle-kit snapshots untouched (generate must not be run)", () => {
-    const snapshots = fs
-      .readdirSync(path.join(MIGRATIONS_FOLDER, "meta"))
-      .filter((name) => name.endsWith("_snapshot.json"))
-      .sort();
-
-    // Snapshots stop at 0013 while the journal is far ahead — regenerating
-    // them would diff against stale state and emit wrong DDL.
-    expect(snapshots).not.toContain("0028_snapshot.json");
-    expect(snapshots[snapshots.length - 1]).toBe("0013_snapshot.json");
-  });
+// The drizzle-kit snapshots are pinned at 0013 once, for the whole journal, in
+// `__tests__/migrations-journal.test.ts` — the rule is global, not per migration.
 });
 
 describe("0028_project_clone_source — applied schema", () => {
@@ -190,7 +157,6 @@ describe("0028_project_clone_source — applied schema", () => {
       }
       conn.exec("ALTER TABLE chat_attachments DROP COLUMN project_id");
       conn.exec("ALTER TABLE chat_attachments DROP COLUMN epic_id");
-      conn.exec("ALTER TABLE notifications DROP COLUMN message");
       // 0042 indexes this column, and SQLite refuses to drop a column an
       // index still references. The replay re-creates the index.
       conn.exec("DROP INDEX IF EXISTS review_comments_session_idx");
@@ -208,6 +174,8 @@ describe("0028_project_clone_source — applied schema", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
+      conn.exec(fs.readFileSync(path.join(MIGRATIONS_FOLDER, "0022_notifications_read_cursor.sql"), "utf-8"));
       const entry = journal.entries.find((e) => e.tag === MIGRATION_TAG);
       conn
         .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at >= ?')

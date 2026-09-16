@@ -2,52 +2,33 @@
 
 import { useTranslations } from "next-intl";
 
-import { useState, useEffect, useCallback } from "react";
 import type { DashboardProject, ProjectFilter } from "@/lib/types/dashboard";
+import { createContext, useCallback, useContext, useState } from "react";
+import { usePolledResource } from "./usePolledResource";
 
-export function useProjects() {
+const NO_PROJECTS: DashboardProject[] = [];
+const isProjectList = (value: unknown): value is DashboardProject[] => Array.isArray(value);
+
+function useProjectsResource(enabled = true) {
   const tErrors = useTranslations("ClientErrors");
-  const [projects, setProjects] = useState<DashboardProject[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const errorMessage = useCallback((status?: number) => status
+    ? tErrors("projectsHttp", { status })
+    : tErrors("failedToLoadProjects"), [tErrors]);
+  const { data, loading, error, refresh } = usePolledResource<DashboardProject[]>(
+    enabled ? "/api/projects" : null, 10000, errorMessage, { validateData: isProjectList },
+  );
+  return { projects: data ?? NO_PROJECTS, loading, error, refresh };
+}
+
+const ProjectsContext = createContext<ReturnType<typeof useProjectsResource> | null>(null);
+export const ProjectsContextProvider = ProjectsContext.Provider;
+export function useSharedProjectsResource() { return useProjectsResource(); }
+
+export function useProjects(enabled = true) {
+  const shared = useContext(ProjectsContext);
+  const fallback = useProjectsResource(!shared && enabled);
+  const { projects, loading, error, refresh } = shared ?? fallback;
   const [filter, setFilter] = useState<ProjectFilter>("all");
-
-  const loadProjects = useCallback(async () => {
-    setError(null);
-    try {
-      const res = await fetch("/api/projects");
-      if (!res.ok) {
-        setError(tErrors("projectsHttp", { status: res.status }));
-        setProjects([]);
-        return;
-      }
-      const data = await res.json();
-      setProjects(data.data || []);
-    } catch {
-      setError(tErrors("failedToLoadProjects"));
-      setProjects([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [tErrors]);
-
-  useEffect(() => {
-    loadProjects();
-  }, [loadProjects]);
-
-  const filtered = projects.filter((p) => {
-    if (filter === "active") return p.status !== "archived";
-    if (filter === "archived") return p.status === "archived";
-    return true;
-  });
-
-  return {
-    projects: filtered,
-    allProjects: projects,
-    loading,
-    error,
-    filter,
-    setFilter,
-    refresh: loadProjects,
-  };
+  return { projects: projects.filter((p) => filter === "all" || (filter === "active" ? p.status !== "archived" : p.status === "archived")),
+    allProjects: projects, loading, error, refresh, filter, setFilter };
 }

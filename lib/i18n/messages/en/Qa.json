@@ -83,8 +83,7 @@
     "label": "The rubric",
     "helper": "what every reviewer checks — injected into their prompt",
     "edit": "edit →",
-    "footnote": "Review unverifiable (tests KO) = a verdict of its own: the ticket goes back to Your turn instead of passing.",
-    "projectRules": "+ {count, plural, one {# project rule} other {# project rules}}"
+    "footnote": "Review unverifiable (tests KO) = a verdict of its own: the ticket goes back to Your turn instead of passing."
   },
   "checkTypes": {
     "techCheck": {
@@ -125,7 +124,9 @@
       "loadPrompts": "Failed to load saved prompts",
       "savePrompt": "Failed to save prompt",
       "start": "Failed to start {checkType}"
-    }
+    },
+    "updatePreset": "Update preset",
+    "deletePreset": "Delete preset"
   },
   "report": {
     "heading": "{label} #{id}",
@@ -161,6 +162,8 @@
     "errors": {
       "load": "Failed to load report",
       "createEpics": "Failed to create epics from report"
-    }
+    },
+    "retry": "Retry",
+    "generationSession": "Open ticket generation session"
   }
 }

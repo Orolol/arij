@@ -1,15 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { forwardRef, useImperativeHandle, useState, useCallback, type ReactNode } from "react";
+import { installMockEventSource } from "./helpers/event-source-mock";
 
 // Mock EventSource (used by useProjectEvents)
-class MockEventSource {
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  close() {}
-}
-(globalThis as Record<string, unknown>).EventSource = MockEventSource;
+installMockEventSource();
 
 // Mock next/navigation. The header actions moved to the project chrome and
 // reach this page through `?panel=`, so the search params are per-test state.
@@ -127,8 +122,8 @@ vi.mock("@/components/chat/UnifiedChatPanel", () => ({
 
 
 // Mock NamedAgentSelect
-vi.mock("@/components/shared/NamedAgentSelect", () => ({
-  NamedAgentSelect: ({ value, onChange }: {
+vi.mock("@/components/shared/AgentSelectPill", () => ({
+  AgentSelectPill: ({ value, onChange }: {
     value: string | null;
     onChange: (v: string) => void;
   }) => (
@@ -411,7 +406,7 @@ describe("Kanban Build Toolbar", () => {
     expect(screen.queryByText("Auto-fix")).not.toBeInTheDocument();
   });
 
-  it("sends autoAgent in merge request when auto-fix is enabled", async () => {
+  it("uses the canonical merge endpoint when auto-fix is enabled", async () => {
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ data: { merged: true } }),
@@ -433,8 +428,7 @@ describe("Kanban Build Toolbar", () => {
         (c: unknown[]) => typeof c[0] === "string" && c[0].includes("/merge")
       );
       expect(mergeCalls.length).toBeGreaterThan(0);
-      const body = JSON.parse(mergeCalls[0][1].body);
-      expect(body.autoAgent).toBe(true);
+      expect(mergeCalls[0][1].body).toBeUndefined();
     });
   });
 });

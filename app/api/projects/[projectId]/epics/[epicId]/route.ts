@@ -1,22 +1,38 @@
-import { NextRequest, NextResponse } from "next/server";
-import { db } from "@/lib/db";
-import { epics } from "@/lib/db/schema";
-import { eq } from "drizzle-orm";
 import {
+  errorResponse,
   getEpicOr404,
   isErrorResponse,
-  errorResponse,
 } from "@/lib/api/route-helpers";
-import { tryExportArjiJson } from "@/lib/sync/export";
+import { db } from "@/lib/db";
+import { epics, gradingReports, userStories } from "@/lib/db/schema";
+import { emitTicketUpdated } from "@/lib/events/emit";
+import { parseGradingEntries } from "@/lib/grading/report";
+import { deleteTicket } from "@/lib/planning/delete-ticket";
 import {
-  deleteEpicPermanently,
   ScopedDeleteNotFoundError,
 } from "@/lib/planning/permanent-delete";
-import { updateEpicSchema } from "@/lib/validation/schemas";
-import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { tryExportArjiJson } from "@/lib/sync/export";
 import type { KanbanStatus } from "@/lib/types/kanban";
+import { updateEpicSchema } from "@/lib/validation/schemas";
+import { isValidationError, validateBody } from "@/lib/validation/validate";
 import { applyTransition } from "@/lib/workflow/transition-service";
-import { emitTicketUpdated, emitTicketDeleted } from "@/lib/events/emit";
+import { desc, eq, sql } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ projectId: string; epicId: string }> }
+) {
+  const { projectId, epicId } = await params;
+  const found = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(found)) return found;
+  const stories = db.select().from(userStories).where(eq(userStories.epicId, epicId)).orderBy(userStories.position).all();
+  const report = db.select().from(gradingReports).where(eq(gradingReports.epicId, epicId))
+    .orderBy(desc(sql`julianday(${gradingReports.createdAt})`), desc(gradingReports.id)).get();
+  const gradings = report ? parseGradingEntries(report.gradings) : null;
+  return NextResponse.json({ data: { epic: found.epic, userStories: stories,
+    gradingReport: report && gradings ? { ...report, gradings } : null } });
+}
 
 export async function PATCH(
   request: NextRequest,
@@ -90,8 +106,7 @@ export async function DELETE(
   const { projectId, epicId } = await params;
 
   try {
-    deleteEpicPermanently(projectId, epicId);
-    emitTicketDeleted(projectId, epicId);
+    await deleteTicket(projectId, epicId);
     tryExportArjiJson(projectId);
     return NextResponse.json({ data: { deleted: true } });
   } catch (error) {

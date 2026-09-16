@@ -1,15 +1,16 @@
 import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { projects, chatMessages, epics, userStories } from "@/lib/db/schema";
+import { chatMessages } from "@/lib/db/schema";
 import { eq, desc } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
-import { spawnClaude } from "@/lib/claude/spawn";
 import { buildSpecGenerationPrompt } from "@/lib/claude/prompt-builder";
-import { extractJsonFromOutput, parseClaudeOutput } from "@/lib/claude/json-parser";
+import { extractJsonFromOutput, isNoTextualOutputFallback, parseClaudeOutput } from "@/lib/claude/json-parser";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { getProvider } from "@/lib/providers";
+import { commitGeneratedSpec, ProjectSpecChangedError, saveConflictingSpecProposal, type GeneratedSpec } from "@/lib/projects/spec-write";
 
 import { activityRegistry } from "@/lib/activity-registry";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
@@ -17,7 +18,6 @@ import {
   enrichPromptWithDocumentMentions,
   userAuthoredTexts,
 } from "@/lib/documents/mentions";
-import { createUnresolvedMentionsNotification } from "@/lib/notifications/create";
 
 export const POST = withAgentResolutionErrors(async function POST(
   request: NextRequest,
@@ -35,10 +35,9 @@ export const POST = withAgentResolutionErrors(async function POST(
     // No body or invalid JSON — use default
   }
 
-  const project = db.select().from(projects).where(eq(projects.id, projectId)).get();
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
+  const found = getProjectOr404(projectId);
+  if (isErrorResponse(found)) return found;
+  const { project } = found;
 
   const chatHistory = db
     .select()
@@ -68,13 +67,6 @@ export const POST = withAgentResolutionErrors(async function POST(
     textSources: userAuthoredTexts(chatHistory),
   });
   const enrichedPrompt = mentionEnrichment.prompt;
-  createUnresolvedMentionsNotification({
-    projectId,
-    missing: mentionEnrichment.missing,
-    agentType: "spec_generation",
-    targetUrl: `/projects/${projectId}/spec`,
-  });
-
   const resolvedAgent = resolveAgentByNamedId(
     "spec_generation",
     projectId,
@@ -92,124 +84,47 @@ export const POST = withAgentResolutionErrors(async function POST(
     startedAt: new Date().toISOString(),
   });
 
+  let generatedOutput: string | null = null;
   try {
-    let result;
-    // Every non-Claude provider goes through the provider abstraction. An
-    // allowlist here would silently run some other CLI's work on Claude while
-    // the activity record claims the resolved provider.
-    if (resolvedAgent.provider !== "claude-code") {
-      const dynamicProvider = getProvider(resolvedAgent.provider);
-      const session = dynamicProvider.spawn({
-        sessionId: `spec-${createId()}`,
-        prompt: enrichedPrompt,
-        cwd: project.gitRepoPath || process.cwd(),
-        mode: "plan",
-        model: resolvedAgent.model,
-        logIdentifier: `spec-${projectId}`,
-      });
-      result = await session.promise;
-    } else {
-      const { promise } = spawnClaude({
-        mode: "plan",
-        prompt: enrichedPrompt,
-        model: resolvedAgent.model,
-        cwd: project.gitRepoPath || undefined,
-      });
-      result = await promise;
-    }
+    // Every provider goes through the provider abstraction, claude-code
+    // included: the resolved provider is the one that runs, and the activity
+    // record says which.
+    const session = getProvider(resolvedAgent.provider).spawn({
+      sessionId: `spec-${createId()}`,
+      prompt: enrichedPrompt,
+      cwd: project.gitRepoPath || process.cwd(),
+      mode: "plan",
+      model: resolvedAgent.model,
+    });
+    const result = await session.promise;
 
     if (!result.success) {
       return NextResponse.json({ error: result.error || "Claude Code failed" }, { status: 500 });
     }
 
     const rawOutput = result.result || "";
+    generatedOutput = rawOutput;
 
     // Try to extract structured JSON
-    const specData = extractJsonFromOutput<{
-      spec?: string;
-      epics?: Array<{
-        title: string;
-        description?: string;
-        priority?: number;
-        status?: string;
-        user_stories?: Array<{
-          title: string;
-          description?: string;
-          acceptance_criteria?: string;
-          status?: string;
-        }>;
-      }>;
-    }>(rawOutput);
-
-    if (!specData || !specData.epics) {
-      // If not JSON, treat as spec text
-      const parsed = parseClaudeOutput(rawOutput);
-      console.log("[generate-spec] No JSON found, treating as spec text. Preview:", parsed.content.slice(0, 300));
-
-      db.update(projects)
-        .set({ spec: parsed.content, status: "specifying", updatedAt: new Date().toISOString() })
-        .where(eq(projects.id, projectId))
-        .run();
-
-      tryExportArjiJson(projectId);
-      return NextResponse.json({ data: { spec: parsed.content, epicsCreated: 0 } });
+    const specData = extractJsonFromOutput<GeneratedSpec>(rawOutput);
+    const generated = specData && (specData.epics || typeof specData.spec === "string")
+      ? specData
+      : { spec: parseClaudeOutput(rawOutput).content };
+    if (!generated.epics && (!generated.spec?.trim() || isNoTextualOutputFallback(generated.spec))) {
+      throw new Error("The agent returned no specification.");
     }
-
-    // Update project spec
-    if (specData.spec) {
-      db.update(projects)
-        .set({ spec: specData.spec, status: "specifying", updatedAt: new Date().toISOString() })
-        .where(eq(projects.id, projectId))
-        .run();
-    }
-
-    // Insert epics and user stories
-    let epicsCreated = 0;
-    if (specData.epics) {
-      for (let i = 0; i < specData.epics.length; i++) {
-        const epicData = specData.epics[i];
-        const epicId = createId();
-        const now = new Date().toISOString();
-
-        db.insert(epics)
-          .values({
-            id: epicId,
-            projectId,
-            title: epicData.title,
-            description: epicData.description || null,
-            priority: epicData.priority ?? 0,
-            status: epicData.status || "backlog",
-            position: i,
-            createdAt: now,
-            updatedAt: now,
-          })
-          .run();
-
-        if (epicData.user_stories) {
-          for (let j = 0; j < epicData.user_stories.length; j++) {
-            const usData = epicData.user_stories[j];
-            db.insert(userStories)
-              .values({
-                id: createId(),
-                epicId,
-                title: usData.title,
-                description: usData.description || null,
-                acceptanceCriteria: usData.acceptance_criteria || null,
-                status: usData.status || "todo",
-                position: j,
-                createdAt: now,
-              })
-              .run();
-          }
-        }
-
-        epicsCreated++;
-      }
-    }
-
+    const epicsCreated = commitGeneratedSpec(projectId, project.spec, generated, { status: "specifying" });
     tryExportArjiJson(projectId);
-    return NextResponse.json({ data: { spec: specData.spec, epicsCreated } });
+    return NextResponse.json({ data: { spec: generated.spec, epicsCreated } });
   } catch (e) {
+    if (e instanceof ProjectSpecChangedError && generatedOutput) {
+      const proposal = saveConflictingSpecProposal(projectId, generatedOutput);
+      return NextResponse.json({
+        error: `${e.message} The agent's proposal is available in Documents as ${proposal.filename}.`,
+        code: "SPEC_CHANGED",
+        proposalDocumentId: proposal.id,
+      }, { status: 409 });
+    }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Unknown error" },
       { status: 500 }

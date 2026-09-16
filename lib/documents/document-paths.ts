@@ -1,3 +1,4 @@
+import { resolveStoredPath } from "@/lib/storage/stored-path";
 /**
  * The `data/documents/` counterpart of `lib/uploads/upload-paths.ts`, and it
  * exists for the same two reasons: `documents.image_path` is a database string
@@ -48,25 +49,5 @@ export function documentImageRelativePath(
  * out of the directory it started in.
  */
 export function documentImageAbsolutePath(storedPath: unknown): string | null {
-  if (typeof storedPath !== "string") return null;
-
-  const trimmed = storedPath.trim();
-  const withoutDotSlash = trimmed.startsWith("./") ? trimmed.slice(2) : trimmed;
-
-  const prefix = `${DOCUMENTS_RELATIVE_ROOT}/`;
-  if (!withoutDotSlash.startsWith(prefix)) return null;
-
-  const withinRoot = withoutDotSlash.slice(prefix.length);
-  if (withinRoot.length === 0) return null;
-
-  const documentsDirectory = path.join(process.cwd(), "data", "documents");
-  const absolute = path.resolve(documentsDirectory, withinRoot);
-  const relativeToRoot = path.relative(documentsDirectory, absolute);
-
-  const inside =
-    relativeToRoot.length > 0 &&
-    !relativeToRoot.startsWith("..") &&
-    !path.isAbsolute(relativeToRoot);
-
-  return inside ? absolute : null;
+  return resolveStoredPath(path.join(process.cwd(), "data", "documents"), DOCUMENTS_RELATIVE_ROOT, storedPath);
 }

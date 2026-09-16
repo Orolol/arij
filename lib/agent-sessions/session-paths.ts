@@ -1,15 +1,12 @@
 /**
  * Where a session's durable artifacts live.
  *
- * Split out of `artifacts.ts` and `servable-artifacts.ts` so both resolve the
- * root the same way, and so the one `process.cwd()` join is written with
- * literal segments. Turbopack evaluates filesystem joins statically: an
- * unscoped one makes the build assume anything under the project may be read
- * and copy every source file — and `public/` — into the server output bundle
- * ("Dynamic filesystem access causes tracing of the whole project").
+ * Artifact readers and dispatchers resolve the same runtime directory.
+ * Existing sessions are user data, never assets of a deployed application.
  */
 
 import path from "node:path";
+import fs from "node:fs";
 
 /**
  * Absolute path of `data/sessions`, or of an explicit override.
@@ -25,4 +22,14 @@ export function resolveSessionsRoot(override?: string): string {
   }
 
   return path.resolve(/*turbopackIgnore: true*/ override);
+}
+
+/**
+ * Runtime session output is user data, not a build asset. Resolve the dynamic
+ * directory without tracing every previous session into the server bundle.
+ */
+export function createSessionLogsPath(sessionId: string): string {
+  const logsDir = path.join(/* turbopackIgnore: true */ resolveSessionsRoot(), sessionId);
+  fs.mkdirSync(logsDir, { recursive: true });
+  return path.join(logsDir, "logs.json");
 }

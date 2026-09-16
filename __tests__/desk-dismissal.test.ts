@@ -114,6 +114,18 @@ describe("applyDeskDismissals", () => {
     expect(out.awaitingReply).toHaveLength(0);
   });
 
+  it("treats SQLite dismissal timestamps as UTC even outside UTC", () => {
+    vi.stubEnv("TZ", "Europe/Paris");
+    try {
+      const out = applyDeskDismissals(rows(), [
+        { epicId: "e1", kind: "asks", signalAt: "2026-08-30 09:00:00" },
+      ]);
+      expect(out.awaitingReply).toHaveLength(0);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("keeps a null-timestamped signal dismissed rather than flickering it back", () => {
     const out = applyDeskDismissals(
       { ...rows(), awaitingReply: [asks({ askedAt: null })] },
@@ -166,7 +178,6 @@ describe("POST /api/desk/dismiss", () => {
     expect(stored[0].epicId).toBe("e1");
     expect(stored[0].kind).toBe("asks");
     expect(stored[0].signalAt).toBe(ASKED);
-    expect(stored[0].dismissedAt).toBeTruthy();
   });
 
   it("re-arms rather than duplicating on the same (epic, kind)", async () => {

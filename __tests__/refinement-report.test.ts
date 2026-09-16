@@ -3,8 +3,8 @@
  *
  * Covers the pure formatting (grouping, the aggregate line, the recap body
  * and its ticket links) and the publish path against the real migrated
- * schema: recap comments on the tickets that changed column, and one
- * project notification carrying the aggregate.
+ * schema: recap comments on the tickets that changed column — the one
+ * surface that renders a discarded ticket's tombstones.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
@@ -12,23 +12,14 @@ import { createTestDb } from "@/lib/db/test-utils";
 import { createId } from "@/lib/utils/nanoid";
 
 const testDb = vi.hoisted(() => ({
-  instance: null as ReturnType<
-    typeof import("@/lib/db/test-utils").createTestDb
-  > | null,
+  instance: null as ReturnType<typeof import("@/lib/db/test-utils").createTestDb> | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
-const { agentSessions, epics, notifications, projects, ticketComments } =
+const { agentSessions, epics, projects, ticketComments } =
   await import("@/lib/db/schema");
 const {
   buildRefinementReport,
@@ -502,8 +493,6 @@ describe("publishRefinementReport", () => {
       succeeded: true,
     });
     expect(published.commentedTicketIds).toEqual([]);
-    // The notification still fires — see the no-op case below.
-    expect(published.notificationId).toBeTruthy();
   });
 
   /**
@@ -597,11 +586,9 @@ describe("publishRefinementReport", () => {
   /**
    * A pass that discarded everything it touched has no ticket of its own to
    * file the record on — and it is exactly the pass whose record the user
-   * most needs. `notifications` is not an answer: nothing in the app renders
-   * that table (hooks/useNotifications.ts has no consumer; the chrome reads
-   * /api/inbox, built from ticket_comments and agent_sessions), so the
-   * tombstone would be a permanently deleted ticket with no readable trace.
-   * It falls back to a ticket the project still has, and says why.
+   * most needs. Nothing else is an answer — the recap comment is the only
+   * surface that renders a tombstone — so it falls back to a ticket the
+   * project still has, and says why.
    */
   it("files a discard-only pass's record on a surviving ticket of the project", () => {
     recordRefinementChange(
@@ -630,11 +617,6 @@ describe("publishRefinementReport", () => {
     expect(body).toContain("Exports to the old CSV shape.");
     // ...and it says plainly that this ticket is only the host.
     expect(body).toContain("this ticket was not touched");
-
-    // The notification still carries the duplicate.
-    const row = testDb.instance!.db.select().from(notifications).all()[0];
-    expect(row.title).toContain("1 ticket discarded");
-    expect(row.message).toContain("Discarded E-9: Removed in 0.3.");
   });
 
   /**
@@ -773,32 +755,6 @@ describe("publishRefinementReport", () => {
     expect(body).not.toContain("Full breakdown of this pass:");
   });
 
-  it("leaves the notification message empty when nothing was discarded", () => {
-    seedChanges();
-    publishRefinementReport({ projectId, sessionId, succeeded: true });
-    expect(
-      testDb.instance!.db.select().from(notifications).all()[0].message
-    ).toBeNull();
-  });
-
-  it("raises one notification carrying the aggregate", () => {
-    seedChanges();
-    const published = publishRefinementReport({
-      projectId,
-      sessionId,
-      succeeded: true,
-    });
-
-    const rows = testDb.instance!.db.select().from(notifications).all();
-    expect(rows).toHaveLength(1);
-    expect(rows[0].id).toBe(published.notificationId);
-    expect(rows[0].status).toBe("completed");
-    expect(rows[0].agentType).toBe(REFINEMENT_AGENT_TYPE);
-    expect(rows[0].targetUrl).toBe(`/projects/${projectId}`);
-    expect(rows[0].title).toContain("1 ticket promoted to To do");
-    expect(rows[0].title).toContain("1 ticket sent back to Backlog");
-  });
-
   it("drains the registry so a second publish reports nothing", () => {
     seedChanges();
     publishRefinementReport({ projectId, sessionId, succeeded: true });
@@ -822,12 +778,9 @@ describe("publishRefinementReport", () => {
     });
 
     expect(published.report.promoted).toHaveLength(1);
-    const row = testDb.instance!.db.select().from(notifications).all()[0];
-    expect(row.status).toBe("failed");
-    expect(row.title).toContain("ended early");
   });
 
-  it("notifies a no-op pass rather than staying silent", () => {
+  it("stays silent about a no-op pass — there is nothing to file", () => {
     const published = publishRefinementReport({
       projectId,
       sessionId,
@@ -835,8 +788,7 @@ describe("publishRefinementReport", () => {
     });
 
     expect(published.report.total).toBe(0);
-    const row = testDb.instance!.db.select().from(notifications).all()[0];
-    expect(row.title).toContain("no changes");
+    expect(published.commentedTicketIds).toEqual([]);
   });
 });
 

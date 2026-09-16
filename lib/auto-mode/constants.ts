@@ -386,6 +386,24 @@ export const AUTO_MODE_REASONS = {
     `Auto mode merged the branch but left the ticket where it is: ${error}`,
   dispatchFailed: (stage: string, error: string) =>
     `Auto mode ${stage} dispatch failed: ${error}`,
+  /**
+   * One rank down a composite agent. Full Auto dispatches every stage itself
+   * rather than entering the pipeline, so without this entry a different
+   * agent appearing on the ticket has no explanation in the feed.
+   *
+   * Names BOTH ends, the attempt it belongs to and what the previous agent
+   * was abandoned for — the same three things the pipeline's rank-down entry
+   * carries, in the mode's own wording.
+   */
+  compositeRankDown: (
+    stage: string,
+    from: string,
+    to: string,
+    attempt: number,
+    budget: number,
+    reason: string
+  ) =>
+    `Auto mode composite fallback: ${stage} moved from ${from} to ${to} (attempt ${attempt}/${budget}) because ${reason}`,
   parked: (failures: number) =>
     `Auto mode parked this ticket after ${failures} consecutive failures`,
   parkedOnReviewRejections: (rejections: number) =>

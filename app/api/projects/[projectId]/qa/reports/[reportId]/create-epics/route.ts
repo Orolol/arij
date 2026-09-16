@@ -1,18 +1,20 @@
-import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
-import { NextRequest, NextResponse } from "next/server";
-import { and, eq, sql } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { agentSessions, epics, qaReports, userStories } from "@/lib/db/schema";
-import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
-import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
-import { createId } from "@/lib/utils/nanoid";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
-import { spawnClaude } from "@/lib/claude/spawn";
-import { extractJsonFromOutput } from "@/lib/claude/json-parser";
-import { getProvider } from "@/lib/providers";
-import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
 import type { AgentType } from "@/lib/agent-config/constants";
+import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
+import { isResumableProvider } from "@/lib/agent-sessions/validate-resume";
+import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
+import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
+import { extractJsonFromOutput } from "@/lib/claude/json-parser";
+import { db } from "@/lib/db";
+import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
+import { agentSessions, epics, qaReports } from "@/lib/db/schema";
+import { emitTicketCreated } from "@/lib/events/emit";
+import { insertEpicWithStories } from "@/lib/planning/create";
 import type { ProviderType } from "@/lib/providers/types";
+import { tryExportArjiJson } from "@/lib/sync/export";
+import { createId } from "@/lib/utils/nanoid";
+import { and, eq, sql } from "drizzle-orm";
+import { NextRequest, NextResponse } from "next/server";
 
 type Params = { params: Promise<{ projectId: string; reportId: string }> };
 
@@ -226,7 +228,6 @@ ${epicTypeRule}
           provider: agentSessions.provider,
           model: agentSessions.model,
           cliSessionId: agentSessions.cliSessionId,
-          claudeSessionId: agentSessions.claudeSessionId,
           namedAgentId: agentSessions.namedAgentId,
         })
         .from(agentSessions)
@@ -251,146 +252,35 @@ ${epicTypeRule}
   const canResume =
     previousCliSessionId !== null && isResumableProvider(provider);
 
-  async function spawnEpicGeneration(
-    useResume: boolean,
-  ): Promise<{ success: boolean; result?: string; error?: string }> {
-    const cwd = project.gitRepoPath || process.cwd();
-    if (provider !== "claude-code") {
-      const dynamicProvider = getProvider(provider);
-      const session = dynamicProvider.spawn({
-        sessionId: `qa-epics-${createId()}`,
-        prompt,
-        cwd,
-        mode: "plan",
-        model,
-        cliSessionId: useResume ? previousCliSessionId! : undefined,
-        resumeSession: useResume,
+  let created: ReturnType<typeof insertEpicWithStories>[] = [];
+  const generation = dispatchBackgroundSession({
+    projectId, agentType, mode: "plan", prompt,
+    resolvedAgent: { ...resolvedAgent, provider, model },
+    cwd: project.gitRepoPath || process.cwd(),
+    cliSessionId: canResume ? previousCliSessionId! : undefined,
+    spawn: { resumeSession: canResume },
+    logPrefix: "[qa/create-epics]",
+    evaluate: ({ result }) => {
+      const parsed = result?.result ? extractJsonFromOutput<unknown>(result.result) : null;
+      if (!result?.success || !toGeneratedEpics(parsed).length) return { success: false, error: result?.error ?? "Failed to parse epics JSON from agent response" };
+      const generated = toGeneratedEpics(parsed, isE2e || isFailureDigest ? "bug" : "feature");
+      created = db.transaction((tx) => {
+        const maxPosition = tx.select({ max: sql<number>`COALESCE(MAX(${epics.position}), -1)` }).from(epics).where(eq(epics.projectId, projectId)).get()?.max ?? -1;
+        return generated.map((item, index) => {
+          const id = createId();
+          return insertEpicWithStories(tx, project.name, { id, projectId, title: item.title,
+            description: isFailureDigest ? withFailureDigestSource(item.description, projectId, reportId) : item.description,
+            priority: item.priority, type: item.type, status: "backlog", position: maxPosition + index + 1,
+          }, item.userStories.map((story, position) => ({ ...story, id: createId(), epicId: id, status: "todo", position })));
+        });
       });
-      return session.promise;
-    } else {
-      const run = spawnClaude({
-        mode: "plan",
-        prompt,
-        cwd,
-        model,
-        cliSessionId: useResume ? previousCliSessionId! : undefined,
-        resumeSession: useResume,
-      });
-      return run.promise;
-    }
-  }
-
-  // Try resume-first, fall back to fresh prompt on failure
-  let result: { success: boolean; result?: string; error?: string };
-  if (canResume) {
-    result = await spawnEpicGeneration(true);
-    if (!result.success || !result.result) {
-      console.warn(
-        "[qa/create-epics] Resume failed, falling back to fresh prompt",
-        { provider, cliSessionId: previousCliSessionId, error: result.error },
-      );
-      result = await spawnEpicGeneration(false);
-    }
-  } else {
-    result = await spawnEpicGeneration(false);
-  }
-
-  if (!result.success || !result.result) {
-    return NextResponse.json(
-      { error: result.error || "Failed to generate epics" },
-      { status: 500 },
-    );
-  }
-
-  const extracted = extractJsonFromOutput<unknown>(result.result);
-  if (extracted === null || typeof extracted !== "object") {
-    const rawSnippet = toSnippet(result.result);
-    console.error("[qa/create-epics] Parsed non-object JSON from agent response", {
-      parsedType: extracted === null ? "null" : typeof extracted,
-      rawOutput: result.result,
-    });
-    return NextResponse.json(
-      {
-        error: "Failed to parse epics JSON from agent response",
-        rawSnippet,
-      },
-      { status: 500 },
-    );
-  }
-
-  const generatedEpics = toGeneratedEpics(
-    extracted,
-    isE2e || isFailureDigest ? "bug" : "feature",
-  );
-  if (generatedEpics.length === 0) {
-    const rawSnippet = toSnippet(result.result);
-    console.error("[qa/create-epics] JSON payload could not be normalized into epics", {
-      rawOutput: result.result,
-      extracted,
-    });
-    return NextResponse.json(
-      {
-        error: "Failed to parse epics JSON from agent response",
-        rawSnippet,
-      },
-      { status: 500 },
-    );
-  }
-
-  const maxPositionResult = db
-    .select({ max: sql<number>`COALESCE(MAX(${epics.position}), -1)` })
-    .from(epics)
-    .where(eq(epics.projectId, projectId))
-    .get();
-  const maxPosition = maxPositionResult?.max ?? -1;
-
-  const now = new Date().toISOString();
-  const epicsToInsert = generatedEpics.map((generatedEpic, epicIndex) => ({
-    id: createId(),
-    projectId,
-    title: generatedEpic.title,
-    description: isFailureDigest
-      ? withFailureDigestSource(generatedEpic.description, projectId, reportId)
-      : generatedEpic.description,
-    priority: generatedEpic.priority,
-    status: "backlog",
-    position: maxPosition + 1 + epicIndex,
-    type: generatedEpic.type,
-    createdAt: now,
-    updatedAt: now,
-  }));
-  const created = epicsToInsert.map((epicRow) => ({
-    id: epicRow.id,
-    title: epicRow.title,
-  }));
-
-  const storiesToInsert = generatedEpics.flatMap((generatedEpic, epicIndex) =>
-    generatedEpic.userStories.map((story, storyIndex) => ({
-      id: createId(),
-      epicId: epicsToInsert[epicIndex].id,
-      title: story.title,
-      description: story.description,
-      acceptanceCriteria: story.acceptanceCriteria,
-      status: "todo",
-      position: storyIndex,
-      createdAt: now,
-    })),
-  );
-
-  try {
-    db.transaction((tx) => {
-      tx.insert(epics).values(epicsToInsert).run();
-      if (storiesToInsert.length > 0) {
-        tx.insert(userStories).values(storiesToInsert).run();
-      }
-    });
-  } catch (error) {
-    console.error("[qa/create-epics] Failed to persist epics transaction", error);
-    return NextResponse.json(
-      { error: "Failed to persist generated epics" },
-      { status: 500 },
-    );
-  }
-
-  return NextResponse.json({ data: { epics: created } });
+      return { success: true, error: null };
+    },
+    onTerminal: ({ success }) => {
+      if (!success) return;
+      for (const epic of created) emitTicketCreated(projectId, epic.id, epic.title);
+      tryExportArjiJson(projectId);
+    },
+  });
+  return NextResponse.json({ data: { sessionId: generation.sessionId } }, { status: 202 });
 });

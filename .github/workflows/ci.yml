@@ -70,19 +70,10 @@ jobs:
       - name: i18n key coverage
         run: npm run i18n:check
 
-      # ESLint runs against eslint-suppressions.json, which records the
-      # violations that already existed when this gate was introduced. Every rule
-      # stays at `error` for new code: a new violation is not in the baseline and
-      # fails here.
+      # ESLint runs on production rules; React Compiler warnings are tolerated
+      # (the compiler gate is __tests__/react-compiler-coverage.test.ts).
       - name: Lint
-        id: lint
         run: npm run lint
-
-      - name: Explain a suppressions-related lint failure
-        if: ${{ failure() && steps.lint.outcome == 'failure' }}
-        run: |
-          echo "::notice::If the failure above is 'unused suppressions', a tracked lint violation was fixed. Run 'npm run lint:prune' and commit the updated eslint-suppressions.json."
-
       # NODE_ENV is pinned on the step, never on the job: a job-level value would
       # also reach `npm ci` above, which then skips devDependencies and leaves the
       # build without the toolchain it needs. `next build` does default to

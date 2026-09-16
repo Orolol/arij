@@ -2,7 +2,7 @@
  * Fencing and neutralisation for stored content injected into agent prompts.
  *
  * The project specification, the learned project memory and imported
- * documents are all **agent-writable**: the spec rewriter, the memory
+ * documents, ticket titles/descriptions and acceptance criteria are all **agent-writable**: the spec rewriter, the memory
  * distiller and Dreaming are themselves agent sessions, and documents come
  * from a repository scan. Anything they persist is replayed verbatim into
  * every later prompt, which makes those fields a channel an earlier agent —

@@ -55,10 +55,10 @@ describe("permanent deletes", () => {
         ('story-2', 'epic-1', 'Story 2'),
         ('story-3', 'epic-2', 'Story 3');
 
-      INSERT INTO agent_sessions (id, project_id, epic_id, user_story_id) VALUES
-        ('sess-epic-1', 'proj-1', 'epic-1', NULL),
-        ('sess-story-1', 'proj-1', NULL, 'story-1'),
-        ('sess-epic-2', 'proj-1', 'epic-2', NULL);
+      INSERT INTO agent_sessions (id, project_id, epic_id, user_story_id, status) VALUES
+        ('sess-epic-1', 'proj-1', 'epic-1', NULL, 'completed'),
+        ('sess-story-1', 'proj-1', NULL, 'story-1', 'completed'),
+        ('sess-epic-2', 'proj-1', 'epic-2', NULL, 'completed');
 
       INSERT INTO ticket_comments (id, epic_id, user_story_id, author, content, agent_session_id) VALUES
         ('comment-1', 'epic-1', NULL, 'user', 'epic comment', NULL),
@@ -103,7 +103,7 @@ describe("permanent deletes", () => {
     sqlite.exec(`
       INSERT INTO epics (id, project_id, title) VALUES ('epic-1', 'proj-1', 'Epic 1');
       INSERT INTO user_stories (id, epic_id, title) VALUES ('story-1', 'epic-1', 'Story 1');
-      INSERT INTO agent_sessions (id, project_id, epic_id, user_story_id) VALUES ('sess-1', 'proj-1', 'epic-1', NULL);
+      INSERT INTO agent_sessions (id, project_id, epic_id, user_story_id, status) VALUES ('sess-1', 'proj-1', 'epic-1', NULL, 'completed');
       INSERT INTO ticket_comments (id, epic_id, user_story_id, author, content, agent_session_id) VALUES
         ('comment-1', 'epic-1', NULL, 'user', 'hello', NULL),
         ('comment-2', NULL, NULL, 'agent', 'session', 'sess-1');
@@ -135,9 +135,9 @@ describe("permanent deletes", () => {
         ('story-1', 'epic-1', 'Story 1'),
         ('story-2', 'epic-1', 'Story 2');
 
-      INSERT INTO agent_sessions (id, project_id, epic_id, user_story_id) VALUES
-        ('sess-story-1', 'proj-1', NULL, 'story-1'),
-        ('sess-story-2', 'proj-1', NULL, 'story-2');
+      INSERT INTO agent_sessions (id, project_id, epic_id, user_story_id, status) VALUES
+        ('sess-story-1', 'proj-1', NULL, 'story-1', 'completed'),
+        ('sess-story-2', 'proj-1', NULL, 'story-2', 'completed');
 
       INSERT INTO ticket_comments (id, epic_id, user_story_id, author, content, agent_session_id) VALUES
         ('comment-1', NULL, 'story-1', 'user', 'story 1', NULL),
@@ -176,7 +176,7 @@ describe("permanent deletes", () => {
     sqlite.exec(`
       INSERT INTO epics (id, project_id, title) VALUES ('epic-1', 'proj-1', 'Epic 1');
       INSERT INTO user_stories (id, epic_id, title) VALUES ('story-1', 'epic-1', 'Story 1');
-      INSERT INTO agent_sessions (id, project_id, epic_id, user_story_id) VALUES ('sess-1', 'proj-1', NULL, 'story-1');
+      INSERT INTO agent_sessions (id, project_id, epic_id, user_story_id, status) VALUES ('sess-1', 'proj-1', NULL, 'story-1', 'completed');
       INSERT INTO ticket_comments (id, epic_id, user_story_id, author, content, agent_session_id) VALUES
         ('comment-1', NULL, 'story-1', 'user', 'hello', NULL),
         ('comment-2', NULL, NULL, 'agent', 'session', 'sess-1');

@@ -5,8 +5,8 @@
  *
  * This runs in a fire-and-forget closure with no HTTP response left to carry
  * the failure — exactly the silent swallow this route exists to kill. The
- * pinned contract: the epic is NOT closed, a ticket comment explains the
- * failed final merge, and a merge-retry-failed notification is created.
+ * pinned contract: the epic is NOT closed, and a ticket comment explains the
+ * failed final merge (the inbox is the one signalling surface).
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
@@ -24,11 +24,12 @@ const mocks = vi.hoisted(() => ({
   startMergeInWorktree: vi.fn(),
   waitForProcessCompletion: vi.fn(),
   applyTransition: vi.fn(),
-  createMergeRetryFailedNotification: vi.fn(),
   tryExportArjiJson: vi.fn(),
   getRunningSessionForTarget: vi.fn(),
   tryLockProjectMerge: vi.fn(),
   unlockProjectMerge: vi.fn(),
+  beginMergeWork: vi.fn(() => true),
+  endMergeWork: vi.fn(),
 }));
 
 vi.mock("@/lib/db", async () => {
@@ -44,12 +45,15 @@ vi.mock("@/lib/workflow/transition-service", () => ({
 
 vi.mock("@/lib/auto-mode/registry", () => ({
   autoModeRegistry: {
+    beginMergeWork: mocks.beginMergeWork,
+    endMergeWork: mocks.endMergeWork,
     tryLockProjectMerge: mocks.tryLockProjectMerge,
     unlockProjectMerge: mocks.unlockProjectMerge,
   },
 }));
 
 vi.mock("@/lib/git/manager", () => ({
+  resolveDefaultBranch: vi.fn(async (_path, preferred) => preferred ?? "main"),
   mergeWorktree: mocks.mergeWorktree,
   createWorktree: mocks.createWorktree,
   attachWorktree: mocks.attachWorktree,
@@ -64,6 +68,9 @@ vi.mock("@/lib/claude/process-manager", () => ({
 vi.mock("@/lib/agent-sessions/wait-for-completion", () => ({
   waitForProcessCompletion: mocks.waitForProcessCompletion,
 }));
+
+vi.mock("@/lib/agent-config/prompts", () => ({ resolveAgentPrompt: vi.fn(async () => "merge system prompt") }));
+vi.mock("@/lib/agents/scheduler", () => ({ agentScheduler: { submit: vi.fn((_project, _session, launch) => { void launch(); }) } }));
 
 vi.mock("@/lib/claude/prompt-builder", () => ({
   buildMergeResolutionPrompt: vi.fn(() => "resolve the conflicts"),
@@ -98,6 +105,7 @@ vi.mock("@/lib/agents/concurrency", () => ({
 
 vi.mock("@/lib/agent-sessions/lifecycle", () => ({
   createQueuedSession: vi.fn(),
+  recordSessionTransitionRefusal: vi.fn(),
   markSessionRunning: vi.fn(),
   markSessionTerminal: vi.fn(),
   isSessionLifecycleConflictError: vi.fn(() => false),
@@ -110,11 +118,6 @@ vi.mock("@/lib/agent-sessions/validate-resume", () => ({
 vi.mock("@/lib/agent-sessions/resume-capability", () => ({
   isResumableProvider: vi.fn(() => false),
   providerAcceptsAssignedSessionId: vi.fn(() => false),
-}));
-
-vi.mock("@/lib/notifications/create", () => ({
-  createMergeRetryFailedNotification:
-    mocks.createMergeRetryFailedNotification,
 }));
 
 vi.mock("@/lib/utils/nanoid", () => ({
@@ -192,24 +195,12 @@ describe("Resolve-merge: final merge fails after the agent", () => {
     });
   });
 
-  it("leaves a comment + notification instead of swallowing the failure", async () => {
+  it("leaves a comment instead of swallowing the failure", async () => {
     seed();
     const res = await callResolveMerge();
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.data).toMatchObject({ sessionId: "session-1", resolved: false });
-
-    // The background closure settles in microtasks (every awaited mock
-    // resolves immediately).
-    await vi.waitFor(() => {
-      expect(mocks.createMergeRetryFailedNotification).toHaveBeenCalledWith({
-        projectId: "p1",
-        epicId: "epic-1",
-        sessionId: "session-1",
-        error:
-          "Branch feature/epic-abc contains unresolved conflict markers in: lib/foo.ts",
-      });
-    });
 
     // The failure comment reached the ticket…
     const failureComment = dbMockState.insertCalls.find((c) =>
@@ -413,19 +404,19 @@ describe("Resolve-merge: final merge fails after the agent", () => {
     expect(mocks.mergeWorktree).not.toHaveBeenCalled();
   });
 
-  it("notifies failure when agent completion final merge cannot acquire project merge lock", async () => {
-    mocks.tryLockProjectMerge.mockReturnValue(false);
+  it("leaves a conflict comment when the agent completion merge cannot acquire the project merge lock", async () => {
+    mocks.tryLockProjectMerge.mockReturnValueOnce(true).mockReturnValue(false);
     seed();
 
     await callResolveMerge();
 
     await vi.waitFor(() => {
-      expect(mocks.createMergeRetryFailedNotification).toHaveBeenCalledWith({
-        projectId: "p1",
-        epicId: "epic-1",
-        sessionId: "session-1",
-        error: expect.stringContaining("another merge is in progress"),
-      });
+      const conflictComment = dbMockState.insertCalls.find((c) =>
+        String((c as Record<string, unknown>).content).includes(
+          "another merge is in progress"
+        )
+      );
+      expect(conflictComment).toBeDefined();
     });
     expect(mocks.mergeWorktree).not.toHaveBeenCalled();
   });
@@ -453,6 +444,11 @@ describe("Resolve-merge: final merge fails after the agent", () => {
       );
       expect(branchClear).toBeDefined();
     });
-    expect(mocks.createMergeRetryFailedNotification).not.toHaveBeenCalled();
+    const failureComment = dbMockState.insertCalls.find((c) =>
+      String((c as Record<string, unknown>).content).includes(
+        "final merge still failed"
+      )
+    );
+    expect(failureComment).toBeUndefined();
   });
 });

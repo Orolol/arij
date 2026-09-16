@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
+import { PillButton } from "@/components/piscine";
 import { Input } from "@/components/ui/input";
 import { Github } from "lucide-react";
 import { parseGitHubRepoInput } from "@/lib/git/github-url";
@@ -51,9 +51,9 @@ export function GitHubUrlSelector({ onImport }: GitHubUrlSelectorProps) {
             className="pl-10"
           />
         </div>
-        <Button onClick={submit} disabled={!parsed}>
+        <PillButton variant="filled" onClick={submit} disabled={!parsed}>
           {t("github.import")}
-        </Button>
+        </PillButton>
       </div>
       {showError ? (
         <p className="text-sm text-destructive">{t("github.invalid")}</p>

@@ -2,8 +2,11 @@
 
 import { useTranslations } from "next-intl";
 
-import { useState, useCallback } from "react";
-import { usePolling } from "@/hooks/usePolling";
+import { useCallback } from "react";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { requestJson } from "@/lib/api/client";
+const loadError = () => "Unable to load ticket comments";
+const isComments = (value: unknown): value is TicketComment[] => Array.isArray(value);
 
 export interface TicketComment {
   id: string;
@@ -50,51 +53,13 @@ export function useTicketComments(
         : null
       : `/api/projects/${resolvedProjectId}/stories/${storyId}/comments`;
 
-  const [loadedComments, setComments] = useState<TicketComment[]>([]);
-  const [isLoading, setLoading] = useState(true);
-
-  // A target with no URL has an empty, settled thread. Deriving that beats the
-  // reset effect it replaces: the value is right on the first render instead of
-  // one commit later, and returning to a target still shows its cached thread.
-  const comments = commentsUrl ? loadedComments : EMPTY_COMMENTS;
-  const loading = commentsUrl ? isLoading : false;
-
-  const loadComments = useCallback(async () => {
+  const { data, loading, error, refresh, updateData } = usePolledResource<TicketComment[]>(commentsUrl, 5000, loadError, { validateData: isComments });
+  const addComment = useCallback(async (content: string) => {
     if (!commentsUrl) return;
-    try {
-      const res = await fetch(commentsUrl);
-      const data = await res.json();
-      if (data.data) {
-        setComments(data.data);
-      }
-    } catch {
-      // silently fail on poll
-    }
-    setLoading(false);
-  }, [commentsUrl]);
-
-  // Initial load + 5s polling
-  usePolling(loadComments, 5000, !!commentsUrl);
-
-  const addComment = useCallback(
-    async (content: string) => {
-      if (!commentsUrl) return;
-      const res = await fetch(commentsUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ author: "user", content }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok || data.error) {
-        throw new Error(data.error || tErrors("failedToAddComment"));
-      }
-      if (data.data) {
-        setComments((prev) => [...prev, data.data]);
-      }
-      return data.data;
-    },
-    [commentsUrl, tErrors]
-  );
-
-  return { comments, loading, addComment, refresh: loadComments };
+    const result = await requestJson<TicketComment>(commentsUrl, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ author: "user", content }), errorMessage: tErrors("failedToAddComment") });
+    if (result.error !== null) throw new Error(result.error);
+    updateData((previous) => [...(previous ?? []), result.data]);
+    return result.data;
+  }, [commentsUrl, tErrors, updateData]);
+  return { comments: data ?? EMPTY_COMMENTS, loading, error, addComment, refresh };
 }

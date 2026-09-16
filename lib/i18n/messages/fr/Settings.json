@@ -111,13 +111,25 @@
     "meta": "répondre au chat depuis un endpoint local ou hébergé, en streaming token par token"
   },
   "webhooks": {
-    "meta": "une notification JSON quand une session se termine ou qu'une release est publiée — vide = désactivé"
+    "meta": "une notification JSON quand une session se termine ou qu'une release est publiée — vide = désactivé",
+    "empty": "Aucun projet pour l'instant. Créez un projet pour configurer un webhook.",
+    "failedToLoad": "Impossible de charger les projets. Rafraîchissez la page pour réessayer."
+  },
+  "mcp": {
+    "message": {
+      "loading": "Chargement des serveurs MCP…",
+      "retry": "Réessayer"
+    }
   },
   "appearance": {
     "heading": "Thème",
     "label": "Thème",
     "day": "Jour",
     "night": "Nuit",
-    "note": "les grounds pastel deviennent une seule encre chaude la nuit — la strate se lit à son libellé"
+    "note": "les grounds pastel deviennent une seule encre chaude la nuit — la strate se lit à son libellé",
+    "languageLabel": "Langue",
+    "languageEn": "Anglais",
+    "languageFr": "Français",
+    "languageNote": "change la langue de l'interface dans tout l'espace de travail"
   }
 }

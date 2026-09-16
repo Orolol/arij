@@ -1,0 +1,9 @@
+{
+  "thread": { "add": "Ajouter un commentaire de revue" },
+  "errors": {
+    "loadComments": "Impossible de charger les commentaires de revue.",
+    "saveComment": "Impossible d’enregistrer le commentaire de revue.",
+    "deleteComment": "Impossible de supprimer le commentaire de revue.",
+    "loadingComments": "Chargement des commentaires de revue…"
+  }
+}

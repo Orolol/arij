@@ -39,6 +39,9 @@ export const WRITABLE_SETTING_KEYS: readonly string[] = [
   "auto_mode_smart_dispatch",
   "bug_regression_check",
   "bug_regression_command",
+  // Headless operational tuning knobs. No dedicated UI field exists today;
+  // they remain writable via PATCH /api/settings so automation and CLI scripts
+  // can configure them without requiring a bespoke settings screen.
   "bug_regression_timeout_ms",
   // Persistent-chat tuning knobs. No UI writes them today; they are here
   // because this route is their only write path, and a numeric timeout that
@@ -98,8 +101,6 @@ export const WRITABLE_SCOPED_SETTING_KEYS: readonly string[] = [
   "ci_autofix_enabled",
   "dreaming_after_night_run",
   "full_auto_second_opinion",
-  "night_circuit_breaker",
-  "night_cost_cap_usd",
   "pipeline_enabled",
   "pipeline_grader_enabled",
   "pipeline_max_attempts",

@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import {
   getTicketDependencies,
   getTicketDependents,
@@ -12,12 +11,9 @@ import {
   isErrorResponse,
 } from "@/lib/api/route-helpers";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { setTicketDependenciesSchema } from "@/lib/validation/schemas";
 
 type RouteParams = { params: Promise<{ projectId: string; epicId: string }> };
-
-const setDependenciesSchema = z.object({
-  dependsOnIds: z.array(z.string()),
-});
 
 /**
  * GET /api/projects/[projectId]/epics/[epicId]/dependencies
@@ -48,7 +44,7 @@ export async function GET(_request: NextRequest, { params }: RouteParams) {
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   const { projectId, epicId } = await params;
 
-  const validated = await validateBody(setDependenciesSchema, request);
+  const validated = await validateBody(setTicketDependenciesSchema, request);
   if (isValidationError(validated)) return validated;
   const { dependsOnIds } = validated.data;
 

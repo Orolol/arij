@@ -91,6 +91,11 @@ export function hasPendingSpecGeneration(projectId: string): boolean {
 // ---------------------------------------------------------------------------
 
 export interface SpecAutoRewriteDecision {
+  /**
+   * Settlement of the rewrite this decision started, when it started one. A
+   * refusal resolves immediately.
+   */
+  settled?: Promise<void>;
   allowed: boolean;
   reason: string;
 }
@@ -153,8 +158,11 @@ export async function maybeAutoRewriteSpecAfterRelease(
       return decision;
     }
 
-    await dispatchSpecAutoRewriteSession({ projectId, releaseId });
-    return decision;
+    const { settled } = await dispatchSpecAutoRewriteSession({
+      projectId,
+      releaseId,
+    });
+    return { ...decision, settled };
   } catch (err) {
     console.warn(
       "[spec-auto-rewrite] Auto-rewrite trigger failed:",
@@ -176,6 +184,17 @@ export interface DispatchSpecAutoRewriteInput {
 
 export interface DispatchSpecAutoRewriteResult {
   sessionId: string;
+  /**
+   * Resolution of the run this dispatch launched: never rejects, and resolves
+   * only AFTER the terminal hook has run — so a caller that awaits it sees the
+   * document the session wrote (or the proof that it wrote nothing). A guard
+   * refusal resolves immediately: there was no run to wait for.
+   *
+   * Exposed for the same reason `dispatchBackgroundSession` exposes its own
+   * `settled`: a caller that needs the effect to have landed can await it
+   * instead of sleeping for a while and hoping.
+   */
+  settled: Promise<void>;
 }
 
 /**
@@ -288,7 +307,7 @@ export async function dispatchSpecAutoRewriteSession(
   // Deliberately no epicId: like the memory distill, a spec rewrite is a
   // project-level background run and must not occupy an epic's concurrency
   // slot or anchor to a ticket.
-  const { sessionId } = dispatchBackgroundSession({
+  const { sessionId, settled } = dispatchBackgroundSession({
     agentType: SPEC_REWRITE_AGENT_TYPE,
     projectId: input.projectId,
     prompt,
@@ -325,5 +344,5 @@ export async function dispatchSpecAutoRewriteSession(
     },
   });
 
-  return { sessionId };
+  return { sessionId, settled: settled.then(() => undefined) };
 }

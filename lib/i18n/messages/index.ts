@@ -6,22 +6,17 @@ import en_AutoMode from "./en/AutoMode.json";
 import en_Chat from "./en/Chat.json";
 import en_ChatLegacy from "./en/ChatLegacy.json";
 import en_ClientErrors from "./en/ClientErrors.json";
-import en_Dependencies from "./en/Dependencies.json";
 import en_Desk from "./en/Desk.json";
 import en_Documents from "./en/Documents.json";
-import en_Epic from "./en/Epic.json";
 import en_Format from "./en/Format.json";
-import en_Frictions from "./en/Frictions.json";
 import en_GitSync from "./en/GitSync.json";
 import en_Github from "./en/Github.json";
 import en_GithubIssues from "./en/GithubIssues.json";
 import en_Import from "./en/Import.json";
 import en_Inbox from "./en/Inbox.json";
 import en_Kanban from "./en/Kanban.json";
-import en_Layout from "./en/Layout.json";
 import en_Nav from "./en/Nav.json";
 import en_NightRuns from "./en/NightRuns.json";
-import en_Notifications from "./en/Notifications.json";
 import en_ProjectDocuments from "./en/ProjectDocuments.json";
 import en_ProjectFrictions from "./en/ProjectFrictions.json";
 import en_ProjectImport from "./en/ProjectImport.json";
@@ -29,7 +24,6 @@ import en_ProjectQaPage from "./en/ProjectQaPage.json";
 import en_ProjectSessions from "./en/ProjectSessions.json";
 import en_ProjectSettings from "./en/ProjectSettings.json";
 import en_ProjectShell from "./en/ProjectShell.json";
-import en_ProjectStories from "./en/ProjectStories.json";
 import en_ProviderOptions from "./en/ProviderOptions.json";
 import en_Qa from "./en/Qa.json";
 import en_Registry from "./en/Registry.json";
@@ -39,30 +33,38 @@ import en_Routines from "./en/Routines.json";
 import en_SessionLive from "./en/SessionLive.json";
 import en_Sessions from "./en/Sessions.json";
 import en_Settings from "./en/Settings.json";
-import en_SettingsLegacy from "./en/SettingsLegacy.json";
 import en_Shared from "./en/Shared.json";
 import en_Spec from "./en/Spec.json";
-import en_Story from "./en/Story.json";
 import en_Ticket from "./en/Ticket.json";
+import en_Toast from "./en/Toast.json";
 import en_TopBar from "./en/TopBar.json";
 import en_Usage from "./en/Usage.json";
 import en_Verify from "./en/Verify.json";
 import fr_AgentsWorkshop from "./fr/AgentsWorkshop.json";
 import fr_Chat from "./fr/Chat.json";
+import fr_ChatLegacy from "./fr/ChatLegacy.json";
+import fr_ClientErrors from "./fr/ClientErrors.json";
 import fr_Desk from "./fr/Desk.json";
 import fr_Documents from "./fr/Documents.json";
 import fr_Format from "./fr/Format.json";
 import fr_Github from "./fr/Github.json";
 import fr_GithubIssues from "./fr/GithubIssues.json";
+import fr_Inbox from "./fr/Inbox.json";
 import fr_Nav from "./fr/Nav.json";
-import fr_Notifications from "./fr/Notifications.json";
+import fr_NightRuns from "./fr/NightRuns.json";
+import fr_ProjectDocuments from "./fr/ProjectDocuments.json";
+import fr_ProjectFrictions from "./fr/ProjectFrictions.json";
+import fr_ProjectSettings from "./fr/ProjectSettings.json";
+import fr_ProjectShell from "./fr/ProjectShell.json";
 import fr_Qa from "./fr/Qa.json";
 import fr_Registry from "./fr/Registry.json";
 import fr_Releases from "./fr/Releases.json";
+import fr_Review from "./fr/Review.json";
 import fr_SessionLive from "./fr/SessionLive.json";
 import fr_Settings from "./fr/Settings.json";
 import fr_Spec from "./fr/Spec.json";
 import fr_Ticket from "./fr/Ticket.json";
+import fr_Toast from "./fr/Toast.json";
 import fr_TopBar from "./fr/TopBar.json";
 import fr_Usage from "./fr/Usage.json";
 
@@ -72,22 +74,17 @@ export const en = {
   Chat: en_Chat,
   ChatLegacy: en_ChatLegacy,
   ClientErrors: en_ClientErrors,
-  Dependencies: en_Dependencies,
   Desk: en_Desk,
   Documents: en_Documents,
-  Epic: en_Epic,
   Format: en_Format,
-  Frictions: en_Frictions,
   GitSync: en_GitSync,
   Github: en_Github,
   GithubIssues: en_GithubIssues,
   Import: en_Import,
   Inbox: en_Inbox,
   Kanban: en_Kanban,
-  Layout: en_Layout,
   Nav: en_Nav,
   NightRuns: en_NightRuns,
-  Notifications: en_Notifications,
   ProjectDocuments: en_ProjectDocuments,
   ProjectFrictions: en_ProjectFrictions,
   ProjectImport: en_ProjectImport,
@@ -95,7 +92,6 @@ export const en = {
   ProjectSessions: en_ProjectSessions,
   ProjectSettings: en_ProjectSettings,
   ProjectShell: en_ProjectShell,
-  ProjectStories: en_ProjectStories,
   ProviderOptions: en_ProviderOptions,
   Qa: en_Qa,
   Registry: en_Registry,
@@ -105,11 +101,10 @@ export const en = {
   SessionLive: en_SessionLive,
   Sessions: en_Sessions,
   Settings: en_Settings,
-  SettingsLegacy: en_SettingsLegacy,
   Shared: en_Shared,
   Spec: en_Spec,
-  Story: en_Story,
   Ticket: en_Ticket,
+  Toast: en_Toast,
   TopBar: en_TopBar,
   Usage: en_Usage,
   Verify: en_Verify,
@@ -118,20 +113,29 @@ export const en = {
 export const fr = {
   AgentsWorkshop: fr_AgentsWorkshop,
   Chat: fr_Chat,
+  ChatLegacy: fr_ChatLegacy,
+  ClientErrors: fr_ClientErrors,
   Desk: fr_Desk,
   Documents: fr_Documents,
   Format: fr_Format,
   Github: fr_Github,
   GithubIssues: fr_GithubIssues,
+  Inbox: fr_Inbox,
   Nav: fr_Nav,
-  Notifications: fr_Notifications,
+  NightRuns: fr_NightRuns,
+  ProjectDocuments: fr_ProjectDocuments,
+  ProjectFrictions: fr_ProjectFrictions,
+  ProjectSettings: fr_ProjectSettings,
+  ProjectShell: fr_ProjectShell,
   Qa: fr_Qa,
   Registry: fr_Registry,
   Releases: fr_Releases,
+  Review: fr_Review,
   SessionLive: fr_SessionLive,
   Settings: fr_Settings,
   Spec: fr_Spec,
   Ticket: fr_Ticket,
+  Toast: fr_Toast,
   TopBar: fr_TopBar,
   Usage: fr_Usage,
 };

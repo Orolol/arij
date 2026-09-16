@@ -1,9 +1,9 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
-}));
+vi.mock("next/navigation", async () =>
+  (await import("@/__tests__/helpers/next-navigation-mock")).nextNavigationMock(),
+);
 
 let mockConversations = [
   {
@@ -45,13 +45,14 @@ vi.mock("@/hooks/useConversations", () => ({
 }));
 
 let mockSending = false;
+let mockPendingQuestions: unknown[] | null = null;
 
 vi.mock("@/hooks/useChat", () => ({
   useChat: () => ({
     messages: [],
     loading: false,
     sending: mockSending,
-    pendingQuestions: null,
+    pendingQuestions: mockPendingQuestions,
     streamStatus: null,
     sendMessage: vi.fn(),
     answerQuestions: vi.fn(),
@@ -119,6 +120,7 @@ describe("Chat concurrency — one generating conversation should not block othe
     ];
     mockActiveId = "conv2";
     mockSending = false;
+    mockPendingQuestions = null;
 
     Object.defineProperty(window, "innerWidth", {
       configurable: true,
@@ -157,6 +159,14 @@ describe("Chat concurrency — one generating conversation should not block othe
 
     const input = screen.getByTestId("message-input");
     expect(input).toBeDisabled();
+  });
+
+  it("allows answering a question while the server still reports generating", () => {
+    mockActiveId = "conv1";
+    mockPendingQuestions = [{ question: "Which direction?" }];
+    render(<UnifiedChatPanel projectId="proj1"><div>board</div></UnifiedChatPanel>);
+    fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
+    expect(screen.getByTestId("message-input")).not.toBeDisabled();
   });
 
   it("collapsed strip shows activity badge when any conversation is generating", () => {

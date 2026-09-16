@@ -1,7 +1,17 @@
 "use client";
 
-import { useTranslations } from "next-intl";
-import { useParams, usePathname, useRouter } from "next/navigation";
+import { GitHubConnectBanner } from "@/components/github/GitHubConnectBanner";
+import { PillButton, pillButtonVariants } from "@/components/piscine";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { useProjects } from "@/hooks/useProjects";
+import { requestJson } from "@/lib/api/client";
+import { cn } from "@/lib/utils";
 import {
   Bug,
   ChevronDown,
@@ -11,117 +21,68 @@ import {
   Plus,
   RefreshCw,
 } from "lucide-react";
-import { GitHubConnectBanner } from "@/components/github/GitHubConnectBanner";
-import { useCallback, useEffect, useState } from "react";
-import { cn } from "@/lib/utils";
-import { PillButton, pillButtonVariants } from "@/components/piscine";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { useTranslations } from "next-intl";
+import { notFound, useParams, usePathname, useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 
-/**
- * The project shell — frame 13a's retrofit.
- *
- * THIS LAYOUT NO LONGER DRAWS A HEADER. It used to draw a 54px bar (project
- * name · Board/Spec/Sessions tabs · "More" · New/Night run/Chat), which on a
- * session page made THREE stacked headers: the global bar, this one, and the
- * screen's own. `components/piscine/TopBar.tsx` now owns every one of those
- * jobs — the project's name and colour are its chips, and its three category
- * menus reach Spec & Memory, Sessions and Releases. The rest of the old "More"
- * list (Docs, QA, Frictions, Git Sync, GitHub Issues, project Settings) is
- * reachable from the desk's project-pages menu.
- *
- * WHAT SURVIVES, AND WHY IT SURVIVES HERE. Three controls had no home in the
- * bar because they are neither navigation nor global: the New menu (epic /
- * manual epic / bug), Night run, and the arji.json import. All three act by
- * pushing a `?panel=` / `?night=` param that ONLY the board page consumes, so
- * they are drawn ONLY on the board route — no other project route grows a
- * second bar from them, and the routes this wave rebuilt (spec, sessions,
- * releases, a session) render exactly one header, the global one, above their
- * own screen row.
- *
- * The Chat button did NOT survive: the board's own collapsed chat strip
- * (`components/chat/UnifiedChatPanel.tsx`) opens the same panel, on the same
- * screen, and two controls for one panel is the duplication 13a removes.
- *
- * TRANSITIONAL, and the seam is deliberate: the board page draws its own
- * second row (`board-capture-bar`, Full Auto + Refinement). These three belong
- * in THAT row. This layout keeps them alive until the board packet folds them
- * in; nothing else about them should change on the way.
- */
-
-interface ProjectSummary {
-  gitRepoPath: string | null;
-  githubOwnerRepo: string | null;
-  /** The branch Arij bases work on (stored at GitHub import). The repo bar
-   *  reads ahead/behind against it — main is just the fallback for legacy
-   *  projects that predate the column. */
-  defaultBranch: string | null;
-}
 
 export default function ProjectLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const t = useTranslations("ProjectShell");
   const params = useParams();
+  const projectId = params.projectId as string;
+  // Layouts survive client navigation: remount all project-owned state when
+  // its identity changes, including drafts in nested legacy screens.
+  return <ProjectShell key={projectId} projectId={projectId}>{children}</ProjectShell>;
+}
+
+function ProjectShell({ projectId, children }: {
+  projectId: string;
+  children: React.ReactNode;
+}) {
+  const t = useTranslations("ProjectShell");
   const pathname = usePathname() ?? "";
   const router = useRouter();
-  const projectId = params.projectId as string;
-  const [projectSummary, setProjectSummary] = useState<ProjectSummary>({
-    gitRepoPath: null,
-    githubOwnerRepo: null,
-    defaultBranch: null,
-  });
+  const { allProjects, refresh: loadSummary, loading } = useProjects();
+  const found = allProjects.find((project) => project.id === projectId);
+  if (!loading && allProjects.length > 0 && !found) {
+    notFound();
+  }
+  const projectSummary = found ?? { gitRepoPath: null, githubOwnerRepo: null };
   const [syncing, setSyncing] = useState(false);
-
-  const loadSummary = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/projects/${projectId}`);
-      const d = await res.json();
-      if (d.data) {
-        setProjectSummary({
-          gitRepoPath: d.data.gitRepoPath ?? null,
-          githubOwnerRepo: d.data.githubOwnerRepo ?? null,
-          defaultBranch: d.data.defaultBranch ?? null,
-        });
-      }
-    } catch {
-      // A failed metadata read must never break the shell: the banner and the
-      // repo bar both degrade to "no repo", which is what an unknown project
-      // looks like anyway.
-    }
-  }, [projectId]);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const syncPending = useRef(false);
+  const lifecycle = useRef(0);
 
   useEffect(() => {
-    void loadSummary();
-  }, [loadSummary]);
+    lifecycle.current += 1;
+    return () => { lifecycle.current += 1; };
+  }, []);
 
   const syncFromJson = useCallback(async () => {
+    if (syncPending.current) return;
+    syncPending.current = true;
+    const lifetime = lifecycle.current;
     setSyncing(true);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "import" }),
-      });
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? "Sync failed");
-      // Re-read the metadata in case the import changed the repo wiring.
-      await loadSummary();
-      // Notify child pages to reload data
-      window.dispatchEvent(new CustomEvent("arji:synced"));
-    } catch (err) {
-      console.error("[sync] import failed:", err);
-    } finally {
-      setSyncing(false);
+    setSyncError(null);
+    const result = await requestJson(`/api/projects/${projectId}/sync`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "import" }), errorMessage: t("actions.syncFailed"),
+    });
+    if (lifetime === lifecycle.current) {
+      if (result.error) setSyncError(result.error);
+      else {
+        await loadSummary();
+        if (lifetime === lifecycle.current) {
+          window.dispatchEvent(new CustomEvent("arji:synced", { detail: { projectId } }));
+        }
+      }
     }
-  }, [projectId, loadSummary]);
+    syncPending.current = false;
+    if (lifetime === lifecycle.current) setSyncing(false);
+  }, [projectId, loadSummary, t]);
 
   const boardHref = `/projects/${projectId}`;
   const isBoard = pathname === boardHref;
@@ -138,9 +99,7 @@ export default function ProjectLayout({
         projectId={projectId}
         gitRepoPath={projectSummary.gitRepoPath}
         githubOwnerRepo={projectSummary.githubOwnerRepo}
-        onConnected={(ownerRepo) =>
-          setProjectSummary((prev) => ({ ...prev, githubOwnerRepo: ownerRepo }))
-        }
+        onConnected={() => { void loadSummary(); }}
       />
 
       {isBoard && (
@@ -233,6 +192,8 @@ export default function ProjectLayout({
           )}
         </div>
       )}
+
+      {syncError && <p role="alert" className="px-[14px] py-2 text-sm text-destructive">{syncError}</p>}
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex-1 overflow-auto">{children}</div>

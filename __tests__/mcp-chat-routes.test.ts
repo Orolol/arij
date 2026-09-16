@@ -36,21 +36,12 @@ import {
 } from "@/lib/mcp/token-store";
 
 const testDb = vi.hoisted(() => ({
-  instance: null as ReturnType<
-    typeof import("@/lib/db/test-utils").createTestDb
-  > | null,
+  instance: null as ReturnType<typeof import("@/lib/db/test-utils").createTestDb> | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
 // ---- Import route handlers AFTER mocks ----
 import { POST as listTicketsPost } from "@/app/api/mcp/list-tickets/route";
@@ -388,8 +379,8 @@ describe("POST /api/mcp/start-build", () => {
     // Instruction first (agent comment through the epic comments route)…
     expect(fetchCallAt(0)).toMatchObject({
       method: "POST",
-      url: `${ORIGIN}/api/projects/${projectId}/epics/${epicId}/comments`,
-      body: { author: "agent", content: "Ship it" },
+      url: `${ORIGIN}/api/mcp/post-comment`,
+      body: { ticket_id: epicId, body: "Ship it" },
     });
     // …then the build itself, with no user-impersonating comment field.
     expect(fetchCallAt(1)).toMatchObject({

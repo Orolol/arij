@@ -1,9 +1,11 @@
 "use client";
+import { useScopedMutation } from "@/hooks/useScopedMutation";
 
 import { useTranslations } from "next-intl";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { parseEpicFromConversation } from "@/lib/epic-parsing";
+import type { ChatSendResult } from "@/hooks/useChat";
 
 /** How long to wait for a finalization reply to land before giving up. */
 const FINALIZE_TIMEOUT_MS = 180_000;
@@ -20,21 +22,33 @@ interface EpicCreateResult {
 interface UseEpicCreateOptions {
   projectId: string;
   conversationId: string | null;
-  sendMessage?: (content: string, attachmentIds?: string[], options?: { finalize?: boolean }) => Promise<void>;
+  sendMessage?: (content: string, attachmentIds?: string[], options?: { finalize?: boolean }) => Promise<ChatSendResult | boolean | void>;
   onEpicCreated?: (result: EpicCreateResult) => void;
 }
 
 export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCreated }: UseEpicCreateOptions) {
   const tErrors = useTranslations("ClientErrors");
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [createdEpic, setCreatedEpic] = useState<EpicCreateResult | null>(null);
+  const scope = JSON.stringify([projectId, conversationId]);
+  const owner = useMemo(() => ({ scope }), [scope]);
+  const activeOwner = useRef<{ scope: string } | null>(owner);
+  const mutation = useScopedMutation(scope);
+  const [states, setStates] = useState<Record<string, { isLoading: boolean; error: string | null; createdEpic: EpicCreateResult | null }>>({});
+  const state = states[scope] ?? { isLoading: false, error: null, createdEpic: null };
+  useEffect(() => {
+    activeOwner.current = owner;
+    return () => { activeOwner.current = null; };
+  }, [owner]);
+  const setError = useCallback((error: string | null) => {
+    setStates((current) => ({ ...current, [scope]: { ...current[scope], error } }));
+  }, [scope]);
+  const setCreatedEpic = useCallback((createdEpic: EpicCreateResult) => {
+    setStates((current) => ({ ...current, [scope]: { ...current[scope], error: null, createdEpic } }));
+  }, [scope]);
 
+  const { run: mutationRun } = mutation;
   const createEpic = useCallback(
     async (): Promise<string | null> => {
-      setIsLoading(true);
-      setError(null);
-      setCreatedEpic(null);
+      if (activeOwner.current !== owner) return null;
 
       const create = async (): Promise<string | null> => {
         try {
@@ -52,7 +66,7 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
             );
             if (!res.ok) return null;
             const json = await res.json();
-            return json.data || [];
+            return Array.isArray(json.data) ? json.data : null;
           };
 
           const countAssistant = (list: Array<{ role: string }>) =>
@@ -84,7 +98,11 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
                   ? "Generate the final epic with user stories based on our discussion."
                   : 'Output ONLY the JSON code block for the epic. Start your response with ```json and end with ```. No other text.';
               const assistantCountBefore = countAssistant(messages);
-              await sendMessage(prompt, [], { finalize: true });
+              const sent = await sendMessage(prompt, [], { finalize: true });
+              if (sent === false || (sent && typeof sent === "object" && (!sent.accepted || sent.error))) {
+                setError((sent && typeof sent === "object" && sent.error) || tErrors("failedToSendMessage"));
+                return null;
+              }
 
               // `sendMessage` can resolve before the reply is persisted (aborted
               // stream, conversation switched while generating). Poll until a new
@@ -117,6 +135,7 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 title: parsedEpic.title,
+                sourceConversationId: conversationId,
                 description: parsedEpic.description,
                 status: "backlog",
                 userStories: parsedEpic.userStories,
@@ -145,7 +164,9 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
             }
 
             setCreatedEpic(result);
-            onEpicCreated?.(result);
+            if (activeOwner.current?.scope === scope) {
+              onEpicCreated?.(result);
+            }
             return result.epicId;
           }
 
@@ -160,12 +181,20 @@ export function useEpicCreate({ projectId, conversationId, sendMessage, onEpicCr
           return null;
         }
       };
-      // A `.finally` call, not a `finally` clause: the React Compiler stops at
-      // the clause, and stopping left this hook unread by every compiler rule.
-      return create().finally(() => setIsLoading(false));
+      // Keep progress/results with their conversation, including a return to it
+      // before completion, while callbacks refresh only the active workspace.
+      let createdResult: string | null = null;
+      const result = await mutationRun(async () => {
+        setStates((current) => ({ ...current, [scope]: { isLoading: true, error: null, createdEpic: null } }));
+        createdResult = await create();
+        return createdResult;
+      }, tErrors("failedToCreateEpic"));
+      setStates((current) => ({ ...current, [scope]: { ...current[scope], isLoading: false } }));
+      if (activeOwner.current?.scope !== scope) return null;
+      return result ?? createdResult;
     },
-    [projectId, conversationId, sendMessage, onEpicCreated, tErrors]
+    [projectId, conversationId, sendMessage, onEpicCreated, tErrors, scope, owner, setError, setCreatedEpic, mutationRun]
   );
 
-  return { createEpic, isLoading, error, createdEpic };
+  return { createEpic, isLoading: mutation.pending || state.isLoading, error: state.error, createdEpic: state.createdEpic };
 }

@@ -19,7 +19,7 @@ vi.mock("@/lib/db", () => {
   return { db: { select: boom, insert: boom, delete: boom, update: boom } };
 });
 
-import { createVerifyGate } from "@/lib/pipeline/verify";
+import { createVerifyGate } from "@/lib/pipeline/regression-gate";
 
 describe("createVerifyGate totality", () => {
   beforeEach(() => {

@@ -93,12 +93,6 @@ export interface ProviderOptionDefinition {
    */
   toArgs?: (value: ProviderOptionValue) => string[];
   /**
-   * False when the CLI's resume path rejects the flag. `codex exec resume`
-   * takes a strict subset of `codex exec`'s flags, and an unknown flag there
-   * is a fatal argv error, not a warning.
-   */
-  resumeSupported?: boolean;
-  /**
    * True when the option may only be applied to a CODE-PRODUCING session
    * (build / ticket_build / team_build), as decided by the session's agent
    * TYPE — not by its spawn mode.
@@ -219,8 +213,6 @@ const CODEX_OPTIONS: ProviderOptionDefinition[] = [
     default: "",
     pattern: /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/,
     toArgs: (value) => ["-p", String(value)],
-    // `codex exec resume` has no --profile; passing it there is fatal.
-    resumeSupported: false,
   },
 ];
 
@@ -503,11 +495,6 @@ export function filterProviderOptionsForAgentType(
   return kept;
 }
 
-export interface ProviderOptionArgsContext {
-  /** True on a CLI resume path, where some flags are not accepted. */
-  resume?: boolean;
-}
-
 /**
  * Translates stored options into CLI arguments, in registry order.
  *
@@ -518,7 +505,6 @@ export interface ProviderOptionArgsContext {
 export function buildProviderOptionArgs(
   provider: string | null | undefined,
   options: NamedAgentCliOptions | null | undefined,
-  context: ProviderOptionArgsContext = {},
 ): string[] {
   if (!options) return [];
   const definitions = getProviderOptionDefinitions(provider);
@@ -526,7 +512,6 @@ export function buildProviderOptionArgs(
 
   for (const definition of definitions) {
     if (!definition.toArgs) continue;
-    if (context.resume && definition.resumeSupported === false) continue;
 
     const value = options[definition.key];
     if (isProviderOptionDefault(definition, value)) continue;

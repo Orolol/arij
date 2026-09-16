@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
 import { useTranslations } from "next-intl";
+import { useAssignmentMutation } from "./useAssignmentMutation";
 
 import {
   BandHeader,
@@ -70,6 +70,8 @@ export interface WhereHeWorksBandProps {
   namedAgents: NamedAgent[];
   selectedAgentId: string | null;
   scope: "global" | "project";
+  projectId?: string;
+  disabled?: boolean;
   onAssign: (
     agentType: AgentType,
     namedAgentId: string | null,
@@ -81,6 +83,8 @@ export function WhereHeWorksBand({
   namedAgents,
   selectedAgentId,
   scope,
+  projectId,
+  disabled = false,
   onAssign,
 }: WhereHeWorksBandProps) {
   const t = useTranslations("AgentsWorkshop");
@@ -98,39 +102,11 @@ export function WhereHeWorksBand({
       t("assignments.agentMeta", { provider, model }),
     cliDefaultModel: t("common.cliDefaultModel"),
   };
-  const [savingRole, setSavingRole] = useState<AgentType | null>(null);
-  // A per-role map, never one shared string: one failing assignment must not
-  // blank the message of another.
-  const [errors, setErrors] = useState<Partial<Record<AgentType, string>>>({});
+  const { savingRoles, errors, updateAssignment } = useAssignmentMutation(`${scope}:${projectId ?? ""}`, onAssign);
 
   const byRole = new Map(
     assignments.map((assignment) => [assignment.agentType, assignment]),
   );
-
-  async function updateAssignment(
-    agentType: AgentType,
-    namedAgentId: string | null,
-  ) {
-    setSavingRole(agentType);
-    setErrors((current) => ({ ...current, [agentType]: undefined }));
-    try {
-      const result = await onAssign(agentType, namedAgentId);
-      if (!result.ok) {
-        setErrors((current) => ({
-          ...current,
-          [agentType]: result.error || t("assignments.updateFailed"),
-        }));
-      }
-    } catch {
-      setErrors((current) => ({
-        ...current,
-        [agentType]: t("assignments.updateFailedRetry"),
-      }));
-    }
-    // Trailing, not in a `finally` clause: the React Compiler stops at the
-    // clause, and stopping left this component unread by every compiler rule.
-    setSavingRole(null);
-  }
 
   const clearLabel =
     scope === "project"
@@ -145,7 +121,7 @@ export function WhereHeWorksBand({
         label={t("whereHeWorks.label")}
         meta={t("whereHeWorks.meta")}
         right={
-          <QuietLink href="/agents/assignments" tone="live" size={12}>
+          <QuietLink href={projectId ? `/agents/assignments?project=${encodeURIComponent(projectId)}` : "/agents/assignments"} tone="live" size={12}>
             {t("whereHeWorks.allRoles")}
           </QuietLink>
         }
@@ -177,16 +153,11 @@ export function WhereHeWorksBand({
                   {tKey(kickerKey)}
                 </FieldKicker>
 
-                {owned ? (
-                  <span className="truncate font-sans text-[13px] font-semibold text-foreground">
-                    {label}
-                  </span>
-                ) : (
                   <SelectPill
                     tone="ink"
                     fill="transparent"
                     disabled={
-                      namedAgents.length === 0 || savingRole === agentType
+                      disabled || namedAgents.length === 0 || savingRoles.includes(agentType)
                     }
                     label={label}
                     className="h-auto px-0"
@@ -213,7 +184,6 @@ export function WhereHeWorksBand({
                       </DropdownMenuItem>
                     ))}
                   </SelectPill>
-                )}
 
                 {/* The provenance line, but never a stutter: with no named
                     agent, line 2 already reads "Arij default" and repeating it

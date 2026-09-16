@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useTranslations } from "next-intl";
 import { sortConversationsForLegacyParity } from "@/lib/chat/parity-contract";
 
 export interface Conversation {
@@ -32,166 +33,149 @@ export interface UpdateConversationInput {
   namedAgentId?: string | null;
 }
 
+interface ConversationState {
+  scope: { projectId: string };
+  conversations: Conversation[];
+  activeId: string | null;
+  loading: boolean;
+  request: object | null;
+  loadError: string | null;
+  mutationError: string | null;
+  mutating: boolean;
+}
+
+function emptyConversations(scope: { projectId: string }): ConversationState {
+  return { scope, conversations: [], activeId: null, loading: true, request: null, loadError: null, mutationError: null, mutating: false };
+}
+
+function withConversations(state: ConversationState, rows: Conversation[]): ConversationState {
+  const conversations = sortConversationsForLegacyParity(rows);
+  const activeId = conversations.some((conversation) => conversation.id === state.activeId)
+    ? state.activeId : conversations[0]?.id ?? null;
+  return { ...state, conversations, activeId };
+}
+
 export function useConversations(projectId: string) {
-  const [conversations, setConversations] = useState<Conversation[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const t = useTranslations("ChatLegacy");
+  const pending = useRef(new Set<object>());
+  const scope = useMemo(() => ({ projectId }), [projectId]);
+  const [state, setState] = useState(() => emptyConversations(scope));
+  if (state.scope !== scope) setState(emptyConversations(scope));
 
-  // Applying the payload is shared by the mount fetch and by `refresh`; keeping
-  // it out of the effect body is what lets the effect update state only from a
-  // promise callback rather than synchronously.
-  const applyConversations = useCallback((json: { data?: unknown }) => {
-    const data = sortConversationsForLegacyParity((json.data || []) as Conversation[]);
-    setConversations(data);
-
-    // Set active to first conversation if none selected or current is gone
-    if (data.length > 0) {
-      setActiveId((prev) => {
-        if (prev && data.some((c) => c.id === prev)) return prev;
-        return data[0].id;
-      });
-    }
-  }, []);
-
+  const update = useCallback((change: (current: ConversationState) => ConversationState) => {
+    setState((current) => current.scope === scope ? change(current) : current);
+  }, [scope]);
   const conversationsUrl = `/api/projects/${projectId}/conversations`;
 
   const refresh = useCallback(async () => {
+    const request = {};
+    update((current) => ({ ...current, request }));
     try {
       const res = await fetch(conversationsUrl);
-      applyConversations(await res.json());
+      const json = await res.json();
+      if (res.ok && Array.isArray(json.data)) {
+        update((current) => current.request === request
+          ? { ...withConversations(current, json.data), loadError: null } : current);
+      } else {
+        update((current) => current.request === request
+          ? { ...current, loadError: json.error || t("conversations.loadFailed") } : current);
+      }
     } catch {
-      // ignore
+      update((current) => current.request === request
+        ? { ...current, loadError: t("conversations.loadFailed") } : current);
     }
-    setLoading(false);
-  }, [conversationsUrl, applyConversations]);
+    update((current) => current.request === request
+      ? { ...current, loading: false, request: null } : current);
+  }, [conversationsUrl, update, t]);
 
-  useEffect(() => {
-    let cancelled = false;
-    fetch(conversationsUrl)
-      .then((res) => res.json())
-      .then((json) => {
-        if (!cancelled) applyConversations(json);
-      })
-      .catch(() => {
-        // ignore
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
+  useEffect(() => { void Promise.resolve().then(refresh); }, [refresh]);
+
+  const setActiveId = useCallback((activeId: string | null) => {
+    update((current) => ({ ...current, activeId }));
+  }, [update]);
+
+  // One write at a time: a first message must not race an agent change, and
+  // repeated create clicks must not create several permanent conversations.
+  const mutate = useCallback(async <T,>(
+    request: () => Promise<T>,
+    fallback: string,
+  ): Promise<T | null> => {
+    if (pending.current.has(scope)) return null;
+    pending.current.add(scope);
+    update((current) => ({ ...current, mutating: true, mutationError: null }));
+    const value = await request().catch((error: unknown) => {
+      update((current) => ({ ...current,
+        mutationError: error instanceof Error ? error.message : fallback }));
+      return null;
+    });
+    pending.current.delete(scope);
+    update((current) => ({ ...current, mutating: false }));
+    return value;
+  }, [scope, update]);
+
+  // Successful mutations invalidate older list reads.
+  const saveConversation = useCallback((
+    method: "POST" | "PATCH",
+    input: CreateConversationInput | UpdateConversationInput,
+    conversationId?: string,
+  ) => {
+    const fallback = method === "POST" ? t("conversations.createFailed") : t("conversations.updateFailed");
+    return mutate(async () => {
+      const res = await fetch(conversationId ? `${conversationsUrl}/${conversationId}` : conversationsUrl, {
+        method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [conversationsUrl, applyConversations]);
-
-  const createConversation = useCallback(
-    async (input: CreateConversationInput = {}) => {
-      try {
-        const res = await fetch(`/api/projects/${projectId}/conversations`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(input),
-        });
-        const json = await res.json();
-        if (json.data) {
-          setConversations((prev) =>
-            sortConversationsForLegacyParity([...prev, json.data as Conversation]),
-          );
-          setActiveId(json.data.id);
-          return json.data as Conversation;
-        }
-      } catch {
-        // ignore
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json.data?.id) {
+        throw new Error(json.error || fallback);
       }
-      return null;
-    },
-    [projectId]
-  );
+      const saved = json.data as Conversation;
+      update((current) => ({
+        ...withConversations(current, [...current.conversations.filter((row) => row.id !== saved.id), saved]),
+        ...(method === "POST" ? { activeId: saved.id } : {}),
+        loading: false, request: null,
+      }));
+      return saved;
+    }, fallback);
+  }, [conversationsUrl, update, mutate, t]);
 
-  const updateConversation = useCallback(
-    async (conversationId: string, updates: UpdateConversationInput) => {
-      try {
-        const res = await fetch(`/api/projects/${projectId}/conversations/${conversationId}`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(updates),
-        });
-        const json = await res.json();
-        if (json.data) {
-          setConversations((prev) =>
-            sortConversationsForLegacyParity(
-              prev.map((conv) =>
-                conv.id === conversationId ? (json.data as Conversation) : conv
-              ),
-            ),
-          );
-          return json.data as Conversation;
-        }
-      } catch {
-        // ignore
-      }
-      return null;
-    },
-    [projectId],
-  );
+  const createConversation = useCallback((input: CreateConversationInput = {}) =>
+    saveConversation("POST", input), [saveConversation]);
+  const updateConversation = useCallback((conversationId: string, input: UpdateConversationInput) =>
+    saveConversation("PATCH", input, conversationId), [saveConversation]);
 
-  const deleteConversation = useCallback(
-    async (conversationId: string) => {
-      try {
-        await fetch(`/api/projects/${projectId}/conversations/${conversationId}`, {
-          method: "DELETE",
-        });
-        // Remove from local state
-        setConversations((prev) => {
-          const next = prev.filter((c) => c.id !== conversationId);
-          // Adjust active if the deleted one was active
-          setActiveId((prevActive) => {
-            if (prevActive === conversationId && next.length > 0) {
-              return next[0].id;
-            }
-            if (next.length === 0) return null;
-            return prevActive;
-          });
-          return next;
-        });
-      } catch {
-        // ignore
-      }
-    },
-    [projectId]
-  );
+  const deleteConversation = useCallback(async (conversationId: string) => Boolean(await mutate(async () => {
+    const res = await fetch(`${conversationsUrl}/${conversationId}`, { method: "DELETE" });
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      throw new Error(json.error || t("conversations.deleteFailed"));
+    }
+    update((current) => ({
+      ...withConversations(current, current.conversations.filter((row) => row.id !== conversationId)),
+      loading: false, request: null,
+    }));
+    return true;
+  }, t("conversations.deleteFailed"))), [conversationsUrl, update, mutate, t]);
 
-  const restartPersistentSession = useCallback(
-    async (conversationId: string) => {
-      try {
-        const res = await fetch(
-          `/api/projects/${projectId}/conversations/${conversationId}/persistent-session`,
-          { method: "DELETE" },
-        );
-        if (!res.ok) return false;
-        setConversations((previous) =>
-          previous.map((conversation) =>
-            conversation.id === conversationId
-              ? { ...conversation, persistentSessionState: "cold" }
-              : conversation,
-          ),
-        );
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    [projectId],
-  );
+  const restartPersistentSession = useCallback(async (conversationId: string) => Boolean(await mutate(async () => {
+    const res = await fetch(`${conversationsUrl}/${conversationId}/persistent-session`, { method: "DELETE" });
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      throw new Error(json.error || t("conversations.restartFailed"));
+    }
+    update((current) => ({ ...current, request: null, loading: false,
+      conversations: current.conversations.map((conversation) => conversation.id === conversationId
+        ? { ...conversation, persistentSessionState: "cold" } : conversation),
+    }));
+    return true;
+  }, t("conversations.restartFailed"))), [conversationsUrl, update, mutate, t]);
+
+  const hasPendingMutation = useCallback(() => pending.current.has(scope), [scope]);
 
   return {
-    conversations,
-    activeId,
-    setActiveId,
-    loading,
-    createConversation,
-    updateConversation,
-    deleteConversation,
-    restartPersistentSession,
-    refresh,
+    conversations: state.conversations, activeId: state.activeId, loading: state.loading,
+    hasPendingMutation,
+    error: state.mutationError || state.loadError, mutating: state.mutating,
+    setActiveId, createConversation, updateConversation, deleteConversation,
+    restartPersistentSession, refresh,
   };
 }

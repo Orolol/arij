@@ -32,7 +32,6 @@ export async function generateConversationTitle(input: {
     cwd: process.cwd(),
     mode: "plan",
     model: resolvedAgent.model,
-    logIdentifier: `title-${input.projectId}`,
   });
   const result = await session.promise;
 

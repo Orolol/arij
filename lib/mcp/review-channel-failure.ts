@@ -1,3 +1,4 @@
+import { isOrdinaryReviewAgentType as isReviewAgentType } from "@/lib/review/agent-types";
 /**
  * The 401 trace for `submit_findings` — making a broken review channel
  * visible instead of silent.
@@ -45,7 +46,6 @@ import { and, eq, like } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { agentSessions, epics, ticketActivityLog } from "@/lib/db/schema";
 import { findMcpTokenRecord } from "@/lib/mcp/token-store";
-import { createReviewChannelFailureNotification } from "@/lib/notifications/create";
 import { logTransition } from "@/lib/workflow/log";
 
 /**
@@ -54,16 +54,6 @@ import { logTransition } from "@/lib/workflow/log";
  * other copies are (lib/agent-config/constants.ts documents that these lists
  * serve different purposes and must stay separate).
  */
-function isReviewAgentType(agentType: string | null | undefined): boolean {
-  if (!agentType) return false;
-  return (
-    agentType.includes("review") ||
-    agentType === "security_reviewer" ||
-    agentType === "code_reviewer" ||
-    agentType === "compliance_reviewer" ||
-    agentType === "feature_reviewer"
-  );
-}
 
 /**
  * Stable prefix of the activity-log reason. Doubles as the dedupe key: a
@@ -231,12 +221,6 @@ export function recordSubmitFindingsAuthFailure(request: Request): void {
       sessionId: attributed.sessionId,
     });
 
-    createReviewChannelFailureNotification({
-      projectId: attributed.projectId,
-      epicId: attributed.epicId,
-      sessionId: attributed.sessionId,
-      reason,
-    });
   } catch (error) {
     console.warn(
       "[review-channel-failure] could not trace a submit_findings 401:",

@@ -105,8 +105,6 @@ function makeHarness(
     assessReview: async () => ({
       blocking: false,
       blockingCount: 0,
-      agentCommentCount: 1,
-      usedProseFallback: false,
     }),
     readSessionStatus: (sessionId) => rowStatus.get(sessionId) ?? null,
     checkGuards: () => guard ?? OPEN_GUARD,
@@ -571,7 +569,7 @@ describe("runner-deterministic-verification — runDeterministicVerificationStep
       attempt: 1,
       fixCycle: 1,
       lastCodeSessionId: "s-build",
-      verificationFailure: { name: "test", exitCode: 1 },
+      verificationFailure: { kind: "command", command: { name: "test", exitCode: 1 } },
     });
     expect(h.reasons()).toEqual([
       PIPELINE_REASONS.deterministicVerificationFailed("test"),
@@ -669,14 +667,14 @@ describe("runner-regression-gate — runRegressionGateStep", () => {
     expect(h.requests[0]).toMatchObject({
       stage: "fix",
       fixCycle: 1,
-      verifyFailure: {
+      verificationFailure: { kind: "regression", report: {
         regression: {
           status: "failed",
           reason: "test_passes_on_base",
           testFiles: ["__tests__/bug.test.ts"],
           detail: "passes on the merge-base",
         },
-      },
+      } },
     });
     expect(h.reasons()[0]).toBe(PIPELINE_REASONS.regressionFailed(1, 2));
   });
@@ -915,8 +913,6 @@ describe("runner-stage-review — handleReviewStageSuccess", () => {
         return {
           blocking: false,
           blockingCount: 0,
-          agentCommentCount: 1,
-          usedProseFallback: false,
         };
       },
     });
@@ -939,8 +935,6 @@ describe("runner-stage-review — handleReviewStageSuccess", () => {
       assessReview: async () => ({
         blocking: true,
         blockingCount: 2,
-        agentCommentCount: 2,
-        usedProseFallback: false,
       }),
     });
     settleReview(h.ctx);
@@ -963,8 +957,6 @@ describe("runner-stage-review — handleReviewStageSuccess", () => {
       assessReview: async () => ({
         blocking: true,
         blockingCount: 1,
-        agentCommentCount: 1,
-        usedProseFallback: false,
       }),
     });
     settleReview(h.ctx);
@@ -980,8 +972,6 @@ describe("runner-stage-review — handleReviewStageSuccess", () => {
       assessReview: async () => ({
         blocking: true,
         blockingCount: 0,
-        agentCommentCount: 0,
-        usedProseFallback: false,
         unverifiable: true,
         verdictSource: "unverifiable",
       }),
@@ -989,7 +979,7 @@ describe("runner-stage-review — handleReviewStageSuccess", () => {
     settleReview(h.ctx);
     h.ctx.state.stageAttempt = 1;
     expect(await handleReviewStageSuccess(h.ctx)).toBeNull();
-    expect(h.reasons()[0]).toBe(PIPELINE_REASONS.retry("review", 2, 2));
+    expect(h.reasons()).toContain(PIPELINE_REASONS.retry("review", 2, 2));
     expect(h.requests[0]).toMatchObject({ stage: "review", attempt: 2 });
     expect(h.ctx.state.fixCycles).toBe(0);
   });

@@ -70,6 +70,13 @@
   },
   "arji": {
     "title": "arji.json sync",
-    "body": "The board is also a versioned file. Importing it overwrites the local database — run it from the sync action in the project header."
+    "body": "The board is also a versioned file. Importing it overwrites the local database — run it from the sync action in the project header.",
+    "export": "Export arji.json",
+    "exported": "arji.json exported.",
+    "exportFailed": "Export failed."
+  },
+  "history": {
+    "title": "Recent operations",
+    "failed": "Failed to load operations."
   }
 }

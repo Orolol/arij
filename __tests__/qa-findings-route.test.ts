@@ -24,10 +24,9 @@ const {
   reviewComments,
   ticketActivityLog,
   ticketComments,
-  customReviewAgents,
 } = await import("@/lib/db/schema");
 const { GET } = await import("@/app/api/qa/findings/route");
-const { QA_LOG_LINE_LIMIT } = await import("@/lib/qa/types");
+const { QA_LOG_LINE_LIMIT, QA_VERDICT_LIMIT } = await import("@/lib/qa/types");
 import type { QaPayload } from "@/lib/qa/types";
 
 function iso(daysAgo: number, hour = 9): string {
@@ -42,7 +41,6 @@ function reset(): void {
   db.delete(reviewComments).run();
   db.delete(agentSessions).run();
   db.delete(epics).run();
-  db.delete(customReviewAgents).run();
   db.delete(projects).run();
 }
 
@@ -108,8 +106,9 @@ function session(
     .run();
 }
 
-async function load(): Promise<QaPayload> {
-  const res = await GET(new Request("http://localhost/api/qa/findings"));
+async function load(projectId?: string): Promise<QaPayload> {
+  const query = projectId ? `?${new URLSearchParams({ projectId })}` : "";
+  const res = await GET(new Request(`http://localhost/api/qa/findings${query}`));
   const body = await res.json();
   expect(body.error).toBeUndefined();
   return body.data as QaPayload;
@@ -360,18 +359,11 @@ describe("GET /api/qa/findings — coverage, verdicts and the rubric", () => {
     expect(payload.verdicts[0].kind).toBe("attention");
   });
 
-  it("reads the rubric from the real checklist and counts enabled project rules", async () => {
+  it("reads the rubric from the real checklist", async () => {
     project("p1", "Arij", "2026-01-01");
-    db.insert(customReviewAgents)
-      .values({ id: "c1", name: "House rules", systemPrompt: "…", scope: "global", isEnabled: 1 })
-      .run();
-    db.insert(customReviewAgents)
-      .values({ id: "c2", name: "Off", systemPrompt: "…", scope: "global", isEnabled: 0 })
-      .run();
 
     const payload = await load();
     expect(payload.rubric.items).toContain("Tests");
-    expect(payload.rubric.projectRuleCount).toBe(1);
   });
 
   it("offers Run QA pass only on tickets the review route would accept", async () => {
@@ -393,5 +385,59 @@ describe("GET /api/qa/findings — coverage, verdicts and the rubric", () => {
     expect(payload.findings).toEqual([]);
     expect(payload.coveragePercent).toBeNull();
     expect(payload.rubric.items.length).toBeGreaterThan(0);
+  });
+});
+
+
+describe("GET /api/qa/findings — project scope", () => {
+  it("scopes before the verdict limit and preserves the project's identity color", async () => {
+    project("busy", "Busy", "2026-01-01");
+    project("selected", "Selected", "2026-01-02");
+    epic("selected-ticket", "selected");
+    session("selected-review", "selected", {
+      epicId: "selected-ticket", endedAt: iso(2), reviewVerdict: "approved",
+    });
+    finding("selected-finding", "selected-ticket");
+    for (let i = 0; i < QA_VERDICT_LIMIT; i++) {
+      epic(`other-${i}`, "busy");
+      session(`other-review-${i}`, "busy", {
+        epicId: `other-${i}`, endedAt: iso(1), reviewVerdict: "approved",
+      });
+    }
+    session("other-live", "busy", { status: "running", epicId: "other-0" });
+    session("selected-live", "selected", { status: "running", epicId: "selected-ticket" });
+    session("selected-queued", "selected", { status: "queued", epicId: "selected-ticket" });
+    finding("other-finding", "other-0");
+
+    expect((await load()).verdicts.map((row) => row.epicId)).not.toContain("selected-ticket");
+    const data = await load("selected");
+    expect(data.projects.map((row) => [row.id, row.colorIndex])).toEqual([["selected", 1]]);
+    expect(data.verdicts.map((row) => row.epicId)).toEqual(["selected-ticket"]);
+    expect(data.findings.map((row) => row.findingId)).toEqual(["selected-finding"]);
+    expect(data.runs.map((row) => row.sessionId)).toEqual(["selected-live"]);
+    expect(data.queued.map((row) => row.sessionId)).toEqual(["selected-queued"]);
+    expect(data.checkableProjectIds).toEqual(["selected"]);
+    expect(data.reviewable).toEqual([]);
+  });
+
+  it("computes coverage and applicable rules inside the selected scope", async () => {
+    for (const id of ["reviewed", "unreviewed", "empty"]) {
+      project(id, id, "2026-01-01");
+      epic(`ticket-${id}`, id, { status: "done" });
+      db.insert(ticketActivityLog).values({
+        id: `activity-${id}`, projectId: id, epicId: `ticket-${id}`,
+        fromStatus: id === "empty" ? "done" : "to_merge", toStatus: "done",
+        actor: "user", createdAt: iso(1),
+      }).run();
+    }
+    session("review", "reviewed", { epicId: "ticket-reviewed" });
+    expect((await load()).coveragePercent).toBe(50);
+    const reviewed = await load("reviewed");
+    expect(reviewed.coveragePercent).toBe(100);
+    expect((await load("unreviewed")).coveragePercent).toBe(0);
+    expect((await load("empty")).coveragePercent).toBeNull();
+    const missing = await load("missing");
+    expect(missing.projects).toEqual([]);
+    expect(missing.coveragePercent).toBeNull();
   });
 });

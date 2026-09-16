@@ -8,6 +8,7 @@ import { BandHeader, Mono, PillButton, StrataBand } from "@/components/piscine";
 import { SettingField, SettingInput } from "./SettingField";
 import { SettingsSection } from "./SettingsSection";
 
+import type { NotificationWebhook } from "./NotificationsBand";
 /**
  * WEBHOOKS — the only notification channel Arij has: one URL per project, POSTed
  * when an agent session finishes and when a release is created.
@@ -17,29 +18,36 @@ import { SettingsSection } from "./SettingsSection";
  * incoming webhook grants post access), which is why `GET /api/settings` masks
  * it to `{hasUrl}` and this band reads the dedicated endpoint instead.
  */
-export interface WebhookRow {
-  projectId: string;
-  projectName: string;
-  url: string;
-}
+export type WebhookRow = NotificationWebhook;
 
 export function WebhooksBand() {
   const t = useTranslations("Settings");
   const [rows, setRows] = useState<WebhookRow[]>([]);
+  const [loaded, setLoaded] = useState(false);
+  const [fetchFailed, setFetchFailed] = useState(false);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-
   useEffect(() => {
     let cancelled = false;
     fetch("/api/settings/webhooks")
-      .then((response) => response.json())
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to load webhooks");
+        return response.json();
+      })
       .then((payload) => {
         if (cancelled) return;
         const list = payload?.data?.webhooks;
-        if (Array.isArray(list)) setRows(list as WebhookRow[]);
+        if (Array.isArray(list)) {
+          setRows(list as WebhookRow[]);
+          setLoaded(true);
+        } else {
+          setFetchFailed(true);
+        }
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setFetchFailed(true);
+      });
     return () => {
       cancelled = true;
     };
@@ -95,7 +103,11 @@ export function WebhooksBand() {
           }
         />
 
-        {rows.length === 0 ? (
+        {fetchFailed ? (
+          <Mono size={11} tone="feed-deep" as="div">
+            {t("webhooks.failedToLoad")}
+          </Mono>
+        ) : !loaded ? null : rows.length === 0 ? (
           <Mono size={11} tone="feed-deep" as="div">
             {t("webhooks.empty")}
           </Mono>

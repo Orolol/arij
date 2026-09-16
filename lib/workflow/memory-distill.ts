@@ -52,9 +52,8 @@ import {
   parseMemoryAutoDistillSetting,
 } from "@/lib/documents/memory-constants";
 import { isNightRunId } from "@/lib/night/constants";
-import { createMemoryDistilledNotification } from "@/lib/notifications/create";
 import { recordMemoryWriteProvenance } from "@/lib/documents/memory-provenance";
-import { emitSessionStarted } from "@/lib/events/emit";
+import { emitSessionStarted, emitProjectSessionStarted } from "@/lib/events/emit";
 import { eventBus } from "@/lib/events/bus";
 import { MEMORY_WRITER_AGENT_TYPES } from "./dreaming-constants";
 import { isDreamingAfterNightRunEnabled } from "./dreaming";
@@ -114,6 +113,11 @@ export interface AutoDistillCandidateSession {
 export interface AutoDistillDecision {
   allowed: boolean;
   reason: string;
+  /**
+   * Settlement of the distill this decision started — the same promise the
+   * dispatch returns. A refusal resolves immediately.
+   */
+  settled?: Promise<void>;
 }
 
 /**
@@ -350,11 +354,11 @@ export async function maybeAutoDistillAfterSessionTerminal(
       return decision;
     }
 
-    await dispatchMemoryDistillSession({
+    const { settled } = await dispatchMemoryDistillSession({
       projectId: session!.projectId!,
       sourceSessionId: sessionId,
     });
-    return decision;
+    return { ...decision, settled };
   } catch (err) {
     console.warn(
       "[memory-distill] Auto-distill trigger failed:",
@@ -378,6 +382,17 @@ export interface DispatchMemoryDistillInput {
 
 export interface DispatchMemoryDistillResult {
   sessionId: string;
+  /**
+   * Resolution of the run this dispatch launched: never rejects, and resolves
+   * only AFTER the terminal hook has run — so a caller that awaits it sees the
+   * document the session wrote (or the proof that it wrote nothing). A guard
+   * refusal resolves immediately: there was no run to wait for.
+   *
+   * Exposed for the same reason `dispatchBackgroundSession` exposes its own
+   * `settled`: a caller that needs the effect to have landed can await it
+   * instead of sleeping for a while and hoping.
+   */
+  settled: Promise<void>;
 }
 
 interface SourceSessionContext {
@@ -582,7 +597,7 @@ export async function dispatchMemoryDistillSession(
   // build is work that run caused, so its cost must land inside the run's
   // cost cap and morning summary instead of escaping both. (No epicId means
   // the summary counts it in the run total, not against a single epic.)
-  const { sessionId } = dispatchBackgroundSession({
+  const { sessionId, settled } = dispatchBackgroundSession({
     agentType: "memory_distill",
     projectId: input.projectId,
     prompt,
@@ -594,12 +609,13 @@ export async function dispatchMemoryDistillSession(
     session: { batchRunId: sourceContext?.batchRunId ?? null },
     onQueued: ({ sessionId: sid }) => {
       try {
-        emitSessionStarted(
-          input.projectId,
-          sourceContext?.epicId ?? "",
-          sid,
-          "memory_distill"
-        );
+        // A distillation with no source ticket is a project-level pass: omit
+        // `epicId` rather than sending "" (see emitProjectSessionStarted).
+        if (sourceContext?.epicId) {
+          emitSessionStarted(input.projectId, sourceContext.epicId, sid, "memory_distill");
+        } else {
+          emitProjectSessionStarted(input.projectId, sid, "memory_distill");
+        }
       } catch {
         // Non-critical event emission
       }
@@ -670,11 +686,6 @@ export async function dispatchMemoryDistillSession(
           data: { source: "distill" },
           timestamp: new Date().toISOString(),
         });
-        createMemoryDistilledNotification({
-          projectId: input.projectId,
-          sessionId: sid,
-          sourceSessionId: input.sourceSessionId,
-        });
       } catch (error) {
         console.warn(
           "[memory-distill] Failed to record the distilled memory write",
@@ -704,5 +715,5 @@ export async function dispatchMemoryDistillSession(
     },
   });
 
-  return { sessionId };
+  return { sessionId, settled: settled.then(() => undefined) };
 }

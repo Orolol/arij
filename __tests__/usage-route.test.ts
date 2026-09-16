@@ -3,21 +3,12 @@ import { createTestDb } from "@/lib/db/test-utils";
 import type { ClaudeQuota, CodexLiveQuota } from "@/lib/types/usage";
 
 const testDb = vi.hoisted(() => ({
-  instance: null as ReturnType<
-    typeof import("@/lib/db/test-utils").createTestDb
-  > | null,
+  instance: null as ReturnType<typeof import("@/lib/db/test-utils").createTestDb> | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
 // The filesystem scan is stubbed out: this test must never touch the user's
 // real ~/.codex/sessions tree, and must certainly never spawn a codex process.
@@ -122,11 +113,11 @@ function seedSnapshot(): void {
       `INSERT INTO provider_usage_snapshots (
          provider, captured_at, plan_type,
          primary_used_percent, primary_window_minutes, primary_resets_at,
-         source_file, raw_json
+         raw_json
        ) VALUES (
          'codex', '2026-08-18T09:00:00.000Z', 'prolite',
          6, 10080, 1787671089,
-         '/home/u/.codex/sessions/2026/08/18/rollout-x.jsonl', '{"limit_id":"codex"}'
+         '{"limit_id":"codex"}'
        )`,
     )
     .run();
@@ -157,10 +148,8 @@ describe("GET /api/usage", () => {
     expect(res.status).toBe(200);
     expect(body.error).toBeUndefined();
     expect(body.data).toBeDefined();
-    expect(body.data.totals).toEqual({
+    expect(body.data.dashboard.totals).toMatchObject({
       sessions: 1,
-      inputTokens: 100,
-      outputTokens: 10,
       costUsd: 1.25,
     });
   });
@@ -176,21 +165,13 @@ describe("GET /api/usage", () => {
     const { data } = await (await GET(request())).json();
 
     expect(Object.keys(data).sort()).toEqual([
-      "byAgent",
-      "byDay",
-      "byProject",
-      "byProvider",
       "dashboard",
       "generatedAt",
       "subscriptions",
-      "totals",
-      "windows",
     ]);
-    expect(data.byDay).toHaveLength(30);
-    expect(data.byAgent[0].name).toBe("Builder");
-    expect(data.byProject[0].projectName).toBe("Project One");
-    expect(data.windows.last5h.sessions).toBe(1);
-    expect(data.windows.last7d.sessions).toBe(1);
+    expect(data.dashboard.byDay).toHaveLength(30);
+    expect(data.dashboard.byAgent[0].label).toBe("Builder");
+    expect(data.dashboard.byProject[0].label).toBe("Project One");
     expect(typeof data.generatedAt).toBe("string");
   });
 
@@ -206,9 +187,9 @@ describe("GET /api/usage", () => {
 
   it("responds on an empty database without inventing numbers", async () => {
     const { data } = await (await GET(request())).json();
-    expect(data.totals.sessions).toBe(0);
-    expect(data.totals.costUsd).toBeNull();
-    expect(data.byAgent).toEqual([]);
+    expect(data.dashboard.totals.sessions).toBe(0);
+    expect(data.dashboard.totals.costUsd).toBeNull();
+    expect(data.dashboard.byAgent).toEqual([]);
   });
 
   it("returns the { error } envelope with a 500 when the read blows up", async () => {

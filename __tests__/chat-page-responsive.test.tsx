@@ -98,10 +98,12 @@ const DESK: ControlDeskPayload = {
 };
 
 const setActiveId = vi.fn();
+let mockActiveId = "conv-1";
+let mockMessages = MESSAGES;
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
-}));
+vi.mock("next/navigation", async () =>
+  (await import("@/__tests__/helpers/next-navigation-mock")).nextNavigationMock(),
+);
 
 vi.mock("@/hooks/useControlDesk", () => ({
   useControlDesk: () => ({
@@ -115,7 +117,7 @@ vi.mock("@/hooks/useControlDesk", () => ({
 vi.mock("@/hooks/useConversations", () => ({
   useConversations: () => ({
     conversations: CONVERSATIONS,
-    activeId: "conv-1",
+    activeId: mockActiveId,
     setActiveId,
     loading: false,
     createConversation: vi.fn(),
@@ -128,7 +130,7 @@ vi.mock("@/hooks/useConversations", () => ({
 
 vi.mock("@/hooks/useChat", () => ({
   useChat: () => ({
-    messages: MESSAGES,
+    messages: mockMessages,
     setMessages: vi.fn(),
     loading: false,
     sending: false,
@@ -195,6 +197,8 @@ beforeEach(() => {
   globalThis.ResizeObserver ??=
     NoopResizeObserver as unknown as typeof ResizeObserver;
   vi.clearAllMocks();
+  mockActiveId = "conv-1";
+  mockMessages = MESSAGES;
   window.localStorage.clear();
   // Everything the page reads on mount — spec, memory, documents — answers
   // "nothing here". None of it is what this file is about.
@@ -481,4 +485,60 @@ describe("chat composer — the row a long agent name has to share", () => {
       agentPill().querySelector("span")?.getAttribute("class") ?? "",
     ).toContain("truncate");
   });
+});
+
+describe("chat deep-link navigation", () => {
+  it("applies a new conversation deep link while the page is already mounted", async () => {
+    const { rerender } = render(<ChatPageView initialProjectId="p1" initialConversationId="conv-1" />);
+    await waitFor(() => expect(setActiveId).toHaveBeenCalledWith("conv-1"));
+    setActiveId.mockClear();
+    rerender(<ChatPageView initialProjectId="p1" initialConversationId="conv-2" />);
+    await waitFor(() => expect(setActiveId).toHaveBeenCalledWith("conv-2"));
+    setActiveId.mockClear();
+    rerender(<ChatPageView initialProjectId="p1" initialConversationId="conv-2" />);
+    expect(setActiveId).not.toHaveBeenCalled();
+  });
+
+  it("keeps a late epic creation bound to its original conversation", async () => {
+    const original = [{ ...MESSAGES[1], id: "message-a", content: JSON.stringify({ title: "Proposal A", description: "Scope", userStories: [{ title: "Story A" }] }) }];
+    mockMessages = original;
+    let finish!: (response: Response) => void;
+    const pending = new Promise<Response>((resolve) => { finish = resolve; });
+    global.fetch = vi.fn(async (url, init) => String(url).endsWith("/epics") && init?.method === "POST"
+      ? pending : { ok: true, json: async () => ({ data: [] }) } as Response);
+    const view = render(<ChatPageView initialProjectId="p1" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Backlog" }));
+    mockActiveId = "conv-2";
+    mockMessages = [{ ...MESSAGES[1], id: "message-b", content: JSON.stringify({ title: "Proposal B", description: "Scope", userStories: [{ title: "Story B" }] }) }];
+    view.rerender(<ChatPageView initialProjectId="p1" />);
+    await act(async () => finish({ ok: true, json: async () => ({ data: { id: "epic-a", readableId: "E-1", status: "backlog" } }) } as Response));
+    expect(JSON.parse(window.localStorage.getItem("arij.chat.epic-by-message.conv-1")!)).toEqual({ "message-a": "epic-a" });
+    expect(window.localStorage.getItem("arij.chat.epic-by-message.conv-2")).toBeNull();
+    expect(screen.queryByText("E-1")).toBeNull();
+    mockActiveId = "conv-1";
+    mockMessages = original;
+    view.rerender(<ChatPageView initialProjectId="p1" />);
+    expect(screen.getAllByText("E-1").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: "Backlog" })).toBeDisabled();
+  });
+});
+
+it("releases the spec proposal action after a network error and shows the successful retry", async () => {
+  let attempts = 0;
+  const fetchMock = vi.fn(async (url) => {
+    if (String(url).endsWith("/spec/update")) {
+      attempts += 1;
+      if (attempts === 1) throw new Error("offline");
+      return { ok: true, json: async () => ({ data: { sessionId: "session" } }) } as Response;
+    }
+    return { ok: true, json: async () => ({ data: [] }) } as Response;
+  });
+  global.fetch = fetchMock;
+  await renderChat();
+  await userEvent.click(screen.getByRole("button", { name: "Propose the addition" }));
+  expect(await screen.findByText("Failed to propose the spec addition")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Propose the addition" })).not.toBeDisabled();
+  await userEvent.click(screen.getByRole("button", { name: "Propose the addition" }));
+  expect(await screen.findByRole("link", { name: "view the spec →" })).toHaveAttribute("href", "/projects/p1/spec");
+  expect(attempts).toBe(2);
 });

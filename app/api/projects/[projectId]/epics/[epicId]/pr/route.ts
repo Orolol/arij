@@ -13,7 +13,7 @@ import { getGitHubTokenFromSettings } from "@/lib/github/client";
 import { pushGitBranch } from "@/lib/git/remote";
 import { resolveDefaultBranch } from "@/lib/git/manager";
 import { generatePrBody, createPullRequest } from "@/lib/github/pull-requests";
-import { writeGitSyncLog } from "@/lib/github/sync-log";
+import { logSyncOperation } from "@/lib/github/sync-log";
 
 type RouteParams = { params: Promise<{ projectId: string; epicId: string }> };
 
@@ -22,7 +22,9 @@ type RouteParams = { params: Promise<{ projectId: string; epicId: string }> };
  * Returns current PR metadata for the epic if it exists.
  */
 export async function GET(_request: NextRequest, { params }: RouteParams) {
-  const { epicId } = await params;
+  const { projectId, epicId } = await params;
+  const foundEpic = getEpicOr404(projectId, epicId);
+  if (isErrorResponse(foundEpic)) return foundEpic;
 
   const pr = db
     .select()
@@ -136,7 +138,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
     await pushGitBranch(project.gitRepoPath, epic.branchName);
 
-    writeGitSyncLog({
+    logSyncOperation({
       projectId,
       operation: "push",
       branch: epic.branchName,
@@ -145,7 +147,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   } catch (e) {
     const detail = e instanceof Error ? e.message : "Push failed";
 
-    writeGitSyncLog({
+    logSyncOperation({
       projectId,
       operation: "push",
       branch: epic.branchName,
@@ -204,9 +206,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       .where(eq(epics.id, epicId))
       .run();
 
-    writeGitSyncLog({
+    logSyncOperation({
       projectId,
-      operation: "push",
+      operation: "pr_create",
       branch: epic.branchName,
       status: "success",
       detail: { prNumber: prResult.number, url: prResult.url },
@@ -222,9 +224,9 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
   } catch (e) {
     const detail = e instanceof Error ? e.message : "PR creation failed";
 
-    writeGitSyncLog({
+    logSyncOperation({
       projectId,
-      operation: "push",
+      operation: "pr_create",
       branch: epic.branchName,
       status: "failed",
       detail: { error: detail },

@@ -241,7 +241,7 @@ describe("buildRefinementPrompt", () => {
 
   it("says the board is empty rather than rendering blank columns", () => {
     const prompt = buildRefinementPrompt(project, { backlog: [], todo: [] });
-    expect(prompt).toContain("Both planning columns are empty");
+    expect(prompt).toContain("Both planning statuses are empty");
   });
 });
 

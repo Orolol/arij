@@ -1,4 +1,4 @@
-import { parseStoredTimestamp } from "@/lib/agent-sessions/last-activity";
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
 import { KANBAN_COLUMNS } from "@/lib/types/kanban";
 import type { RegistryRow } from "./types";
 

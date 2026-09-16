@@ -6,7 +6,7 @@
  *     fragments into complete OpenAiToolCall objects,
  *   - buildChatCompletionsBody including `tools` only when given,
  *   - the non-streaming JSON fallback surfacing `message.tool_calls`,
- *   - the text-only streamOpenAiChatCompletion wrapper staying text-only.
+ *   - text deltas arriving alongside tool-call fragments.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -17,7 +17,6 @@ vi.mock("@/lib/db", async () => {
 
 import {
   buildChatCompletionsBody,
-  streamOpenAiChatCompletion,
   streamOpenAiChatEvents,
   type OpenAiChatMessage,
   type OpenAiConfig,
@@ -91,13 +90,6 @@ async function collectEvents(
   return out;
 }
 
-async function collectText(
-  stream: AsyncGenerator<string, void, unknown>,
-): Promise<string[]> {
-  const out: string[] = [];
-  for await (const delta of stream) out.push(delta);
-  return out;
-}
 
 describe("streamOpenAiChatEvents — tool call assembly", () => {
   let fetchMock: ReturnType<typeof vi.fn>;
@@ -354,31 +346,3 @@ describe("buildChatCompletionsBody — tools field", () => {
   });
 });
 
-describe("streamOpenAiChatCompletion — text-only wrapper", () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
-  });
-
-  it("yields only text even when the stream carries tool calls", async () => {
-    fetchMock.mockResolvedValue(
-      sseResponse([
-        sseChunk({ choices: [{ delta: { content: "Hel" } }] }),
-        toolCallDeltaChunk([
-          { index: 0, id: "call_1", function: { name: "list_tickets", arguments: "{}" } },
-        ]),
-        sseChunk({ choices: [{ delta: { content: "lo" } }] }),
-        "data: [DONE]\n\n",
-      ]),
-    );
-
-    const deltas = await collectText(streamOpenAiChatCompletion(baseConfig, messages));
-    expect(deltas).toEqual(["Hel", "lo"]);
-  });
-});

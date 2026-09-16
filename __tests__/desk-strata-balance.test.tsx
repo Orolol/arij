@@ -16,9 +16,9 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { NowDesk } from "@/components/desk/NowDesk";
 import type { ControlDeskPayload } from "@/lib/control-desk/types";
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-}));
+vi.mock("next/navigation", async () =>
+  (await import("@/__tests__/helpers/next-navigation-mock")).nextNavigationMock(),
+);
 
 vi.mock("@/hooks/useNamedAgentsList", () => ({
   useNamedAgentsList: () => ({ agents: [], loading: false, refresh: vi.fn() }),

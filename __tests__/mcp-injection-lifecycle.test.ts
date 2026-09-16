@@ -135,8 +135,14 @@ vi.mock("@/lib/claude/spawn", () => ({
   }),
 }));
 
-vi.mock("@/lib/providers", () => ({
-  getProvider: vi.fn((provider: string) => ({
+// claude-code reaches the mocked spawnClaude through the same provider
+// registry as every other CLI — there is no claude branch in the manager.
+vi.mock("@/lib/providers", async () => {
+  const { spawnClaude } = await import("@/lib/claude/spawn");
+  const { mockProviderRegistry } = await import(
+    "@/__tests__/helpers/provider-mock"
+  );
+  return mockProviderRegistry(spawnClaude, (provider: string) => ({
     type: provider,
     spawn: vi.fn((options: Record<string, unknown>) => {
       pmState.providerSpawnedOptions.push(options);
@@ -151,8 +157,8 @@ vi.mock("@/lib/providers", () => ({
     }),
     cancel: vi.fn(() => true),
     isAvailable: vi.fn().mockResolvedValue(true),
-  })),
-}));
+  }));
+});
 
 // REAL token store (globalThis-backed — shared across module generations).
 import {

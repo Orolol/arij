@@ -39,18 +39,6 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
 
   const now = new Date().toISOString();
 
-  // Update project fields from JSON
-  db.update(projects)
-    .set({
-      name: data.project.name,
-      description: data.project.description,
-      status: data.project.status,
-      spec: data.project.spec,
-      updatedAt: now,
-    })
-    .where(eq(projects.id, projectId))
-    .run();
-
   // Run epic + story sync inside a transaction
   const sqlite = (db as unknown as { $client: Database.Database }).$client;
 
@@ -67,6 +55,18 @@ export async function importArjiJson(projectId: string): Promise<ImportResult> {
   }> = [];
 
   const transaction = sqlite.transaction(() => {
+    // Update project fields from JSON
+    db.update(projects)
+      .set({
+        name: data.project.name,
+        description: data.project.description,
+        status: data.project.status,
+        spec: data.project.spec,
+        updatedAt: now,
+      })
+      .where(eq(projects.id, projectId))
+      .run();
+
     // Get current epic/story IDs for deletion pass
     const currentEpicRows = db
       .select({ id: epics.id, status: epics.status })

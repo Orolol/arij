@@ -1,13 +1,11 @@
 /**
- * The settings inventory of frame 11c — one entry per key the screen owns.
+ * The settings registry of frame 11c — one entry per key the screen owns.
  *
  * WHY A REGISTRY AND NOT 58 useState. The page this replaces held every value
  * in its own hook with its own save button; the failure mode of rebuilding it
  * is a setting silently disappearing. Here every batched key declares, in one
  * place, how it is READ out of `GET /api/settings` and how the editor value is
- * PARSED back into what the PATCH stores — and `SETTINGS_INVENTORY` names the
- * tab and the test id it must be reachable through, so a regression test can
- * assert the whole table is still on screen.
+ * PARSED back into what the PATCH stores.
  *
  * TWO VALUE SPACES, never confused:
  * - the EDITOR value (what the control holds: a string, or a boolean),
@@ -98,19 +96,21 @@ import {
   OPENAI_MODEL_SETTING_KEY,
   OPENAI_REASONING_EFFORT_SETTING_KEY,
 } from "@/lib/openai/constants";
-/**
- * `github_pat`, inlined. The constant lives in `lib/github/client.ts`, which
- * imports better-sqlite3 — importing it here would drag the database into the
- * client bundle. The old settings page inlined the literal for the same
- * reason; `app/api/settings/route.ts` remains the authority.
- */
-export const GITHUB_PAT_SETTING_KEY = "github_pat";
+import {
+  GITHUB_PAT_SETTING_KEY,
+  GLOBAL_PROMPT_SETTING_KEY,
+  MEMORY_AUTO_DISTILL_SETTING_KEY,
+  SPEC_AUTO_REWRITE_SETTING_KEY,
+  MCP_TOOLS_ENABLED_SETTING_KEY,
+} from "@/lib/settings/keys";
 
-/** Keys that carry a global prompt / memory / spec switch and have no constant. */
-export const GLOBAL_PROMPT_SETTING_KEY = "global_prompt";
-export const MEMORY_AUTO_DISTILL_SETTING_KEY = "memory_auto_distill";
-export const SPEC_AUTO_REWRITE_SETTING_KEY = "spec_auto_rewrite";
-export const MCP_TOOLS_ENABLED_SETTING_KEY = "mcp_tools_enabled";
+export {
+  GITHUB_PAT_SETTING_KEY,
+  GLOBAL_PROMPT_SETTING_KEY,
+  MEMORY_AUTO_DISTILL_SETTING_KEY,
+  SPEC_AUTO_REWRITE_SETTING_KEY,
+  MCP_TOOLS_ENABLED_SETTING_KEY,
+};
 
 /** What a control holds. Text fields and segments are strings; toggles are booleans. */
 export type EditorValue = string | boolean;
@@ -430,74 +430,9 @@ const SPECS: readonly SettingFieldSpec[] = [
 export const SETTING_FIELDS: Readonly<Record<string, SettingFieldSpec>> =
   Object.fromEntries(SPECS.map((spec) => [spec.key, spec]));
 
-/** Every batched key, in declaration order. */
-export const SETTING_FIELD_KEYS: readonly string[] = SPECS.map((s) => s.key);
-
 /** Reads the whole payload into editor values, once per server response. */
 export function readEditors(data: SettingsData): Record<string, EditorValue> {
   const editors: Record<string, EditorValue> = {};
   for (const spec of SPECS) editors[spec.key] = spec.read(data);
   return editors;
 }
-
-/* ------------------------------------------------------------------ */
-/* The inventory — every setting this screen owns, and where it lives   */
-/* ------------------------------------------------------------------ */
-
-export type SettingsTab = "workspace" | "pipeline" | "integrations";
-
-export interface SettingsInventoryEntry {
-  key: string;
-  tab: SettingsTab;
-  /** The `data-testid` that proves the control is on screen. */
-  testId: string;
-  /** `false` for the three secrets/webhooks, which are never batched. */
-  batched: boolean;
-}
-
-/**
- * The load-bearing table: every setting the old 1862-line page owned, plus the
- * five global Full Auto / budget keys it never surfaced, each with the tab and
- * the test id it must be reachable through.
- *
- * `__tests__/settings-inventory.test.tsx` renders all three tabs and asserts
- * every entry here is in the DOM. That is the cheapest possible defence
- * against this packet's stated failure mode — a setting quietly disappearing.
- */
-export const SETTINGS_INVENTORY: readonly SettingsInventoryEntry[] = [
-  { key: PROJECTS_ROOT_SETTING_KEY, tab: "workspace", testId: "projects-root-setting", batched: true },
-  { key: AUTO_MODE_ENABLED_SETTING_KEY, tab: "workspace", testId: "full-auto-master", batched: true },
-  { key: AUTO_MODE_SMART_DISPATCH_SETTING_KEY, tab: "workspace", testId: "auto-smart-dispatch", batched: true },
-  { key: FULL_AUTO_SECOND_OPINION_SETTING_KEY, tab: "workspace", testId: "auto-second-opinion", batched: true },
-  { key: AUTO_MODE_BUILD_AGENT_SETTING_KEY, tab: "workspace", testId: "auto-build-agent", batched: true },
-  { key: AUTO_MODE_REVIEW_AGENT_SETTING_KEY, tab: "workspace", testId: "auto-review-agent", batched: true },
-  { key: AGENT_MAX_CONCURRENT_GLOBAL_SETTING_KEY, tab: "workspace", testId: "agent-max-concurrent", batched: true },
-  { key: NIGHT_COST_CAP_SETTING_KEY, tab: "workspace", testId: "night-cost-cap-setting", batched: true },
-  { key: NIGHT_CIRCUIT_BREAKER_SETTING_KEY, tab: "workspace", testId: "night-circuit-breaker-setting", batched: true },
-  { key: DREAMING_AFTER_NIGHT_RUN_SETTING_KEY, tab: "workspace", testId: "dream-after-night-run", batched: true },
-  { key: MONTHLY_CAP_SETTING_KEY, tab: "workspace", testId: "monthly-cap-setting", batched: true },
-  { key: CLAUDE_WEEKLY_BUDGET_SETTING_KEY, tab: "workspace", testId: "usage-budget-setting", batched: true },
-  { key: PROMPT_TOKEN_BUDGET_GLOBAL_SETTING_KEY, tab: "workspace", testId: "prompt-token-budget-setting", batched: true },
-
-  { key: PIPELINE_ENABLED_SETTING_KEY, tab: "pipeline", testId: "pipeline-enabled-toggle", batched: true },
-  { key: PIPELINE_GRADER_ENABLED_SETTING_KEY, tab: "pipeline", testId: "pipeline-grader-toggle", batched: true },
-  { key: PIPELINE_MAX_ATTEMPTS_SETTING_KEY, tab: "pipeline", testId: "pipeline-max-attempts", batched: true },
-  { key: PIPELINE_MAX_FIX_CYCLES_SETTING_KEY, tab: "pipeline", testId: "pipeline-max-fix-cycles", batched: true },
-  { key: VERIFY_COMMANDS_SETTING_KEY, tab: "pipeline", testId: "verify-commands", batched: true },
-  { key: VERIFY_TIMEOUT_MS_SETTING_KEY, tab: "pipeline", testId: "verify-timeout-ms", batched: true },
-  { key: BUG_REGRESSION_CHECK_SETTING_KEY, tab: "pipeline", testId: "bug-regression-toggle", batched: true },
-  // Revealed by the toggle above; the inventory test switches it on first.
-  { key: BUG_REGRESSION_COMMAND_SETTING_KEY, tab: "pipeline", testId: "bug-regression-command", batched: true },
-  { key: TEST_FILE_PATTERNS_SETTING_KEY, tab: "pipeline", testId: "test-file-patterns", batched: true },
-  { key: MCP_TOOLS_ENABLED_SETTING_KEY, tab: "pipeline", testId: "mcp-tools-toggle", batched: true },
-  { key: MEMORY_AUTO_DISTILL_SETTING_KEY, tab: "pipeline", testId: "memory-auto-distill-toggle", batched: true },
-  { key: SPEC_AUTO_REWRITE_SETTING_KEY, tab: "pipeline", testId: "spec-auto-rewrite-toggle", batched: true },
-  { key: GLOBAL_PROMPT_SETTING_KEY, tab: "pipeline", testId: "global-prompt", batched: true },
-
-  { key: GITHUB_PAT_SETTING_KEY, tab: "integrations", testId: "github-pat", batched: false },
-  { key: OPENAI_BASE_URL_SETTING_KEY, tab: "integrations", testId: "openai-base-url", batched: false },
-  { key: OPENAI_API_KEY_SETTING_KEY, tab: "integrations", testId: "openai-api-key", batched: false },
-  { key: OPENAI_MODEL_SETTING_KEY, tab: "integrations", testId: "openai-model", batched: false },
-  { key: OPENAI_REASONING_EFFORT_SETTING_KEY, tab: "integrations", testId: "openai-reasoning-effort", batched: false },
-  { key: "webhook_url", tab: "integrations", testId: "webhooks-settings", batched: false },
-];

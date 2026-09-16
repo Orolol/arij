@@ -17,7 +17,6 @@ import {
 } from "@/lib/documents/memory-provenance";
 import { eventBus } from "@/lib/events/bus";
 import { getPendingMemoryWriter } from "@/lib/workflow/memory-writer-lock";
-import { createMemoryManualWriteNotification } from "@/lib/notifications/create";
 
 type Params = { params: Promise<{ projectId: string }> };
 
@@ -108,7 +107,6 @@ export async function PUT(request: NextRequest, { params }: Params) {
     data: { source: "manual" },
     timestamp: new Date().toISOString(),
   });
-  createMemoryManualWriteNotification({ projectId, restored: false });
 
   return NextResponse.json({
     data: {

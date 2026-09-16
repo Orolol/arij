@@ -29,6 +29,7 @@ vi.mock("@/lib/db", async () => {
 });
 
 vi.mock("@/lib/pipeline", () => ({
+  listPipelineRunsByProject: vi.fn(() => []),
   resolvePipelineEnabled: vi.fn(() => false),
   startPipelineRun: vi.fn(() => ({ runId: "run-test" })),
 }));
@@ -97,7 +98,7 @@ const {
   settings,
   reviewComments,
   ticketActivityLog,
-  notifications,
+  ticketComments,
 } = await import("@/lib/db/schema");
 const { POST: batchBuildPost } =
   await import("@/app/api/projects/[projectId]/build/route");
@@ -409,19 +410,12 @@ describe("scheduler-integrated batch build", () => {
           row.reason.includes("manual push"),
       ),
     ).toBe(true);
-    const autofixNotification = db
+    const autofixComment = db
       .select()
-      .from(notifications)
-      .where(eq(notifications.sessionId, json.data.sessionId))
+      .from(ticketComments)
       .all()
-      .find((notification) => notification.agentType === "ci_autofix");
-    expect(autofixNotification).toMatchObject({
-      status: "completed",
-      targetUrl: `/projects/${projectId}/sessions/${json.data.sessionId}`,
-    });
-    expect(autofixNotification?.title).toContain(
-      `push ${persistedPrBranch} for PR #42`,
-    );
+      .find((comment) => comment.content.includes(`push ${persistedPrBranch} for PR #42`));
+    expect(autofixComment).toMatchObject({ author: "agent" });
   });
 
   it("keeps review feedback in an ordinary build prompt", async () => {

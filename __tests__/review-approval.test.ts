@@ -26,8 +26,6 @@ const mocks = vi.hoisted(() => ({
   mergeWorktree: vi.fn(),
   applyTransition: vi.fn(),
   logTransition: vi.fn(),
-  createApproveMergeFailedNotification: vi.fn(),
-  createMergeRetryFailedNotification: vi.fn(),
   tryExportArjiJson: vi.fn(),
   getRunningSessionForTarget: vi.fn(),
   processStart: vi.fn(),
@@ -49,12 +47,6 @@ vi.mock("@/lib/workflow/transition-service", () => ({
 
 vi.mock("@/lib/workflow/log", () => ({
   logTransition: mocks.logTransition,
-}));
-
-vi.mock("@/lib/notifications/create", () => ({
-  createApproveMergeFailedNotification:
-    mocks.createApproveMergeFailedNotification,
-  createMergeRetryFailedNotification: mocks.createMergeRetryFailedNotification,
 }));
 
 vi.mock("@/lib/sync/export", () => ({
@@ -278,17 +270,6 @@ describe("Epic merge — the merge is the approval", () => {
       expect(String(comment.content)).toContain("CONFLICTS: lib/foo.ts");
     });
 
-    it("creates the merge-failed notification", async () => {
-      seed();
-      await callMerge();
-
-      expect(mocks.createApproveMergeFailedNotification).toHaveBeenCalledWith({
-        projectId: "p1",
-        epicId: "epic-1",
-        error: "CONFLICTS: lib/foo.ts",
-      });
-    });
-
     it("logs a to_merge → to_merge activity entry as system", async () => {
       seed();
       await callMerge();
@@ -302,25 +283,6 @@ describe("Epic merge — the merge is the approval", () => {
           actor: "system",
         })
       );
-    });
-
-    it("keeps the 409 contract when writing the failure trail throws", async () => {
-      // SQLITE_BUSY on the trail writes must not turn the contractual 409
-      // into a generic 500 — the trail is best-effort.
-      mocks.createApproveMergeFailedNotification.mockImplementationOnce(() => {
-        throw new Error("SQLITE_BUSY");
-      });
-      const consoleError = vi
-        .spyOn(console, "error")
-        .mockImplementation(() => {});
-      seed();
-      const res = await callMerge();
-
-      expect(res.status).toBe(409);
-      const json = await res.json();
-      expect(json.mergeFailed).toBe(true);
-      expect(consoleError).toHaveBeenCalled();
-      consoleError.mockRestore();
     });
 
     it("returns mergeFailed: false for conflict-markers so it does not loop Resolve merge", async () => {

@@ -1,12 +1,11 @@
 /** Migration coverage for agent_sessions estimated prompt tokens (0045). */
-import Database from "better-sqlite3";
 import fs from "fs";
-import os from "os";
 import path from "path";
 import { afterEach, describe, expect, it } from "vitest";
 import { getTableColumns } from "drizzle-orm";
 import { initDb } from "@/lib/db/init";
 import { agentSessions } from "@/lib/db/schema";
+import { withMigratedDb } from "./helpers/migration";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
 const MIGRATION_TAG = "0045_agent_session_estimated_tokens";
@@ -22,19 +21,8 @@ afterEach(() => {
   }
 });
 
-function withDb<T>(fn: (conn: Database.Database) => T): T {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arij-estimated-tokens-"));
-  tempDirs.push(dir);
-  const conn = new Database(path.join(dir, "arij.db"));
-  try {
-    return fn(conn);
-  } finally {
-    conn.close();
-  }
-}
-
 describe("0045_agent_session_estimated_tokens", () => {
-  it("is a hand-written journal migration with a unique increasing timestamp", () => {
+  it("is a hand-written journal migration, applied in the right order", async () => {
     const sql = fs.readFileSync(
       path.join(MIGRATIONS_FOLDER, `${MIGRATION_TAG}.sql`),
       "utf-8"
@@ -48,21 +36,10 @@ describe("0045_agent_session_estimated_tokens", () => {
 
     const entry = journal.entries.find((candidate) => candidate.tag === MIGRATION_TAG);
     expect(entry).toMatchObject({ idx: 44, when: 1786714200000 });
-    // Appended, never spliced in: every entry recorded after it must carry a
-    // strictly later timestamp, or drizzle would skip one of them.
-    const position = journal.entries.findIndex(
-      (candidate) => candidate.tag === MIGRATION_TAG
-    );
-    for (const later of journal.entries.slice(position + 1)) {
-      expect(later.when).toBeGreaterThan(entry!.when);
-    }
-    expect(new Set(journal.entries.map((candidate) => candidate.when)).size).toBe(
-      journal.entries.length
-    );
   });
 
   it("adds the nullable estimated prompt tokens and breakdown columns and preserves rows", () => {
-    withDb((conn) => {
+    withMigratedDb((conn) => {
       initDb(conn);
       const columns = Object.values(getTableColumns(agentSessions)).map(
         (column) => column.name

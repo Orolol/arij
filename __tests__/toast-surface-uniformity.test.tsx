@@ -219,66 +219,10 @@ vi.mock("@/components/chat-page/TowardSpecBand", () => ({
   TowardSpecBand: () => <div data-testid="stub-toward-spec" />,
 }));
 
-/* ---- story detail: its panels ---------------------------------------- */
-
-vi.mock("@/hooks/useStoryDetail", () => ({
-  useStoryDetail: () => ({
-    story: {
-      id: "s1",
-      epicId: "e1",
-      title: "Story title",
-      description: "",
-      acceptanceCriteria: "",
-      status: "todo",
-      position: 0,
-      createdAt: new Date().toISOString(),
-      epic: {
-        id: "e1",
-        title: "Epic",
-        description: "",
-        status: "todo",
-        branchName: null,
-        projectId: "p1",
-      },
-    },
-    loading: false,
-    updateStory: vi.fn(),
-    refresh: vi.fn(),
-  }),
-}));
-
-vi.mock("@/hooks/useTicketComments", () => ({
-  useTicketComments: () => ({ comments: [], loading: false, addComment: vi.fn() }),
-}));
-
-vi.mock("@/hooks/useAgentDispatch", () => ({
-  useAgentDispatch: () => ({
-    activeSession: null,
-    dispatching: false,
-    isRunning: false,
-    sendToDev: vi.fn(),
-    sendToReview: vi.fn(),
-    merge: vi.fn(),
-  }),
-}));
-
-vi.mock("@/components/story/StoryDetailPanel", () => ({
-  StoryDetailPanel: () => <div data-testid="story-detail-panel" />,
-}));
-
-vi.mock("@/components/story/CommentThread", () => ({
-  CommentThread: () => <div data-testid="comment-thread" />,
-}));
-
-vi.mock("@/components/shared/AgentActionsBar", () => ({
-  AgentActionsBar: () => <div data-testid="story-actions" />,
-}));
-
 import { QaScreen } from "@/components/qa/QaScreen";
 import { ChatPageView } from "@/components/chat-page/ChatPageView";
 import ReleasesPage from "@/app/projects/[projectId]/releases/page";
 import GitSyncPage from "@/app/projects/[projectId]/git-sync/page";
-import StoryDetailPage from "@/app/projects/[projectId]/stories/[storyId]/page";
 import GitHubIssuesPage from "@/app/projects/[projectId]/github-issues/page";
 
 function jsonRes(body: unknown, init: { ok?: boolean; status?: number } = {}): Response {
@@ -422,34 +366,7 @@ describe("toast uniformity — /projects/:id/git-sync", () => {
   });
 });
 
-/* ---- 5. /projects/:id/stories/:storyId ------------------------------- */
-
-describe("toast uniformity — /projects/:id/stories/:storyId", () => {
-  it("raises the delete failure through the shared stack", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () =>
-        jsonRes({ error: "Story is owned by a running session" }, {
-          ok: false,
-          status: 409,
-        }),
-      ),
-    );
-
-    const { container } = render(<StoryDetailPage />);
-    fireEvent.click(screen.getByRole("button", { name: "Delete User Story" }));
-    fireEvent.click(await screen.findByRole("button", { name: "Confirm Delete" }));
-    await screen.findByTestId("story-toast");
-
-    expectSharedToastContract(container, {
-      testId: "story-toast",
-      tone: "error",
-      message: "Story is owned by a running session",
-    });
-  });
-});
-
-/* ---- 6. /projects/:id/github-issues ---------------------------------- */
+/* ---- 5. /projects/:id/github-issues ---------------------------------- */
 
 describe("toast uniformity — /projects/:id/github-issues", () => {
   it("raises both sync outcomes through the shared stack", async () => {

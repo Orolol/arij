@@ -1,3 +1,5 @@
+import { runAuthenticatedGit } from "@/lib/git/authenticated";
+import { createSessionLogsPath } from "@/lib/agent-sessions/session-paths";
 import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -11,6 +13,7 @@ import {
 import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { createReleaseSchema } from "@/lib/validation/schemas";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { GLOBAL_PROMPT_SETTING_KEY } from "@/lib/settings/keys";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { eq, desc, inArray, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
@@ -35,13 +38,13 @@ import { waitForProcessCompletion } from "@/lib/agent-sessions/wait-for-completi
 import { isResumableProvider } from "@/lib/agent-sessions/resume-capability";
 import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { applyTransition } from "@/lib/workflow/transition-service";
 import { emitReleaseCreated } from "@/lib/events/emit";
 import { sendProjectWebhook } from "@/lib/webhooks/send";
 import { maybeAutoRewriteSpecAfterRelease } from "@/lib/workflow/spec-auto-rewrite";
 import type { KanbanStatus } from "@/lib/types/kanban";
 import fs from "fs";
-import path from "path";
 
 export async function GET(
   _request: NextRequest,
@@ -146,9 +149,13 @@ export const POST = withAgentResolutionErrors(async function POST(
     const settingsRow = db
       .select()
       .from(settings)
-      .where(eq(settings.key, "global_prompt"))
+      .where(eq(settings.key, GLOBAL_PROMPT_SETTING_KEY))
       .get();
     const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+    const releaseNotesPrompt = await resolveAgentPrompt("release_notes", projectId);
+    const combinedInstructions = [globalPrompt, releaseNotesPrompt]
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .join("\n\n");
 
     const filteredEpicIds = selectedEpics.map((e) => e.id);
     const storiesByEpic = db
@@ -192,7 +199,7 @@ export const POST = withAgentResolutionErrors(async function POST(
       })
       .join("\n");
 
-    const prompt = `${globalPrompt ? `# Global Instructions\n${globalPrompt}\n\n` : ""}# Task: Generate Release Changelog
+    const prompt = `${combinedInstructions ? `# Instructions\n${combinedInstructions}\n\n` : ""}# Task: Generate Release Changelog
 
 Generate a markdown changelog for version ${version} of project "${project.name}".
 
@@ -214,9 +221,7 @@ ${ticketContext}
     try {
       const sessionId = createId();
       const now = new Date().toISOString();
-      const logsDir = path.join(process.cwd(), "data", "sessions", sessionId);
-      fs.mkdirSync(logsDir, { recursive: true });
-      const logsPath = path.join(logsDir, "logs.json");
+      const logsPath = createSessionLogsPath(sessionId);
 
       let cliSessionId: string | undefined;
       let resumeSession = false;
@@ -228,7 +233,6 @@ ${ticketContext}
               projectId: agentSessions.projectId,
               provider: agentSessions.provider,
               cliSessionId: agentSessions.cliSessionId,
-              claudeSessionId: agentSessions.claudeSessionId,
             })
             .from(agentSessions)
             .where(eq(agentSessions.id, resumeSessionId))
@@ -395,8 +399,7 @@ ${ticketContext}
 
     // Push tag to remote
     try {
-      const git = simpleGit(project.gitRepoPath);
-      await git.push("origin", gitTag);
+      await runAuthenticatedGit(project.gitRepoPath, ["push", "origin", gitTag]);
       logSyncOperation({
         projectId,
         operation: "tag_push",
@@ -409,7 +412,7 @@ ${ticketContext}
       logSyncOperation({
         projectId,
         operation: "tag_push",
-        status: "failure",
+        status: "failed",
         detail: { tag: gitTag, error: errorMsg },
       });
     }
@@ -441,7 +444,7 @@ ${ticketContext}
       logSyncOperation({
         projectId,
         operation: "release",
-        status: "failure",
+        status: "failed",
         detail: { tag: gitTag, error: errorMsg },
       });
     }

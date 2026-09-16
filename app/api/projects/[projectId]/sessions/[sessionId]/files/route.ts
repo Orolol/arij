@@ -16,7 +16,7 @@ import type {
   SessionDiffFile,
   SessionFilesProject,
   SessionFilesTicket,
-} from "@/components/session-live/types";
+} from "@/lib/types/session-files";
 
 /**
  * What the live-session screen's FILES TOUCHED card reads: the identity of the

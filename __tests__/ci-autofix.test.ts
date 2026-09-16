@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const routeMocks = vi.hoisted(() => ({ post: vi.fn() }));
 
-vi.mock("@/app/api/projects/[projectId]/epics/[epicId]/build/route", () => ({
-  POST: routeMocks.post,
+vi.mock("@/lib/build/dispatch-epic", () => ({
+  dispatchEpicBuild: routeMocks.post,
 }));
 
 import {
@@ -80,11 +80,10 @@ describe("CI autofix hand-off", () => {
       })
     ).resolves.toEqual({ status: "launched", sessionId: "session-1" });
 
-    const [request, context] = routeMocks.post.mock.calls[0] as [
-      Request,
-      { params: Promise<{ projectId: string; epicId: string }> },
-    ];
-    expect(await request.json()).toEqual({
+    const [projectId, epicId, body] = routeMocks.post.mock.calls[0];
+    expect(projectId).toBe("project-1");
+    expect(epicId).toBe("epic-1");
+    expect(body).toEqual({
       pipeline: false,
       ciAutofix: {
         prNumber: 42,
@@ -92,10 +91,7 @@ describe("CI autofix hand-off", () => {
         failures: [{ name: "unit", logTail: "test failed" }],
       },
     });
-    await expect(context.params).resolves.toEqual({
-      projectId: "project-1",
-      epicId: "epic-1",
-    });
+
   });
 
   it("turns an active target conflict into a safe skip", async () => {

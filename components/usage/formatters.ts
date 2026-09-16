@@ -1,5 +1,5 @@
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
-import { projectTone, type ProjectTone } from "@/components/piscine";
+import { projectTone, projectToneIndex, type ProjectTone } from "@/components/piscine";
 import { formatDateTime } from "@/lib/i18n/format";
 import type { UiLocale } from "@/lib/i18n/locales";
 
@@ -82,23 +82,11 @@ export function windowLabel(windowMinutes: number | null, copy: WindowLabelCopy)
 /**
  * Identity colour for a BY PROJECT row.
  *
- * `projects.color_index` does not exist in the schema yet, so `colorIndex` is
- * null on every row today and the fallback is a stable hash of the project id.
- * Deliberately NOT the row's position: `GET /api/projects` orders by
- * `updatedAt`, so a positional colour would reshuffle whenever any project is
- * touched. Two projects sharing a tone past the fourth is accepted.
+ * Derives the project tone from the project id using the unified hash in lib/piscine/tokens.ts.
  */
 export function resolveProjectTone(
-  colorIndex: number | null,
   projectId: string,
+  colorIndex?: number | null,
 ): ProjectTone {
-  if (colorIndex !== null && Number.isFinite(colorIndex)) {
-    return projectTone(colorIndex);
-  }
-  // djb2, folded to a non-negative int. Stable across processes and restarts.
-  let hash = 5381;
-  for (let i = 0; i < projectId.length; i++) {
-    hash = ((hash << 5) + hash + projectId.charCodeAt(i)) | 0;
-  }
-  return projectTone(Math.abs(hash));
+  return projectTone(projectToneIndex(projectId, colorIndex));
 }

@@ -1,10 +1,10 @@
+import { bodyStartsWithAnySql } from "@/lib/workflow/blocking-findings";
 import { NextResponse } from "next/server";
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
 
 import { db } from "@/lib/db";
 import {
   agentSessions,
-  customReviewAgents,
   epics,
   projects,
   qaReports,
@@ -13,8 +13,9 @@ import {
 } from "@/lib/db/schema";
 import { REVIEW_CHECKLISTS } from "@/lib/claude/prompt-sections";
 import { deriveProjects } from "@/lib/control-desk/aggregate";
+import { lookbackCutoff, storedTimestampSince } from "@/lib/control-desk/read-model";
 import { sessionAtSql } from "@/lib/agent-sessions/session-time";
-import { NON_TERMINAL_STATUSES } from "@/lib/agent-sessions/lifecycle-status";
+import { liveCheckSql } from "@/lib/qa/check-liveness-sql";
 import { BLOCKING_FINDING_PREFIXES } from "@/lib/review/finding-severity";
 import {
   ORDINARY_REVIEW_AGENT_TYPES,
@@ -54,7 +55,9 @@ import {
 } from "@/lib/qa/types";
 
 /**
- * GET /api/qa/findings — everything frame 11b shows, for every project.
+ * GET /api/qa/findings — review facts for the workspace or ?projectId= scope.
+ * Scope precedes every limit and aggregate so one project cannot hide another
+ * project's recent checks, verdicts or coverage.
  *
  * WHY ONE ROUTE, AND WHY IT IS SHAPED LIKE THE DESK'S. better-sqlite3 is
  * synchronous on ONE shared connection (`lib/db/index.ts`): a slow query here
@@ -87,11 +90,6 @@ import {
  * "clean" for a ticket the supervisor refuses.
  */
 
-/** Lexicographic floor for both timestamp shapes stored in these columns. */
-function cutoff(now: Date, days: number): string {
-  return new Date(now.getTime() - days * 86_400_000).toISOString();
-}
-
 /**
  * `SUBSTR(body, 1, n) = '[critical]' OR …` — the blocking half of the severity
  * vocabulary, in SQL.
@@ -104,33 +102,9 @@ function cutoff(now: Date, days: number): string {
  * two can never disagree about what "[major]" is.
  */
 function blockingPrefixSql(): SQL {
-  const [first, ...rest] = BLOCKING_FINDING_PREFIXES.map(
-    ({ prefix }) =>
-      sql`SUBSTR(COALESCE(${reviewComments.body}, ''), 1, ${sql.raw(String(prefix.length))}) = ${prefix}`,
-  );
-  return rest.reduce<SQL>((acc, next) => sql`${acc} OR ${next}`, first);
+  return bodyStartsWithAnySql(BLOCKING_FINDING_PREFIXES);
 }
 
-/**
- * `1` when this `qa_reports` row is a check that is genuinely still going.
- *
- * The SQL twin of `isCheckLive` (`lib/qa/aggregate.ts`), and it must stay a
- * twin: the ordering, the row flag and the totals all read this one expression,
- * and a JavaScript answer that disagreed with the SQL one would sort the band
- * by a different rule than it paints it by. Requires the `agent_sessions` LEFT
- * JOIN to be in scope; a `NULL` session status fails the `IN` and yields `0`,
- * which is the wanted answer for a report whose session is gone.
- */
-function liveCheckSql(): SQL<number> {
-  return sql<number>`CASE WHEN ${qaReports.status} = 'running'
-    AND ${agentSessions.status} IN (${sql.raw(NON_TERMINAL_SESSION_SQL)})
-    THEN 1 ELSE 0 END`;
-}
-
-/** `'queued','running'` — `NON_TERMINAL_STATUSES` as a SQL list literal. */
-const NON_TERMINAL_SESSION_SQL = NON_TERMINAL_STATUSES.map(
-  (status) => `'${status}'`,
-).join(",");
 
 /** The empty answer, so a fresh install renders four folded label lines. */
 function emptyPayload(now: Date): QaPayload {
@@ -143,7 +117,6 @@ function emptyPayload(now: Date): QaPayload {
     verdicts: [],
     rubric: {
       items: rubricItemsFromChecklist(REVIEW_CHECKLISTS.feature_review),
-      projectRuleCount: 0,
     },
     reviewable: [],
     checks: [],
@@ -156,12 +129,13 @@ function emptyPayload(now: Date): QaPayload {
 export async function GET(request: Request) {
   const queryStartedAt = Date.now();
   const now = new Date();
-  const verdictCutoff = cutoff(now, QA_VERDICT_DAYS);
-  const coverageCutoff = cutoff(now, QA_COVERAGE_DAYS);
+  const scopedProjectId = new URL(request.url).searchParams.get("projectId")?.trim() || null;
+  const verdictCutoff = lookbackCutoff(now, QA_VERDICT_DAYS);
+  const coverageCutoff = lookbackCutoff(now, QA_COVERAGE_DAYS);
 
   /* ---- 1. projects -------------------------------------------------- */
 
-  const projectRows = db
+  const allProjectRows = db
     .select({
       id: projects.id,
       name: projects.name,
@@ -174,14 +148,17 @@ export async function GET(request: Request) {
     .from(projects)
     .all();
 
+  const projectRows = scopedProjectId
+    ? allProjectRows.filter((project) => project.id === scopedProjectId)
+    : allProjectRows;
   if (projectRows.length === 0) {
     return NextResponse.json({ data: emptyPayload(now) });
   }
 
   /**
    * The `project_id IN (…)` bound every cross-project session scan carries.
-   * It is not a filter — `agent_sessions.project_id` is NOT NULL with a
-   * cascading FK — it is the leading column of the one composite index.
+   * It both enforces the selected scope and supplies the leading column of
+   * the session index. Keep the complete project list for stable color slots.
    */
   const projectIds = projectRows.map((row) => row.id);
 
@@ -197,6 +174,7 @@ export async function GET(request: Request) {
     })
     .from(epics)
     .innerJoin(projects, eq(epics.projectId, projects.id))
+    .where(inArray(epics.projectId, projectIds))
     .all();
 
   const epicIds = epicRows.map((row) => row.id);
@@ -310,7 +288,10 @@ export async function GET(request: Request) {
     })
     .from(agentSessions)
     .leftJoin(epics, eq(agentSessions.epicId, epics.id))
-    .where(inArray(agentSessions.status, ["running", "queued"]))
+    .where(and(
+      inArray(agentSessions.status, ["running", "queued"]),
+      inArray(agentSessions.projectId, projectIds),
+    ))
     .all();
 
   // `review_second_opinion` is excluded on purpose: it is a Full Auto merge
@@ -335,15 +316,16 @@ export async function GET(request: Request) {
       epicId: agentSessions.epicId,
       projectId: agentSessions.projectId,
       reviewVerdict: agentSessions.reviewVerdict,
-      // `sessionAtSql()` is typed `SQL<unknown>`; it normalises the two
+      lastNonEmptyText: agentSessions.lastNonEmptyText,
+      // `sessionAtSql()` normalises the two
       // timestamp shapes this column mixes and always yields text.
-      at: sql<string | null>`${sessionAtSql()}`.as("session_at"),
+      at: sessionAtSql().as("session_at"),
     })
     .from(agentSessions)
     .where(
       and(
         inArray(agentSessions.projectId, projectIds),
-        sql`${agentSessions.createdAt} >= ${verdictCutoff}`,
+        storedTimestampSince(agentSessions.createdAt, verdictCutoff),
         eq(agentSessions.status, "completed"),
         inArray(agentSessions.agentType, [...ORDINARY_REVIEW_AGENT_TYPES]),
         sql`${agentSessions.userStoryId} IS NULL`,
@@ -415,7 +397,8 @@ export async function GET(request: Request) {
       and(
         inArray(ticketActivityLog.projectId, projectIds),
         inArray(ticketActivityLog.toStatus, ["done", "released"]),
-        sql`${ticketActivityLog.createdAt} >= ${coverageCutoff}`,
+        sql`${ticketActivityLog.fromStatus} IS NOT ${ticketActivityLog.toStatus}`,
+        storedTimestampSince(ticketActivityLog.createdAt, coverageCutoff),
       ),
     )
     .groupBy(ticketActivityLog.epicId)
@@ -458,12 +441,8 @@ export async function GET(request: Request) {
    * writer among several, so it is clipped in SQL like every other text column
    * this route ships.
    *
-   * NO `project_id` BOUND ON THE SCAN, deliberately, and it is the one place
-   * this route departs from its own discipline: `qa_reports` carries no
-   * secondary index at all, so an `IN (…)` would prune nothing and only add a
-   * predicate. What bounds the read is `LIMIT`, and the table grows one row per
-   * QA check a human starts by hand — it is three orders of magnitude smaller
-   * than `agent_sessions`.
+   * Apply the project scope before LIMIT: filtering the five workspace rows
+   * afterwards can hide every check belonging to the selected project.
    *
    * WHY THE JOIN. Liveness cannot be read from `qa_reports.status`: that column
    * has ONE writer, and three ordinary paths (restart, rejected launch,
@@ -494,7 +473,8 @@ export async function GET(request: Request) {
     })
     .from(qaReports)
     .leftJoin(agentSessions, eq(qaReports.agentSessionId, agentSessions.id))
-    .orderBy(desc(liveCheckSql()), desc(qaReports.createdAt))
+    .where(inArray(qaReports.projectId, projectIds))
+    .orderBy(desc(liveCheckSql()), desc(sql`julianday(${qaReports.createdAt})`), desc(qaReports.id))
     .limit(QA_CHECK_LIMIT)
     .all();
 
@@ -507,10 +487,8 @@ export async function GET(request: Request) {
    * same `liveCheckSql()` the rows do, so the meta can never say "3 running"
    * over a band drawing one breathing dot.
    *
-   * GROUPED BY PROJECT so the figure survives `filterQaPayload`: the screen
-   * takes an optional `projectId`, and one workspace total would come through
-   * that narrowing untouched and print every project's count over one
-   * project's band. `sumCheckTotals` adds up whichever projects are in scope.
+   * Grouped by project inside the same server scope as the rows. Counts
+   * include reports outside the five-row window; they are never inferred from it.
    */
   const checkTotalRows = db
     .select({
@@ -520,16 +498,11 @@ export async function GET(request: Request) {
     })
     .from(qaReports)
     .leftJoin(agentSessions, eq(qaReports.agentSessionId, agentSessions.id))
+    .where(inArray(qaReports.projectId, projectIds))
     .groupBy(qaReports.projectId)
     .all();
 
   /* ---- 11. la rubrique ----------------------------------------------- */
-
-  const projectRules = db
-    .select({ rules: sql<number>`COUNT(*)`.as("project_rules") })
-    .from(customReviewAgents)
-    .where(eq(customReviewAgents.isEnabled, 1))
-    .get();
 
   /* ---- assemble ------------------------------------------------------ */
 
@@ -578,6 +551,7 @@ export async function GET(request: Request) {
       epicId: row.epicId,
       projectId: row.projectId,
       reviewVerdict: row.reviewVerdict,
+      lastNonEmptyText: row.lastNonEmptyText,
       at: row.at,
       findingsFiled: filingCounts.get(row.id)?.findings ?? 0,
     }));
@@ -626,14 +600,13 @@ export async function GET(request: Request) {
     // Reused, never re-derived: project identity colour is the position in
     // creation order, and a second derivation is how two screens start painting
     // one project two colours.
-    projects: deriveProjects(projectRows),
+    projects: deriveProjects(allProjectRows).filter((project) => projectIds.includes(project.id)),
     runs: deriveRuns(reviewRows, filingCounts),
     queued: deriveQueued(reviewRows),
     findings,
     verdicts: deriveVerdicts(verdictSessions, verdictEpics, unverifiableEpicIds, verdictCopy),
     rubric: {
       items: rubricItemsFromChecklist(REVIEW_CHECKLISTS.feature_review),
-      projectRuleCount: Number(projectRules?.rules ?? 0),
     },
     reviewable,
     checks: deriveChecks(checkRows),

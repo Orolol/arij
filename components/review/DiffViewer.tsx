@@ -5,9 +5,9 @@ import { useTranslations } from "next-intl";
 import { useDiff } from "@/hooks/useDiff";
 import { useReviewComments } from "@/hooks/useReviewComments";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Badge } from "@/components/ui/badge";
+import { Mono, PillButton, Stamp } from "@/components/piscine";
 import { Loader2, RefreshCw, FileCode, MessageSquare, GitBranch, AlertTriangle } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { FileDiffView } from "./FileDiffView";
 import { ReviewActions } from "./ReviewActions";
 import {
@@ -26,7 +26,11 @@ interface DiffViewerProps {
   isRunning?: boolean;
 }
 
-export function DiffViewer({
+export function DiffViewer(props: DiffViewerProps) {
+  return <DiffViewerContent key={`${props.projectId}:${props.epicId}`} {...props} />;
+}
+
+function DiffViewerContent({
   projectId,
   epicId,
   epicStatus,
@@ -39,6 +43,9 @@ export function DiffViewer({
   const {
     comments,
     loading: commentsLoading,
+    error: commentsError,
+    pending: commentsPending,
+    ready: commentsReady,
     openCount,
     addComment,
     updateComment,
@@ -67,6 +74,22 @@ export function DiffViewer({
     refreshComments();
   }
 
+  const commentsDisabled = !commentsReady || commentsPending;
+  const feedback = (
+    <>
+      {(diffError || commentsError) && (
+        <div role="alert" className="space-y-2 text-sm">
+          {diffError && <p>{diffError}</p>}
+          {commentsError && <p>{commentsError}</p>}
+          <PillButton variant="outline" outlineTone="neutral" size="sm" onClick={handleRefresh}>
+            {t("diff.retry")}
+          </PillButton>
+        </div>
+      )}
+      {commentsLoading && <p role="status" className="text-sm text-muted-foreground">{t("errors.loadingComments")}</p>}
+    </>
+  );
+
   if (diffLoading && files.length === 0) {
     return (
       <div className="flex items-center justify-center py-12">
@@ -76,14 +99,14 @@ export function DiffViewer({
     );
   }
 
-  if (diffError) {
+  if (diffError && files.length === 0) {
     return (
       <div className="py-8 text-center space-y-2">
         <p className="text-sm text-destructive">{diffError}</p>
-        <Button variant="outline" size="sm" onClick={handleRefresh}>
+        <PillButton variant="outline" outlineTone="neutral" size="sm" onClick={handleRefresh}>
           <RefreshCw className="h-3 w-3 mr-1" />
           {t("diff.retry")}
-        </Button>
+        </PillButton>
       </div>
     );
   }
@@ -91,6 +114,7 @@ export function DiffViewer({
   if (files.length === 0) {
     return (
       <div className="py-8 text-center space-y-3">
+        {feedback}
         <FileCode className="h-8 w-8 mx-auto text-muted-foreground/50" />
         <p className="text-sm text-muted-foreground">{t("emptyDiff.title")}</p>
 
@@ -105,7 +129,7 @@ export function DiffViewer({
             </div>
 
             {metadata.ahead > 0 && (
-              <p className="text-xs text-amber-500 flex items-center justify-center gap-1">
+              <p className="text-xs text-muted-foreground flex items-center justify-center gap-1">
                 <AlertTriangle className="h-3 w-3" />
                 {metadata.behind > 0
                   ? t("emptyDiff.aheadAndBehind", {
@@ -127,7 +151,7 @@ export function DiffViewer({
             )}
 
             {metadata.hasUncommittedChanges && (
-              <p className="text-xs text-amber-500 flex items-center justify-center gap-1">
+              <p className="text-xs text-muted-foreground flex items-center justify-center gap-1">
                 <AlertTriangle className="h-3 w-3" />
                 {t("emptyDiff.uncommitted")}
               </p>
@@ -135,10 +159,10 @@ export function DiffViewer({
           </div>
         )}
 
-        <Button variant="outline" size="sm" onClick={handleRefresh}>
+        <PillButton variant="outline" outlineTone="neutral" size="sm" onClick={handleRefresh}>
           <RefreshCw className="h-3 w-3 mr-1" />
           {t("diff.refresh")}
-        </Button>
+        </PillButton>
 
         {/* Even without a diff, open findings block approval — keep them visible. */}
         {unanchoredComments.length > 0 && (
@@ -147,6 +171,7 @@ export function DiffViewer({
               comments={unanchoredComments}
               onUpdateComment={updateComment}
               onDeleteComment={deleteComment}
+              disabled={commentsDisabled}
             />
           </div>
         )}
@@ -156,35 +181,36 @@ export function DiffViewer({
 
   return (
     <div className="space-y-4">
+      {feedback}
       {/* Summary bar */}
       <div className="flex items-center gap-3 flex-wrap">
-        <Badge variant="outline" className="gap-1 text-xs">
+        <Mono size={11} tone="muted" className="flex items-center gap-1">
           <FileCode className="h-3 w-3" />
           {t("summary.files", { count: files.length })}
-        </Badge>
-        <Badge variant="outline" className="gap-1 text-xs text-green-500">
+        </Mono>
+        <Mono size={11} tone="live">
           +{totalAdditions}
-        </Badge>
-        <Badge variant="outline" className="gap-1 text-xs text-red-500">
+        </Mono>
+        <Mono size={11} tone="coral">
           -{totalDeletions}
-        </Badge>
+        </Mono>
         {openCount > 0 && (
-          <Badge variant="outline" className="gap-1 text-xs text-blue-500 border-blue-500/30">
-            <MessageSquare className="h-3 w-3" />
+          <Stamp tone="live">
+            <MessageSquare className="h-3 w-3 mr-1" />
             {t("summary.openComments", { count: openCount })}
-          </Badge>
+          </Stamp>
         )}
         {metadata && metadata.ahead > 0 && (
-          <Badge variant="outline" className="gap-1 text-xs text-muted-foreground">
+          <Mono size={11} tone="muted" className="flex items-center gap-1">
             <GitBranch className="h-3 w-3" />
             {t("summary.commitsAhead", { count: metadata.ahead })}
-          </Badge>
+          </Mono>
         )}
         <div className="flex-1" />
-        <Button variant="ghost" size="sm" onClick={handleRefresh} className="h-7 text-xs">
-          <RefreshCw className={`h-3 w-3 mr-1 ${diffLoading ? "animate-spin" : ""}`} />
+        <PillButton variant="outline" outlineTone="neutral" size="sm" onClick={handleRefresh}>
+          <RefreshCw className={cn("h-3 w-3 mr-1", diffLoading && "animate-spin")} />
           {t("diff.refresh")}
-        </Button>
+        </PillButton>
       </div>
 
       {/* Review actions */}
@@ -199,6 +225,7 @@ export function DiffViewer({
         onResolveAll={resolveAll}
         dispatching={dispatching}
         isRunning={isRunning}
+        disabled={commentsDisabled || Boolean(commentsError)}
       />
 
       {/* Findings anchored outside the visible diff */}
@@ -206,6 +233,7 @@ export function DiffViewer({
         comments={unanchoredComments}
         onUpdateComment={updateComment}
         onDeleteComment={deleteComment}
+        disabled={commentsDisabled}
       />
 
       {/* File diffs */}
@@ -219,6 +247,7 @@ export function DiffViewer({
               onAddComment={addComment}
               onUpdateComment={updateComment}
               onDeleteComment={deleteComment}
+              disabled={commentsDisabled}
             />
           ))}
         </div>

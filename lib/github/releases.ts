@@ -1,12 +1,4 @@
-import { getGitHubTokenFromSettings, createGitHubClient } from "@/lib/github/client";
-
-function getOctokit() {
-  const token = getGitHubTokenFromSettings();
-  if (!token) {
-    throw new Error("GitHub PAT not configured. Set it in project settings.");
-  }
-  return createGitHubClient(token);
-}
+import { createOctokit } from "@/lib/github/client";
 
 export interface GitHubReleaseResult {
   id: number;
@@ -26,7 +18,7 @@ export async function createDraftRelease(params: {
   title: string;
   body: string;
 }): Promise<GitHubReleaseResult> {
-  const octokit = getOctokit();
+  const octokit = createOctokit();
   const { data } = await octokit.rest.repos.createRelease({
     owner: params.owner,
     repo: params.repo,
@@ -52,7 +44,7 @@ export async function publishRelease(params: {
   repo: string;
   releaseId: number;
 }): Promise<GitHubReleaseResult> {
-  const octokit = getOctokit();
+  const octokit = createOctokit();
   const { data } = await octokit.rest.repos.updateRelease({
     owner: params.owner,
     repo: params.repo,
@@ -76,7 +68,7 @@ export async function getRelease(params: {
   repo: string;
   releaseId: number;
 }): Promise<GitHubReleaseResult> {
-  const octokit = getOctokit();
+  const octokit = createOctokit();
   const { data } = await octokit.rest.repos.getRelease({
     owner: params.owner,
     repo: params.repo,

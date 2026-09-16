@@ -288,6 +288,26 @@ describe("project routines CRUD routes", () => {
     );
     expect(invalidConfig.status).toBe(400);
     expect((await invalidConfig.json()).error).toContain("positive integer");
+
+    const missingTimeForNightRun = await POST(
+      mockJsonRequest({
+        kind: "night_run",
+        config: {},
+      }),
+      projectParams(),
+    );
+    expect(missingTimeForNightRun.status).toBe(400);
+
+    const validCiWatchNoTime = await POST(
+      mockJsonRequest({
+        kind: "ci_watch",
+        config: { intervalMinutes: 10 },
+      }),
+      projectParams(),
+    );
+    expect(validCiWatchNoTime.status).toBe(201);
+    const createdCiWatch = await validCiWatchNoTime.json();
+    expect(createdCiWatch.data.timeOfDay).toBe("00:00");
   });
 
   it("scopes mutation ids to the route project", async () => {

@@ -25,9 +25,9 @@ import { cn } from "@/lib/utils";
  * a merge the engine refuses.
  *
  * DISPLAY-ONLY SLICE. This band never writes `epics.position`: position is
- * Full Auto's execution-order contract (lib/kanban/reorder.ts), and ordering a
- * display list into it would silently re-order the supervisor's queue. There is
- * no drag-and-drop here for the same reason.
+ * Full Auto's execution-order contract (lib/workflow/reorder.ts states it), and
+ * ordering a display list into it would silently re-order the supervisor's
+ * queue. There is no drag-and-drop here for the same reason.
  *
  * MERGE AFFORDANCE. A ticket any session still owns — QUEUED included — loses
  * its Land button rather than being offered a click the merge route refuses:

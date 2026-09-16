@@ -79,6 +79,7 @@ vi.mock("@/hooks/useAutoModeArmed", () => ({
 }));
 
 vi.mock("@/hooks/useControlDesk", () => ({
+  useDeskInboxSummary: () => ({ enabled: false, unreadCount: 0 }),
   useControlDesk: () => ({
     data: barState.desk,
     loading: false,
@@ -305,9 +306,9 @@ describe("nav model", () => {
       "sessions /projects/:projectId/sessions",
       "usage /usage",
       "workspace /settings",
-      "night-runs /settings#night-runs",
-      "notifications /settings#notifications",
+      "pipeline /settings/pipeline",
       "integrations /settings/integrations",
+      "appearance /settings/appearance",
     ]);
   });
 
@@ -337,6 +338,12 @@ describe("nav model", () => {
     expect(isNavEntryActive(namedAgents, "/agents", null)).toBe(true);
     expect(isNavEntryActive(namedAgents, "/agents/limits", null)).toBe(true);
     expect(isNavEntryActive(namedAgents, "/agentsx", null)).toBe(false);
+  });
+
+  it("only marks exact entries active when path matches exactly", () => {
+    const workspace = NAV_CATEGORIES[2].entries.find((e) => e.id === "workspace")!;
+    expect(isNavEntryActive(workspace, "/settings", null)).toBe(true);
+    expect(isNavEntryActive(workspace, "/settings/integrations", null)).toBe(false);
   });
 
   it("puts no category on the desk or on /chat — both are direct destinations", () => {

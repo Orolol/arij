@@ -1,3 +1,6 @@
+import type { TranslationKey } from "@/lib/i18n";
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
+
 /**
  * "Ready to merge" — the single derived signal behind Full Auto's merge step
  * AND the To Merge column's ordering.
@@ -106,15 +109,8 @@ export interface MergeReadiness {
   openFindings: number;
 }
 
-/**
- * Timestamps mix ISO-8601 (`2026-08-16T09:00:00.000Z`, written by routes)
- * and SQLite CURRENT_TIMESTAMP (`2026-08-16 09:00:00`, also UTC). Normalizing
- * the separator makes lexicographic comparison chronologically correct — the
- * same normalization lib/kanban/awaiting-reply.ts does.
- */
-function normalizeAt(value: string | null | undefined): string | null {
-  if (!value) return null;
-  return value.includes("T") ? value : value.replace(" ", "T");
+function timestamp(value: string | null | undefined): number | null {
+  return value ? parseStoredTimestamp(value) : null;
 }
 
 /**
@@ -131,10 +127,10 @@ export function hasFreshCleanReview(
     "lastCleanReviewAt" | "lastTerminalCodeAt"
   > | undefined
 ): boolean {
-  const reviewed = normalizeAt(facts?.lastCleanReviewAt);
-  if (!reviewed) return false;
-  const coded = normalizeAt(facts?.lastTerminalCodeAt);
-  if (!coded) return true;
+  const reviewed = timestamp(facts?.lastCleanReviewAt);
+  if (reviewed === null) return false;
+  const coded = timestamp(facts?.lastTerminalCodeAt);
+  if (coded === null) return !facts?.lastTerminalCodeAt;
   return reviewed > coded;
 }
 
@@ -151,10 +147,10 @@ export function hasCurrentMergeConflict(
     "lastMergeConflictAt" | "lastTerminalCodeAt"
   > | undefined
 ): boolean {
-  const failed = normalizeAt(facts?.lastMergeConflictAt);
-  if (!failed) return false;
-  const coded = normalizeAt(facts?.lastTerminalCodeAt);
-  if (!coded) return true;
+  const failed = timestamp(facts?.lastMergeConflictAt);
+  if (failed === null) return Boolean(facts?.lastMergeConflictAt);
+  const coded = timestamp(facts?.lastTerminalCodeAt);
+  if (coded === null) return true;
   return failed > coded;
 }
 
@@ -164,10 +160,10 @@ export function hasCurrentConflictMarkers(
     "lastConflictMarkersAt" | "lastTerminalCodeAt"
   > | undefined
 ): boolean {
-  const markers = normalizeAt(facts?.lastConflictMarkersAt);
-  if (!markers) return false;
-  const coded = normalizeAt(facts?.lastTerminalCodeAt);
-  if (!coded) return true;
+  const markers = timestamp(facts?.lastConflictMarkersAt);
+  if (markers === null) return Boolean(facts?.lastConflictMarkersAt);
+  const coded = timestamp(facts?.lastTerminalCodeAt);
+  if (coded === null) return true;
   return markers > coded;
 }
 
@@ -195,10 +191,10 @@ export function hasStandingNegativeVerdict(
     "lastNegativeVerdictReviewAt" | "supersessionAt"
   > | null | undefined
 ): boolean {
-  const rejected = normalizeAt(facts?.lastNegativeVerdictReviewAt);
-  if (!rejected) return false;
-  const answered = normalizeAt(facts?.supersessionAt);
-  return !(answered && rejected < answered);
+  const rejected = timestamp(facts?.lastNegativeVerdictReviewAt);
+  if (rejected === null) return Boolean(facts?.lastNegativeVerdictReviewAt);
+  const answered = timestamp(facts?.supersessionAt);
+  return answered === null || rejected >= answered;
 }
 
 /**
@@ -222,9 +218,9 @@ export function evaluateMergeReadiness(
   const hasConflict = hasCurrentMergeConflict(facts);
   const hasMarkers = hasCurrentConflictMarkers(facts);
   if (hasConflict && hasMarkers) {
-    const conflictAt = normalizeAt(facts?.lastMergeConflictAt);
-    const markersAt = normalizeAt(facts?.lastConflictMarkersAt);
-    return markersAt && conflictAt && markersAt > conflictAt
+    const conflictAt = timestamp(facts?.lastMergeConflictAt);
+    const markersAt = timestamp(facts?.lastConflictMarkersAt);
+    return markersAt !== null && conflictAt !== null && markersAt > conflictAt
       ? blocked("conflict_markers")
       : blocked("merge_conflict");
   }
@@ -243,13 +239,6 @@ export function evaluateMergeReadiness(
   if (!facts.branchName) return blocked("no_branch");
 
   return { ready: true, blocker: null, openFindings };
-}
-
-/** Convenience wrapper for call sites that only need the boolean. */
-export function isMergeReady(
-  facts: MergeReadinessFacts | null | undefined
-): boolean {
-  return evaluateMergeReadiness(facts).ready;
 }
 
 /**
@@ -275,32 +264,20 @@ export function describeMergeBlocker(
   }
 }
 
-/** A board row carrying the signal the API derived for it. */
-export interface MergeReadinessCarrier {
-  mergeReadiness?: MergeReadiness | null;
+export function describeMergeBlockerKey(
+  readiness: MergeReadiness | null | undefined,
+): TranslationKey | null {
+  switch (readiness?.blocker) {
+    case "merge_conflict":
+      return "Registry.blocker.mergeConflict";
+    case "conflict_markers":
+      return "Registry.blocker.conflictMarkers";
+    case "changes_requested":
+      return "Registry.blocker.changesRequested";
+    case "no_branch":
+      return "Registry.blocker.noBranch";
+    default:
+      return null;
+  }
 }
 
-/** True when the API said this epic is ready to merge. */
-export function isMergeReadyEpic(epic: MergeReadinessCarrier): boolean {
-  return epic.mergeReadiness?.ready === true;
-}
-
-/**
- * To Merge column order: ready-to-merge first (conflicted branches sink),
- * then board position within each group.
- *
- * Sorting HERE rather than in the column component is what keeps membership
- * derived and non-draggable. The board hands one array down in this exact
- * order, so drag indices, the optimistic reorder and the persisted positions
- * all agree with what the user sees; a card dropped into the "wrong" section
- * keeps its new position but snaps back to the section its signal dictates.
- */
-export function sortMergeColumn<
-  T extends MergeReadinessCarrier & { position: number },
->(epics: readonly T[]): T[] {
-  return [...epics].sort((a, b) => {
-    const readiness = Number(isMergeReadyEpic(b)) - Number(isMergeReadyEpic(a));
-    if (readiness !== 0) return readiness;
-    return a.position - b.position;
-  });
-}

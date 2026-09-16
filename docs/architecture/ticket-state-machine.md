@@ -57,12 +57,11 @@ The human-driven edges in the table now originate from:
 transactional core, `lib/workflow/reorder.ts`, with the agent-facing
 `reorder_tickets` MCP tool — that core is live and is why agent ordering and
 any future UI ordering cannot drift. The HTTP route itself, however, has no
-caller left in the app: its one client was `hooks/useKanban.ts`
-(`moveEpic`, `sortColumnByPriority`), and no component mounts that hook any
-more. Both are exercised only by tests. So the surviving writers of
-`epics.position` today are the refinement tool and `MAX(position) + 1` at
-creation; the route's doc comment still describes drag-and-drop and
-"Sort by priority", neither of which the UI offers.
+caller left in the app: its legacy client `hooks/useKanban.ts` was removed,
+so the route is now exercised only by tests and is a candidate for removal.
+So the surviving writers of `epics.position` today are the refinement tool and
+`MAX(position) + 1` at creation; the route's doc comment still describes
+drag-and-drop and "Sort by priority", neither of which the UI offers.
 
 ## Resulting state machine
 
@@ -164,7 +163,7 @@ Full Auto itself does not write status: `lib/auto-mode/select.ts` selects and
 - `app/api/mcp/promote-ticket/route.ts` — the refinement tool's Backlog ⇄ To do move, `source: "refinement"` (the engine refuses that source anywhere else).
 - `app/api/mcp/reorder-tickets/route.ts` — the refinement re-rank; positions only, through the shared core.
 - `app/api/projects/[projectId]/epics/[epicId]/route.ts` — epic PATCH; this is what the ticket overlay's status and priority control writes.
-- `app/api/projects/[projectId]/epics/reorder/route.ts` — bulk position write plus whatever transitions the submitted statuses imply, through `lib/workflow/reorder.ts`. The core is live (`reorder_tickets` calls it); the HTTP route's only caller, `hooks/useKanban.ts`, is no longer mounted by any screen, so this endpoint is currently reachable but unused by the UI.
+- `app/api/projects/[projectId]/epics/reorder/route.ts` — bulk position write plus whatever transitions the submitted statuses imply, through `lib/workflow/reorder.ts`. The core is live (`reorder_tickets` calls it); the HTTP route has no caller left (its legacy client `hooks/useKanban.ts` was removed), so this endpoint is currently reachable but unused by the UI.
 - `app/api/projects/[projectId]/stories/[storyId]/route.ts` and `user-stories/route.ts` — story PATCH variants.
 - `app/api/projects/[projectId]/stories/[storyId]/approve/route.ts` — explicit story approval; never merges nor closes the epic (a decision line records when the last story closed).
 - `app/api/projects/[projectId]/epics/[epicId]/merge/route.ts` — manual merge preflight/finalization (resolves open findings on success) and merge-fix finalization.

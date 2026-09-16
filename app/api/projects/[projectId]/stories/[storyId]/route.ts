@@ -1,3 +1,4 @@
+import { emitTicketUpdated } from "@/lib/events/emit";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { userStories, epics } from "@/lib/db/schema";
@@ -101,6 +102,7 @@ export async function DELETE(_request: NextRequest, { params }: Params) {
 
   try {
     const result = deleteUserStoryPermanently(projectId, storyId);
+    emitTicketUpdated(projectId, result.epicId, { deletedStoryId: storyId });
     tryExportArjiJson(projectId);
     return NextResponse.json({ data: { deleted: true, epicId: result.epicId } });
   } catch (error) {

@@ -1,11 +1,16 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import type { NextResponse } from "next/server";
 
 import { mockNextRequest, mockRouteContext } from "@/__tests__/helpers/db-mock";
+import {
+  git,
+  makeBareRepository,
+  makePlainDirectory,
+  makeRepository,
+  makeTempRoot,
+} from "./helpers/temp-git-repo";
 
 /**
  * Convention pin: no git/* or github/* route may answer 500 for a
@@ -318,43 +323,6 @@ const EXERCISED: ExercisedRoute[] = [
     },
   },
   {
-    routePath: "/api/projects/[projectId]/git/connect",
-    method: "POST",
-    allowed: [200],
-    note:
-      "Writes the owner/repo. It is the fix for the unconfigured state, so it must succeed while unconfigured.",
-    notARepository: {
-      allowed: [200],
-      note:
-        "Writes the owner/repo into the database and never touches git, so an unusable path is irrelevant to it.",
-    },
-    invoke: async () => {
-      const { POST } = await import("@/app/api/projects/[projectId]/git/connect/route");
-      return POST(
-        mockNextRequest({ body: { ownerRepo: "orolol/arij" } }),
-        mockRouteContext({ projectId: PROJECT_ID })
-      );
-    },
-  },
-  {
-    routePath: "/api/projects/[projectId]/git/detect-remote",
-    method: "POST",
-    allowed: [400],
-    note: "The convention's original reference: no parsable origin is a 400, never a fault.",
-    notARepository: {
-      allowed: [400],
-      code: "GIT_REPO_NOT_A_REPOSITORY",
-      note:
-        "Already fixed by the adjacent epic: the shared assertGitRepository() guard refuses before reading remotes.",
-    },
-    invoke: async () => {
-      const { POST } = await import(
-        "@/app/api/projects/[projectId]/git/detect-remote/route"
-      );
-      return POST(mockNextRequest({ method: "POST" }), mockRouteContext({ projectId: PROJECT_ID }));
-    },
-  },
-  {
     routePath: "/api/projects/[projectId]/git/pull",
     method: "POST",
     allowed: [409],
@@ -598,6 +566,66 @@ const EXERCISED: ExercisedRoute[] = [
       );
     },
   },
+  {
+    // The read-back half of /pr. It reaches fetchPrStatus() — and therefore
+    // the Octokit factory — with a configured owner/repo but no PAT, which is
+    // exactly the precondition this convention is about.
+    routePath: "/api/projects/[projectId]/epics/[epicId]/pr/sync",
+    method: "POST",
+    allowed: [400],
+    note:
+      "A stored PR row with no PAT refuses as configuration: fetchPrStatus() throws the typed GitHubNotConfiguredError, which the route answers 400 + code.",
+    code: "GITHUB_PAT_NOT_CONFIGURED",
+    notARepository: {
+      allowed: [400],
+      code: "GITHUB_PAT_NOT_CONFIGURED",
+      note:
+        "The refusal happens before any git call, so an unusable checkout path cannot change it.",
+    },
+    invoke: async () => {
+      seedProject(repoPath, { githubOwnerRepo: "acme/widgets" });
+      dbFixture.rows.set("epics", [{ id: EPIC_ID, projectId: PROJECT_ID }]);
+      dbFixture.rows.set("pull_requests", [
+        { id: "pr-convention", epicId: EPIC_ID, number: 7, headBranch: "feature/x" },
+      ]);
+      const { POST } = await import(
+        "@/app/api/projects/[projectId]/epics/[epicId]/pr/sync/route"
+      );
+      return POST(
+        mockNextRequest({ method: "POST" }),
+        mockRouteContext({ projectId: PROJECT_ID, epicId: EPIC_ID })
+      );
+    },
+  },
+  {
+    // Publishing a draft release needs the PAT too, and used to answer 500
+    // with an untyped Error from its own local Octokit wrapper.
+    routePath: "/api/projects/[projectId]/releases/[releaseId]/publish",
+    method: "POST",
+    allowed: [400],
+    note:
+      "A draft release row with no PAT refuses as configuration: getRelease() throws the typed GitHubNotConfiguredError, which the route answers 400 + code.",
+    code: "GITHUB_PAT_NOT_CONFIGURED",
+    notARepository: {
+      allowed: [400],
+      code: "GITHUB_PAT_NOT_CONFIGURED",
+      note:
+        "The refusal happens before any git call, so an unusable checkout path cannot change it.",
+    },
+    invoke: async () => {
+      seedProject(repoPath, { githubOwnerRepo: "acme/widgets" });
+      dbFixture.rows.set("releases", [
+        { id: "rel-convention", projectId: PROJECT_ID, githubReleaseId: 42 },
+      ]);
+      const { POST } = await import(
+        "@/app/api/projects/[projectId]/releases/[releaseId]/publish/route"
+      );
+      return POST(
+        mockNextRequest({ method: "POST" }),
+        mockRouteContext({ projectId: PROJECT_ID, releaseId: "rel-convention" })
+      );
+    },
+  },
 ];
 
 /**
@@ -606,20 +634,12 @@ const EXERCISED: ExercisedRoute[] = [
  * (route moved or deleted) fails the derivation test below.
  */
 const EXCLUDED: Array<{ routePath: string; reason: string }> = [
-  {
-    routePath: "/api/projects/[projectId]/epics/[epicId]/pr/sync",
-    reason:
-      "Reads back an already-created PR. It cannot be reached before /pr has succeeded, so the unconfigured state is unreachable through it.",
-  },
+  { routePath: "/api/github/config", reason: "Reads token presence without calling GitHub or Git." },
+  { routePath: "/api/projects/[projectId]/git/log", reason: "Reads stored audit rows without invoking Git." },
   {
     routePath: "/api/projects/[projectId]/releases",
     reason:
       "Release creation is Git-local; the GitHub reference is an optional draft-release step guarded inside the release flow, covered by the release tests.",
-  },
-  {
-    routePath: "/api/projects/[projectId]/releases/[releaseId]/publish",
-    reason:
-      "Publishing an existing release is a deliberate user action on a configured repo, not a page load; its unconfigured path is its own ticket.",
   },
   {
     routePath: "/api/projects/clone",
@@ -647,55 +667,20 @@ const EXCLUDED: Array<{ routePath: string; reason: string }> = [
 
 let tmpRoot = "";
 
-function git(cwd: string, ...args: string[]): void {
-  execFileSync("git", args, { cwd, stdio: "pipe" });
-}
-
 beforeAll(() => {
-  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "arij-route-status-"));
-  repoPath = path.join(tmpRoot, "no-remote");
-  fs.mkdirSync(repoPath, { recursive: true });
-  git(repoPath, "init");
-  // A commit so the current branch actually resolves: `git/status` reads
-  // ahead/behind against it, and an unborn HEAD would fail for a reason that
-  // has nothing to do with the missing remote.
-  fs.writeFileSync(path.join(repoPath, "README.md"), "# fixture\n");
-  git(repoPath, "add", "README.md");
-  git(
-    repoPath,
-    "-c",
-    "user.email=fixture@arij.local",
-    "-c",
-    "user.name=Arij Fixture",
-    "commit",
-    "-m",
-    "initial"
-  );
+  tmpRoot = makeTempRoot("arij-route-status-");
 
-  notARepoPath = path.join(tmpRoot, "plain-directory");
-  fs.mkdirSync(notARepoPath, { recursive: true });
-  // Only meaningful while it really sits outside every repository: a temp dir
-  // nested in one would make every not-a-repository assertion vacuously green.
-  let insideRepo = true;
-  try {
-    execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
-      cwd: notARepoPath,
-      stdio: "pipe",
-    });
-  } catch {
-    insideRepo = false;
-  }
-  if (insideRepo) {
-    throw new Error(
-      `Fixture invalid: ${notARepoPath} is inside a git repository, so "not a repository" is untestable here.`
-    );
-  }
+  // A real repository with a commit: `git/status` reads ahead/behind against
+  // HEAD, and an unborn branch would fail for a reason that has nothing to do
+  // with the missing remote.
+  repoPath = makeRepository(tmpRoot, "no-remote");
+
+  notARepoPath = makePlainDirectory(tmpRoot);
 
   pushOnlyRepoPath = path.join(tmpRoot, "push-only-origin");
   fs.cpSync(repoPath, pushOnlyRepoPath, { recursive: true });
-  const bareRemote = path.join(tmpRoot, "push-target.git");
-  fs.mkdirSync(bareRemote, { recursive: true });
-  git(bareRemote, "init", "--bare");
+  // A bare repository with NO remote: it is only a push target here.
+  const bareRemote = makeBareRepository(tmpRoot, "push-target.git", "");
   git(pushOnlyRepoPath, "config", "remote.origin.pushurl", bareRemote);
 });
 
@@ -709,14 +694,17 @@ afterAll(() => {
  * link, vary. Anything else would make the routes answer 404/400 for the
  * wrong reason. No `settings` rows are seeded either: no stored PAT.
  */
-function seedProject(gitRepoPath: string): void {
+function seedProject(
+  gitRepoPath: string,
+  overrides: { githubOwnerRepo?: string } = {},
+): void {
   dbFixture.rows.clear();
   dbFixture.rows.set("projects", [
     {
       id: PROJECT_ID,
       name: "Convention",
       gitRepoPath,
-      githubOwnerRepo: null,
+      githubOwnerRepo: overrides.githubOwnerRepo ?? null,
       defaultBranch: null,
     },
   ]);
@@ -753,7 +741,7 @@ describe("git/github route status-code convention", () => {
     const classified = new Set(EXERCISED.map((r) => key(r.routePath, r.method)));
 
     const unclassified = discovered
-      .filter((route) => route.inGitTree)
+      .filter((route) => route.inGitTree && !EXCLUDED.some((entry) => entry.routePath === route.routePath))
       .flatMap((route) =>
         route.methods
           .map((method) => key(route.routePath, method))
@@ -882,7 +870,7 @@ describe("git/github route status-code convention", () => {
       refusals.filter((entry) => entry.notARepository.code === "GIT_REPO_NOT_A_REPOSITORY")
         .length,
       "every route that actually reaches git must publish the shared code"
-    ).toBeGreaterThanOrEqual(7);
+    ).toBeGreaterThanOrEqual(6);
 
     const defects: string[] = [];
     for (const entry of refusals) {

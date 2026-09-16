@@ -168,25 +168,29 @@ export function usePanelLayout({
     panelRatio,
   );
 
-  // Persist activeId — read on mount (with guard to avoid overriding user switches)
-  const activeIdRestoredRef = useRef(false);
+  // Restore only after the asynchronous conversation list arrives. The same
+  // effect writes subsequent selections, so the default cannot overwrite the
+  // saved id in the commit that restores it.
+  const restoredActiveKey = useRef<string | null>(null);
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (activeIdRestoredRef.current) return;
-    activeIdRestoredRef.current = true;
-    const saved = window.localStorage.getItem(activeStorageKey);
-    if (saved && conversations.some((c) => c.id === saved)) {
-      setActiveId(saved);
+    if (conversations.length === 0) return;
+    if (restoredActiveKey.current !== activeStorageKey) {
+      restoredActiveKey.current = activeStorageKey;
+      let saved: string | null = null;
+      try {
+        saved = window.localStorage.getItem(activeStorageKey);
+      } catch {
+        // Storage is optional.
+      }
+      if (saved && saved !== activeId && conversations.some((row) => row.id === saved)) {
+        setActiveId(saved);
+        return;
+      }
     }
-  }, [activeStorageKey, conversations, setActiveId]);
-
-  // Persist activeId — write on change
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    if (activeId) {
-      window.localStorage.setItem(activeStorageKey, activeId);
+    if (activeId && conversations.some((row) => row.id === activeId)) {
+      writeStoredValue(activeStorageKey, activeId);
     }
-  }, [activeId, activeStorageKey]);
+  }, [activeId, activeStorageKey, conversations, setActiveId]);
 
   useEffect(() => {
     if (!isDragging || panelState !== "expanded") {
@@ -195,8 +199,9 @@ export function usePanelLayout({
 
     function onMove(event: MouseEvent) {
       const totalWidth = getContainerWidth();
+      const right = containerRef.current?.getBoundingClientRect().right || totalWidth;
       const nextPanelWidth = clamp(
-        totalWidth - event.clientX,
+        right - event.clientX,
         MIN_PANEL_WIDTH,
         totalWidth - MIN_BOARD_WIDTH - DIVIDER_WIDTH,
       );

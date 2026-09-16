@@ -1,6 +1,4 @@
-import type { GradingStatus } from "@/lib/grading/report";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
-import type { MergeReadiness } from "@/lib/kanban/merge-readiness";
 
 export const KANBAN_COLUMNS = [
   "backlog",
@@ -24,11 +22,6 @@ export const COLUMN_LABEL_KEYS: Record<KanbanStatus, TranslationKey> = {
   released: "Kanban.columns.released",
 };
 
-/** Columns that support drag-and-drop (all except released) */
-export const DRAGGABLE_COLUMNS = KANBAN_COLUMNS.filter(
-  (col) => col !== "released"
-) as Exclude<KanbanStatus, "released">[];
-
 /**
  * Statuses a build agent may be dispatched from. `done` and `released` are
  * terminal delivery states: there is nothing left for a build agent to do,
@@ -43,8 +36,6 @@ export const BUILDABLE_STATUSES = [
   "review",
   "to_merge",
 ] as const;
-
-export type BuildableStatus = (typeof BUILDABLE_STATUSES)[number];
 
 const BUILDABLE_STATUS_SET: ReadonlySet<string> = new Set(BUILDABLE_STATUSES);
 
@@ -66,8 +57,6 @@ export function isBuildableStatus(status: string | null | undefined): boolean {
  */
 export const DELIVERED_STATUSES = ["done", "released"] as const;
 
-export type DeliveredStatus = (typeof DELIVERED_STATUSES)[number];
-
 const DELIVERED_STATUS_SET: ReadonlySet<string> = new Set(DELIVERED_STATUSES);
 
 /**
@@ -88,105 +77,6 @@ export const PRIORITY_LABEL_KEYS: Record<number, TranslationKey> = {
   3: "Kanban.priorities.critical",
 };
 
-export const PRIORITY_COLORS: Record<number, string> = {
-  0: "bg-muted text-muted-foreground",
-  1: "bg-priority-blue/10 text-priority-blue",
-  2: "bg-priority-yellow/10 text-priority-yellow",
-  3: "bg-priority-red/10 text-priority-red",
-};
-
-export interface KanbanEpic {
-  id: string;
-  projectId: string;
-  title: string;
-  description: string | null;
-  priority: number;
-  status: string;
-  position: number;
-  branchName: string | null;
-  prNumber: number | null;
-  prUrl: string | null;
-  prStatus: string | null;
-  confidence: number | null;
-  evidence: string | null;
-  createdAt: string;
-  updatedAt: string;
-  type: string; // 'feature' | 'bug'
-  linkedEpicId: string | null;
-  images: string | null; // JSON array
-  readableId: string | null;
-  releaseId: string | null;
-  usCount: number;
-  usDone: number;
-  /**
-   * How many of the epic's user stories carry a non-empty acceptance-criteria
-   * rubric. Drives the Backlog readiness indicator: `usCount` alone is
-   * satisfied by a story with an empty rubric, which is exactly the state that
-   * makes the grading stage a no-op.
-   */
-  usWithCriteriaCount?: number;
-  latestCommentId?: string | null;
-  latestCommentAuthor?: string | null;
-  latestCommentCreatedAt?: string | null;
-  /** Delivery verdict of the epic's latest agent session (any status). */
-  latestSessionOutcome?: string | null;
-  /** When that session ended (used to order user replies vs. the question). */
-  latestSessionEndedAt?: string | null;
-  /** Creation time of the epic's latest user-authored comment. */
-  latestUserCommentCreatedAt?: string | null;
-  /** The epic's read cursor (ticket_read_cursors.last_read_at), if any. */
-  lastReadAt?: string | null;
-  /**
-   * True when the epic's LATEST delivered review could not file anything
-   * through `submit_findings` — no verdict, no findings — on a session that
-   * had the tool. That review proves nothing: Full Auto will not merge the
-   * epic, and it earns another review rather than a rebuild.
-   *
-   * Deliberately NOT a statement about `review → done`. That guard accepts
-   * ANY verifiable completed review ever (lib/workflow/context.ts), so an
-   * epic reviewed cleanly and then re-reviewed on a broken channel carries
-   * this flag while approval still passes. The badge speaks for the merge
-   * gate and for what happens next, which is what the Review column is about
-   * — see lib/pipeline/findings.ts for why the asymmetry is intended.
-   */
-  reviewUnverifiable?: boolean;
-  /** Aggregate of the latest atomic acceptance-grading report. */
-  gradingStatus?: GradingStatus | null;
-  gradingSummary?: string | null;
-  gradingCreatedAt?: string | null;
-  /**
-   * Derived "can this land on main?" signal, computed by the board API from
-   * the same predicate Full Auto's merge step uses
-   * (lib/kanban/merge-readiness.ts). The `to_merge` status says a review
-   * passed; this signal adds the git-side facts (branch present, no live
-   * conflict) that only the board API can see.
-   */
-  mergeReadiness?: MergeReadiness | null;
-}
-
-export type KanbanAgentActionType = "build" | "review" | "merge";
-
-export interface KanbanEpicAgentActivity {
-  sessionId: string;
-  actionType: KanbanAgentActionType;
-  agentName: string;
-  provider?: string;
-  startedAt?: string;
-}
-
-export interface ReleaseGroup {
-  id: string;
-  version: string;
-  title: string | null;
-  createdAt: string;
-  epics: KanbanEpic[];
-}
-
-export interface BoardState {
-  columns: Record<KanbanStatus, KanbanEpic[]>;
-  releaseGroups?: ReleaseGroup[];
-}
-
 /**
  * A project ticket-dependency edge (`ticket_dependencies` row, epic-level):
  * `ticketId` depends on `dependsOnTicketId`.
@@ -196,14 +86,37 @@ export interface TicketDependencyEdge {
   dependsOnTicketId: string;
 }
 
-export interface ReorderItem {
-  id: string;
-  status: string;
-  position: number;
-}
-
 export const USER_STORY_STATUSES = ["todo", "in_progress", "review", "done"] as const;
 export type UserStoryStatus = (typeof USER_STORY_STATUSES)[number];
+
+/**
+ * The row `GET /api/projects/:id/epics` returns, for the four client views
+ * that read the LIST payload (`components/releases/derive.ts`,
+ * `components/night/NightRunDialog.tsx`, `hooks/useProjectEpicsList.ts`,
+ * `hooks/useTicketOverlayData.ts`). Each used to redeclare its own guess, so
+ * a renamed column broke nothing at compile time; they now derive from this
+ * by `Pick`.
+ *
+ * The single-ticket GET has its own projection (`hooks/useEpicDetail.ts`),
+ * which is a different contract and is not this type.
+ */
+export interface ProjectEpicListRow {
+  id: string;
+  projectId: string;
+  title: string;
+  description: string | null;
+  priority: number;
+  status: string;
+  position: number;
+  type: string;
+  readableId: string | null;
+  releaseId: string | null;
+  createdAt: string;
+  updatedAt: string;
+  usCount: number;
+  usDone: number;
+  latestSessionOutcome: string | null;
+}
 
 /**
  * A MODULE-SCOPE COPY TABLE, so it holds catalogue KEY REFERENCES rather than

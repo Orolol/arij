@@ -22,7 +22,8 @@
     "select": "Select issue #{number}",
     "imported": "imported",
     "toImport": "to import",
-    "loadFailed": "Failed to load issues"
+    "loadFailed": "Failed to load issues",
+    "retry": "Retry"
   },
   "sync": {
     "failed": "Failed to sync issues",
@@ -33,12 +34,14 @@
     "done": "{count, plural, one {Imported # issue} other {Imported # issues}}"
   },
   "config": {
+    "readFailed": "Could not read the GitHub configuration. Try again.",
     "repoTitle": "No GitHub repository is connected to this project.",
     "repoDetail": "Connect this project to a GitHub repository from the Git sync page to triage its issues here.",
     "patTitle": "No GitHub personal access token is stored.",
     "patDetail": "Add a GitHub PAT in Settings so Arij can read this repository's issues."
   },
   "mapping": {
+    "loadFailed": "Could not load the label mapping. Try again.",
     "title": "Label mapping",
     "feature": "Feature labels (comma-separated)",
     "featurePlaceholder": "feature, enhancement, epic",

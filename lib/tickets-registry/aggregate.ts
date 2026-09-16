@@ -41,8 +41,8 @@ import {
 import type { DeskProject, DeskTaskType } from "@/lib/control-desk/types";
 import {
   describeMergeBlocker,
+  describeMergeBlockerKey,
   evaluateMergeReadiness,
-  type MergeReadinessFacts,
 } from "@/lib/kanban/merge-readiness";
 
 import type { TicketDependencyEdge } from "@/lib/types/kanban";
@@ -156,22 +156,6 @@ export interface RegistryDeriveInput {
   locale: UiLocale;
   now?: Date;
 }
-
-function mergeFactsOf(epic: RegistryEpicRow): MergeReadinessFacts {
-  return {
-    status: epic.status,
-    branchName: epic.branchName,
-    openFindings: epic.openFindings,
-    lastCleanReviewAt: epic.lastCleanReviewAt,
-    lastTerminalCodeAt: epic.lastTerminalCodeAt,
-    lastNegativeVerdictReviewAt: epic.lastNegativeVerdictReviewAt,
-    supersessionAt: epic.supersessionAt,
-    lastMergeConflictAt: epic.lastMergeConflictAt,
-    lastConflictMarkersAt: epic.lastConflictMarkersAt,
-  };
-}
-
-
 
 /* ------------------------------------------------------------------ */
 /* The composed DERNIÈRE ACTIVITÉ string                               */
@@ -371,7 +355,7 @@ export function deriveRegistryRows(
     const ask = asks.get(epic.id);
     const failure = failures.get(epic.id);
     const conflict = conflicts.get(epic.id);
-    const readiness = evaluateMergeReadiness(mergeFactsOf(epic));
+    const readiness = evaluateMergeReadiness(epic);
     const queue = queueTickets.get(epic.id);
     const project = projectsById.get(epic.projectId);
 
@@ -440,6 +424,7 @@ export function deriveRegistryRows(
       isDraft: group === "waiting" && status === "backlog",
       isQueued: group === "waiting" && queuedEpicIds.has(epic.id),
       mergeReady: readiness.ready,
+      mergeBlockerKey: describeMergeBlockerKey(readiness),
       mergeBlockerLine: describeMergeBlocker(readiness),
       releaseVersion:
         epic.releaseId ? (input.releaseVersionById.get(epic.releaseId) ?? null) : null,

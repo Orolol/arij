@@ -48,11 +48,14 @@ const eslintConfig = defineConfig([
   },
   {
     files: ["components/**/*.tsx", "app/**/*.tsx"],
-    ignores: ["app/piscine-preview/**", "app/_piscine-preview/**"],
     plugins: { i18n: { rules: { "no-bare-jsx-copy": noBareJsxCopy } } },
     rules: {
       "i18n/no-bare-jsx-copy": ["error", { allowPattern: "^(?:(?:·|—|→|←|↑|↓|⌘|⌥|⇧|…)+|git remote (?:add|set-url)(?: --push)?|<url>)$" }],
     },
+  },
+  {
+    files: ["lib/**/*.{ts,tsx}", "hooks/**/*.{ts,tsx}", "components/**/*.{ts,tsx}"],
+    rules: { "no-restricted-imports": ["error", { patterns: [{ group: ["@/app/**"], message: "Import a shared lib service or type, never a route handler." }] }] },
   },
   // Override default ignores of eslint-config-next.
   globalIgnores([

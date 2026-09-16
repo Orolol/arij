@@ -17,6 +17,7 @@ import {
 } from "@/components/piscine";
 import { SpecPreview } from "@/components/spec/SpecPreview";
 import { Textarea } from "@/components/ui/textarea";
+import { requestJson } from "@/lib/api/client";
 import { cn } from "@/lib/utils";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
 import { PROJECT_MEMORY_MAX_TOKENS } from "@/lib/documents/memory-constants";
@@ -63,6 +64,10 @@ interface MemoryEnvelope {
     updatedAt?: string | null;
   } | null;
   pendingWriter?: PendingMemoryWriter | null;
+}
+
+function isMemoryEnvelope(value: unknown): value is MemoryEnvelope {
+  return typeof value === "object" && value !== null && "content" in value && typeof value.content === "string";
 }
 
 interface MemoryPanelProps {
@@ -122,19 +127,17 @@ function sourceLabelKey(
  * rewrite the whole document by string surgery, and a wrong split silently
  * deletes learned conventions.
  */
-export function MemoryPanel({
-  projectId: propsProjectId,
-  mode,
-  className,
-}: MemoryPanelProps) {
+export function MemoryPanel(props: MemoryPanelProps) {
+  const params = useParams();
+  const projectId = props.projectId || (params?.projectId as string) || "";
+  return <MemoryWorkspace key={projectId} {...props} projectId={projectId} />;
+}
+
+function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { projectId: string }) {
   const locale = useLocale();
   const t = useTranslations("Spec");
-  // The provenance table holds full dotted paths, so it resolves through the
-  // namespace-less translator.
   const tKey = useTranslations();
-  const hookParams = useParams();
   const router = useRouter();
-  const projectId = propsProjectId || (hookParams?.projectId as string) || "";
   const [content, setContent] = useState("");
   const [savedContent, setSavedContent] = useState("");
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
@@ -153,6 +156,13 @@ export function MemoryPanel({
   const [error, setError] = useState<string | null>(null);
   const [backgroundUpdateConflict, setBackgroundUpdateConflict] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
+  const readSequence = useRef(0);
+  const mutationInFlight = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; readSequence.current += 1; };
+  }, []);
 
   const safeContent = content;
   const estimatedTokens = estimateTokens(safeContent);
@@ -161,11 +171,13 @@ export function MemoryPanel({
     !overCap && estimatedTokens >= Math.floor(PROJECT_MEMORY_MAX_TOKENS * 0.85);
   const dirty = safeContent !== savedContent;
   const dirtyRef = useRef(dirty);
-  dirtyRef.current = dirty;
   const savedContentRef = useRef(savedContent);
-  savedContentRef.current = savedContent;
   const pendingWriterRef = useRef(pendingWriter);
-  pendingWriterRef.current = pendingWriter;
+  useEffect(() => {
+    dirtyRef.current = dirty;
+    savedContentRef.current = savedContent;
+    pendingWriterRef.current = pendingWriter;
+  }, [dirty, savedContent, pendingWriter]);
 
   const missingSections = DREAMING_MEMORY_SECTIONS.filter((section) =>
     !new RegExp(`^##\\s+${section.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "im").test(safeContent)
@@ -193,50 +205,31 @@ export function MemoryPanel({
     []
   );
 
-  useEffect(() => {
-    if (!projectId) return;
-    let cancelled = false;
-    setLoading(true);
-    setLoaded(false);
-    setError(null);
-    fetch(`/api/projects/${projectId}/memory`)
-      .then(async (res) => {
-        const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-          throw new Error(data?.error || t("memory.errors.load"));
-        }
-        return data as { data: MemoryEnvelope };
-      })
-      .then((data) => {
-        if (cancelled) return;
-        applyEnvelope(data.data ?? {}, false);
+  const loadMemory = useCallback((preserveEdits: boolean) => {
+    if (!projectId || mutationInFlight.current) return Promise.resolve();
+    const request = ++readSequence.current;
+    return requestJson<MemoryEnvelope>(`/api/projects/${projectId}/memory`, {
+      errorMessage: t("memory.errors.load"),
+      validateData: isMemoryEnvelope,
+    }).then((result) => {
+      if (request !== readSequence.current) return;
+      if (result.data) {
+        applyEnvelope(result.data, preserveEdits && dirtyRef.current);
         setLoaded(true);
-      })
-      .catch((err: Error) => {
-        if (!cancelled) setError(err?.message || t("memory.errors.load"));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+      }
+      setError(result.error);
+      setLoading(false);
+    });
   }, [projectId, applyEnvelope, t]);
 
+  useEffect(() => {
+    void loadMemory(false);
+    return () => { readSequence.current += 1; };
+  }, [loadMemory]);
+
   const refetchMemory = useCallback(() => {
-    if (!projectId) return;
-    fetch(`/api/projects/${projectId}/memory`)
-      .then(async (res) => {
-        if (!res.ok) return null;
-        return (await res.json().catch(() => null)) as { data: MemoryEnvelope } | null;
-      })
-      .then((data) => {
-        if (data?.data) {
-          applyEnvelope(data.data, dirtyRef.current);
-        }
-      })
-      .catch(() => {});
-  }, [projectId, applyEnvelope]);
+    void loadMemory(true);
+  }, [loadMemory]);
 
   const { pollTick } = useProjectEvents(projectId, {
     "memory:changed": () => refetchMemory(),
@@ -285,85 +278,65 @@ export function MemoryPanel({
     return () => window.removeEventListener("hashchange", scroll);
   }, []);
 
-  async function handleSave() {
-    if (!projectId) return;
-    setSaving(true);
+  async function writeMemory(action: "save" | "restore") {
+    if (!projectId || !loaded || pendingWriter || mutationInFlight.current) return;
+    if (action === "save" ? overCap : dirty) return;
+    mutationInFlight.current = true;
+    readSequence.current += 1;
+    setSaving(action === "save");
+    setRestoring(action === "restore");
+    setConfirmingRestore(false);
     setMessage(null);
     setError(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/memory`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: safeContent }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data.error || t("memory.errors.save"));
-        return;
-      }
-      applyEnvelope(data.data as MemoryEnvelope, false);
-      setMessage(t("memory.saved"));
-    } catch {
-      setError(t("memory.errors.save"));
-    } finally {
-      setSaving(false);
+    const result = await requestJson<MemoryEnvelope>(
+      `/api/projects/${projectId}/memory${action === "restore" ? "/restore" : ""}`,
+      {
+        method: action === "save" ? "PUT" : "POST",
+        ...(action === "save" ? {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ content: safeContent }),
+        } : {}),
+        errorMessage: action === "save" ? t("memory.errors.save") : t("memory.errors.restore"),
+        validateData: isMemoryEnvelope,
+      },
+    );
+    readSequence.current += 1;
+    mutationInFlight.current = false;
+    setSaving(false);
+    setRestoring(false);
+    setError(result.error);
+    if (result.data) {
+      applyEnvelope(result.data, false);
+      setMessage(action === "save" ? t("memory.saved") : t("memory.restored"));
     }
   }
 
-  async function handleRestore() {
-    if (!projectId) return;
-    setRestoring(true);
-    setMessage(null);
-    setError(null);
-    setConfirmingRestore(false);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/memory/restore`, {
-        method: "POST",
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data.error || t("memory.errors.restore"));
-        return;
-      }
-      applyEnvelope(data.data as MemoryEnvelope, false);
-      setMessage(t("memory.restored"));
-    } catch {
-      setError(t("memory.errors.restore"));
-    } finally {
-      setRestoring(false);
-    }
-  }
+  function handleSave() { return writeMemory("save"); }
+  function handleRestore() { return writeMemory("restore"); }
 
   async function handleDream() {
-    if (!projectId) return;
+    if (!projectId || !loaded || dirty || pendingWriter || mutationInFlight.current) return;
+    mutationInFlight.current = true;
     setDreaming(true);
     setMessage(null);
     setError(null);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/memory/dream`, {
+    const result = await requestJson<{ sessionId?: string; reason?: string }>(
+      `/api/projects/${projectId}/memory/dream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        setError(data.error || t("memory.errors.dream"));
-        return;
-      }
-      const dreamSessionId = data.data?.sessionId;
-      if (!dreamSessionId) {
-        setMessage(
-          data.data?.reason
-            ? t("memory.nothingToDreamReason", { reason: data.data.reason })
-            : t("memory.nothingToDream")
-        );
-        return;
-      }
-      router.push(`/projects/${projectId}/sessions/${dreamSessionId}`);
-    } catch {
-      setError(t("memory.errors.dream"));
-    } finally {
-      setDreaming(false);
+        errorMessage: t("memory.errors.dream"),
+      },
+    );
+    mutationInFlight.current = false;
+    setDreaming(false);
+    setError(result.error);
+    if (!result.data) return;
+    const { sessionId, reason } = result.data;
+    if (!sessionId) {
+      setMessage(reason ? t("memory.nothingToDreamReason", { reason }) : t("memory.nothingToDream"));
+    } else if (mounted.current) {
+      router.push(`/projects/${projectId}/sessions/${sessionId}`);
     }
   }
 
@@ -528,6 +501,7 @@ export function MemoryPanel({
                   size="sm"
                   className="ml-auto"
                   onClick={handleInsertSkeleton}
+                  disabled={saving || restoring || dreaming}
                 >
                   {!safeContent.trim()
                     ? t("memory.skeleton.useTemplate")
@@ -548,7 +522,7 @@ export function MemoryPanel({
                     setContent(event.target.value);
                     setMessage(null);
                   }}
-                  disabled={!!pendingWriter || saving || restoring}
+                  disabled={!!pendingWriter || saving || restoring || dreaming}
                   placeholder={t("memory.editorPlaceholder")}
                   className="h-full min-h-0 flex-1 resize-none overflow-y-auto rounded-none border-0 bg-transparent p-0 font-mono text-[12.5px] leading-[1.6] shadow-none focus-visible:border-0 focus-visible:ring-0"
                 />
@@ -598,7 +572,7 @@ export function MemoryPanel({
                       variant="filled"
                       size="sm"
                       onClick={handleRestore}
-                      disabled={restoring || saving || dirty}
+                      disabled={restoring || saving || dreaming || dirty || !!pendingWriter}
                       pending={restoring}
                       pendingLabel={t("memory.archive.restorePending")}
                     >
@@ -622,7 +596,7 @@ export function MemoryPanel({
                     icon={RotateCcw}
                     className="ml-auto"
                     onClick={() => setConfirmingRestore(true)}
-                    disabled={restoring || saving || dirty || !!pendingWriter}
+                    disabled={restoring || saving || dreaming || dirty || !!pendingWriter}
                     title={
                       dirty
                         ? t("memory.archive.restoreBlockedTitle")
@@ -684,7 +658,7 @@ export function MemoryPanel({
                       setMessage(null);
                       setBackgroundUpdateConflict(false);
                     }}
-                    disabled={saving}
+                    disabled={saving || restoring || dreaming}
                     title={t("memory.discardTitle")}
                   >
                     {t("memory.discard")}
@@ -696,7 +670,7 @@ export function MemoryPanel({
                   size="sm"
                   icon={Moon}
                   onClick={handleDream}
-                  disabled={dreaming || saving || dirty || !!pendingWriter}
+                  disabled={dreaming || saving || restoring || dirty || !!pendingWriter}
                   pending={dreaming}
                   pendingLabel={t("memory.dreamPending")}
                   title={
@@ -712,7 +686,7 @@ export function MemoryPanel({
                   variant="filled"
                   size="sm"
                   onClick={handleSave}
-                  disabled={saving || overCap || !dirty || !!pendingWriter}
+                  disabled={saving || restoring || dreaming || overCap || !dirty || !!pendingWriter}
                   pending={saving}
                   pendingLabel={t("memory.savePending")}
                 >

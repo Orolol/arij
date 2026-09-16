@@ -7,7 +7,6 @@ import {
   updateEpicSchema,
   createStorySchema,
   updateStorySchema,
-  updateStoryByIdSchema,
 } from "@/lib/validation/schemas";
 
 describe("createProjectSchema", () => {
@@ -236,7 +235,6 @@ describe("createEpicSchema", () => {
       createEpicSchema.safeParse({ title: "Account Security", userStories: [atCap] })
         .success,
     ).toBe(true);
-    expect(updateStoryByIdSchema.safeParse({ id: "story-1", ...atCap }).success).toBe(true);
 
     // One field over cap at a time, so each field's rule is proven on its own
     // rather than riding on a neighbour's rejection.
@@ -254,9 +252,6 @@ describe("createEpicSchema", () => {
       ).toBe(false);
       // The same story against the routes that would have to accept it afterwards.
       expect(createStorySchema.safeParse({ epicId: "epic-1", ...story }).success).toBe(
-        false,
-      );
-      expect(updateStoryByIdSchema.safeParse({ id: "story-1", ...story }).success).toBe(
         false,
       );
       expect(updateStorySchema.safeParse(story).success).toBe(false);
@@ -339,17 +334,3 @@ describe("updateStorySchema", () => {
   });
 });
 
-describe("updateStoryByIdSchema", () => {
-  it("requires id", () => {
-    const result = updateStoryByIdSchema.safeParse({ title: "T" });
-    expect(result.success).toBe(false);
-  });
-
-  it("accepts valid update with id", () => {
-    const result = updateStoryByIdSchema.safeParse({
-      id: "story-1",
-      title: "Updated",
-    });
-    expect(result.success).toBe(true);
-  });
-});

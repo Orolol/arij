@@ -1,3 +1,5 @@
+import { isOrdinaryReviewAgentType } from "@/lib/review/agent-types";
+import { STRUCTURED_REVIEW_VERDICTS } from "@/lib/review/verdict";
 /**
  * POST /api/mcp/submit-findings — the mcp__arij__submit_findings tool
  * (review sessions).
@@ -64,11 +66,7 @@ const priorFindingSchema = z
 
 const bodySchema = z
   .object({
-    verdict: z.enum([
-      "approved",
-      "approved_with_minor_issues",
-      "changes_requested",
-    ]),
+    verdict: z.enum(STRUCTURED_REVIEW_VERDICTS),
     summary: z.string().min(1).max(4000),
     findings: z.array(findingSchema).max(50),
     prior_findings: z.array(priorFindingSchema).max(100).optional(),
@@ -88,7 +86,7 @@ export async function POST(request: NextRequest) {
 
   // Review-session tool: chat tokens (fast-mode board tools and CLI chat
   // turns) have no launch ticket and no review to file against.
-  if (auth.agentType === "chat") {
+  if (!isOrdinaryReviewAgentType(auth.agentType) && auth.agentType !== "review_second_opinion") {
     return NextResponse.json(
       {
         error: "submit_findings is only available to review sessions.",

@@ -6,6 +6,7 @@
     "newBug": "New Bug",
     "nightRun": "Night run",
     "sync": "Sync from arji.json",
-    "syncTitle": "Import from arji.json (overrides DB)"
+    "syncTitle": "Import from arji.json (overrides DB)",
+    "syncFailed": "Failed to import arji.json."
   }
 }

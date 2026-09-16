@@ -212,14 +212,16 @@ describe("SessionsPage — synthesis band", () => {
   it("renders one row per session, with the Queued state spelled out", async () => {
     await renderPage();
 
+    // The list and the live header share one status vocabulary, so the row
+    // prints the stamp word.
     expect(screen.getByTestId("session-row-sess-queued")).toHaveTextContent(
-      "Queued"
+      "QUEUED"
     );
     expect(screen.getByTestId("session-row-sess-running")).toHaveTextContent(
-      "Running"
+      "LIVE"
     );
     expect(screen.getByTestId("session-row-sess-failed")).toHaveTextContent(
-      "Failed"
+      "FAILED"
     );
     // The row links to the existing detail route.
     expect(screen.getByTestId("session-row-sess-done")).toHaveAttribute(

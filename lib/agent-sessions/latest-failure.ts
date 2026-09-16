@@ -14,6 +14,12 @@
  * ended most recently wins so the badge shows the retry's error.
  */
 
+import { parseStoredTimestamp } from "@/lib/utils/timestamps";
+
+function timestamp(value: string | null | undefined): number {
+  return value ? parseStoredTimestamp(value) ?? -Infinity : -Infinity;
+}
+
 export interface FailedSessionInfo {
   sessionId: string;
   error: string;
@@ -83,11 +89,11 @@ export function selectLatestFailures(
     // Registry-only active agents have no DB row yet; never badge those epics.
     if (runningEpicIds.has(epicId)) continue;
 
-    let newest = "";
+    let newest = -Infinity;
     for (const s of epicSessions) {
-      if ((s.createdAt ?? "") > newest) newest = s.createdAt ?? "";
+      newest = Math.max(newest, timestamp(s.createdAt));
     }
-    const newestGroup = epicSessions.filter((s) => (s.createdAt ?? "") === newest);
+    const newestGroup = epicSessions.filter((s) => timestamp(s.createdAt) === newest);
 
     // Same-second tie with any non-failed session → clear the badge.
     if (newestGroup.some((s) => s.status !== "failed")) continue;
@@ -95,7 +101,9 @@ export function selectLatestFailures(
     // All-failed tie: prefer the session that ended most recently.
     let latest = newestGroup[0];
     for (const s of newestGroup) {
-      if ((s.endedAt ?? "") > (latest.endedAt ?? "")) latest = s;
+      const endedAt = timestamp(s.endedAt);
+      const latestEndedAt = timestamp(latest.endedAt);
+      if (endedAt > latestEndedAt || (endedAt === latestEndedAt && s.id > latest.id)) latest = s;
     }
     failed[epicId] = {
       sessionId: latest.id,

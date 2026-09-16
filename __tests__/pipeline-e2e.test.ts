@@ -41,6 +41,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { mockJsonRequest, mockRouteContext } from "@/__tests__/helpers/db-mock";
+import { claudeEnvelope } from "./helpers/provider-fixtures";
 
 /** One scripted CLI run, consumed FIFO by processManager.start. */
 interface ScriptedCliRun {
@@ -196,7 +197,6 @@ const {
   reviewComments,
   ticketComments,
   ticketActivityLog,
-  notifications,
   namedAgents,
   compositeAgentMembers,
 } = await import("@/lib/db/schema");
@@ -222,10 +222,6 @@ let counter = 0;
 /* ------------------------------------------------------------------ */
 /* Harness helpers                                                     */
 /* ------------------------------------------------------------------ */
-
-function claudeEnvelope(text: string): string {
-  return JSON.stringify({ type: "result", subtype: "success", result: text });
-}
 
 function cliOk(
   text: string,
@@ -535,6 +531,7 @@ describe("pipeline e2e — clean pass", () => {
       "Build completed successfully",
       PIPELINE_REASONS.reviewStarted,
       "Review verdict: passed (Code Review) [verdict source: structured]",
+      "Review verdict channel: structured (approved)",
       PIPELINE_REASONS.finished,
     ]);
     // Pipeline entries are actor 'system' with from == to; the board moves
@@ -645,11 +642,14 @@ describe("pipeline e2e — blocking findings and fix cycle", () => {
       PIPELINE_REASONS.started,
       "Build completed successfully",
       PIPELINE_REASONS.reviewStarted,
+      "Review verdict: changes requested (Code Review) [verdict source: prose]",
+      "Review verdict channel: prose",
       "Build agent started",
       PIPELINE_REASONS.fixStarted(1, 2),
       "Build completed successfully",
       PIPELINE_REASONS.reviewStarted,
       "Review verdict: passed (Code Review) [verdict source: structured]",
+      "Review verdict channel: structured (approved)",
       PIPELINE_REASONS.finished,
     ]);
   });
@@ -719,6 +719,7 @@ describe("pipeline e2e — the structured submit_findings verdict decides", () =
       "Build completed successfully",
       PIPELINE_REASONS.reviewStarted,
       "Review verdict: changes requested (Code Review) [verdict source: structured]",
+      "Review verdict channel: structured (changes_requested)",
       // The revert already put both rows in in_progress, so the fix
       // dispatch is a same-state write and its entry is the dispatch trace.
       "Build agent started",
@@ -726,6 +727,7 @@ describe("pipeline e2e — the structured submit_findings verdict decides", () =
       "Build completed successfully",
       PIPELINE_REASONS.reviewStarted,
       "Review verdict: passed (Code Review) [verdict source: structured]",
+      "Review verdict channel: structured (approved)",
       PIPELINE_REASONS.finished,
     ]);
   });
@@ -947,15 +949,8 @@ describe("pipeline e2e — asked_question pause", () => {
       status: "completed",
     });
 
-    // The user was notified with the asked-question deep link.
-    const notifs = db.select().from(notifications).all();
-    expect(
-      notifs.some(
-        (n) =>
-          n.projectId === projectId &&
-          n.title.startsWith("Agent asked a question")
-      )
-    ).toBe(true);
+    // The hold is visible on the desk (asked_question outcome) and in the
+    // ticket's activity feed — no notification row is written.
 
     // No fix/retry was ever dispatched.
     expect(cliState.starts).toHaveLength(2);

@@ -1409,3 +1409,40 @@ describe("review-rejection budget", () => {
     expect(selectBuildCandidates(PROJECT_ID, board)).toHaveLength(1);
   });
 });
+
+
+describe("mixed-format chronology", () => {
+  it("holds a newer SQLite epic question until the newest user comment answers it", () => {
+    addEpic({ id: "e1", status: "in_progress" });
+    addSession({ epicId: "e1", status: "completed", outcome: "answered", createdAt: "2026-08-19T08:00:00.000Z" });
+    addSession({ epicId: "e1", status: "completed", outcome: "asked_question", createdAt: "2026-08-19 09:00:00", endedAt: "2026-08-19 09:05:00" });
+    addUserComment({ epicId: "e1", createdAt: "2026-08-19T08:30:00.000Z" });
+    expect(selectBuildCandidates(PROJECT_ID)).toEqual([]);
+    addUserComment({ epicId: "e1", createdAt: "2026-08-19 10:00:00" });
+    expect(selectBuildCandidates(PROJECT_ID).map((row) => row.epicId)).toEqual(["e1"]);
+  });
+
+  it("uses the newest story question and accepts the latest answer on either thread", () => {
+    addEpic({ id: "e1", status: "in_progress" });
+    addStory({ id: "s1", epicId: "e1", status: "in_progress" });
+    addSession({ epicId: "e1", userStoryId: "s1", status: "completed", outcome: "answered", createdAt: "2026-08-19T08:00:00.000Z" });
+    addSession({ epicId: "e1", userStoryId: "s1", status: "completed", outcome: "asked_question", createdAt: "2026-08-19 09:00:00", endedAt: "2026-08-19 09:05:00" });
+    expect(selectBuildCandidates(PROJECT_ID)).toEqual([]);
+    addUserComment({ userStoryId: "s1", createdAt: "2026-08-19T08:30:00Z" });
+    addUserComment({ epicId: "e1", createdAt: "2026-08-19 10:00:00" });
+    expect(selectBuildCandidates(PROJECT_ID).map((row) => row.userStoryId)).toEqual(["s1"]);
+    expect(loadAutoModeBoard(PROJECT_ID).awaitingByStory.get("s1")?.latestUserCommentCreatedAt).toBe("2026-08-19T10:00:00.000Z");
+  });
+
+  it("resets rejected-review counts by instant including fractions and offsets", () => {
+    addEpic({ id: "e1", status: "in_progress" });
+    addUserComment({ epicId: "e1", createdAt: "2026-08-19T10:00:00.500+02:00" });
+    db.insert(ticketActivityLog).values([
+      { id: "before", projectId: PROJECT_ID, epicId: "e1", fromStatus: "review", toStatus: "in_progress", actor: "agent", createdAt: "2026-08-19T08:00:00Z" },
+      { id: "after", projectId: PROJECT_ID, epicId: "e1", fromStatus: "review", toStatus: "in_progress", actor: "agent", createdAt: "2026-08-19 08:00:01" },
+    ]).run();
+    const board = loadAutoModeBoard(PROJECT_ID);
+    expect(board.reviewRejectionsByEpic.get("e1")).toBe(1);
+    expect(board.lastReviewRejectionAtByEpic.get("e1")).toBe("2026-08-19T08:00:01.000Z");
+  });
+});

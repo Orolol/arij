@@ -3,11 +3,11 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
+import { isSafeRepoSegment } from "@/lib/git/github-url";
 import {
   DEFAULT_PROJECTS_ROOT_DIRNAME,
   PROJECTS_ROOT_SETTING_KEY,
   cloneDirectoryName,
-  isSafeRepoNameSegment,
   parseProjectsRootSetting,
 } from "./workspace-constants";
 
@@ -115,7 +115,7 @@ export function resolveCloneDestination(
   repo: string,
   root: string = resolveProjectsRoot()
 ): string {
-  if (!isSafeRepoNameSegment(owner) || !isSafeRepoNameSegment(repo)) {
+  if (!isSafeRepoSegment(owner) || !isSafeRepoSegment(repo)) {
     throw new Error(`Unsafe repository identifier: ${owner}/${repo}`);
   }
 

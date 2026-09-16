@@ -1,19 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useTranslations } from "next-intl";
-import {
-  ChevronDown,
-  ChevronRight,
-  Code2,
-  ListChecks,
-  Loader2,
-  Plus,
-  Scale,
-  Shield,
-} from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 
-import { FieldBoxInput } from "@/components/agents-workshop/FieldBox";
+import { AgentConfigError } from "./AgentConfigError";
 import { ScopeSwitcher } from "@/components/agents-workshop/ScopeSwitcher";
 import { sourceLabelKey } from "@/components/agents-workshop/agent-initials";
 import {
@@ -25,17 +16,13 @@ import {
 } from "@/components/piscine";
 import {
   useAgentPrompts,
-  useReviewAgents,
-  type CustomReviewAgent,
   type ResolvedAgentPrompt,
 } from "@/hooks/useAgentConfig";
 import {
   AGENT_TYPES,
   AGENT_TYPE_LABELS,
-  DEFAULT_REVIEW_AGENT_PROMPT,
   type AgentType,
 } from "@/lib/agent-config/constants";
-import type { TranslationKey } from "@/lib/i18n/catalogue";
 
 /**
  * Role prompts and review agents.
@@ -52,13 +39,17 @@ const PROMPT_TEXTAREA =
   "min-h-32 w-full resize-y rounded-[10px] border-0 bg-card px-3 py-2 font-mono text-[12.5px] leading-[1.5] text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring placeholder:text-muted-foreground disabled:opacity-60";
 
 export function PromptsView({ projectId }: { projectId?: string }) {
+  return <PromptsContent key={projectId ?? "global"} projectId={projectId} />;
+}
+
+function PromptsContent({ projectId }: { projectId?: string }) {
   const t = useTranslations("AgentsWorkshop");
   const [scope, setScope] = useState<"global" | "project">(
     projectId ? "project" : "global",
   );
   const scopedProjectId = scope === "project" ? projectId : undefined;
 
-  const { data, loading, updatePrompt, resetPrompt } = useAgentPrompts(
+  const { data, loading, error, refresh, updatePrompt, resetPrompt } = useAgentPrompts(
     scope,
     scopedProjectId,
   );
@@ -80,9 +71,10 @@ export function PromptsView({ projectId }: { projectId?: string }) {
           label={t("prompts.rolePromptsLabel")}
           meta={t("prompts.rolePromptsMeta")}
         />
+        {error && <AgentConfigError onRetry={refresh} />}
         {loading ? (
           <Loader2 className="h-4 w-4 animate-spin text-strata-feed-deep motion-reduce:animate-none" />
-        ) : (
+        ) : error && data.length === 0 ? null : (
           <div className="flex flex-col gap-1.5">
             {AGENT_TYPES.map((agentType) => {
               // Every one of the 21 roles renders, even with no stored row:
@@ -95,7 +87,7 @@ export function PromptsView({ projectId }: { projectId?: string }) {
               };
               return (
                 <PromptRow
-                  key={agentType}
+                  key={`${scope}:${agentType}`}
                   prompt={prompt}
                   scope={scope}
                   onSave={updatePrompt}
@@ -107,7 +99,6 @@ export function PromptsView({ projectId }: { projectId?: string }) {
         )}
       </StrataBand>
 
-      <ReviewAgentsBand scope={scope} projectId={scopedProjectId} />
     </div>
   );
 }
@@ -127,10 +118,38 @@ function PromptRow({
   // Namespace-less, for the KEY REFERENCES `agent-initials.ts` holds.
   const tKey = useTranslations();
   const [expanded, setExpanded] = useState(false);
-  const [value, setValue] = useState(prompt.systemPrompt);
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? prompt.systemPrompt;
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pending = useRef(false);
   const dirty = value !== prompt.systemPrompt;
   const panelId = `agent-prompt-${prompt.agentType}-panel`;
+
+  async function submit(reset: boolean) {
+    if (pending.current) return;
+    pending.current = true;
+    setSaving(true);
+    setError(null);
+    const submitted = value;
+    const failure = reset ? t("prompts.resetFailed") : t("prompts.saveFailed");
+    const action = reset ? () => onReset(prompt.agentType) : () => onSave(prompt.agentType, submitted);
+    let ok = false;
+    try {
+      ok = await action();
+    } catch {
+      // Keep the editable draft; the same feedback handles HTTP and network failures.
+    }
+    if (ok) {
+      // A reload supplies the inherited prompt after reset. Preserve typing
+      // performed while the request was in flight instead of erasing it.
+      setDraft((current) => current === submitted || current === null ? null : current);
+    } else {
+      setError(failure);
+    }
+    pending.current = false;
+    setSaving(false);
+  }
 
   return (
     <SurfaceCard radius={10} className="flex flex-col">
@@ -157,27 +176,23 @@ function PromptRow({
         <div id={panelId} className="flex flex-col gap-2 px-4 pb-3">
           <textarea
             value={value}
-            onChange={(event) => setValue(event.target.value)}
+            onChange={(event) => setDraft(event.target.value)}
             placeholder={t("prompts.promptPlaceholder")}
             aria-label={t("prompts.instructionsAria", {
               role: AGENT_TYPE_LABELS[prompt.agentType],
             })}
             className={PROMPT_TEXTAREA}
           />
+          {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
           <div className="flex items-center justify-end gap-2">
-            {/* Only a project-scoped override has anything to reset — the hook
-                short-circuits to false in global scope. */}
-            {scope === "project" && prompt.source === "project" ? (
+            {(scope === "project" && prompt.source === "project") ||
+            (scope === "global" && prompt.source === "global") ? (
               <PillButton
                 variant="outline"
                 outlineTone="neutral"
                 size="sm"
                 disabled={saving}
-                onClick={async () => {
-                  setSaving(true);
-                  await onReset(prompt.agentType);
-                  setSaving(false);
-                }}
+                onClick={() => void submit(true)}
               >
                 {t("prompts.resetToGlobal")}
               </PillButton>
@@ -188,11 +203,7 @@ function PromptRow({
               disabled={saving || !dirty}
               pending={saving}
               pendingLabel={t("common.saving")}
-              onClick={async () => {
-                setSaving(true);
-                await onSave(prompt.agentType, value);
-                setSaving(false);
-              }}
+              onClick={() => void submit(false)}
             >
               {t("common.save")}
             </PillButton>
@@ -200,309 +211,5 @@ function PromptRow({
         </div>
       ) : null}
     </SurfaceCard>
-  );
-}
-
-const BUILTIN_REVIEWS = [
-  {
-    agentType: "review_security" as const,
-    label: AGENT_TYPE_LABELS.review_security,
-    icon: Shield,
-  },
-  {
-    agentType: "review_code" as const,
-    label: AGENT_TYPE_LABELS.review_code,
-    icon: Code2,
-  },
-  {
-    agentType: "review_compliance" as const,
-    label: AGENT_TYPE_LABELS.review_compliance,
-    icon: Scale,
-  },
-  {
-    agentType: "review_feature" as const,
-    label: AGENT_TYPE_LABELS.review_feature,
-    icon: ListChecks,
-  },
-];
-
-/** The two words the row's provenance stamp uses, per editability. */
-const INHERITED_KEYS: Record<"shared" | "own", { labelKey: TranslationKey }> = {
-  shared: { labelKey: "AgentsWorkshop.prompts.sharedAcrossProjects" },
-  own: { labelKey: "AgentsWorkshop.prompts.editableHere" },
-};
-
-function ReviewAgentsBand({
-  scope,
-  projectId,
-}: {
-  scope: "global" | "project";
-  projectId?: string;
-}) {
-  const t = useTranslations("AgentsWorkshop");
-  const { data, loading, createAgent, updateAgent, deleteAgent } =
-    useReviewAgents(scope, projectId);
-
-  return (
-    <StrataBand stratum="next" density="full" gap={8}>
-      <BandHeader
-        stratum="next"
-        labelSize={12}
-        label={t("prompts.reviewAgentsLabel")}
-        meta={t("prompts.reviewAgentsMeta")}
-      />
-
-      <div className="flex flex-col gap-1.5">
-        {BUILTIN_REVIEWS.map(({ agentType, label, icon: Icon }) => (
-          <SurfaceCard
-            key={agentType}
-            radius={10}
-            className="flex items-center gap-3 px-4 py-2.5"
-          >
-            <Icon className="h-4 w-4 shrink-0 text-strata-next-mid" />
-            <span className="min-w-0 flex-1 truncate font-sans text-[13px] text-foreground">
-              {label}
-            </span>
-            <Mono size={10} tone="muted">
-              {t("prompts.included")}
-            </Mono>
-          </SurfaceCard>
-        ))}
-      </div>
-      <p className="font-sans text-[11.5px] text-strata-next-mid">
-        {t("prompts.builtinNote")}
-      </p>
-
-      {loading ? (
-        <Loader2 className="h-4 w-4 animate-spin text-strata-next-mid motion-reduce:animate-none" />
-      ) : (
-        <div className="flex flex-col gap-1.5">
-          {data.map((agent) => (
-            <CustomReviewAgentRow
-              key={agent.id}
-              agent={agent}
-              // A globally-defined reviewer read from inside a project is
-              // shared, so it is read-only here: editing it would silently
-              // change every other project too.
-              inherited={scope === "project" && agent.source === "global"}
-              onUpdate={updateAgent}
-              onDelete={deleteAgent}
-            />
-          ))}
-          <NewReviewAgentForm onCreate={createAgent} />
-        </div>
-      )}
-    </StrataBand>
-  );
-}
-
-function CustomReviewAgentRow({
-  agent,
-  inherited,
-  onUpdate,
-  onDelete,
-}: {
-  agent: CustomReviewAgent;
-  inherited: boolean;
-  onUpdate: (
-    id: string,
-    updates: { name?: string; systemPrompt?: string },
-  ) => Promise<boolean>;
-  onDelete: (id: string) => Promise<boolean>;
-}) {
-  const t = useTranslations("AgentsWorkshop");
-  const tKey = useTranslations();
-  const [name, setName] = useState(agent.name);
-  const [prompt, setPrompt] = useState(agent.systemPrompt);
-  const [saving, setSaving] = useState(false);
-  const [deleting, setDeleting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const dirty = name !== agent.name || prompt !== agent.systemPrompt;
-
-  async function handleSave() {
-    if (inherited) return;
-    setError(null);
-    setSaving(true);
-    // Only what actually changed is sent.
-    const updates: { name?: string; systemPrompt?: string } = {};
-    if (name !== agent.name) updates.name = name;
-    if (prompt !== agent.systemPrompt) updates.systemPrompt = prompt;
-    try {
-      const saved = await onUpdate(agent.id, updates);
-      if (!saved) setError(t("prompts.saveReviewFailed"));
-    } catch {
-      setError(t("prompts.saveReviewFailedConnection"));
-    }
-    // Trailing, not in a `finally` clause: the React Compiler stops at the
-    // clause, and stopping left this component unread by every compiler rule.
-    setSaving(false);
-  }
-
-  async function handleDelete() {
-    if (inherited) return;
-    setError(null);
-    setDeleting(true);
-    try {
-      const deleted = await onDelete(agent.id);
-      if (!deleted) setError(t("prompts.deleteReviewFailed"));
-    } catch {
-      setError(t("prompts.deleteReviewFailedConnection"));
-    }
-    setDeleting(false);
-  }
-
-  return (
-    <SurfaceCard radius={10} className="flex flex-col gap-2 px-4 py-3">
-      <div className="flex items-center gap-3">
-        <FieldBoxInput
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-          disabled={inherited}
-          aria-label={t("prompts.reviewNameAria")}
-          placeholder={t("common.agentNamePlaceholder")}
-          className="flex-1"
-        />
-        <Mono size={10} tone="muted">
-          {tKey(INHERITED_KEYS[inherited ? "shared" : "own"].labelKey)}
-        </Mono>
-      </div>
-      <textarea
-        value={prompt}
-        onChange={(event) => setPrompt(event.target.value)}
-        disabled={inherited}
-        aria-label={t("prompts.reviewInstructionsAria")}
-        placeholder={t("prompts.reviewPlaceholder")}
-        className={`${PROMPT_TEXTAREA} bg-muted`}
-      />
-      {error ? (
-        <p role="alert" className="font-sans text-[12px] text-destructive">
-          {error}
-        </p>
-      ) : null}
-      {!inherited ? (
-        <div className="flex items-center justify-end gap-2">
-          <PillButton
-            variant="outline"
-            outlineTone="neutral"
-            size="sm"
-            labelTone="danger"
-            onClick={handleDelete}
-            disabled={saving}
-            pending={deleting}
-            pendingLabel={t("common.deleting")}
-          >
-            {t("common.delete")}
-          </PillButton>
-          <PillButton
-            variant="filled"
-            size="sm"
-            onClick={handleSave}
-            disabled={deleting || !dirty}
-            pending={saving}
-            pendingLabel={t("common.saving")}
-          >
-            {t("common.save")}
-          </PillButton>
-        </div>
-      ) : null}
-    </SurfaceCard>
-  );
-}
-
-function NewReviewAgentForm({
-  onCreate,
-}: {
-  onCreate: (name: string, systemPrompt: string) => Promise<boolean>;
-}) {
-  const t = useTranslations("AgentsWorkshop");
-  const [open, setOpen] = useState(false);
-  const [name, setName] = useState("");
-  // Pre-filled on purpose: the form is meant to be useful after typing only a
-  // name.
-  const [prompt, setPrompt] = useState(DEFAULT_REVIEW_AGENT_PROMPT);
-  const [creating, setCreating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  function reset() {
-    setOpen(false);
-    setName("");
-    setPrompt(DEFAULT_REVIEW_AGENT_PROMPT);
-    setError(null);
-  }
-
-  if (!open) {
-    return (
-      <PillButton
-        variant="outline"
-        outlineTone="neutral"
-        size="sm"
-        icon={Plus}
-        className="w-fit"
-        onClick={() => setOpen(true)}
-      >
-        {t("prompts.addReviewAgent")}
-      </PillButton>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-2 rounded-[10px] border-[1.5px] border-dashed border-border-strong p-4">
-      <FieldBoxInput
-        autoFocus
-        value={name}
-        onChange={(event) => setName(event.target.value)}
-        aria-label={t("prompts.newReviewNameAria")}
-        placeholder={t("prompts.newAgentNamePlaceholder")}
-      />
-      <textarea
-        value={prompt}
-        onChange={(event) => setPrompt(event.target.value)}
-        aria-label={t("prompts.newReviewInstructionsAria")}
-        placeholder={t("prompts.reviewPlaceholder")}
-        className={PROMPT_TEXTAREA}
-      />
-      {error ? (
-        <p role="alert" className="font-sans text-[12px] text-destructive">
-          {error}
-        </p>
-      ) : null}
-      <div className="flex items-center justify-end gap-2">
-        <PillButton
-          variant="outline"
-          outlineTone="neutral"
-          size="sm"
-          onClick={reset}
-          disabled={creating}
-        >
-          {t("common.cancel")}
-        </PillButton>
-        <PillButton
-          variant="filled"
-          size="sm"
-          disabled={!name.trim() || !prompt.trim()}
-          pending={creating}
-          pendingLabel={t("common.creating")}
-          onClick={async () => {
-            if (!name.trim() || !prompt.trim()) return;
-            setError(null);
-            setCreating(true);
-            try {
-              const ok = await onCreate(name.trim(), prompt.trim());
-              if (ok) {
-                reset();
-              } else {
-                setError(t("prompts.createReviewFailed"));
-              }
-            } catch {
-              setError(t("prompts.createReviewFailedConnection"));
-            }
-            setCreating(false);
-          }}
-        >
-          {t("common.create")}
-        </PillButton>
-      </div>
-    </div>
   );
 }

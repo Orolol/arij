@@ -43,6 +43,7 @@ function renderThread(
 ) {
   const props: React.ComponentProps<typeof ChatThread> = {
     projectId: "p1",
+    conversationId: "conversation-1",
     messages: [],
     loading: false,
     sending: false,

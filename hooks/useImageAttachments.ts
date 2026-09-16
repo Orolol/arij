@@ -22,6 +22,8 @@ export interface PendingAttachment {
 
 export interface UseImageAttachmentsOptions {
   projectId: string;
+  /** Independent staging area within a project, e.g. a chat conversation. */
+  scopeId?: string | null;
   /**
    * Makes every entry point inert without discarding what is already staged.
    * Set by the chat composer when the active provider cannot take images.
@@ -43,19 +45,35 @@ interface UploadOutcome {
  */
 export function useImageAttachments({
   projectId,
+  scopeId,
   disabled = false,
 }: UseImageAttachmentsOptions) {
   const tErrors = useTranslations("ClientErrors");
-  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
-  // Counted rather than a flag: paste and drop stay live during a transfer, so
-  // batches overlap as soon as the user pastes twice without waiting.
-  const [pendingUploads, setPendingUploads] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const [dragActive, setDragActive] = useState(false);
+  const scope = JSON.stringify([projectId, scopeId ?? null]);
+  type Staging = { attachments: PendingAttachment[]; pendingUploads: number; error: string | null; dragActive: boolean };
+  const [staging, setStaging] = useState<Record<string, Staging>>({});
+  const { attachments, pendingUploads, error, dragActive } = staging[scope] ?? {
+    attachments: [], pendingUploads: 0, error: null, dragActive: false,
+  };
+  const update = useCallback((change: (current: Staging) => Staging) => {
+    setStaging((current) => ({ ...current, [scope]: change(current[scope] ?? {
+      attachments: [], pendingUploads: 0, error: null, dragActive: false,
+    }) }));
+  }, [scope]);
+  const setAttachments = useCallback((action: React.SetStateAction<PendingAttachment[]>) => {
+    update((current) => ({ ...current, attachments: typeof action === "function" ? action(current.attachments) : action }));
+  }, [update]);
+  const setPendingUploads = useCallback((action: React.SetStateAction<number>) => {
+    update((current) => ({ ...current, pendingUploads: typeof action === "function" ? action(current.pendingUploads) : action }));
+  }, [update]);
+  const setError = useCallback((action: React.SetStateAction<string | null>) => {
+    update((current) => ({ ...current, error: typeof action === "function" ? action(current.error) : action }));
+  }, [update]);
+  const setDragActive = useCallback((dragActive: boolean) => update((current) => ({ ...current, dragActive })), [update]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  // Bumped by `clear()`. Everything still in flight belongs to the staging area
-  // that just ended, and must not land in the empty one that replaced it.
-  const stagingSessionRef = useRef(0);
+  // Each conversation keeps its draft, including uploads finishing while a
+  // different conversation is selected. Clearing invalidates only that draft.
+  const stagingSessionRef = useRef(new Map<string, number>());
 
   const uploading = pendingUploads > 0;
 
@@ -116,7 +134,7 @@ export function useImageAttachments({
     async (accepted: File[]) => {
       if (accepted.length === 0) return;
 
-      const session = stagingSessionRef.current;
+      const session = stagingSessionRef.current.get(scope) ?? 0;
       setPendingUploads((pending) => pending + 1);
 
       // A `.finally` call, not a `finally` clause (the React Compiler stops at
@@ -125,7 +143,7 @@ export function useImageAttachments({
       const outcomes: UploadOutcome[] = await Promise.all(
         accepted.map(uploadFile)
       ).finally(() => {
-        if (stagingSessionRef.current === session) {
+        if ((stagingSessionRef.current.get(scope) ?? 0) === session) {
           setPendingUploads((pending) => pending - 1);
         }
       });
@@ -134,7 +152,7 @@ export function useImageAttachments({
       // it now would attach a screenshot the user never sees to whatever they
       // write next — and leaving it alone would strand the file, since nothing
       // that survives this call knows it exists.
-      if (stagingSessionRef.current !== session) {
+      if ((stagingSessionRef.current.get(scope) ?? 0) !== session) {
         for (const outcome of outcomes) {
           if (outcome.attachment) discardUpload(outcome.attachment.id);
         }
@@ -155,7 +173,7 @@ export function useImageAttachments({
         setError((prev) => [prev, ...failures].filter(Boolean).join(" · "));
       }
     },
-    [discardUpload, uploadFile]
+    [discardUpload, uploadFile, scope, setPendingUploads, setAttachments, setError]
   );
 
   const addFiles = useCallback(
@@ -165,7 +183,7 @@ export function useImageAttachments({
       setError(formatImageRejections(rejected));
       void uploadAccepted(accepted);
     },
-    [disabled, uploadAccepted]
+    [disabled, uploadAccepted, setError]
   );
 
   const handlePaste = useCallback(
@@ -184,7 +202,7 @@ export function useImageAttachments({
         void uploadAccepted(accepted);
       }
     },
-    [disabled, uploadAccepted]
+    [disabled, uploadAccepted, setError]
   );
 
   const handleDragOver = useCallback(
@@ -195,7 +213,7 @@ export function useImageAttachments({
       e.preventDefault();
       setDragActive(true);
     },
-    [disabled]
+    [disabled, setDragActive]
   );
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
@@ -206,7 +224,7 @@ export function useImageAttachments({
     const movingTo = e.relatedTarget;
     if (movingTo instanceof Node && e.currentTarget.contains(movingTo)) return;
     setDragActive(false);
-  }, []);
+  }, [setDragActive]);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -217,7 +235,7 @@ export function useImageAttachments({
       setDragActive(false);
       addFiles(files);
     },
-    [addFiles, disabled]
+    [addFiles, disabled, setDragActive]
   );
 
   const handleFileSelect = useCallback(
@@ -244,7 +262,7 @@ export function useImageAttachments({
       // has to go now or it never will.
       discardUpload(id);
     },
-    [discardUpload]
+    [discardUpload, setAttachments]
   );
 
   /**
@@ -252,11 +270,11 @@ export function useImageAttachments({
    * now owned by whatever was submitted, so the files stay.
    */
   const clear = useCallback(() => {
-    stagingSessionRef.current += 1;
+    stagingSessionRef.current.set(scope, (stagingSessionRef.current.get(scope) ?? 0) + 1);
     setPendingUploads(0);
     setAttachments([]);
     setError(null);
-  }, []);
+  }, [scope, setPendingUploads, setAttachments, setError]);
 
   /**
    * Empties the staging area for a form that has been *abandoned*: nothing was

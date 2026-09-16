@@ -798,6 +798,46 @@ describe("collectDreamDigest — per-session record", () => {
     expect(sessions.every((s) => s.forensic === null)).toBe(true);
   });
 
+  it.each(["epic", "story"])("does not let an explicit marker cross its %s scope", (scope) => {
+    const otherEpic = `other-epic-${counter}`;
+    const storyId = `other-story-${counter}`;
+    db.insert(epics).values({ id: otherEpic, projectId, title: "Other ticket" }).run();
+    db.insert(userStories).values({ id: storyId, epicId, title: "Other story" }).run();
+    const named = seedSession({
+      epicId: scope === "epic" ? otherEpic : epicId,
+      userStoryId: scope === "story" ? storyId : null,
+    });
+    seedSession(); // Keep the comment's own epic in the collector's window.
+    db.insert(ticketComments).values({
+      id: `cross-scope-${counter}`, epicId, userStoryId: null, author: "agent",
+      content: `${FORENSIC_COMMENT_HEADING}\n${forensicDeadSessionMarker(named)}\n\nWRONG SCOPE`,
+      createdAt: minutesAgo(35),
+    }).run();
+    const result = collectDreamDigest(projectId, { now: NOW });
+    expect(result.sessions).toHaveLength(2);
+    expect(result.sessions.every((session) => session.forensic === null)).toBe(true);
+    expect(result.text).not.toContain("WRONG SCOPE");
+  });
+
+  it("reserves explicitly diagnosed sessions before attributing older unmarked reports", () => {
+    const first = seedSession({ startedAt: minutesAgo(60), endedAt: minutesAgo(40) });
+    const retry = seedSession({ startedAt: minutesAgo(55), endedAt: minutesAgo(35) });
+    db.insert(ticketComments).values([
+      {
+        id: `legacy-${counter}`, epicId, author: "agent",
+        content: `${FORENSIC_COMMENT_HEADING}\n\nLEGACY DIAGNOSIS`, createdAt: minutesAgo(34),
+      },
+      {
+        id: `marked-${counter}`, epicId, author: "agent",
+        content: `${FORENSIC_COMMENT_HEADING}\n${forensicDeadSessionMarker(retry)}\n\nRETRY DIAGNOSIS`,
+        createdAt: minutesAgo(20),
+      },
+    ]).run();
+    const { sessions } = collectDreamDigest(projectId, { now: NOW });
+    expect(sessions.find((session) => session.sessionId === retry)!.forensic).toBe("RETRY DIAGNOSIS");
+    expect(sessions.find((session) => session.sessionId === first)!.forensic).toBe("LEGACY DIAGNOSIS");
+  });
+
   /**
    * A stage that failed, was retried, and failed again produces TWO sessions
    * of the same scope with overlapping attach windows. Attributing by "first

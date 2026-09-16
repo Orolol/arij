@@ -24,6 +24,11 @@ import {
  */
 const NO_AGENT_VALUE = "__none__";
 
+/**
+ * The modal and dialog form picker for named agents.
+ * Displays role-based reliability badges (`dispatchRole`) inside configuration dialogs
+ * (AutoMode, QA checks, Night runs, Refinement). Toolbars and composers use `AgentSelectPill`.
+ */
 interface NamedAgentSelectProps {
   value: string | null;
   onChange: (namedAgentId: string) => void;

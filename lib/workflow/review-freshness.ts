@@ -65,16 +65,9 @@ const CODE_AGENT_TYPES_SQL = "'build','ticket_build','team_build','merge'";
 
 const TERMINAL_STATUSES_SQL = "'completed','failed','cancelled'";
 
-/**
- * When a review STARTED, normalised for lexicographic comparison — the
- * anchor the verdict windows key on, as opposed to `sessionAtSql`
- * (lib/agent-sessions/session-time.ts), which answers when a session ENDED.
- * Same ' ' → 'T' normalisation and for the same reason: routes write
- * ISO-8601 while a defaulted column stores SQLite CURRENT_TIMESTAMP, ' '
- * sorts before 'T', and an unnormalised MAX/compare then ranks them wrongly.
- */
+/** Review start, in the same fixed UTC precision as sessionAtSql(). */
 function reviewStartedAtSql() {
-  return sql`REPLACE(COALESCE(${agentSessions.startedAt}, ${agentSessions.createdAt}), ' ', 'T')`;
+  return sql`COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', ${agentSessions.startedAt}), strftime('%Y-%m-%dT%H:%M:%fZ', ${agentSessions.createdAt}))`;
 }
 
 /**
@@ -160,6 +153,9 @@ function isTerminalCodeSessionSql(): SQL {
 
 /**
  * Level one: every session row of the selected scope, tagged.
+ * An undatable rejection/code change keeps an internal "unknown" marker:
+ * it sorts after ISO instants and cannot be superseded by a dated review.
+ * The client-safe gates treat this as missing chronology, never as no signal.
  *
  * `epicCleanVerdictAt` is the epic's newest clean-verdict start, computed as
  * a WINDOW so each row can be compared against it — that is the only thing
@@ -179,11 +175,11 @@ function epicSessionRows(database: ArijDatabase, scope: SQL) {
         "clean_verdict_at"
       ),
       negativeVerdictAt: sql<string | null>`CASE
-        WHEN ${isNegativeVerdictReviewSql()} THEN ${reviewStartedAtSql()} END`.as(
+        WHEN ${isNegativeVerdictReviewSql()} THEN COALESCE(${reviewStartedAtSql()}, 'unknown') END`.as(
         "negative_verdict_at"
       ),
       terminalCodeAt: sql<string | null>`CASE
-        WHEN ${isTerminalCodeSessionSql()} THEN ${sessionAtSql()} END`.as(
+        WHEN ${isTerminalCodeSessionSql()} THEN COALESCE(${sessionAtSql()}, 'unknown') END`.as(
         "terminal_code_at"
       ),
       epicCleanVerdictAt: sql<string | null>`MAX(CASE

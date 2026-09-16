@@ -14,21 +14,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestDb } from "@/lib/db/test-utils";
 
 const testDb = vi.hoisted(() => ({
-  instance: null as ReturnType<
-    typeof import("@/lib/db/test-utils").createTestDb
-  > | null,
+  instance: null as ReturnType<typeof import("@/lib/db/test-utils").createTestDb> | null,
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
 // ---- Import the module under test AFTER mocks ----
 import { getUsageReport, parseUsageRange } from "@/lib/usage/aggregate";
@@ -433,9 +424,6 @@ describe("dashboard — byAgent / byProject bars", () => {
     expect(bars[0].costUsd).toBe(7);
   });
 
-  it("reports colorIndex as null while the column does not exist", () => {
-    expect(dashboard().byProject.every((b) => b.colorIndex === null)).toBe(true);
-  });
 });
 
 describe("dashboard — byDay", () => {

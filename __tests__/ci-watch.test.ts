@@ -368,6 +368,26 @@ describe("CI watch", () => {
     );
   });
 
+  it("releases a transient launch failure on a new head and retries that head", async () => {
+    const row = routine();
+    const watchDeps = deps(row);
+    vi.mocked(watchDeps.isAutofixEnabled).mockReturnValue(true);
+    const snapshot = { headSha: "sha-2", state: "failing" as const, prState: "open" as const, failedChecks: ["unit"] };
+    vi.mocked(watchDeps.fetchPullRequestCi)
+      .mockResolvedValueOnce({ ...snapshot, headSha: "sha-1" })
+      .mockResolvedValue(snapshot);
+    vi.mocked(watchDeps.launchAutofix)
+      .mockResolvedValueOnce({ status: "launched", sessionId: "old-fix" })
+      .mockRejectedValueOnce(new Error("Temporary repository lock"))
+      .mockResolvedValueOnce({ status: "launched", sessionId: "new-fix" });
+    await runCiWatchRoutine(row, watchDeps);
+    await runCiWatchRoutine(row, watchDeps);
+    expect(JSON.parse(row.config).ciWatchState["epic-open"]).toMatchObject({ headSha: "sha-2", autofixAttempted: false, autofixSessionId: null });
+    await runCiWatchRoutine(row, watchDeps);
+    expect(watchDeps.launchAutofix).toHaveBeenCalledTimes(3);
+    expect(JSON.parse(row.config).ciWatchState["epic-open"]).toMatchObject({ autofixAttempted: true, autofixSessionId: "new-fix" });
+  });
+
   it("defers on a busy target without downloading log evidence", async () => {
     const row = routine();
     const watchDeps = deps(row);

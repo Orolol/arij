@@ -6,6 +6,9 @@ import type { InboxItem } from "@/hooks/useInbox";
 const mockInboxState = vi.hoisted(() => ({
   items: [] as InboxItem[],
   loading: false,
+  page: 1,
+  totalPages: 1,
+  setPage: vi.fn(),
   markRead: vi.fn(),
   reply: vi.fn(),
   refresh: vi.fn(),
@@ -22,6 +25,9 @@ vi.mock("@/hooks/useInbox", () => ({
     awaitingReplyCount: mockInboxState.items.filter((i) => i.awaitingReply)
       .length,
     loading: mockInboxState.loading,
+    page: mockInboxState.page,
+    totalPages: mockInboxState.totalPages,
+    setPage: mockInboxState.setPage,
     markRead: mockInboxState.markRead,
     reply: mockInboxState.reply,
     refresh: mockInboxState.refresh,
@@ -48,12 +54,14 @@ function makeItem(overrides: Partial<InboxItem> = {}): InboxItem {
 }
 
 describe("Inbox page", () => {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let fetchSpy: any;
 
   beforeEach(() => {
     mockInboxState.items = [];
     mockInboxState.loading = false;
+    mockInboxState.page = 1;
+    mockInboxState.totalPages = 1;
+    mockInboxState.setPage = vi.fn();
     mockInboxState.markRead = vi.fn().mockResolvedValue(undefined);
     mockInboxState.reply = vi.fn().mockResolvedValue(undefined);
     fetchSpy = vi.spyOn(globalThis, "fetch");
@@ -66,6 +74,26 @@ describe("Inbox page", () => {
   it("shows the empty state when nothing is waiting", () => {
     render(<InboxPage />);
     expect(screen.getByTestId("inbox-empty")).toBeInTheDocument();
+  });
+
+  it("navigates pages and prevents requests beyond the bounds or during loading", () => {
+    mockInboxState.items = [makeItem()];
+    mockInboxState.totalPages = 3;
+    const { rerender } = render(<InboxPage />);
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(mockInboxState.setPage).toHaveBeenLastCalledWith(2);
+
+    mockInboxState.page = 3;
+    rerender(<InboxPage />);
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    expect(mockInboxState.setPage).toHaveBeenLastCalledWith(2);
+
+    mockInboxState.loading = true;
+    rerender(<InboxPage />);
+    expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Previous" })).toBeDisabled();
   });
 
   it("groups rows by project, preserving the server order", () => {
@@ -185,7 +213,7 @@ describe("Inbox page", () => {
         "/api/projects/p1/epics/e1/build",
         expect.objectContaining({
           method: "POST",
-          body: JSON.stringify({ comment: "Go ahead with OAuth" }),
+          body: JSON.stringify({ namedAgentId: null, comment: "Go ahead with OAuth" }),
         })
       );
     });
@@ -384,4 +412,19 @@ describe("Inbox page", () => {
       ).not.toBeInTheDocument();
     });
   });
+  it("keeps a successful dispatch confirmed when only marking it read fails", async () => {
+    mockInboxState.items = [makeItem()];
+    mockInboxState.markRead.mockRejectedValueOnce(new Error("offline"));
+    mockInboxState.refresh.mockResolvedValueOnce(undefined);
+    fetchSpy.mockResolvedValueOnce(new Response(JSON.stringify({ data: { sessionId: "launched" } })));
+    render(<InboxPage />);
+    const launch = screen.getByTestId("inbox-send-to-dev-e1");
+    fireEvent.click(launch);
+    await waitFor(() => expect(mockInboxState.refresh).toHaveBeenCalled());
+    expect(screen.getByTestId("inbox-item-error-e1")).toHaveTextContent("Failed to mark as read");
+    expect(launch).toBeDisabled();
+    fireEvent.click(launch);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
 });

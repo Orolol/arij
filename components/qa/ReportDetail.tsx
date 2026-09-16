@@ -1,13 +1,16 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { CheckCircle2, Loader2, Plus, Sparkles, XCircle } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { BreathingDot, Mono, PillButton } from "@/components/piscine";
 import { MarkdownContent } from "@/components/chat/MarkdownContent";
-import { usePolling } from "@/hooks/usePolling";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { useScopedMutation } from "@/hooks/useScopedMutation";
+import { requestJson } from "@/lib/api/client";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
 import { formatDateTime } from "@/lib/i18n/format";
+import { checkStatusLabel } from "@/lib/qa/aggregate";
 import { cn } from "@/lib/utils";
 
 interface QaReport {
@@ -25,8 +28,8 @@ interface QaReport {
 interface ReportDetailProps {
   projectId: string;
   reportId: string | null;
+  live?: boolean;
   onCreateEpics?: (epics: Array<{ id: string; title: string }>) => void;
-  onReportUpdated?: () => void;
 }
 
 type Severity = "critical" | "major" | "minor";
@@ -184,102 +187,51 @@ function formatDuration(from: string | null, to: string | null): string | null {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
-function statusTone(status: string): string {
-  if (status === "completed") return "bg-agent-bg text-agent";
-  if (status === "failed") return "bg-destructive/10 text-destructive";
-  if (status === "running") return "bg-band text-primary";
-  return "bg-band text-meta";
+export function ReportDetail(props: ReportDetailProps) {
+  return <ReportWorkspace key={JSON.stringify([props.projectId, props.reportId])} {...props} />;
 }
 
-export function ReportDetail({
+function ReportWorkspace({
   projectId,
   reportId,
+  live,
   onCreateEpics,
-  onReportUpdated,
 }: ReportDetailProps) {
   const locale = useLocale();
   const t = useTranslations("Qa");
   // The severity tables hold full dotted paths, so they resolve through the
   // namespace-less translator.
   const tKey = useTranslations();
-  const [report, setReport] = useState<QaReport | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [creatingEpics, setCreatingEpics] = useState(false);
+  const errorMessage = useCallback(() => t("report.errors.load"), [t]);
+  const url = reportId ? `/api/projects/${projectId}/qa/reports/${reportId}` : null;
+  const pollWhen = useCallback(
+    (current: QaReport | null) => {
+      if (typeof live === "boolean") return live && current?.status === "running";
+      return current?.status === "running";
+    },
+    [live],
+  );
+  const { data: report, loading, error: loadError, refresh: loadReport } = usePolledResource<QaReport>(
+    url, 3000, errorMessage, { pollWhen },
+  );
+  const { run, pending: creatingEpics, error: mutationError } = useScopedMutation(url);
+  const error = mutationError || loadError;
+  const [generationSessionId, setGenerationSessionId] = useState<string | null>(null);
   const [createdEpics, setCreatedEpics] = useState<Array<{ id: string; title: string }>>([]);
   const [selectedFindings, setSelectedFindings] = useState<Set<string>>(new Set());
 
-  const onReportUpdatedRef = useRef(onReportUpdated);
-  onReportUpdatedRef.current = onReportUpdated;
-
-  const loadReport = useCallback(async () => {
-    if (!reportId) {
-      setReport(null);
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/projects/${projectId}/qa/reports/${reportId}`);
-      const json = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        setError(json.error || t("report.errors.load"));
-        setReport(null);
-        return;
-      }
-
-      setReport((json.data || null) as QaReport | null);
-      setError(null);
-    } catch {
-      setError(t("report.errors.load"));
-      setReport(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId, reportId, t]);
-
-  useEffect(() => {
-    void loadReport();
-  }, [loadReport]);
-
-  useEffect(() => {
-    setSelectedFindings(new Set());
-  }, [reportId]);
-
-  // Poll while the report is running; the effect above already did the
-  // initial fetch, so skip the immediate call.
-  usePolling(
-    loadReport,
-    3000,
-    Boolean(reportId && report && report.status === "running"),
-    { immediate: false },
-  );
-
   async function handleCreateEpics() {
-    if (!reportId) return;
-    setCreatingEpics(true);
-    setError(null);
-
-    try {
-      const res = await fetch(
-        `/api/projects/${projectId}/qa/reports/${reportId}/create-epics`,
-        { method: "POST" },
-      );
-      const json = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        setError(json.error || t("report.errors.createEpics"));
-        return;
-      }
-
-      const epics = (json.data?.epics || []) as Array<{ id: string; title: string }>;
-      setCreatedEpics(epics);
-      onCreateEpics?.(epics);
-    } catch {
-      setError(t("report.errors.createEpics"));
-    } finally {
-      setCreatingEpics(false);
+    if (!report || !url) return;
+    const result = await run(async () => {
+      const response = await requestJson<{ epics?: Array<{ id: string; title: string }>; sessionId?: string }>(`${url}/create-epics`, {
+        method: "POST", errorMessage: t("report.errors.createEpics"),
+      });
+      if (response.error !== null) throw new Error(response.error);
+      return response.data;
+    }, t("report.errors.createEpics"));
+    if (result) {
+      if (result.sessionId) setGenerationSessionId(result.sessionId);
+      if (result.epics) { setCreatedEpics(result.epics); onCreateEpics?.(result.epics); }
     }
   }
 
@@ -371,6 +323,7 @@ export function ReportDetail({
           <XCircle className="h-4 w-4" />
           {error}
         </div>
+        <PillButton variant="outline" size="sm" onClick={() => void loadReport()}>{t("report.retry")}</PillButton>
       </div>
     );
   }
@@ -393,25 +346,22 @@ export function ReportDetail({
     Boolean(report.reportContent) &&
     !isEmptyFailureDigest;
 
+  const displayStatus = typeof live === "boolean"
+    ? checkStatusLabel({ status: report.status, sessionStatus: live ? "running" : null })
+    : report.status;
+  const isLive = typeof live === "boolean" ? live : report.status === "running";
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-[16px] rounded-[12px] border border-border bg-card px-[24px] py-[22px]">
       <div className="flex flex-wrap items-center gap-[12px]">
         <h3 className="text-[17px] font-semibold">{heading}</h3>
-        <span
-          className={cn(
-            "inline-flex items-center gap-[7px] rounded-full px-[10px] py-[4px] text-[12px]",
-            statusTone(report.status),
-          )}
-        >
-          {report.status === "completed" && (
-            <CheckCircle2 className="h-[12px] w-[12px]" />
-          )}
-          {report.status === "running" && (
-            <Loader2 className="h-[12px] w-[12px] animate-spin" />
-          )}
-          {duration
-            ? t("report.statusDuration", { status: report.status, duration })
-            : report.status}
+        <span className="inline-flex items-center gap-[7px] rounded-full bg-band px-[10px] py-[4px]">
+          {isLive ? <BreathingDot size={6} /> : null}
+          <Mono size={11} tone="muted">
+            {duration
+              ? t("report.statusDuration", { status: displayStatus, duration })
+              : displayStatus}
+          </Mono>
         </span>
         <span className="ml-auto font-mono text-[11px] text-meta">
           {formatDateTime(report.createdAt, { locale, style: "dateTimeSeconds" }) || "-"}
@@ -531,17 +481,20 @@ export function ReportDetail({
           {t("report.selectedFindings", { count: selectedFindings.size })}
         </span>
         <span className="ml-auto flex items-center gap-[10px]">
-          <Button
+          <PillButton
             variant="outline"
-            className="h-[31px] rounded-[8px] px-[12px] text-[13px]"
+            size="sm"
             onClick={handleExportMarkdown}
             disabled={!report.reportContent}
           >
             {t("report.exportMarkdown")}
-          </Button>
+          </PillButton>
           {canCreateEpics && (
-            <Button
-              className="h-[31px] rounded-[8px] px-[13px] text-[13px]"
+            <>
+            {generationSessionId && <a className="text-sm underline" href={`/projects/${projectId}/sessions/${generationSessionId}`}>{t("report.generationSession")}</a>}
+            <PillButton
+              variant="filled"
+              size="sm"
               onClick={handleCreateEpics}
               disabled={creatingEpics}
             >
@@ -553,7 +506,8 @@ export function ReportDetail({
                 <Sparkles className="h-[14px] w-[14px]" />
               )}
               {t("report.createEpics")}
-            </Button>
+            </PillButton>
+            </>
           )}
         </span>
       </div>

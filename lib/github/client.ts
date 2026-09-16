@@ -1,9 +1,10 @@
+import { GITHUB_PAT_SETTING_KEY } from "@/lib/settings/keys";
 import { Octokit } from "@octokit/rest";
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { settings } from "@/lib/db/schema";
 
-export const GITHUB_PAT_SETTING_KEY = "github_pat";
+export { GITHUB_PAT_SETTING_KEY } from "@/lib/settings/keys";
 
 /**
  * The GitHub preconditions a project must satisfy before any GitHub call can

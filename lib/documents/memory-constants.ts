@@ -108,7 +108,7 @@ export function isInternalMemoryDocKind(kind: string | null | undefined): boolea
  * build-type session enqueues a memory-distill session on completion.
  * DEFAULT OFF — absent key means disabled.
  */
-export const MEMORY_AUTO_DISTILL_SETTING_KEY = "memory_auto_distill";
+export { MEMORY_AUTO_DISTILL_SETTING_KEY } from "@/lib/settings/keys";
 
 /** Tolerant parse of the settings row value ('true'/'false', default off). */
 export function parseMemoryAutoDistillSetting(value: unknown): boolean {

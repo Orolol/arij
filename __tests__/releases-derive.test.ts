@@ -8,7 +8,6 @@ import {
   displayVersion,
   nextPatchVersion,
   parseEpicIds,
-  projectToneIndex,
   releaseState,
   ticketExclusionReason,
   upperAge,
@@ -244,11 +243,3 @@ describe("parseEpicIds", () => {
   });
 });
 
-describe("projectToneIndex", () => {
-  it("is stable and non-negative", () => {
-    const a = projectToneIndex("p1");
-    expect(a).toBe(projectToneIndex("p1"));
-    expect(a).toBeGreaterThanOrEqual(0);
-    expect(projectToneIndex("")).toBe(0);
-  });
-});

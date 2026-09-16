@@ -15,6 +15,7 @@ const gitMock = vi.hoisted(() => {
   git.raw = vi.fn();
   git.env = vi.fn(() => git);
   git.branchLocal = vi.fn();
+  git.revparse = vi.fn();
   git.checkIsRepo = vi.fn();
   git.getRemotes = vi.fn();
   return git;
@@ -41,7 +42,7 @@ function dest(name = "octocat-hello-world"): string {
 }
 
 function rawCalls(): string[][] {
-  return gitMock.raw.mock.calls.map((call) => call[0] as string[]);
+  return gitMock.raw.mock.calls.map((call) => call[0] as string[]).filter((args) => args.includes("clone") || args.includes("fetch"));
 }
 
 function cloneArgs(index = 0): string[] {
@@ -83,7 +84,7 @@ function decodedCredentials(args: string[]): string | null {
 
 /** Makes `dest` look like an existing clone of `originUrl`. */
 function existingCloneAt(remotes: Array<{ name: string; url: string }>): void {
-  fs.mkdirSync(dest(), { recursive: true });
+  fs.mkdirSync(path.join(dest(), ".git"), { recursive: true });
   gitMock.checkIsRepo.mockResolvedValue(true);
   gitMock.getRemotes.mockResolvedValue(
     remotes.map((remote) => ({
@@ -96,6 +97,7 @@ function existingCloneAt(remotes: Array<{ name: string; url: string }>): void {
 beforeEach(() => {
   vi.clearAllMocks();
   gitMock.raw.mockImplementation(fakeClone);
+  gitMock.revparse.mockResolvedValue("hash");
   gitMock.env.mockImplementation(() => gitMock);
   gitMock.branchLocal.mockResolvedValue({ current: "main", all: ["main"] });
   gitMock.checkIsRepo.mockResolvedValue(false);
@@ -174,7 +176,7 @@ describe("clone command", () => {
   });
 
   it("checks out an explicit branch", async () => {
-    gitMock.branchLocal.mockResolvedValue({ current: "develop", all: ["develop"] });
+    gitMock.raw.mockImplementation((args: string[]) => args.includes("--abbrev-ref") ? Promise.resolve("develop\n") : fakeClone(args));
 
     const result = await cloneRepository({
       cloneUrl: CLONE_URL,
@@ -266,7 +268,7 @@ describe("reuse fetch", () => {
     });
 
     expect(result.reused).toBe(true);
-    expect(rawCalls()).toEqual([["fetch", "origin"]]);
+    expect(rawCalls()).toEqual([["fetch", "origin", "--prune"]]);
     expect(gitMock.env).toHaveBeenCalledWith(
       expect.objectContaining({ GIT_TERMINAL_PROMPT: "0" })
     );
@@ -279,9 +281,11 @@ describe("reuse fetch", () => {
     // A private repository Arij cloned has no credentials of its own on disk:
     // without the stored PAT its re-import would fail.
     existingCloneAt([{ name: "origin", url: CLONE_URL }]);
-    gitMock.raw
-      .mockRejectedValueOnce(new Error("remote: Repository not found."))
-      .mockResolvedValue("");
+    let fetchAttempts = 0;
+    gitMock.raw.mockImplementation(async (args: string[]) => {
+      if (args.includes("fetch") && ++fetchAttempts === 1) throw new Error("remote: Repository not found.");
+      return "main";
+    });
 
     const result = await cloneRepository({
       cloneUrl: CLONE_URL,
@@ -294,7 +298,7 @@ describe("reuse fetch", () => {
     expect(rawCalls()).toHaveLength(2);
     expect(decodedCredentials(rawCalls()[0])).toBeNull();
     expect(decodedCredentials(rawCalls()[1])).toBe(`x-access-token:${PAT}`);
-    expect(rawCalls()[1].slice(2)).toEqual(["fetch", "origin"]);
+    expect(rawCalls()[1].slice(2)).toEqual(["fetch", "origin", "--prune"]);
   });
 
   it("reuses an ssh clone of the same GitHub repository", async () => {

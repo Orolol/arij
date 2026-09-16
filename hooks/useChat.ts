@@ -1,223 +1,141 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createId } from "@/lib/utils/nanoid";
 import type { QuestionData } from "@/lib/claude/spawn";
+import { fetchChatHistory, streamChatMessage, type ChatMessage, type ChatSendResult } from "@/lib/chat/client";
 
-export interface ChatAttachment {
-  id: string;
-  fileName: string;
-  mimeType: string;
-  url: string;
+export type { ChatAttachment, ChatMessage, ChatSendResult } from "@/lib/chat/client";
+
+interface ChatState {
+  messages: ChatMessage[];
+  loading: boolean;
+  sending: boolean;
+  error: string | null;
+  pendingQuestions: QuestionData[] | null;
+  streamStatus: string | null;
 }
 
-export interface ChatMessage {
-  id: string;
-  projectId: string;
-  role: "user" | "assistant";
-  content: string;
-  metadata?: string;
-  attachments?: ChatAttachment[];
-  createdAt: string;
+function emptyChat(loading: boolean): ChatState {
+  return { messages: [], loading, sending: false, error: null, pendingQuestions: null, streamStatus: null };
 }
 
-export function useChat(projectId: string, conversationId: string | null) {
+interface ActiveStream {
+  controller: AbortController;
+  awaitingAnswer: boolean;
+  pendingQuestions: QuestionData[] | null;
+}
+
+export function useChat(projectId: string, conversationId: string | null, conversationStatus?: string | null) {
   const tErrors = useTranslations("ClientErrors");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [pendingQuestions, setPendingQuestions] = useState<QuestionData[] | null>(null);
-  const [streamStatus, setStreamStatus] = useState<string | null>(null);
+  const scope = JSON.stringify([projectId, conversationId]);
+  // Conversation state survives navigation while its stream continues. Keeping
+  // it here avoids rebuilding visible questions/progress from refs in an effect.
+  const [states, setStates] = useState<Record<string, ChatState>>({});
+  const state = states[scope] ?? emptyChat(Boolean(conversationId));
+  const streams = useRef(new Map<string, ActiveStream>());
+  const historyLoads = useRef(new Map<string, object>());
+  const update = useCallback((change: (current: ChatState) => ChatState) => {
+    setStates((current) => ({ ...current, [scope]: change(current[scope] ?? emptyChat(Boolean(conversationId))) }));
+  }, [scope, conversationId]);
 
-  // Track the conversation that owns the current stream so state updates
-  // from a stale stream (after the user switches tabs) are ignored.
-  const activeConvRef = useRef(conversationId);
-  activeConvRef.current = conversationId;
-
-  // AbortController for the in-flight fetch, plus the conversation it belongs to
-  // so a send in another conversation never cancels it.
-  const abortRef = useRef<AbortController | null>(null);
-  const abortOwnerRef = useRef<string | null>(null);
-
-  // When the active conversation changes, reset transient UI state so the new
-  // conversation starts with a clean slate (not blocked by the previous stream).
-  useEffect(() => {
-    setSending(false);
-    setPendingQuestions(null);
-    setStreamStatus(null);
-    setError(null);
-  }, [conversationId]);
-
-  const loadMessages = useCallback(async () => {
-    if (!conversationId) {
-      setMessages([]);
-      return;
-    }
-    setLoading(true);
-    try {
-      const url = `/api/projects/${projectId}/chat?conversationId=${conversationId}`;
-      const res = await fetch(url);
-      const data = await res.json();
-      setMessages(data.data || []);
-    } catch {
-      // ignore
-    }
-    setLoading(false);
-  }, [projectId, conversationId]);
+  const loadMessages = useCallback(() => {
+    if (!conversationId) return Promise.resolve();
+    const request = {};
+    historyLoads.current.set(scope, request);
+    return fetchChatHistory(`/api/projects/${projectId}/chat?conversationId=${conversationId}`,
+      tErrors("unableToLoadTheConversationTryAgain")).then((result) => {
+      if (historyLoads.current.get(scope) !== request) return;
+      historyLoads.current.delete(scope);
+      update((current) => result.error === null
+        ? { ...current, messages: result.data, loading: false, error: null }
+        : { ...current, loading: false, error: result.error });
+    });
+  }, [projectId, conversationId, scope, update, tErrors]);
 
   useEffect(() => {
-    loadMessages();
-  }, [loadMessages]);
+    if (!streams.current.has(scope)) void loadMessages();
+  }, [loadMessages, scope]);
+  const previousStatus = useRef(conversationStatus);
+  useEffect(() => {
+    // Also catch up when a background turn finishes after this hook remounted.
+    if (previousStatus.current !== conversationStatus && !streams.current.has(scope)) void loadMessages();
+    previousStatus.current = conversationStatus;
+  }, [loadMessages, conversationStatus, scope]);
 
   const sendMessage = useCallback(
-    async (content: string, attachmentIds?: string[], options?: { finalize?: boolean }) => {
-      // Capture the conversation this send belongs to so we can guard state updates.
-      const ownerConversationId = conversationId;
+    async (content: string, attachmentIds?: string[], options?: { finalize?: boolean }): Promise<ChatSendResult> => {
+      if (!conversationId) return { accepted: false, error: null };
+      const previous = streams.current.get(scope);
+      if (previous && !previous.awaitingAnswer) return { accepted: false, error: null };
+      previous?.controller.abort();
+      const stream: ActiveStream = { controller: new AbortController(), awaitingAnswer: false, pendingQuestions: null };
+      streams.current.set(scope, stream);
+      historyLoads.current.delete(scope);
+      const updateStream = (change: (current: ChatState) => ChatState) => {
+        if (streams.current.get(scope) === stream) update(change);
+      };
+      const userTempId = `temp-user-${createId()}`;
+      const assistantTempId = `temp-assistant-${createId()}`;
+      const createdAt = new Date().toISOString();
+      updateStream((current) => ({
+        ...current, sending: true, loading: false, pendingQuestions: null, streamStatus: null, error: null,
+        messages: [...current.messages,
+          { id: userTempId, projectId, role: "user", content, createdAt },
+          { id: assistantTempId, projectId, role: "assistant", content: "", createdAt },
+        ],
+      }));
 
-      // Abort the previous stream only when it belongs to the same conversation.
-      // Aborting across conversations makes the server cancel a generation the
-      // user never cancelled, and its reply is then never persisted.
-      if (abortOwnerRef.current === ownerConversationId) {
-        abortRef.current?.abort();
-      }
-      const controller = new AbortController();
-      abortRef.current = controller;
-      abortOwnerRef.current = ownerConversationId;
-
-      // Helper: only update state if this conversation is still the active one.
-      // This prevents a slow-finishing stream from clobbering the new conversation.
-      const isStale = () => activeConvRef.current !== ownerConversationId;
-
-      setSending(true);
-      setPendingQuestions(null);
-      setStreamStatus(null);
-      setError(null);
-
-      // Optimistically add user message + empty assistant placeholder
-      const userTempId = `temp-user-${Date.now()}`;
-      const assistantTempId = `temp-assistant-${Date.now()}`;
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: userTempId,
-          projectId,
-          role: "user",
-          content,
-          createdAt: new Date().toISOString(),
-        },
-        {
-          id: assistantTempId,
-          projectId,
-          role: "assistant",
-          content: "",
-          createdAt: new Date().toISOString(),
-        },
-      ]);
-
-      try {
-        const res = await fetch(`/api/projects/${projectId}/chat/stream`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content, conversationId: ownerConversationId, attachmentIds, finalize: options?.finalize }),
-          signal: controller.signal,
-        });
-
-        if (!res.ok || !res.body) {
-          const payload = await res.json().catch(() => ({}));
-          throw new Error(payload.error || tErrors("streamRequestFailed"));
-        }
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          // Keep draining even when the user switched away: stopping here leaves
-          // the response unread, the server-side stream gets cancelled and the
-          // assistant reply is lost. Per-event `isStale()` guards below keep the
-          // other conversation's UI untouched.
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const payload = line.slice(6);
-            try {
-              const event = JSON.parse(payload);
-              if (isStale()) continue;
-
-              if (event.status) {
-                setStreamStatus(event.status);
-              }
-              if (event.delta) {
-                setStreamStatus(null);
-                setMessages((prev) =>
-                  prev.map((m) =>
-                    m.id === assistantTempId
-                      ? { ...m, content: m.content + event.delta }
-                      : m
-                  )
-                );
-              }
-              if (event.questions) {
-                setPendingQuestions(event.questions);
-                // Allow user to interact with question cards
-                setSending(false);
-                setStreamStatus(null);
-              }
-              if (event.done) {
-                // Reload to sync real IDs from DB
-                await loadMessages();
-              }
-            } catch {
-              // ignore malformed event
-            }
+      // Switching tabs does not cancel the response: cancelling it can kill
+      // server-side generation. All events update their owning conversation.
+      const result = await streamChatMessage(`/api/projects/${projectId}/chat/stream`,
+        { content, conversationId, attachmentIds, finalize: options?.finalize }, stream.controller.signal,
+        async (event) => {
+          if (event.status) updateStream((current) => ({ ...current, streamStatus: event.status ?? null }));
+          if (event.delta) updateStream((current) => ({ ...current, streamStatus: null,
+            messages: current.messages.map((message) => message.id === assistantTempId
+              ? { ...message, content: message.content + event.delta } : message),
+          }));
+          if (event.questions) {
+            stream.awaitingAnswer = true;
+            stream.pendingQuestions = event.questions;
+            updateStream((current) => ({ ...current, pendingQuestions: event.questions ?? null,
+              sending: false, streamStatus: null }));
           }
-        }
-      } catch (err) {
-        // Don't touch state if aborted due to conversation switch
-        if (err instanceof DOMException && err.name === "AbortError") return;
+          if (event.done && streams.current.get(scope) === stream) await loadMessages();
+        }, { request: tErrors("streamRequestFailed"), send: tErrors("failedToSendMessage") });
 
-        if (!isStale()) {
-          // Remove optimistic messages on error
-          setMessages((prev) =>
-            prev.filter((m) => m.id !== userTempId && m.id !== assistantTempId)
-          );
-          setError(err instanceof Error ? err.message : tErrors("failedToSendMessage"));
+      if (result.error) {
+        if (!result.accepted && previous?.pendingQuestions) {
+          stream.awaitingAnswer = true;
+          stream.pendingQuestions = previous.pendingQuestions;
         }
+        // Accepted requests already own the user message and its images. Sync
+        // that durable history without turning it back into an unsent draft.
+        if (result.accepted && streams.current.get(scope) === stream) await loadMessages();
+        updateStream((current) => ({ ...current, pendingQuestions: stream.pendingQuestions,
+          messages: current.messages.filter((message) =>
+            (result.accepted || message.id !== userTempId) && message.id !== assistantTempId),
+          error: result.error,
+        }));
       }
-      if (!isStale()) {
-        setSending(false);
-        setStreamStatus(null);
-      }
+      updateStream((current) => ({ ...current, sending: false, streamStatus: null }));
+      // Questions remain actionable after SSE closes, until the next answer.
+      if (streams.current.get(scope) === stream && !stream.awaitingAnswer) streams.current.delete(scope);
+      return result;
     },
-    [projectId, conversationId, loadMessages, tErrors]
+    [projectId, conversationId, scope, update, loadMessages, tErrors],
   );
 
-  const answerQuestions = useCallback(
-    (formatted: string) => {
-      sendMessage(formatted);
-    },
-    [sendMessage],
-  );
+  const setMessages = useCallback((action: React.SetStateAction<ChatMessage[]>) => {
+    update((current) => ({ ...current, messages: typeof action === "function" ? action(current.messages) : action }));
+  }, [update]);
+  const answerQuestions = useCallback((formatted: string) => { void sendMessage(formatted); }, [sendMessage]);
 
   return {
-    messages,
-    setMessages,
-    loading,
-    sending,
-    error,
-    pendingQuestions,
-    streamStatus,
-    sendMessage,
-    answerQuestions,
-    refresh: loadMessages,
+    messages: state.messages, setMessages, loading: state.loading,
+    sending: state.sending, error: state.error, pendingQuestions: state.pendingQuestions,
+    streamStatus: state.streamStatus, sendMessage, answerQuestions, refresh: loadMessages,
   };
 }

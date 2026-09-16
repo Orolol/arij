@@ -1,7 +1,5 @@
 "use client";
 
-import * as React from "react";
-import { useRef, useState } from "react";
 import { ImagePlus, Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 
@@ -14,7 +12,7 @@ import {
 } from "@/components/shared/AgentSelectPill";
 import { ImageAttachmentStrip } from "@/components/shared/ImageAttachmentStrip";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { useImageAttachments } from "@/hooks/useImageAttachments";
+import { useChatComposer, type ChatSend } from "@/hooks/useChatComposer";
 import type { DeskProject } from "@/lib/control-desk/types";
 import { cn } from "@/lib/utils";
 
@@ -42,6 +40,7 @@ import { cn } from "@/lib/utils";
  */
 export interface ChatComposerProps {
   projectId: string | null;
+  conversationId?: string | null;
   projects: readonly DeskProject[];
   project: DeskProject | null;
   onSelectProject: (projectId: string) => void;
@@ -53,11 +52,12 @@ export interface ChatComposerProps {
   /** The active provider cannot take images (OpenAI-compatible fast mode). */
   attachmentsDisabled?: boolean;
   disabled?: boolean;
-  onSend: (content: string, attachmentIds: string[]) => void;
+  onSend: ChatSend;
 }
 
 export function ChatComposer({
   projectId,
+  conversationId,
   projects,
   project,
   onSelectProject,
@@ -65,58 +65,15 @@ export function ChatComposer({
   onSelectAgent,
   agentLocked,
   attachmentsDisabled = false,
-  disabled = false,
+  disabled: parentDisabled = false,
   onSend,
 }: ChatComposerProps) {
   const t = useTranslations("Chat");
-  const [value, setValue] = useState("");
-  const composingRef = useRef(false);
-
   const {
-    attachments,
-    uploading,
-    fileInputProps,
-    openFilePicker,
-    handlePaste,
-    remove: removeAttachment,
-    clear: clearAttachments,
-  } = useImageAttachments({
-    projectId: projectId ?? "",
-    disabled: attachmentsDisabled,
-  });
-
-  const effectiveAttachments = attachmentsDisabled ? [] : attachments;
-
-  function handleSubmit() {
-    const trimmed = value.trim();
-    if (
-      (!trimmed && effectiveAttachments.length === 0) ||
-      disabled ||
-      uploading
-    ) {
-      return;
-    }
-    onSend(
-      trimmed,
-      effectiveAttachments.map((attachment) => attachment.id),
-    );
-    setValue("");
-    if (!attachmentsDisabled) {
-      // clear(), not discardAll(): the uploads are now owned by the message
-      // that was sent, so the files stay on disk.
-      clearAttachments();
-    }
-  }
-
-  function handleKeyDown(event: React.KeyboardEvent) {
-    if (event.key !== "Enter") return;
-    // Shift+Enter is a newline — let the textarea have it.
-    if (event.shiftKey) return;
-    // Never swallow Enter while an IME candidate window is open.
-    if (composingRef.current || event.nativeEvent.isComposing) return;
-    event.preventDefault();
-    handleSubmit();
-  }
+    value, setValue, attachments: effectiveAttachments, uploading, error,
+    fileInputProps, openFilePicker, handlePaste, removeAttachment,
+    handleKeyDown, onCompositionStart, onCompositionEnd, disabled,
+  } = useChatComposer({ projectId, conversationId, onSend, disabled: parentDisabled, attachmentsDisabled });
 
   return (
     /*
@@ -152,6 +109,7 @@ export function ChatComposer({
         628px desktop band stays one row, so the 1280 and 1440 frames are
         untouched; a 372px band at 1024 now wraps instead of pretending.
       */}
+      {error && <p role="alert" className="px-[18px] pb-1 text-[12px] text-destructive">{error}</p>}
       <StrataBand
         stratum="feed"
         gap={13}
@@ -181,12 +139,8 @@ export function ChatComposer({
             onValueChange={setValue}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            onCompositionStart={() => {
-              composingRef.current = true;
-            }}
-            onCompositionEnd={() => {
-              composingRef.current = false;
-            }}
+            onCompositionStart={onCompositionStart}
+            onCompositionEnd={onCompositionEnd}
             placeholder={t("composer.placeholder")}
             aria-label={t("composer.label")}
             data-testid="chat-composer-input"

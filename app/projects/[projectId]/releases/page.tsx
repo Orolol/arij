@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
+import { useTranslations } from "next-intl";
 
-import { projectTone } from "@/components/piscine";
-import { ToastStack } from "@/components/notifications/ToastStack";
-import { useToastStack } from "@/components/notifications/useToastStack";
+import { PillButton, projectTone, projectToneIndex } from "@/components/piscine";
+import { ToastStack } from "@/components/toast/ToastStack";
+import { useToastStack } from "@/components/toast/useToastStack";
 import { NextReleaseBand } from "@/components/releases/NextReleaseBand";
 import { ReleaseHeaderCluster } from "@/components/releases/ReleaseHeaderCluster";
 import { ReleaseHistory } from "@/components/releases/ReleaseHistory";
@@ -15,7 +16,6 @@ import {
   buildChangelogPreview,
   nextPatchVersion,
   parseEpicIds,
-  projectToneIndex,
   releaseState,
   versionBumps,
   type ReleaseEpic,
@@ -36,11 +36,18 @@ interface ProjectRecord {
 export default function ReleasesPage() {
   const params = useParams();
   const projectId = params.projectId as string;
+  return <ProjectReleases key={projectId} projectId={projectId} />;
+}
 
+function ProjectReleases({ projectId }: { projectId: string }) {
+  const t = useTranslations("Releases");
   const [releases, setReleases] = useState<ReleaseRow[]>([]);
   const [allEpics, setAllEpics] = useState<ReleaseEpic[]>([]);
   const [project, setProject] = useState<ProjectRecord | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const readSeq = useRef(0);
+  const creatingRef = useRef(false);
   const { toasts, raise: showToast, dismiss: dismissToast } = useToastStack();
 
   // GitHub config. `isConfigured` reads the MASKED settings shape
@@ -77,46 +84,34 @@ export default function ReleasesPage() {
     ? namedAgents.find((a) => a.id === namedAgentId)?.provider
     : undefined;
 
-  // Shared by the mount fetch and by `loadData`, so the effect only ever
-  // updates state from a promise callback instead of synchronously.
-  const applyData = useCallback(
-    (
-      releasesData: { data?: unknown },
-      epicsData: { data?: unknown },
-      projectData: { data?: unknown }
-    ) => {
-      setReleases((releasesData.data || []) as ReleaseRow[]);
-      setAllEpics((epicsData.data || []) as ReleaseEpic[]);
-      setProject((projectData.data || null) as ProjectRecord | null);
-      setLoading(false);
-    },
-    []
-  );
-
-  const fetchData = useCallback(
-    () =>
-      Promise.all([
-        fetch(`/api/projects/${projectId}/releases`).then((r) => r.json()),
-        fetch(`/api/projects/${projectId}/epics`).then((r) => r.json()),
-        fetch(`/api/projects/${projectId}`).then((r) => r.json()),
-      ]),
-    [projectId]
-  );
-
   const loadData = useCallback(async () => {
-    const [releasesData, epicsData, projectData] = await fetchData();
-    applyData(releasesData, epicsData, projectData);
-  }, [fetchData, applyData]);
+    const request = ++readSeq.current;
+    const payloads = await Promise.all([
+      `/api/projects/${projectId}/releases`,
+      `/api/projects/${projectId}/epics`,
+      `/api/projects/${projectId}`,
+    ].map(async (url) => {
+      const response = await fetch(url);
+      return response.ok ? response.json() : null;
+    })).catch(() => null);
+    if (request !== readSeq.current) return;
+    if (!payloads || !Array.isArray(payloads[0]?.data) ||
+        !Array.isArray(payloads[1]?.data) || !payloads[2]?.data) {
+      setLoadError(t("feedback.loadFailed"));
+    } else {
+      setReleases(payloads[0].data);
+      setAllEpics(payloads[1].data);
+      setProject(payloads[2].data);
+      setLoadError(null);
+    }
+    setLoading(false);
+  }, [projectId, t]);
 
   useEffect(() => {
-    let cancelled = false;
-    void fetchData().then(([releasesData, epicsData, projectData]) => {
-      if (!cancelled) applyData(releasesData, epicsData, projectData);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [fetchData, applyData]);
+    let active = true;
+    void Promise.resolve().then(() => { if (active) void loadData(); });
+    return () => { active = false; readSeq.current += 1; };
+  }, [loadData]);
 
   // Both halves matter: the second is what stops an already-released ticket
   // from being offered again.
@@ -175,7 +170,8 @@ export default function ReleasesPage() {
   }, [inspectRelease, epicById]);
 
   async function handleCreateRelease() {
-    if (!version.trim() || selectedEpicIds.size === 0) return;
+    if (!version.trim() || selectedEpicIds.size === 0 || creatingRef.current) return;
+    creatingRef.current = true;
     setCreating(true);
 
     const res = await fetch(`/api/projects/${projectId}/releases`, {
@@ -192,11 +188,11 @@ export default function ReleasesPage() {
         resumeSessionId,
         namedAgentId: namedAgentId || undefined,
       }),
-    });
+    }).catch(() => null);
 
-    const json = await res.json().catch(() => ({}));
+    const json = res ? await res.json().catch(() => ({})) : {};
 
-    if (res.ok) {
+    if (res?.ok) {
       setVersionOverride(null);
       setCheckOverrides(new Map());
       setPushToGitHub(false);
@@ -213,17 +209,18 @@ export default function ReleasesPage() {
       if (githubErrors.length > 0) {
         showToast(
           "error",
-          "Release v" + version.trim() + " created, but GitHub sync failed: " + githubErrors[0]
+          t("feedback.githubFailed", { version: version.trim(), error: githubErrors[0] }),
         );
       } else {
-        showToast("success", "Release v" + version.trim() + " created");
+        showToast("success", t("feedback.created", { version: version.trim() }));
       }
       loadData();
     } else {
-      showToast("error", json.error || "Failed to create release");
+      showToast("error", json.error || t("feedback.createFailed"));
     }
 
     setCreating(false);
+    creatingRef.current = false;
   }
 
   async function handlePublish(release: ReleaseRow) {
@@ -265,6 +262,15 @@ export default function ReleasesPage() {
         branch={branch}
         enabled={hasRepo}
       />
+
+      {loadError && (
+        <div role="alert" className="flex items-center gap-3 px-[14px] py-2">
+          <span>{loadError}</span>
+          <PillButton variant="outline" onClick={() => void loadData()}>
+            {t("feedback.retry")}
+          </PillButton>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1 gap-[12px] px-[14px] pb-[14px]">
         <NextReleaseBand

@@ -6,8 +6,8 @@ import {
 import {
   buildBuildPrompt,
   buildTicketBuildPrompt,
-  VISUAL_PROOF_SECTION,
 } from "@/lib/claude/prompt-builder";
+import { VISUAL_PROOF_SECTION } from "@/lib/claude/prompt-sections";
 import {
   isVisualProofEnabled,
   parseVisualProofEnabledSetting,

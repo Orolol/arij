@@ -68,25 +68,6 @@ describe("Prompt builders with agent-config system prompts", () => {
     ).toContain("Fix this ticket");
   });
 
-  it("supports custom review agent prompts", () => {
-    const prompt = buildReviewPrompt(
-      project,
-      docs,
-      epic,
-      story,
-      {
-        name: "UI Review",
-        systemPrompt: "Focus on visual hierarchy and copy clarity.",
-      },
-      "Follow project constraints"
-    );
-
-    expect(prompt).toContain("Follow project constraints");
-    expect(prompt).toContain("Custom Review Agent Instructions");
-    expect(prompt).toContain("UI Review");
-    expect(prompt).toContain("visual hierarchy");
-  });
-
   it("keeps built-in review checklists available", () => {
     const prompt = buildReviewPrompt(
       project,

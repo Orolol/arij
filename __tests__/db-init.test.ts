@@ -8,9 +8,9 @@
  *  - ad-hoc-bootstrapped database    -> chain applies around existing objects
  */
 
-import Database from "better-sqlite3";
 import fs from "fs";
 import os from "os";
+import Database from "better-sqlite3";
 import path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { getTableColumns, getTableName, is } from "drizzle-orm";
@@ -23,6 +23,7 @@ import {
   initDb,
 } from "@/lib/db/init";
 import * as schema from "@/lib/db/schema";
+import { appliedMigrationTimestamps, columnNames, tableNames, tempDbPath, withDb } from "./helpers/migration";
 
 const MIGRATIONS_FOLDER = path.join(process.cwd(), "lib", "db", "migrations");
 
@@ -51,49 +52,6 @@ afterEach(() => {
     fs.rmSync(tempDirs.pop() as string, { recursive: true, force: true });
   }
 });
-
-function tempDbPath(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "arij-init-test-"));
-  tempDirs.push(dir);
-  return path.join(dir, "arij.db");
-}
-
-function withDb<T>(file: string, fn: (conn: Database.Database) => T): T {
-  const conn = new Database(file);
-  try {
-    return fn(conn);
-  } finally {
-    conn.close();
-  }
-}
-
-function tableNames(conn: Database.Database): string[] {
-  return (
-    conn
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name",
-      )
-      .all() as { name: string }[]
-  ).map((row) => row.name);
-}
-
-function columnNames(conn: Database.Database, table: string): string[] {
-  return (
-    conn.prepare("SELECT name FROM pragma_table_info(?)").all(table) as {
-      name: string;
-    }[]
-  ).map((row) => row.name);
-}
-
-function appliedMigrationTimestamps(conn: Database.Database): number[] {
-  return (
-    conn
-      .prepare(
-        'SELECT created_at FROM "__drizzle_migrations" ORDER BY created_at',
-      )
-      .all() as { created_at: number }[]
-  ).map((row) => Number(row.created_at));
-}
 
 function seedRows(conn: Database.Database) {
   return conn
@@ -263,7 +221,6 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE projects DROP COLUMN default_branch");
       conn.exec("ALTER TABLE chat_attachments DROP COLUMN project_id");
       conn.exec("ALTER TABLE chat_attachments DROP COLUMN epic_id");
-      conn.exec("ALTER TABLE notifications DROP COLUMN message");
       // 0042 indexes this column, and SQLite refuses to drop a column an
       // index still references. The replay re-creates the index.
       conn.exec("DROP INDEX IF EXISTS review_comments_session_idx");
@@ -281,6 +238,9 @@ describe("initDb", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
+      applyLegacyAdHocDdl(conn);
+      if (columnNames(conn, "notifications").includes("message")) conn.exec("ALTER TABLE notifications DROP COLUMN message");
     });
 
     withDb(file, (conn) => {
@@ -300,7 +260,6 @@ describe("initDb", () => {
       expect(columnNames(conn, "projects")).toContain("default_branch");
       expect(columnNames(conn, "chat_attachments")).toContain("project_id");
       expect(columnNames(conn, "chat_attachments")).toContain("epic_id");
-      expect(columnNames(conn, "notifications")).toContain("message");
       expect(columnNames(conn, "agent_sessions")).toContain("review_verdict");
       expect(columnNames(conn, "named_agents")).toContain("options");
       expect(columnNames(conn, "named_agents")).toContain("persona_prompt");
@@ -369,7 +328,6 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE projects DROP COLUMN default_branch");
       conn.exec("ALTER TABLE chat_attachments DROP COLUMN project_id");
       conn.exec("ALTER TABLE chat_attachments DROP COLUMN epic_id");
-      conn.exec("ALTER TABLE notifications DROP COLUMN message");
       // 0042 indexes this column, and SQLite refuses to drop a column an
       // index still references. The replay re-creates the index.
       conn.exec("DROP INDEX IF EXISTS review_comments_session_idx");
@@ -387,6 +345,9 @@ describe("initDb", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
+      applyLegacyAdHocDdl(conn);
+      if (columnNames(conn, "notifications").includes("message")) conn.exec("ALTER TABLE notifications DROP COLUMN message");
       conn.exec("DROP TABLE ticket_read_cursors");
     });
 
@@ -420,14 +381,15 @@ describe("initDb", () => {
 
     withDb(file, (conn) => {
       applyLegacyAdHocDdl(conn);
-      expect(tableNames(conn)).toEqual([
-        "notification_read_cursor",
-        "notifications",
-        "ticket_activity_log",
-      ]);
+      // The bootstrap DDL also created the notifications tables; migration
+      // 0060 drops them again, so the state the migrator inherits is the
+      // activity log alone.
+      expect(tableNames(conn)).toContain("ticket_activity_log");
 
       initDb(conn);
 
+      expect(tableNames(conn)).not.toContain("notifications");
+      expect(tableNames(conn)).not.toContain("notification_read_cursor");
       expectFullSchema(conn);
       expect(appliedMigrationTimestamps(conn)).toHaveLength(TOTAL_MIGRATIONS);
       expect(seedRows(conn)).toHaveLength(1);
@@ -504,7 +466,6 @@ describe("migration journal", () => {
         .run(entry!.when);
       conn.exec("ALTER TABLE chat_attachments DROP COLUMN project_id");
       conn.exec("ALTER TABLE chat_attachments DROP COLUMN epic_id");
-      conn.exec("ALTER TABLE notifications DROP COLUMN message");
       // 0042 indexes this column, and SQLite refuses to drop a column an
       // index still references. The replay re-creates the index.
       conn.exec("DROP INDEX IF EXISTS review_comments_session_idx");
@@ -522,6 +483,9 @@ describe("migration journal", () => {
       // no-op the second time.
       conn.exec("ALTER TABLE named_agents DROP COLUMN kind");
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
+      conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
+      applyLegacyAdHocDdl(conn);
+      if (columnNames(conn, "notifications").includes("message")) conn.exec("ALTER TABLE notifications DROP COLUMN message");
 
       expect(() => initDb(conn)).not.toThrow();
 

@@ -2,11 +2,9 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
+import { PillButton, Stamp, type StampTone, SurfaceCard } from "@/components/piscine";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
-import { Card } from "@/components/ui/card";
 import { Trash2 } from "lucide-react";
 import type { ImportData } from "@/components/import/types";
 
@@ -57,12 +55,12 @@ export function ImportPreview({
     setEditData(updated);
   }
 
-  const statusColor: Record<string, string> = {
-    done: "bg-green-500/10 text-green-500",
-    in_progress: "bg-yellow-500/10 text-yellow-500",
-    backlog: "bg-muted text-muted-foreground",
-    todo: "bg-blue-500/10 text-blue-500",
-  };
+  function importStatusTone(status: string): StampTone {
+    if (status === "done") return "land";
+    if (status === "in_progress") return "live";
+    if (status === "todo") return "next";
+    return "asks";
+  }
 
   return (
     <div className="space-y-6">
@@ -102,74 +100,75 @@ export function ImportPreview({
             // crash the whole app (no error boundary) on such a preview.
             const stories = epic.user_stories ?? [];
             return (
-            <Card key={ei} className="p-4">
+            <SurfaceCard key={ei} radius={12} className="p-4">
               <div className="flex items-start gap-2 mb-2">
                 <Input
                   value={epic.title}
                   onChange={(e) => updateEpic(ei, "title", e.target.value)}
                   className="flex-1"
                 />
-                <Badge className={statusColor[epic.status] || ""}>
+                <Stamp tone={importStatusTone(epic.status)}>
                   {epic.status}
-                </Badge>
+                </Stamp>
                 {epic.confidence != null && (
                   <span className="text-xs text-muted-foreground whitespace-nowrap">
                     {Math.round(epic.confidence * 100)}%
                   </span>
                 )}
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0"
+                <button
+                  type="button"
+                  className="shrink-0 p-1 rounded-md text-muted-foreground hover:text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring"
                   onClick={() => removeEpic(ei)}
+                  aria-label={t("preview.removeEpic")}
                 >
                   <Trash2 className="h-4 w-4" />
-                </Button>
+                </button>
               </div>
               {stories.length > 0 && (
                 <div className="ml-4 space-y-1">
                   {stories.map((us, usi) => (
                     <div key={usi} className="flex items-center gap-2 text-sm">
-                      <Badge
-                        variant="outline"
-                        className={`text-xs ${statusColor[us.status] || ""}`}
-                      >
+                      <Stamp tone={importStatusTone(us.status)}>
                         {us.status}
-                      </Badge>
+                      </Stamp>
                       <span className="flex-1">{us.title}</span>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-6 w-6"
+                      <button
+                        type="button"
+                        className="p-1 rounded-md text-muted-foreground hover:text-foreground outline-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-ring"
                         onClick={() => removeUS(ei, usi)}
+                        aria-label={t("preview.removeStory")}
                       >
                         <Trash2 className="h-3 w-3" />
-                      </Button>
+                      </button>
                     </div>
                   ))}
                 </div>
               )}
-            </Card>
+            </SurfaceCard>
             );
           })}
         </div>
       </div>
 
       <div className="flex gap-2">
-        <Button onClick={() => onValidate(editData)} disabled={busy || locked}>
+        <PillButton
+          variant="filled"
+          onClick={() => onValidate(editData)}
+          disabled={busy || locked}
+        >
           {busy
             ? t("preview.importing")
             : locked
               ? t("preview.alreadyImported")
               : t("preview.validate")}
-        </Button>
-        <Button
+        </PillButton>
+        <PillButton
           variant="outline"
           onClick={onCancel}
           disabled={cancelDisabled}
         >
           {t("preview.cancel")}
-        </Button>
+        </PillButton>
       </div>
     </div>
   );

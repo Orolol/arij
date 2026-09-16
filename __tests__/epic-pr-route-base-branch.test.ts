@@ -36,7 +36,7 @@ vi.mock("@/lib/github/pull-requests", () => ({
 }));
 
 vi.mock("@/lib/github/sync-log", () => ({
-  writeGitSyncLog: mockWriteGitSyncLog,
+  logSyncOperation: mockWriteGitSyncLog,
 }));
 
 const prResult = {

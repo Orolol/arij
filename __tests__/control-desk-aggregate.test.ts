@@ -410,6 +410,17 @@ describe("ready to land", () => {
     expect(heldBackCount).toBe(0);
   });
 
+  it("respects each project's queue position instead of alphabetizing ticket ids", () => {
+    const epics = [
+      { ...ready, id: "early-id", readableId: "ARJ-1", position: 8 },
+      { ...ready, id: "late-id", readableId: "ARJ-20", position: 0 },
+      { ...ready, id: "other-project", projectId: "p2", position: 0 },
+    ];
+    const { rows } = deriveReadyToLand(epics, new Set());
+    expect(rows.map((row) => row.epicId)).toEqual(["late-id", "early-id", "other-project"]);
+    expect(epics.map((epic) => epic.position)).toEqual([8, 0, 0]);
+  });
+
   it("counts a blocked to_merge ticket as held back instead of listing it", () => {
     const blocked = {
       ...ready,
@@ -580,5 +591,31 @@ describe("up next", () => {
     expect(rows[0].tickets[0].specOnly).toBe(true);
     // A bug's creation flow has no stories by design — it is not "missing" one.
     expect(rows[0].tickets[1].specOnly).toBe(false);
+  });
+});
+
+
+describe("chronological desk order", () => {
+  it("uses creation instants for project colors and session instants for working rows", () => {
+    const projects = deriveProjects([
+      { id: "new", name: "New", createdAt: "2026-08-28 10:00:00" },
+      { id: "old", name: "Old", createdAt: "2026-08-28T09:00:00.000Z" },
+    ]);
+    expect(projects.map((row) => [row.id, row.colorIndex])).toEqual([["old", 0], ["new", 1]]);
+    const working = deriveWorking([
+      session({ id: "new", startedAt: "2026-08-28 10:00:00" }),
+      session({ id: "old", startedAt: "2026-08-28T09:00:00.000Z" }),
+      session({ id: "undated", startedAt: null, createdAt: null }),
+    ]);
+    expect(working.map((row) => row.sessionId)).toEqual(["old", "new", "undated"]);
+    expect(working[2].startedAt).toBe("");
+  });
+
+  it("surfaces the newest question across mixed timestamp formats", () => {
+    const rows = deriveAwaitingReply([
+      epic({ id: "old", latestSessionOutcome: "asked_question", latestSessionEndedAt: "2026-08-28T09:00:00.000Z" }),
+      epic({ id: "new", latestSessionOutcome: "asked_question", latestSessionEndedAt: "2026-08-28 10:00:00" }),
+    ]);
+    expect(rows.map((row) => row.epicId)).toEqual(["new", "old"]);
   });
 });

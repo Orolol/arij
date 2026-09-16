@@ -88,4 +88,14 @@ describe("isAwaitingReply", () => {
       })
     ).toBe(false);
   });
+  it("keeps equal instants unanswered regardless of fractional precision or timezone", () => {
+    for (const replied of ["2026-08-16T09:00:00Z", "2026-08-16T11:00:00.000+02:00"]) {
+      expect(isAwaitingReply({
+        latestSessionOutcome: "asked_question",
+        latestSessionEndedAt: "2026-08-16 09:00:00",
+        latestUserCommentCreatedAt: replied,
+      })).toBe(true);
+    }
+  });
+
 });

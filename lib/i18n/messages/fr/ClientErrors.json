@@ -1,0 +1,14 @@
+{
+  "failedToLoadDependencies": "Impossible de charger les dépendances",
+  "failedToLoadPR": "Impossible de charger la pull request",
+  "errorTitle": "Une erreur est survenue",
+  "errorDescription": "Une exception client inattendue s'est produite. Vous pouvez réessayer ou revenir au poste de pilotage.",
+  "tryAgain": "Réessayer",
+  "backToDesk": "Retour au poste de pilotage",
+  "notFoundTitle": "404 — Page non trouvée",
+  "notFoundDescription": "La page ou le projet demandé n'existe pas ou a été supprimé.",
+  "globalErrorTitle": "Erreur critique de l'application",
+  "globalErrorDescription": "Une exception critique a interrompu le layout de l'application.",
+  "projectErrorTitle": "Impossible de charger l'écran du projet",
+  "projectErrorDescription": "Une erreur est survenue lors de l'affichage de ce projet. Vous pouvez réessayer ou revenir au poste de pilotage."
+}

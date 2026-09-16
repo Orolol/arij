@@ -48,6 +48,8 @@ export interface LiveSessionScreenProps {
   providerLabel: string;
   typeLabel: string;
   arijActions: ArijActionItem[] | null;
+  /** The raw-stream scan failed; the list is the durable half only. */
+  arijActionsUnavailable: boolean;
 
   onStop: () => void;
   stopping: boolean;
@@ -74,6 +76,7 @@ export function LiveSessionScreen({
   providerLabel,
   typeLabel,
   arijActions,
+  arijActionsUnavailable,
   onStop,
   stopping,
   stopError,
@@ -188,6 +191,11 @@ export function LiveSessionScreen({
               Renders null when the list is empty, which satisfies the collapse
               rule for free. Its card is still in the old cassette palette — a
               known seam owned by no packet in this wave. */}
+          {arijActionsUnavailable && (
+            <span data-testid="arij-actions-unavailable">
+              <Mono size={11} tone="danger">{t("actions.unavailable")}</Mono>
+            </span>
+          )}
           {(arijActions ?? session.arijActions ?? []).length > 0 && (
             // Bounded for the same reason as the file list above: a busy
             // build posts dozens of actions, and the log must not be the thing

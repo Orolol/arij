@@ -23,6 +23,15 @@
  * only ever drive client state.
  */
 
+/**
+ * Deep link opening an epic on the project board (the project page's
+ * `?ticket=` parameter). Shared by the comment/report writers that need a
+ * clickable ticket reference.
+ */
+export function epicDeepLink(projectId: string, epicId: string): string {
+  return `/projects/${projectId}?ticket=${epicId}`;
+}
+
 /** The URL `basePath` becomes once `key` is dropped from `search`. */
 export function urlWithoutQueryParam(
   search: string | URLSearchParams,

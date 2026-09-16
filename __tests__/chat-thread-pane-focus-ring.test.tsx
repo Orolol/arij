@@ -135,9 +135,9 @@ const DESK: ControlDeskPayload = {
   upNext: [],
 };
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn(), push: vi.fn(), replace: vi.fn() }),
-}));
+vi.mock("next/navigation", async () =>
+  (await import("@/__tests__/helpers/next-navigation-mock")).nextNavigationMock(),
+);
 
 vi.mock("@/hooks/useControlDesk", () => ({
   useControlDesk: () => ({

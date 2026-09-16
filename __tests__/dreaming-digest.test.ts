@@ -100,6 +100,10 @@ describe("resolveDreamWindow", () => {
  * the host's offset and could land on the wrong side of a dream's cutoff.
  */
 describe("parseTimestampMs", () => {
+  it("treats legacy T-separated timestamps without a zone as stored UTC", () => {
+    expect(parseTimestampMs("2026-08-25T12:00:00.500")).toBe(Date.parse("2026-08-25T12:00:00.500Z"));
+  });
+
   it("reads a SQLite CURRENT_TIMESTAMP string as UTC", () => {
     expect(parseTimestampMs("2026-08-25 12:00:00")).toBe(
       Date.parse("2026-08-25T12:00:00.000Z")
@@ -315,7 +319,7 @@ describe("extractReviewVerdict", () => {
     ).toBe("Changes Requested");
     expect(
       extractReviewVerdict("**Overall Verdict: Feature Complete**\n")
-    ).toBe("Feature Complete");
+    ).toBe("Approved");
   });
 
   it("returns null when no verdict was produced", () => {

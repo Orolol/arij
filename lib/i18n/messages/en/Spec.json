@@ -31,7 +31,7 @@
     },
     "errors": {
       "importFile": "Failed to import {name}.",
-      "import": "Failed to import the document."
+      "load": "Failed to load documents."
     }
   },
   "anatomy": {
@@ -69,7 +69,8 @@
     "instructionLabel": "Instruction",
     "instructionPlaceholder": "Optional — e.g. “update the architecture section after the Full Auto mode”. Leave empty to let the agent refresh the spec from the current project state.",
     "confirm": "Update spec",
-    "error": "Failed to start the spec update session."
+    "error": "Failed to start the spec update session.",
+    "saveFailed": "Save the specification successfully before starting the update."
   },
   "memory": {
     "heading": "Project memory",
@@ -139,6 +140,9 @@
   "page": {
     "regenerate": "Regenerate via chat",
     "sessionNotFound": "Session not found",
-    "sessionFailed": "Agent session failed."
+    "sessionFailed": "Agent session failed.",
+    "loadFailed": "Failed to load the specification.",
+    "saveFailed": "Failed to save the specification. Your edits are preserved.",
+    "retry": "Retry"
   }
 }

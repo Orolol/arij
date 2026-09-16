@@ -8,11 +8,11 @@ import {
   ToastStack,
   type ToastAction,
   type ToastTone,
-} from "@/components/notifications/ToastStack";
+} from "@/components/toast/ToastStack";
 import {
   useDispatchFailureReporter,
   useToastStack,
-} from "@/components/notifications/useToastStack";
+} from "@/components/toast/useToastStack";
 import { useTicketOverlay } from "@/components/ticket/TicketOverlayProvider";
 import { useQaFindings } from "@/hooks/useQaFindings";
 import { sumCheckTotals } from "@/lib/qa/aggregate";
@@ -112,7 +112,7 @@ export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
   /**
    * The band's meta. Summed over the projects IN SCOPE rather than read off
    * `checks`, which is a `QA_CHECK_LIMIT` window and would print a constant —
-   * and `projects` is already narrowed by `filterQaPayload`, so a
+   * and `projects` is already scoped by the server, so a
    * project-scoped mount counts that project alone.
    */
   const checkTotals = useMemo(
@@ -219,8 +219,8 @@ export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               id: finding.findingId,
-              status: "resolved",
-              body: `${finding.rawBody}\n\n[dismissed] ${reason}`,
+              status: "dismissed",
+              dismissedReason: reason,
             }),
           },
         );
@@ -449,7 +449,8 @@ export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
             }}
           />
           <RubricBand
-            rubric={data?.rubric ?? { items: [], projectRuleCount: 0 }}
+            rubric={data?.rubric ?? { items: [] }}
+            projectId={projectId ?? undefined}
           />
         </div>
       </div>

@@ -1,4 +1,11 @@
 {
+  "feedback": {
+    "loadFailed": "Impossible de charger les versions",
+    "retry": "Réessayer",
+    "createFailed": "Impossible de créer la version",
+    "created": "Version v{version} créée",
+    "githubFailed": "Version v{version} créée, mais la synchronisation GitHub a échoué : {error}"
+  },
   "next": {
     "backToDraft": "← revenir au brouillon",
     "changelogCompose": "CHANGELOG — GÉNÉRÉ À LA CRÉATION"

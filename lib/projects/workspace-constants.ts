@@ -17,20 +17,6 @@ export const PROJECTS_ROOT_SETTING_KEY = "projects_root";
 export const DEFAULT_PROJECTS_ROOT_DIRNAME = "projects";
 
 /**
- * Owner and repo segments are re-validated against this before they are ever
- * concatenated into a filesystem path. It excludes `/`, `\` and every other
- * separator, so a crafted URL cannot escape the clone root; `.` and `..` are
- * rejected separately because they match the character class.
- */
-export const GITHUB_NAME_PATTERN = /^[A-Za-z0-9._-]+$/;
-
-/** True when `value` is safe to use as one path segment of a clone directory. */
-export function isSafeRepoNameSegment(value: string): boolean {
-  if (!GITHUB_NAME_PATTERN.test(value)) return false;
-  return value !== "." && value !== "..";
-}
-
-/**
  * Directory name of a clone: `<owner>-<repo>`. Deterministic, so re-importing
  * the same URL resolves to the same directory and takes the reuse path, and
  * collision-free across owners of same-named repositories.

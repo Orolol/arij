@@ -6,7 +6,7 @@ import { logTransition } from "@/lib/workflow/log";
 import type { AgentProvider } from "@/lib/agent-config/constants";
 import { transitionReviewRejected } from "@/lib/workflow/automatic-transitions";
 import { runForensic } from "./forensic";
-import { createVerifyGate } from "./verify";
+import { createVerifyGate } from "./regression-gate";
 import {
   DEFAULT_PIPELINE_MAX_ATTEMPTS,
   DEFAULT_PIPELINE_MAX_FIX_CYCLES,

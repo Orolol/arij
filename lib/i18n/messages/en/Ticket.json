@@ -1,6 +1,5 @@
 {
   "overlay": {
-    "dialogLabel": "Ticket",
     "backToTicket": "Ticket",
     "delete": "Delete ticket",
     "resolveMergeTitle": "Resolve Merge Conflicts",
@@ -33,9 +32,19 @@
   },
   "stories": {
     "label": "User stories",
+    "toggleStatus": "Toggle story status: {status}",
     "meta": "{done}/{total} done",
     "criteria": "{count} AC",
-    "open": "open →",
+    "edit": "edit",
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "deleting": "Deleting…",
+    "titlePlaceholder": "Story title",
+    "criteriaPlaceholder": "Acceptance criteria (markdown checklist)",
+    "updateFailed": "Failed to update story",
+    "deleteFailed": "Failed to delete story",
     "gradedMet": "GRADED · MET",
     "gradedPartial": "GRADED · PARTIAL",
     "gradedMissed": "GRADED · MISSED"
@@ -76,12 +85,15 @@
     "grade": "Grade"
   },
   "dependencies": {
+    "retry": "Retry",
     "label": "Dependencies",
     "edit": "Edit",
     "blocks": "BLOCKS",
     "waitsOn": "WAITS ON"
   },
   "git": {
+    "loadingPr": "Loading pull request...",
+    "retryPr": "Retry",
     "label": "Git",
     "diffstat": "· {files} files · isolated worktree",
     "diffstatUnknown": "— · — files · isolated worktree",

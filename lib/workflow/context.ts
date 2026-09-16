@@ -1,3 +1,4 @@
+import { isOrdinaryReviewAgentType } from "@/lib/review/agent-types";
 /**
  * Builds TransitionContext from database state for workflow validation.
  */
@@ -75,16 +76,7 @@ export function buildTransitionContext(opts: {
       )
     )
     .all()
-    .filter((s) => {
-      const agentType = s.agentType ?? "";
-      return (
-        agentType.includes("review") ||
-        agentType === "security_reviewer" ||
-        agentType === "code_reviewer" ||
-        agentType === "compliance_reviewer" ||
-        agentType === "feature_reviewer"
-      );
-    });
+    .filter((s) => isOrdinaryReviewAgentType(s.agentType));
 
   // Batched on purpose: the per-session helper costs three queries each, and
   // four review types over a few rounds turns one guarded transition into

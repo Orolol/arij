@@ -280,6 +280,23 @@ describe("manual grading dispatch", () => {
     expect(unchangedEpic?.status).toBe("review");
   });
 
+  it("records a human question and holds the ticket during grading", async () => {
+    const { projectId, epicId } = seedEpic(["- The flow works"]);
+    processManagerState.status = {
+      status: "completed",
+      result: { success: true, endedWithQuestion: true, result: "Which browser should I verify?" },
+    };
+    const handle = await dispatchGradingSession({ projectId, epicId });
+    if (handle.skipped) throw new Error("Expected a grading session");
+    const terminal = await handle.settled;
+    expect(terminal.outcome).toBe("asked_question");
+    expect(db.select().from(epics).where(eq(epics.id, epicId)).get()?.status).toBe("review");
+    const activities = db.select().from(ticketActivityLog).where(eq(ticketActivityLog.epicId, epicId)).all();
+    expect(activities).toEqual(expect.arrayContaining([expect.objectContaining({
+      reason: "Agent asked a question", fromStatus: "review", toStatus: "review", sessionId: handle.sessionId,
+    })]));
+  });
+
   it("only completes successfully when submit_grading saved a report", async () => {
     const { projectId, epicId, storyIds } = seedEpic(["- The flow works"]);
     processManagerState.onStart = (sessionId) => {

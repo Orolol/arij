@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ToastStack, TOAST_DURATION_MS, MAX_TOASTS, type ToastItem } from "@/components/notifications/ToastStack";
+import { ToastStack, TOAST_DURATION_MS, MAX_TOASTS, type ToastItem } from "@/components/toast/ToastStack";
 
 const success: ToastItem = { id: "one", type: "success", message: "Ticket créé", href: "/projects/p1?ticket=e1", actionLabel: "Voir le ticket" };
 afterEach(() => vi.useRealTimers());

@@ -6,7 +6,6 @@
  * - stdout/stderr buffer collection
  * - SIGTERM → SIGKILL kill logic
  * - Session ID extraction via extractCliSessionIdFromOutput
- * - NDJSON session logging
  * - endedWithQuestion detection
  * - Duration tracking
  * - Display command building
@@ -15,15 +14,7 @@
  * Subclasses implement ~3 abstract methods and get everything else for free.
  */
 
-import { spawn as nodeSpawn, type ChildProcess } from "child_process";
-import { execSync } from "child_process";
-import {
-  createStreamLog,
-  appendStreamEvent,
-  appendStderrEvent,
-  endStreamLog,
-  type StreamLogContext,
-} from "@/lib/claude/logger";
+import { spawn as nodeSpawn, execFile, type ChildProcess } from "child_process";
 import {
   extractCliSessionIdFromOutput,
   hasAskUserQuestion,
@@ -40,6 +31,45 @@ import type {
   ProviderSpawnOptions,
   ProviderType,
 } from "./types";
+import { createChildKiller } from "./process-signals";
+
+/** Upper bound on any availability probe; a hung CLI must not hang a request. */
+export const PROVIDER_PROBE_TIMEOUT_MS = 5000;
+
+/**
+ * Runs a short diagnostic command WITHOUT blocking the event loop and returns
+ * its combined stdout+stderr, or `null` when it could not run or exited
+ * non-zero. Availability probes are called from request handlers (the
+ * providers/available route, the default chat mode, reviewer segregation);
+ * their synchronous predecessors (`execSync("which …")`, `codex login
+ * status`) stalled every concurrent request and SSE stream for the probe's
+ * duration, up to the five-second timeout when a CLI hung.
+ */
+export function runProbe(
+  file: string,
+  args: string[],
+  timeoutMs: number = PROVIDER_PROBE_TIMEOUT_MS,
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    try {
+      execFile(
+        file,
+        args,
+        { encoding: "utf-8", timeout: timeoutMs },
+        (error, stdout, stderr) => {
+          if (error) {
+            resolve(null);
+            return;
+          }
+          resolve(`${stdout ?? ""}${stderr ?? ""}`);
+        },
+      );
+    } catch {
+      // A synchronous throw (invalid arguments, spawn refused) is a "no".
+      resolve(null);
+    }
+  });
+}
 
 export interface BaseProviderChunkCallbacks {
   onRawChunk?: (chunk: {
@@ -82,48 +112,6 @@ export interface ProviderExitInfo {
   spawnContext?: ProviderSpawnContext;
 }
 
-/**
- * Whether the child is still running.
- *
- * NOT `child.killed`, which only reports that a signal was successfully
- * delivered — it flips to true the instant `kill()` returns and says nothing
- * about whether the process died. A process still holds the CPU until one of
- * `exitCode` / `signalCode` is set.
- */
-function isChildAlive(child: ChildProcess): boolean {
-  // Only an explicitly-set exit field proves death. Anything else — including
-  // a handle that does not report these at all — is treated as alive, because
-  // on a kill path a redundant signal costs nothing and a skipped one leaves
-  // an agent running loose.
-  const exited = child.exitCode !== null && child.exitCode !== undefined;
-  const signalled = child.signalCode !== null && child.signalCode !== undefined;
-  return !exited && !signalled;
-}
-
-/**
- * Signals the child's whole process GROUP, falling back to the child alone.
- *
- * A CLI agent is a tree, not a process: it spawns shells, test runners and
- * dev servers of its own. Signalling only the process at the head leaves that
- * tree running, re-parented to init and invisible to Arij — the concrete
- * symptom being a dev server still bound to a port hours after the session
- * that started it was cancelled.
- *
- * `-pid` addresses the group, which exists because the spawn is `detached`.
- * ESRCH simply means everything is already gone.
- */
-function signalChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
-  if (child.pid === undefined) return;
-  try {
-    process.kill(-child.pid, signal);
-  } catch {
-    try {
-      child.kill(signal);
-    } catch {
-      // Already reaped — nothing left to signal.
-    }
-  }
-}
 
 /**
  * Abstract base class for CLI agent providers.
@@ -145,9 +133,9 @@ function signalChild(child: ChildProcess, signal: "SIGTERM" | "SIGKILL"): void {
  * - `emitFinalChunks(result, callbacks, spawnContext)` — final output/response chunk emission
  * - `cleanupSpawnContext(spawnContext)` — release per-spawn resources (temp files, …)
  * - `stdinPayload(spawnContext)` — text to pipe on stdin (default: none)
- * - `handleExit(info, callbacks, logCtx)` — custom exit handling for providers that need
+ * - `handleExit(info, callbacks)` — custom exit handling for providers that need
  *   full control over how collected output becomes a ProviderResult
- * - `handlePrefix` / `logPrefix` — prefixes for session handles and NDJSON log names
+ * - `handlePrefix` / `logPrefix` — prefixes for session handles and log lines
  */
 export abstract class BaseCliProvider implements AgentProvider {
   abstract readonly type: ProviderType;
@@ -198,7 +186,7 @@ export abstract class BaseCliProvider implements AgentProvider {
    * the output, so it has to be caught before the agent gets its tools.
    * Default: nothing to check.
    */
-  protected preflight(_options: ProviderSpawnOptions): string | undefined {
+  protected preflight(_options: ProviderSpawnOptions): string | undefined | Promise<string | undefined> {
     return undefined;
   }
 
@@ -317,16 +305,12 @@ export abstract class BaseCliProvider implements AgentProvider {
   }
 
   /**
-   * Check if the CLI is available. Default: `which <binaryName>`.
-   * Override for providers that need additional checks (e.g. login status).
+   * Check if the CLI is available. Default: `which <binaryName>`, run
+   * asynchronously (see runProbe). Override for providers that need
+   * additional checks (e.g. login status).
    */
   async isAvailable(): Promise<boolean> {
-    try {
-      execSync(`which ${this.binaryName}`, { stdio: "ignore" });
-      return true;
-    } catch {
-      return false;
-    }
+    return (await runProbe("which", [this.binaryName])) !== null;
   }
 
   /**
@@ -393,7 +377,6 @@ export abstract class BaseCliProvider implements AgentProvider {
   protected handleExit(
     info: ProviderExitInfo,
     callbacks: BaseProviderChunkCallbacks,
-    logCtx: StreamLogContext | null,
   ): ProviderResult {
     const { code, stdout, stderr, duration, killed, options, spawnContext } = info;
     const result = this.extractResult(stdout, stderr, spawnContext);
@@ -410,19 +393,6 @@ export abstract class BaseCliProvider implements AgentProvider {
 
     // Emit final output/response chunks
     this.emitFinalChunks(result, callbacks, spawnContext);
-
-    // Log session end
-    if (logCtx) {
-      try {
-        if (result) appendStreamEvent(logCtx, result);
-        endStreamLog(logCtx, {
-          exitCode: code,
-          error: code !== 0 ? stderr.slice(0, 500) : undefined,
-        });
-      } catch {
-        /* best-effort */
-      }
-    }
 
     if (killed) {
       return {
@@ -457,7 +427,45 @@ export abstract class BaseCliProvider implements AgentProvider {
    * the entire lifecycle. Most subclasses should NOT override this.
    */
   spawn(options: ProviderSpawnOptions): ProviderSession {
-    const { sessionId, prompt, cwd, logIdentifier } = options;
+    const blocked = this.preflight(options);
+    const refused = (error: string): ProviderSession => ({
+      handle: `${this.handlePrefix}-${options.sessionId}`,
+      kill: () => {},
+      promise: Promise.resolve({ success: false, error, duration: 0 }),
+    });
+    if (!(blocked instanceof Promise)) {
+      return blocked ? refused(blocked) : this.spawnReady(options);
+    }
+    let active: ProviderSession | null = null;
+    let cancelled = false;
+    return {
+      handle: `${this.handlePrefix}-${options.sessionId}`,
+      get command() {
+        return active?.command;
+      },
+      kill: () => {
+        cancelled = true;
+        active?.kill();
+      },
+      promise: blocked
+        .then((reason) => {
+          if (cancelled) {
+            return { success: false, error: "Process was cancelled.", duration: 0 };
+          }
+          if (reason) return { success: false, error: reason, duration: 0 };
+          active = this.spawnReady(options);
+          return active.promise;
+        })
+        .catch((error: unknown) => ({
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          duration: 0,
+        })),
+    };
+  }
+
+  private spawnReady(options: ProviderSpawnOptions): ProviderSession {
+    const { sessionId, prompt, cwd } = options;
     const effectiveCwd = cwd || process.cwd();
     const spawnContext = this.prepareSpawn(options);
     const args = this.buildArgs(options, spawnContext);
@@ -476,11 +484,6 @@ export abstract class BaseCliProvider implements AgentProvider {
       };
     };
 
-    // A precondition the provider cannot express through argv — today, an omp
-    // install too old to honour the tool allowlist Arij is relying on.
-    const blocked = this.preflight(options);
-    if (blocked) return abort(blocked);
-
     // execve() would fail with a bare `spawn E2BIG` here — a provider that
     // cannot move the prompt off argv says why instead.
     const oversized = findOversizedArg(args);
@@ -493,22 +496,7 @@ export abstract class BaseCliProvider implements AgentProvider {
       );
     }
 
-    // Optional NDJSON logging
-    let logCtx: StreamLogContext | null = null;
-    if (logIdentifier) {
-      try {
-        logCtx = createStreamLog(
-          `${this.logPrefix}-${logIdentifier}`,
-          [this.binaryName, ...args],
-          prompt,
-        );
-      } catch {
-        // logging is best-effort
-      }
-    }
-
     let child: ChildProcess | null = null;
-    let killed = false;
 
     const promise = new Promise<ProviderResult>((resolve) => {
       const startTime = Date.now();
@@ -547,13 +535,6 @@ export abstract class BaseCliProvider implements AgentProvider {
           text,
           emittedAt: new Date().toISOString(),
         });
-        if (logCtx) {
-          try {
-            appendStreamEvent(logCtx, text);
-          } catch {
-            /* best-effort */
-          }
-        }
       });
 
       child.stderr?.on("data", (chunk: Buffer) => {
@@ -566,27 +547,12 @@ export abstract class BaseCliProvider implements AgentProvider {
           text,
           emittedAt: new Date().toISOString(),
         });
-        if (logCtx) {
-          try {
-            appendStderrEvent(logCtx, text);
-          } catch {
-            /* best-effort */
-          }
-        }
       });
 
       child.on("error", (err) => {
         const duration = Date.now() - startTime;
         this.cleanupSpawnContext(spawnContext);
         const errorMsg = this.buildSpawnErrorMessage(err);
-
-        if (logCtx) {
-          try {
-            endStreamLog(logCtx, { exitCode: null, error: errorMsg });
-          } catch {
-            /* best-effort */
-          }
-        }
 
         resolve({
           success: false,
@@ -595,16 +561,20 @@ export abstract class BaseCliProvider implements AgentProvider {
         });
       });
 
-      child.on("close", (code) => {
+      child.on("close", async (code) => {
         const duration = Date.now() - startTime;
         const stdout = Buffer.concat(stdoutChunks).toString("utf-8");
         const stderr = Buffer.concat(stderrChunks).toString("utf-8");
 
+        if (killer.isKilled()) {
+          await killer.waitForTeardown();
+        } else {
+          killer.clear();
+        }
         try {
           const providerResult = this.handleExit(
-            { code, stdout, stderr, duration, killed, options, spawnContext },
+            { code, stdout, stderr, duration, killed: killer.isKilled(), options, spawnContext },
             callbacks,
-            logCtx,
           );
           resolve(providerResult);
         } finally {
@@ -613,25 +583,8 @@ export abstract class BaseCliProvider implements AgentProvider {
       });
     });
 
-    const kill = () => {
-      if (!child || !isChildAlive(child)) return;
-      killed = true;
-      signalChild(child, "SIGTERM");
-
-      // Force kill whatever is still standing 5s later. The guard reads the
-      // exit fields, NOT `child.killed`: Node sets `killed` as soon as a
-      // signal has been *delivered*, so `!child.killed` is already false here
-      // and the escalation this timer exists for could never fire. An agent
-      // that ignored or outran SIGTERM therefore survived its own
-      // cancellation — which is how a session marked `cancelled` in the
-      // database kept writing to a worktree that a live session had meanwhile
-      // been handed.
-      setTimeout(() => {
-        if (child && isChildAlive(child)) {
-          signalChild(child, "SIGKILL");
-        }
-      }, 5000);
-    };
+    const killer = createChildKiller(() => child, options.killGraceMs);
+    const kill = killer.kill;
 
     // The prompt is not in argv when it rides stdin — show the redirection so
     // the command in the UI still accounts for it.

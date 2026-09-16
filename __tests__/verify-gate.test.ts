@@ -26,7 +26,7 @@ import {
 import {
   createVerifyGate,
   readRegressionConfig,
-} from "@/lib/pipeline/verify";
+} from "@/lib/pipeline/regression-gate";
 import { REGRESSION_REPORT_MARKER } from "@/lib/verify/regression-report";
 import * as regressionCheckModule from "@/lib/verify/regression-check";
 

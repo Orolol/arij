@@ -10,27 +10,11 @@
  */
 
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { errorResponse, isErrorResponse } from "@/lib/api/route-helpers";
 import { validateBody } from "@/lib/validation/validate";
+import { reorderTicketsSchema } from "@/lib/validation/schemas";
 import { tryExportArjiJson } from "@/lib/sync/export";
 import { reorderTickets } from "@/lib/workflow/reorder";
-
-const reorderSchema = z.object({
-  items: z.array(
-    z.object({
-      id: z.string().min(1),
-      status: z.string().min(1),
-      position: z.number(),
-    })
-  ),
-  /**
-   * "I am only reordering; never move anything." See `reorderOnly` in
-   * lib/workflow/reorder.ts for why a whole-column sort needs it and
-   * drag-and-drop does not.
-   */
-  reorderOnly: z.boolean().optional(),
-});
 
 export async function POST(
   request: NextRequest,
@@ -38,7 +22,7 @@ export async function POST(
 ) {
   const { projectId } = await params;
 
-  const validated = await validateBody(reorderSchema, request);
+  const validated = await validateBody(reorderTicketsSchema, request);
   if (isErrorResponse(validated)) return validated;
   const body = validated.data;
 

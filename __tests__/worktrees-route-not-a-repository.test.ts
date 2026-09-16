@@ -1,7 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import {
@@ -10,6 +8,15 @@ import {
   mockNextRequest,
   mockRouteContext,
 } from "@/__tests__/helpers/db-mock";
+
+import {
+  git,
+  makeBareRepository,
+  makeMissingPath,
+  makePlainDirectory,
+  makeRepository,
+  makeTempRoot,
+} from "./helpers/temp-git-repo";
 
 /**
  * Regression pin: a `gitRepoPath` that is not a usable git repository is a
@@ -56,29 +63,6 @@ let repoWithWorktreePath = "";
  */
 let bareRepoPath = "";
 
-function git(cwd: string, ...args: string[]): void {
-  execFileSync("git", args, { cwd, stdio: "pipe" });
-}
-
-function initRepo(dir: string): void {
-  fs.mkdirSync(dir, { recursive: true });
-  git(dir, "init");
-  // A commit so `git worktree add` has something to branch from, and so the
-  // porcelain listing is the one a real project produces.
-  fs.writeFileSync(path.join(dir, "README.md"), "# fixture\n");
-  git(dir, "add", "README.md");
-  git(
-    dir,
-    "-c",
-    "user.email=fixture@arij.local",
-    "-c",
-    "user.name=Arij Fixture",
-    "commit",
-    "-m",
-    "initial"
-  );
-}
-
 function seedProject(gitRepoPath: string): void {
   dbMockState.getQueue = [
     {
@@ -109,46 +93,26 @@ async function callPrune() {
 }
 
 beforeAll(() => {
-  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "arij-worktrees-route-"));
+  tmpRoot = makeTempRoot("arij-worktrees-route-");
 
-  notARepoPath = path.join(tmpRoot, "plain-directory");
-  fs.mkdirSync(notARepoPath, { recursive: true });
-  // Only meaningful while it really sits outside every repository: a temp dir
-  // nested in one would make every not-a-repository assertion vacuously green.
-  let insideRepo = true;
-  try {
-    execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
-      cwd: notARepoPath,
-      stdio: "pipe",
-    });
-  } catch {
-    insideRepo = false;
-  }
-  if (insideRepo) {
-    throw new Error(
-      `Fixture invalid: ${notARepoPath} is inside a git repository, so "not a repository" is untestable here.`
-    );
-  }
+  // Throws rather than handing out a negative fixture that is inside some
+  // checkout, where every "not a repository" assertion would pass vacuously.
+  notARepoPath = makePlainDirectory(tmpRoot);
+  missingPath = makeMissingPath(tmpRoot);
 
-  missingPath = path.join(tmpRoot, "was-moved-away");
+  repoPath = makeRepository(tmpRoot, "repo-without-worktree");
 
-  repoPath = path.join(tmpRoot, "repo-without-worktree");
-  initRepo(repoPath);
-
-  repoWithWorktreePath = path.join(tmpRoot, "repo-with-worktree");
-  initRepo(repoWithWorktreePath);
+  repoWithWorktreePath = makeRepository(tmpRoot, "repo-with-worktree");
   git(
     repoWithWorktreePath,
     "worktree",
     "add",
     "-b",
     "feature/epic-1-payments",
-    path.join(tmpRoot, ".arij-worktrees", "feature-epic-1-payments")
+    path.join(tmpRoot, ".arij-worktrees", "feature-epic-1-payments"),
   );
 
-  bareRepoPath = path.join(tmpRoot, "bare-repo.git");
-  fs.mkdirSync(bareRepoPath, { recursive: true });
-  git(bareRepoPath, "init", "--bare");
+  bareRepoPath = makeBareRepository(tmpRoot);
 });
 
 afterAll(() => {

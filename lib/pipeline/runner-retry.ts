@@ -43,9 +43,6 @@ export async function handleStageFailure(
       previousAttemptSessionId: state.handle.sessionId,
       lastCodeSessionId: state.lastCodeSessionId,
       ...(descentReason ? { descentReason } : {}),
-      ...(currentRequest?.verifyFailure
-        ? { verifyFailure: currentRequest.verifyFailure }
-        : {}),
       ...(currentRequest?.gradingFailure
         ? { gradingFailure: currentRequest.gradingFailure }
         : {}),

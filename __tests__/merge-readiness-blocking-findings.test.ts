@@ -40,7 +40,13 @@ vi.mock("@/lib/db", async () => {
 const { db } = await import("@/lib/db");
 const { projects, epics, userStories, agentSessions, reviewComments } =
   await import("@/lib/db/schema");
-const { GET } = await import("@/app/api/projects/[projectId]/epics/route");
+const { readMergeFacts } = await import("@/lib/control-desk/read-model");
+const { evaluateMergeReadiness: evaluateReadiness } = await import("@/lib/kanban/merge-readiness");
+async function GET(_request: unknown, _context: unknown) {
+  const rows = db.select().from(epics).all();
+  const facts = readMergeFacts(db, rows.map((row) => row.id));
+  return Response.json({ data: rows.map((row) => ({ ...row, mergeReadiness: evaluateReadiness({ ...row, ...facts.get(row.id)! }) })) });
+}
 const { selectMergeCandidates } = await import("@/lib/auto-mode/select");
 const { buildTransitionContext } = await import("@/lib/workflow/context");
 const { validateTransition } = await import("@/lib/workflow/engine");
@@ -87,6 +93,7 @@ function addSession(input: {
   reviewVerdict?: string | null;
   userStoryId?: string | null;
   startedAt?: string;
+  createdAt?: string;
   endedAt: string;
 }): void {
   db.insert(agentSessions)
@@ -101,7 +108,7 @@ function addSession(input: {
       reviewVerdict: input.reviewVerdict ?? null,
       startedAt: input.startedAt ?? input.endedAt,
       endedAt: input.endedAt,
-      createdAt: input.startedAt ?? input.endedAt,
+      createdAt: input.createdAt ?? input.startedAt ?? input.endedAt,
     })
     .run();
 }
@@ -893,4 +900,47 @@ describe("board / Full Auto parity on the finding count", () => {
       )
     ).toEqual({ "p-minor": 0, "p-superseded": 0, "p-critical": 1 });
   });
+});
+
+
+describe("chronological review facts across stored formats", () => {
+  it("shares sub-second fix and review ordering between board, selector and workflow", async () => {
+    addEpic("millisecond-fix");
+    addSession({ epicId: "millisecond-fix", agentType: "review_code", reviewVerdict: "changes_requested", endedAt: "2026-08-26T10:00:00Z" });
+    addFinding({ epicId: "millisecond-fix", body: "[critical] Fixed in the next commit", createdAt: "2026-08-26T10:00:00Z" });
+    addSession({ epicId: "millisecond-fix", agentType: "build", endedAt: "2026-08-26T10:00:00.100Z" });
+    addSession({ epicId: "millisecond-fix", agentType: "review_code", reviewVerdict: "approved", startedAt: "2026-08-26T10:00:00.200Z", endedAt: "2026-08-26T10:00:00.300Z" });
+    expect(await readinessOf("millisecond-fix")).toEqual({ ready: true, blocker: null, openFindings: 0 });
+    expect(selectMergeCandidates(PROJECT_ID).map((c) => c.epicId)).toEqual(["millisecond-fix"]);
+    const facts = (await import("@/lib/workflow/review-freshness")).readEpicSessionFacts(db, "millisecond-fix");
+    expect(facts.supersessionAt).toBe("2026-08-26T10:00:00.100Z");
+    const ctx = buildTransitionContext({ epicId: "millisecond-fix", fromStatus: "to_merge", toStatus: "done", actor: "user" });
+    ctx.source = "merge";
+    expect(validateTransition(ctx).error).toBeUndefined();
+  });
+
+  it("chooses the latest clean review by UTC instant when timezone offsets differ", async () => {
+    addEpic("offset-review");
+    addSession({ epicId: "offset-review", agentType: "build", endedAt: "2026-08-26 10:00:00" });
+    addSession({ epicId: "offset-review", agentType: "review_code", reviewVerdict: "approved", endedAt: "2026-08-26T12:00:00+02:00" });
+    addSession({ epicId: "offset-review", agentType: "review_code", reviewVerdict: "approved", endedAt: "2026-08-26T10:30:00Z" });
+    const facts = (await import("@/lib/workflow/review-freshness")).readEpicSessionFacts(db, "offset-review");
+    expect(facts.lastCleanReviewAt).toBe("2026-08-26T10:30:00.000Z");
+  });
+});
+
+
+it("falls back to a valid creation time when a session start or end is corrupt", async () => {
+  addEpic("invalid-primary");
+  addSession({ epicId: "invalid-primary", agentType: "review_code", reviewVerdict: "changes_requested", startedAt: "invalid", endedAt: "invalid", createdAt: "2026-08-26 10:00:00" });
+  const facts = (await import("@/lib/workflow/review-freshness")).readEpicSessionFacts(db, "invalid-primary");
+  expect(facts.lastNegativeVerdictReviewAt).toBe("2026-08-26T10:00:00.000Z");
+  expect(await readinessOf("invalid-primary")).toMatchObject({ blocker: "changes_requested" });
+});
+
+it("retains an undatable rejection when dated reviews also exist", async () => {
+  seedApprovedEpic("unknown-rejection");
+  addSession({ epicId: "unknown-rejection", agentType: "review_code", reviewVerdict: "changes_requested", startedAt: "invalid", endedAt: "invalid" });
+  expect(await readinessOf("unknown-rejection")).toMatchObject({ blocker: "changes_requested" });
+  expect(selectMergeCandidates(PROJECT_ID)).toEqual([]);
 });

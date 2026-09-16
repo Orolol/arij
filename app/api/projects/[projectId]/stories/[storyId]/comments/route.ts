@@ -8,6 +8,8 @@ import {
   MentionResolutionError,
   validateMentionsExist,
 } from "@/lib/documents/mentions";
+import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { createTicketCommentSchema } from "@/lib/validation/schemas";
 
 type Params = { params: Promise<{ projectId: string; storyId: string }> };
 
@@ -29,14 +31,9 @@ export async function GET(_request: NextRequest, { params }: Params) {
 
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
-  const body = await request.json().catch(() => ({}));
-
-  if (!body.content || !body.author) {
-    return NextResponse.json(
-      { error: "author and content are required" },
-      { status: 400 }
-    );
-  }
+  const validated = await validateBody(createTicketCommentSchema, request);
+  if (isValidationError(validated)) return validated;
+  const body = validated.data;
 
   // User input only: an agent comment naming a codebase file (@src/foo.ts) is
   // not an Arij document reference and must not bounce. Same rule as

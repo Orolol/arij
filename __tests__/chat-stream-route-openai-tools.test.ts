@@ -243,7 +243,6 @@ function seedFastModeConversation(overrides: {
 /* Tests                                                               */
 /* ------------------------------------------------------------------ */
 
-const COMPLETIONS_URL = "http://localhost:11434/v1/chat/completions";
 /** mockJsonRequest defaults to http://localhost:3000/... — the route derives
  *  the board-tools base URL from request.nextUrl.origin. */
 const APP_ORIGIN = "http://localhost:3000";

@@ -2,6 +2,7 @@ import simpleGit, { type SimpleGit } from "simple-git";
 import path from "path";
 import fs from "fs";
 import { resolveBaseBranch } from "./base-branch";
+import { assertGitRepository } from "./remote";
 
 function slugify(text: string): string {
   return text
@@ -198,12 +199,6 @@ export interface MergeCheckpoint {
   branchHead: string;
 }
 
-/** Resolves the repo's integration branch — "main", else "master". */
-async function resolveMainBranch(git: SimpleGit): Promise<string> {
-  const branches = await git.branchLocal();
-  return branches.all.includes("main") ? "main" : "master";
-}
-
 /**
  * Pathspecs per `git grep` invocation. Every changed file goes to git as an
  * argv pathspec, and a large enough diff would blow past ARG_MAX and kill
@@ -382,13 +377,14 @@ async function checkMergeTree(
 }
 
 /**
- * Records where `main` and the epic branch point right now, so a merge that
- * turns out to have been unwanted can be undone. Returns null when the state
- * cannot be captured — the caller then simply has no rollback available.
+ * Records the integration branch and epic branch before merging. Resolve
+ * the same project default as mergeWorktree so rollback restores the branch
+ * that actually changed. Returns null when the state cannot be captured.
  */
 export async function captureMergeCheckpoint(
   repoPath: string,
   branchName: string,
+  options: BaseBranchOptions = {},
 ): Promise<MergeCheckpoint | null> {
   const cleanBranch = branchName?.trim();
   if (!cleanBranch || cleanBranch.startsWith("-")) {
@@ -396,7 +392,10 @@ export async function captureMergeCheckpoint(
   }
   try {
     const git = getGit(repoPath);
-    const mainBranch = await resolveMainBranch(git);
+    const branches = await git.branchLocal();
+    const mainBranch = await resolveBaseBranch(git, branches.all, {
+      preferred: options.defaultBranch,
+    });
     const mainHead = (await git.revparse([mainBranch])).trim();
     const branchHead = (await git.revparse([cleanBranch])).trim();
     return { mainBranch, mainHead, branchName: cleanBranch, branchHead };
@@ -521,13 +520,22 @@ export async function mergeWorktree(
         conflictFiles: preflight.conflictFiles,
       };
     }
-
-
-    // Remove the worktree first (git can't merge while worktree is active)
+    // Refuse before deleting an agent's working copy if it still contains
+    // work that is absent from the branch. Ignored build/runtime artifacts
+    // do not count as changes. The non-forced removal repeats git's own
+    // check, protecting edits made between this status read and removal.
     if (worktreePath && fs.existsSync(worktreePath)) {
+      const worktreeStatus = await getGit(worktreePath).status();
+      if (!worktreeStatus.isClean()) {
+        return {
+          merged: false,
+          reason: "error",
+          error: "The worktree has uncommitted changes. Commit or save them before merging; the worktree was preserved.",
+        };
+      }
       // Invariant: `--` separator ensures worktreePath is not parsed as an option;
       // worktree prune takes only static subcommand arguments.
-      await git.raw(["worktree", "remove", "--force", "--", worktreePath]);
+      await git.raw(["worktree", "remove", "--", worktreePath]);
       await git.raw(["worktree", "prune"]);
     }
     await git.checkout(mainBranch);
@@ -612,13 +620,29 @@ export async function startMergeInWorktree(
 }
 
 /**
- * Checks if a path is a valid git repository.
+ * Boolean form of {@link assertGitRepository} — the same locale-pinned
+ * `git rev-parse --is-inside-work-tree` probe the git-sync routes use, so
+ * every caller shares one definition of "usable repository". Deliberately not
+ * simple-git's `checkIsRepo()`, which only recognises a not-a-repository
+ * refusal when git speaks English or German.
  */
 export async function isGitRepo(repoPath: string): Promise<boolean> {
   try {
-    const git = getGit(repoPath);
-    return await git.checkIsRepo();
+    await assertGitRepository(repoPath);
+    return true;
   } catch {
     return false;
   }
+}
+
+/** Remove only a clean worktree; preserve uncommitted user work by refusing. */
+export async function removeTicketWorktree(repoPath: string, branchName: string): Promise<void> {
+  if (!branchName.startsWith("feature/epic-")) throw new Error("Cannot delete an unmanaged ticket branch");
+  const git = getGit(repoPath);
+  const { listWorktrees } = await import("./worktrees");
+  const worktrees = await listWorktrees(repoPath);
+  const tree = worktrees.find((entry) => entry.branch === branchName);
+  if (tree) await git.raw(["worktree", "remove", "--", tree.path]);
+  const branches = await git.branchLocal();
+  if (branches.all.includes(branchName)) await git.raw(["branch", "-D", "--", branchName]);
 }

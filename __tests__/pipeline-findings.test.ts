@@ -37,10 +37,8 @@ import {
   countAgentReviewCommentsSince,
   ingestProseFindings,
   isNegativeProseVerdict,
-  readStructuredReviewVerdict,
   resolveReviewVerdict,
   NEGATIVE_VERDICT_SUBSTRINGS,
-  STRUCTURED_REVIEW_VERDICTS,
 } from "@/lib/pipeline/findings";
 
 type TestDb = ReturnType<typeof createTestDb>["db"];
@@ -173,15 +171,13 @@ describe("collectBlockingFindings", () => {
     expect(collectBlockingFindings(epicId, WINDOW_START, db)).toEqual([]);
   });
 
-  it("tolerates SQLite CURRENT_TIMESTAMP-style createdAt via Date.parse on both sides", () => {
-    // 'YYYY-MM-DD HH:MM:SS' (no T, no zone) — what a DB-defaulted column
-    // stores. Window start far in the past keeps the comparison robust
-    // across the local-time interpretation of zoneless strings.
+  it("treats SQLite CURRENT_TIMESTAMP-style createdAt as UTC within the stage window", () => {
+    // SQLite values are UTC regardless of the process's local timezone.
     insertFinding({
       body: "[major] Filed with a DB-default timestamp",
       createdAt: "2026-08-17 12:00:00",
     });
-    const findings = collectBlockingFindings(epicId, "2020-01-01T00:00:00.000Z", db);
+    const findings = collectBlockingFindings(epicId, "2026-08-17T11:59:00.000Z", db);
     expect(findings).toHaveLength(1);
     expect(findings[0].severity).toBe("major");
   });
@@ -194,7 +190,7 @@ describe("collectBlockingFindings", () => {
 });
 
 describe("isNegativeProseVerdict", () => {
-  it("matches the review routes' three substrings, case-insensitively", () => {
+  it("reads explicit verdict lines, ignoring incidental prose", () => {
     expect(NEGATIVE_VERDICT_SUBSTRINGS).toEqual([
       "changes requested",
       "not complete",
@@ -203,8 +199,8 @@ describe("isNegativeProseVerdict", () => {
     expect(
       isNegativeProseVerdict("**Overall Verdict: Changes Requested**")
     ).toBe(true);
-    expect(isNegativeProseVerdict("verdict: NOT COMPLETE")).toBe(true);
-    expect(isNegativeProseVerdict("Partially Complete, see notes")).toBe(true);
+    expect(isNegativeProseVerdict("**Overall Verdict: NOT COMPLETE**")).toBe(true);
+    expect(isNegativeProseVerdict("Partially Complete, see notes")).toBe(false);
     expect(
       isNegativeProseVerdict("**Overall Verdict: Complete** — ship it")
     ).toBe(false);
@@ -238,7 +234,7 @@ describe("assessReviewOutcome", () => {
     });
     expect(assessment.blocking).toBe(false);
     expect(assessment.usedProseFallback).toBe(false);
-    expect(assessment.proseNegative).toBe(true);
+    expect(assessment.proseNegative).toBe(false);
   });
 
   it("falls back to prose ONLY when zero agent rows were filed in the window", () => {
@@ -281,34 +277,6 @@ describe("assessReviewOutcome", () => {
   });
 });
 
-describe("readStructuredReviewVerdict", () => {
-  it("returns the verdict submit_findings persisted on the session", () => {
-    const sessionId = insertReviewSession({ reviewVerdict: "approved" });
-    expect(readStructuredReviewVerdict(sessionId, db)).toBe("approved");
-  });
-
-  it("is null for a session that never called the tool, and for no session", () => {
-    const sessionId = insertReviewSession();
-    expect(readStructuredReviewVerdict(sessionId, db)).toBeNull();
-    expect(readStructuredReviewVerdict(null, db)).toBeNull();
-    expect(readStructuredReviewVerdict("missing-session", db)).toBeNull();
-  });
-
-  it("treats an unrecognised stored value as absent rather than trusting it", () => {
-    // The column is free text; a verdict the decision table has no rule for
-    // must fall through to the prose channel, not pass as an approval.
-    const sessionId = insertReviewSession({ reviewVerdict: "lgtm" });
-    expect(readStructuredReviewVerdict(sessionId, db)).toBeNull();
-  });
-
-  it("mirrors the submit_findings enum exactly", () => {
-    expect(STRUCTURED_REVIEW_VERDICTS).toEqual([
-      "approved",
-      "approved_with_minor_issues",
-      "changes_requested",
-    ]);
-  });
-});
 
 describe("assessReviewOutcome — channel priority matrix", () => {
   it("(1) structured changes_requested beats clean prose", () => {
@@ -388,6 +356,15 @@ describe("assessReviewOutcome — channel priority matrix", () => {
       structuredVerdict: "approved",
     });
     expect(assessment.blockingFindings).toHaveLength(1);
+  });
+
+  it("a prose approval cannot override an anchored major finding", () => {
+    const assessment = assessReviewOutcome({
+      epicId, sinceIso: WINDOW_START, database: db,
+      sessionOutput: "### 1. Unsafe update\n- **Severity:** Major\n- **Location:** `src/a.ts:10`\nA corrupt write loses data.\n\n**Overall Verdict: Approved**",
+    });
+    expect(assessment.blockingFindings).toHaveLength(1);
+    expect(assessment.blocking).toBe(true);
   });
 
   it("(3b) a RESOLVED [critical] finding no longer vetoes", () => {
@@ -545,7 +522,7 @@ describe("resolveReviewVerdict (revert drivers)", () => {
     ).toMatchObject({ negative: false, blockingFindings: [] });
   });
 
-  it("(4) no structured verdict → pure prose scan, findings rows ignored", () => {
+  it("(4) no structured verdict → blocking findings veto a prose approval", () => {
     // Retro-compatibility: this call site never consulted findings rows, so
     // a row-filing reviewer from before the verdict column behaves exactly
     // as it did.
@@ -559,10 +536,9 @@ describe("resolveReviewVerdict (revert drivers)", () => {
         database: db,
       })
     ).toMatchObject({
-      negative: false,
+      negative: true,
       source: "prose",
       structuredVerdict: null,
-      blockingFindings: [],
     });
 
     expect(

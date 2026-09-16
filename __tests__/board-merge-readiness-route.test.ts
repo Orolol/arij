@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 /**
  * The board list route's merge-readiness signal
  * (GET /api/projects/[projectId]/epics).
@@ -29,7 +30,13 @@ const {
   reviewComments,
   ticketActivityLog,
 } = await import("@/lib/db/schema");
-const { GET } = await import("@/app/api/projects/[projectId]/epics/route");
+const { readMergeFacts } = await import("@/lib/control-desk/read-model");
+const { evaluateMergeReadiness } = await import("@/lib/kanban/merge-readiness");
+async function GET(_request: unknown, _context: unknown) {
+  const rows = db.select().from(epics).where(eq(epics.projectId, PROJECT_ID)).all();
+  const facts = readMergeFacts(db, rows.map((row) => row.id));
+  return Response.json({ data: rows.map((row) => ({ ...row, mergeReadiness: evaluateMergeReadiness({ ...row, ...facts.get(row.id)! }) })) });
+}
 const { selectMergeCandidates } = await import("@/lib/auto-mode/select");
 const { AUTO_MODE_REASONS } = await import("@/lib/auto-mode/constants");
 const {

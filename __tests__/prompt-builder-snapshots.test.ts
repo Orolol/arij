@@ -14,7 +14,6 @@ import {
   buildMergeResolutionPrompt,
   buildEpicReviewPrompt,
   buildGradingPrompt,
-  VISUAL_PROOF_SECTION,
   type PromptProject,
   type PromptDocument,
   type PromptMessage,
@@ -23,6 +22,7 @@ import {
   type PromptComment,
   type TeamEpic,
 } from "@/lib/claude/prompt-builder";
+import { VISUAL_PROOF_SECTION } from "@/lib/claude/prompt-sections";
 
 const project: PromptProject = {
   name: "TestProject",
@@ -190,10 +190,6 @@ describe("Prompt builder snapshot regression", () => {
     expect(buildReviewPrompt(project, docs, epic, story, "feature_review", systemPrompt)).toMatchSnapshot();
   });
 
-  it("buildReviewPrompt - custom", () => {
-    expect(buildReviewPrompt(project, docs, epic, story, { name: "UI Review", systemPrompt: "Check visual hierarchy" }, systemPrompt)).toMatchSnapshot();
-  });
-
   it("buildMergeResolutionPrompt", () => {
     expect(buildMergeResolutionPrompt(project, epic, "feature/epic-123", "CONFLICT (content): merge conflict in src/index.ts", systemPrompt)).toMatchSnapshot();
   });
@@ -219,7 +215,7 @@ describe("Prompt builder snapshot regression", () => {
 
     expect(prompt).toContain("story-grade-1");
     expect(prompt).toContain("Editors are persisted");
-    expect(prompt).toContain("mcp__arij__submit_grading");
+    expect(prompt).toContain("submit_grading");
     expect(prompt).toContain("MUST call");
     expect(prompt).toContain("met | partial | missed");
     expect(prompt).toContain("Do not judge general code quality");

@@ -105,7 +105,7 @@ function normalizeSeverity(raw: string): FindingSeverity | null {
  * (`app/api/projects/[projectId]/bugs/route.ts`), which defeats the naive
  * `\[([^\]]+)\]` and would truncate the path at `[projectId`.
  */
-export function parseLocation(
+function parseLocation(
   raw: string
 ): { filePath: string; lineNumber: number } | null {
   let value = raw.trim();

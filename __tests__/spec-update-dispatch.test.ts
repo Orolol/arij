@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
+import { claudeEnvelope } from "./helpers/provider-fixtures";
 
 const processManagerState = vi.hoisted(() => ({
   result: undefined as Record<string, unknown> | undefined,
@@ -58,6 +59,7 @@ vi.mock("fs", () => ({
 }));
 
 const { db } = await import("@/lib/db");
+const { processManager } = await import("@/lib/claude/process-manager");
 const { projects, agentSessions, epics, userStories, releases } = await import(
   "@/lib/db/schema"
 );
@@ -73,19 +75,6 @@ const { buildSpecUpdatePrompt, buildProjectStateSection } = await import(
 );
 
 let counter = 0;
-
-async function flushBackground() {
-  await new Promise((r) => setTimeout(r, 25));
-  await new Promise((r) => setTimeout(r, 25));
-}
-
-function claudeEnvelope(text: string): string {
-  return JSON.stringify({
-    type: "result",
-    subtype: "success",
-    result: text,
-  });
-}
 
 function seedProject(spec: string | null, gitRepoPath: string | null = "/repos/s") {
   counter += 1;
@@ -143,13 +132,13 @@ describe("dispatchSpecUpdateSession", () => {
     const projectId = seedProject("# Old Spec\n\n- stale");
     expect(hasPendingSpecUpdate(projectId)).toBe(false);
 
-    const { sessionId } = await dispatchSpecUpdateSession({
+    const { sessionId, settled } = await dispatchSpecUpdateSession({
       projectId,
       instruction: null,
       namedAgentId: null,
     });
 
-    await flushBackground();
+    await settled;
 
     const sessions = specUpdateSessions(projectId);
     expect(sessions).toHaveLength(1);
@@ -178,12 +167,11 @@ describe("dispatchSpecUpdateSession", () => {
       duration: 1000,
     };
 
-    await dispatchSpecUpdateSession({
+    await (await dispatchSpecUpdateSession({
       projectId,
       instruction: null,
       namedAgentId: null,
-    });
-    await flushBackground();
+    })).settled;
 
     const row = db
       .select()
@@ -213,12 +201,11 @@ describe("dispatchSpecUpdateSession", () => {
     expect(withoutInstruction).not.toContain("## User Instruction");
     expect(withoutInstruction).toContain("# Spec");
 
-    await dispatchSpecUpdateSession({
+    await (await dispatchSpecUpdateSession({
       projectId,
       instruction: "focus on architecture",
       namedAgentId: null,
-    });
-    await flushBackground();
+    })).settled;
     const sessions = specUpdateSessions(projectId);
     expect(sessions[0].prompt ?? "").toContain("focus on architecture");
   });
@@ -272,12 +259,11 @@ describe("dispatchSpecUpdateSession", () => {
       duration: 500,
     };
 
-    await dispatchSpecUpdateSession({
+    await (await dispatchSpecUpdateSession({
       projectId,
       instruction: null,
       namedAgentId: null,
-    });
-    await flushBackground();
+    })).settled;
 
     const session = specUpdateSessions(projectId)[0];
     expect(session.error).toContain("asked a question");
@@ -296,12 +282,11 @@ describe("dispatchSpecUpdateSession", () => {
       duration: 500,
     };
 
-    await dispatchSpecUpdateSession({
+    await (await dispatchSpecUpdateSession({
       projectId,
       instruction: null,
       namedAgentId: null,
-    });
-    await flushBackground();
+    })).settled;
 
     const session = specUpdateSessions(projectId)[0];
     expect(session.status).toBe("failed");
@@ -324,12 +309,11 @@ describe("dispatchSpecUpdateSession", () => {
       duration: 10,
     };
 
-    await dispatchSpecUpdateSession({
+    await (await dispatchSpecUpdateSession({
       projectId,
       instruction: null,
       namedAgentId: null,
-    });
-    await flushBackground();
+    })).settled;
 
     const session = specUpdateSessions(projectId)[0];
     expect(session.status).toBe("failed");
@@ -347,12 +331,11 @@ describe("dispatchSpecUpdateSession", () => {
     const projectId = seedProject("# Spec");
     seedBoardState(projectId);
 
-    await dispatchSpecUpdateSession({
+    await (await dispatchSpecUpdateSession({
       projectId,
       instruction: null,
       namedAgentId: null,
-    });
-    await flushBackground();
+    })).settled;
 
     const prompt = specUpdateSessions(projectId)[0].prompt ?? "";
     expect(prompt).toContain("## Current Project State");
@@ -395,12 +378,11 @@ describe("dispatchSpecUpdateSession", () => {
       })
       .run();
 
-    await dispatchSpecUpdateSession({
+    await (await dispatchSpecUpdateSession({
       projectId,
       instruction: null,
       namedAgentId: null,
-    });
-    await flushBackground();
+    })).settled;
 
     const prompt = specUpdateSessions(projectId)[0].prompt ?? "";
     // Newest release (2.14.0) must appear in prompt
@@ -507,5 +489,20 @@ describe("buildProjectStateSection", () => {
     expect(section).toContain("**1.0.0** — Release 0");
     expect(section).toContain("_... [changelog truncated]_");
     expect(section).toContain("- _... and 5 older releases (truncated)_");
+  });
+});
+describe("spec update optimistic concurrency", () => {
+  it("marks the session failed and preserves a manual edit made during the run", async () => {
+    const projectId = seedProject("# Original");
+    vi.mocked(processManager.start).mockImplementationOnce((sessionId) => {
+      db.update(projects).set({ spec: "# Newer human edit" }).where(eq(projects.id, projectId)).run();
+      return { sessionId, status: "running", provider: "claude-code", startedAt: new Date() };
+    });
+    const { sessionId, settled } = await dispatchSpecUpdateSession({ projectId, instruction: null, namedAgentId: null });
+    await settled;
+    expect(db.select().from(projects).where(eq(projects.id, projectId)).get()?.spec).toBe("# Newer human edit");
+    const session = db.select().from(agentSessions).where(eq(agentSessions.id, sessionId)).get();
+    expect(session?.status).toBe("failed");
+    expect(session?.error).toContain("specification changed");
   });
 });

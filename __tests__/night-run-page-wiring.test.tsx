@@ -15,14 +15,9 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { installMockEventSource } from "./helpers/event-source-mock";
 
-class MockEventSource {
-  onopen: (() => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
-  onerror: (() => void) | null = null;
-  close() {}
-}
-(globalThis as Record<string, unknown>).EventSource = MockEventSource;
+installMockEventSource();
 
 const routerReplace = vi.fn();
 let searchParams = new URLSearchParams();

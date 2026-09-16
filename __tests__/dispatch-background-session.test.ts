@@ -26,6 +26,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import type { BackgroundSessionQueued } from "@/lib/agent-sessions/dispatch-background-session";
+import { waitForBackground } from "./helpers/background";
+import { claudeEnvelope } from "./helpers/provider-fixtures";
 
 const pm = vi.hoisted(() => ({
   status: null as null | { status: string; result?: Record<string, unknown> },
@@ -97,20 +99,6 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 let counter = 0;
-
-async function flushBackground() {
-  await new Promise((r) => setTimeout(r, 25));
-  await new Promise((r) => setTimeout(r, 25));
-}
-
-function claudeEnvelope(text: string, costUsd?: number): string {
-  return JSON.stringify({
-    type: "result",
-    subtype: "success",
-    result: text,
-    ...(costUsd !== undefined ? { total_cost_usd: costUsd } : {}),
-  });
-}
 
 /** The named agent a user bound to the role — `named_agent_id` is a FK. */
 function seedNamedAgent(id: string, provider: string, model: string) {
@@ -212,7 +200,7 @@ describe("dispatchBackgroundSession — the provider is carried, never re-defaul
       status: "completed",
       result: {
         success: true,
-        result: claudeEnvelope("verdict", 0.42),
+        result: claudeEnvelope("verdict", { costUsd: 0.42 }),
         duration: 10,
       },
     };
@@ -675,12 +663,16 @@ describe("dispatchBackgroundSession — launch failures", () => {
     });
     expect(settled.launchError).toBe(pm.throwOnStart);
 
-    // The scheduler's safety net owns the row and the slot.
-    await flushBackground();
-    expect(getRow(dispatched.sessionId)).toMatchObject({
-      status: "failed",
-      error: "claude: command not found",
-    });
+    // The scheduler's safety net owns the row and the slot: it is a separate
+    // async path with no handle to await, so the wait is on the row itself.
+    await waitForBackground(
+      () =>
+        expect(getRow(dispatched.sessionId)).toMatchObject({
+          status: "failed",
+          error: "claude: command not found",
+        }),
+      "the scheduler safety net finalizing the failed row",
+    );
     expect(agentScheduler.getCounts(projectId)).toEqual({ running: 0, queued: 0 });
     expect(pm.starts).toHaveLength(0);
     errorSpy.mockRestore();
@@ -714,14 +706,18 @@ describe("dispatchBackgroundSession — launch failures", () => {
     expect(launchFailures).toHaveLength(1);
     expect((launchFailures[0] as Error).message).toBe("listener exploded");
 
-    await flushBackground();
     // Already terminal when the hook threw; the safety net's second write is
-    // a lifecycle conflict and stays silent.
+    // a lifecycle conflict and stays silent. The ROW is settled by the promise
+    // above, but the SLOT is released by that same safety net afterwards —
+    // hence the wait on the count rather than on the row.
     expect(getRow(dispatched.sessionId)).toMatchObject({
       status: "completed",
       error: null,
     });
-    expect(agentScheduler.getCounts(projectId)).toEqual({ running: 0, queued: 0 });
+    await waitForBackground(
+      () => expect(agentScheduler.getCounts(projectId)).toEqual({ running: 0, queued: 0 }),
+      "the safety net releasing the project slot",
+    );
     errorSpy.mockRestore();
   });
 });

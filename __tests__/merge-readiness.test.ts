@@ -13,9 +13,6 @@ import {
   hasCurrentConflictMarkers,
   hasCurrentMergeConflict,
   hasFreshCleanReview,
-  isMergeReady,
-  isMergeReadyEpic,
-  sortMergeColumn,
   type MergeReadinessFacts,
 } from "@/lib/kanban/merge-readiness";
 
@@ -34,7 +31,6 @@ describe("evaluateMergeReadiness", () => {
       blocker: null,
       openFindings: 0,
     });
-    expect(isMergeReady(READY)).toBe(true);
   });
 
   it("refuses anything outside the To Merge column", () => {
@@ -228,39 +224,35 @@ describe("describeMergeBlocker", () => {
   });
 });
 
-describe("sortMergeColumn", () => {
-  const epic = (id: string, position: number, ready: boolean) => ({
-    id,
-    position,
-    mergeReadiness: {
-      ready,
-      blocker: ready ? null : ("merge_conflict" as const),
-      openFindings: 0,
-    },
+
+
+describe("merge gate timestamp precision", () => {
+  it("clears a conflict after a fix within the same second", () => {
+    expect(hasCurrentMergeConflict({
+      lastMergeConflictAt: "2026-08-20T10:00:00Z",
+      lastTerminalCodeAt: "2026-08-20T10:00:00.100Z",
+    })).toBe(false);
   });
 
-  it("floats ready tickets to the top, keeping board position within groups", () => {
-    const sorted = sortMergeColumn([
-      epic("a", 0, false),
-      epic("b", 1, true),
-      epic("c", 2, false),
-      epic("d", 3, true),
-    ]);
-    expect(sorted.map((e) => e.id)).toEqual(["b", "d", "a", "c"]);
+  it("does not treat an equal instant in another format as a newer clean review", () => {
+    expect(hasFreshCleanReview({
+      lastCleanReviewAt: "2026-08-20T12:00:00+02:00",
+      lastTerminalCodeAt: "2026-08-20 10:00:00",
+    })).toBe(false);
   });
 
-  it("does not mutate its input", () => {
-    const input = [epic("a", 0, false), epic("b", 1, true)];
-    sortMergeColumn(input);
-    expect(input.map((e) => e.id)).toEqual(["a", "b"]);
+  it("clears a rejection when a subsequently reviewed fix follows it by milliseconds", () => {
+    expect(evaluateMergeReadiness({
+      ...READY,
+      lastNegativeVerdictReviewAt: "2026-08-20T10:00:00Z",
+      supersessionAt: "2026-08-20T10:00:00.100Z",
+    })).toMatchObject({ ready: true });
   });
+});
 
-  it("treats a missing signal as not ready rather than throwing", () => {
-    const sorted = sortMergeColumn([
-      { id: "a", position: 0 },
-      epic("b", 1, true),
-    ]);
-    expect(sorted.map((e) => e.id)).toEqual(["b", "a"]);
-    expect(isMergeReadyEpic({})).toBe(false);
-  });
+
+it("keeps undatable negative signals blocking instead of erasing them", () => {
+  expect(evaluateMergeReadiness({ ...READY, lastNegativeVerdictReviewAt: "invalid" }).blocker).toBe("changes_requested");
+  expect(evaluateMergeReadiness({ ...READY, lastMergeConflictAt: "invalid" }).blocker).toBe("merge_conflict");
+  expect(hasFreshCleanReview({ lastCleanReviewAt: READY.lastCleanReviewAt, lastTerminalCodeAt: "invalid" })).toBe(false);
 });

@@ -1,8 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import {
   dbMockState,
@@ -10,6 +7,13 @@ import {
   mockNextRequest,
   mockRouteContext,
 } from "@/__tests__/helpers/db-mock";
+
+import {
+  makeMissingPath,
+  makePlainDirectory,
+  makeRepository,
+  makeTempRoot,
+} from "./helpers/temp-git-repo";
 
 /**
  * Regression pin: `git/status`, `git/push` and `git/pull` against a
@@ -42,7 +46,7 @@ vi.mock("@/lib/db", async () => {
 });
 
 vi.mock("@/lib/github/sync-log", () => ({
-  writeGitSyncLog: mockWriteGitSyncLog,
+  logSyncOperation: mockWriteGitSyncLog,
 }));
 
 vi.mock("@/lib/agent-config/agent-resolution", () => ({
@@ -66,10 +70,6 @@ let missingPath = "";
  * existing answers on BOTH sides of the fix, or the guard is over-refusing.
  */
 let repoWithoutRemotePath = "";
-
-function git(cwd: string, ...args: string[]): void {
-  execFileSync("git", args, { cwd, stdio: "pipe" });
-}
 
 function seedProject(gitRepoPath: string): void {
   dbMockState.getQueue = [
@@ -144,48 +144,15 @@ const ROUTES = [
 ] as const;
 
 beforeAll(() => {
-  tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), "arij-git-sync-not-a-repo-"));
+  tmpRoot = makeTempRoot("arij-git-sync-not-a-repo-");
 
-  notARepoPath = path.join(tmpRoot, "plain-directory");
-  fs.mkdirSync(notARepoPath, { recursive: true });
-
-  missingPath = path.join(tmpRoot, "was-moved-away");
-
-  repoWithoutRemotePath = path.join(tmpRoot, "repo-without-remote");
-  fs.mkdirSync(repoWithoutRemotePath, { recursive: true });
-  git(repoWithoutRemotePath, "init");
+  // Throws rather than handing out a negative fixture inside some checkout,
+  // where every "not a repository" assertion would pass vacuously.
+  notARepoPath = makePlainDirectory(tmpRoot);
+  missingPath = makeMissingPath(tmpRoot);
   // A commit so the current branch resolves: the status read compares against
   // it, and an unborn HEAD would fail for a reason unrelated to this epic.
-  fs.writeFileSync(path.join(repoWithoutRemotePath, "README.md"), "# fixture\n");
-  git(repoWithoutRemotePath, "add", "README.md");
-  git(
-    repoWithoutRemotePath,
-    "-c",
-    "user.email=fixture@arij.local",
-    "-c",
-    "user.name=Arij Fixture",
-    "commit",
-    "-m",
-    "initial"
-  );
-
-  // The fixture is only meaningful while it really is outside any repository.
-  // A temp dir nested in one (or a stray `git init` above it) would make every
-  // assertion below vacuous, so fail loudly instead.
-  let insideRepo = true;
-  try {
-    execFileSync("git", ["rev-parse", "--is-inside-work-tree"], {
-      cwd: notARepoPath,
-      stdio: "pipe",
-    });
-  } catch {
-    insideRepo = false;
-  }
-  if (insideRepo) {
-    throw new Error(
-      `Fixture invalid: ${notARepoPath} is inside a git repository, so "not a repository" is untestable here.`
-    );
-  }
+  repoWithoutRemotePath = makeRepository(tmpRoot, "repo-without-remote");
 });
 
 afterAll(() => {

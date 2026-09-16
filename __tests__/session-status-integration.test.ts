@@ -22,7 +22,13 @@ vi.mock("@/lib/claude/spawn", () => ({
   })),
 }));
 
-vi.mock("@/lib/providers", () => {
+// claude-code reaches the mocked spawnClaude through the same provider
+// registry as every other CLI — there is no claude branch in the manager.
+vi.mock("@/lib/providers", async () => {
+  const { spawnClaude } = await import("@/lib/claude/spawn");
+  const { mockProviderRegistry } = await import(
+    "@/__tests__/helpers/provider-mock"
+  );
   const mockCodexSession = {
     handle: "codex-test",
     kill: vi.fn(),
@@ -32,14 +38,12 @@ vi.mock("@/lib/providers", () => {
       duration: 300,
     }),
   };
-  return {
-    getProvider: vi.fn(() => ({
-      type: "codex",
-      spawn: vi.fn(() => mockCodexSession),
-      cancel: vi.fn(() => true),
-      isAvailable: vi.fn().mockResolvedValue(true),
-    })),
-  };
+  return mockProviderRegistry(spawnClaude, () => ({
+    type: "codex",
+    spawn: vi.fn(() => mockCodexSession),
+    cancel: vi.fn(() => true),
+    isAvailable: vi.fn().mockResolvedValue(true),
+  }));
 });
 
 let processManager: typeof import("@/lib/claude/process-manager").processManager;
@@ -106,6 +110,31 @@ describe("Process Manager — Status Machine Integration", () => {
     expect(processManager.getStatus("s7")).toBeNull();
   });
 
+  /**
+   * `vi.resetModules` clears the module cache but not the mock registry, so
+   * the hoisted `@/lib/providers` factory keeps the spawnClaude it captured
+   * at first evaluation. A test that re-mocks spawnClaude must re-mock the
+   * registry with it, or the process manager keeps spawning the old fake.
+   */
+  async function mockProvidersOnCurrentSpawn() {
+    vi.doMock("@/lib/providers", async () => {
+      const { spawnClaude } = await import("@/lib/claude/spawn");
+      const { mockProviderRegistry } = await import(
+        "@/__tests__/helpers/provider-mock"
+      );
+      return mockProviderRegistry(spawnClaude, () => ({
+        type: "codex",
+        spawn: vi.fn(() => ({
+          handle: "codex-test",
+          kill: vi.fn(),
+          promise: Promise.resolve({ success: true, result: "Codex output", duration: 300 }),
+        })),
+        cancel: vi.fn(() => true),
+        isAvailable: vi.fn().mockResolvedValue(true),
+      }));
+    });
+  }
+
   it("cancelled session is not overwritten by late completion", async () => {
     // Create a session with a slow-resolving promise
     vi.resetModules();
@@ -118,6 +147,7 @@ describe("Process Manager — Status Machine Integration", () => {
         kill: vi.fn(),
       })),
     }));
+    await mockProvidersOnCurrentSpawn();
 
     const mod = await import("@/lib/claude/process-manager");
     const pm = mod.processManager;
@@ -144,6 +174,7 @@ describe("Process Manager — Status Machine Integration", () => {
         kill: vi.fn(),
       })),
     }));
+    await mockProvidersOnCurrentSpawn();
 
     const mod = await import("@/lib/claude/process-manager");
     const pm = mod.processManager;

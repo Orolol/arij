@@ -200,8 +200,6 @@ function runScripted(config: HarnessConfig = {}) {
           // NULL, so they never prove the channel worked: the session stays
           // unverifiable while blockingCount is non-zero.
           blockingCount: recovered ? 1 : 0,
-          agentCommentCount: 0,
-          usedProseFallback: false,
           unverifiable: true,
           verdictSource: "unverifiable" as const,
         };
@@ -209,8 +207,6 @@ function runScripted(config: HarnessConfig = {}) {
       return {
         blocking: scripted,
         blockingCount: scripted ? 1 : 0,
-        agentCommentCount: 1,
-        usedProseFallback: false,
       };
     },
     readSessionStatus: (sessionId) => rowStatus.get(sessionId) ?? null,

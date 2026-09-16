@@ -8,7 +8,6 @@
 import { describe, it, expect } from "vitest";
 import {
   ticketStatusOptions,
-  isTicketTransitionSelectable,
   REASON_MERGE_REQUIRED_KEY,
   REASON_RELEASED_SYSTEM_ONLY_KEY,
   REASON_SESSION_RUNNING_KEY,
@@ -62,13 +61,6 @@ describe("ticketStatusOptions", () => {
       "in_progress",
       "review",
     ]);
-  });
-
-  it("keeps done reachable only through the merge, never the dropdown", () => {
-    expect(isTicketTransitionSelectable("review", "done")).toBe(false);
-    expect(isTicketTransitionSelectable("to_merge", "done")).toBe(false);
-    expect(isTicketTransitionSelectable("review", "to_merge")).toBe(true);
-    expect(isTicketTransitionSelectable("review", "in_progress")).toBe(true);
   });
 
   it("disables the released target with the system-only reason from every source", () => {

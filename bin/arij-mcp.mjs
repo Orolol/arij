@@ -109,7 +109,7 @@ const AGENT_TOOLS = [
         status: {
           type: "string",
           enum: ["backlog", "todo", "in_progress", "review"],
-          description: "Target board column.",
+          description: "Target ticket status.",
         },
         reason: {
           type: "string",
@@ -392,7 +392,7 @@ const AGENT_TOOLS = [
   // These reshape the planning half of the board. Every one requires a
   // `reason`: Arij records it in the ticket's activity log, so a ticket the
   // agent moved always explains itself. They are refused outside the
-  // Backlog and To do columns.
+  // Backlog and To do statuses.
   {
     name: "set_priority",
     description:
@@ -429,7 +429,7 @@ const AGENT_TOOLS = [
   {
     name: "reorder_tickets",
     description:
-      "Re-rank Backlog/To do tickets by writing their board positions (0 = top of the column). Position is the board's single ordering source, the same one drag-and-drop writes. Send every ticket of the column you are ordering, each id once; this never changes a ticket's column.",
+      "Re-rank Backlog/To do tickets by writing their board positions (0 = top of the status). Position is the registry's ordering source within each status. Send every ticket of the status you are ordering, each id once; this never changes a ticket's status.",
     inputSchema: {
       type: "object",
       properties: {
@@ -445,7 +445,7 @@ const AGENT_TOOLS = [
               position: {
                 type: "integer",
                 minimum: 0,
-                description: "0-based rank inside the ticket's column.",
+                description: "0-based rank inside the ticket's status.",
               },
             },
             required: ["ticket_id", "position"],
@@ -525,7 +525,7 @@ const AGENT_TOOLS = [
   {
     name: "promote_ticket",
     description:
-      "Move a ticket between Backlog and To do: promote it to 'todo' when it is ready to be picked up, or send it back to 'backlog' when it is not. Sending one back REQUIRES `question` — the missing answer — which is posted on the ticket. No other column is reachable through this tool.",
+      "Move a ticket between Backlog and To do: promote it to 'todo' when it is ready to be picked up, or send it back to 'backlog' when it is not. Sending one back REQUIRES `question` — the missing answer — which is posted on the ticket. No other status is reachable through this tool.",
     inputSchema: {
       type: "object",
       properties: {
@@ -533,7 +533,7 @@ const AGENT_TOOLS = [
         status: {
           type: "string",
           enum: ["backlog", "todo"],
-          description: "Target column.",
+          description: "Target status.",
         },
         reason: {
           type: "string",
@@ -655,7 +655,7 @@ const AGENT_TOOLS = [
           type: "string",
           enum: ["backlog", "todo"],
           description:
-            "Which planning column to create it in. Defaults to backlog.",
+            "Which planning status to create it in. Defaults to backlog.",
         },
         user_stories: {
           type: "array",
@@ -706,14 +706,14 @@ const CHAT_TOOLS = [
   {
     name: "list_tickets",
     description:
-      "List the tickets (epics) on this project's Arij kanban board: id, readable id, title, status column, type, priority and user-story progress. Use it to read the board before answering questions about it.",
+      "List the tickets (epics) on this project's Arij ticket registry: id, readable id, title, status status, type, priority and user-story progress. Use it to read the board before answering questions about it.",
     inputSchema: {
       type: "object",
       properties: {
         status: {
           type: "string",
           enum: ["backlog", "todo", "in_progress", "review", "done", "released"],
-          description: "Only return tickets in this board column.",
+          description: "Only return tickets in this board status.",
         },
       },
       additionalProperties: false,
@@ -754,7 +754,7 @@ const CHAT_TOOLS = [
         status: {
           type: "string",
           enum: ["backlog", "todo", "in_progress", "review", "done"],
-          description: "Starting column, defaults to backlog.",
+          description: "Starting status, defaults to backlog.",
         },
         user_stories: {
           type: "array",
@@ -794,7 +794,7 @@ const CHAT_TOOLS = [
   {
     name: "update_ticket_status",
     description:
-      "Move an Arij ticket to another board column. Transitions are validated by the workflow engine (To Merge is reached through a passing review verdict, Done through a successful merge), so an invalid move returns an explanatory error.",
+      "Move an Arij ticket to another board status. Transitions are validated by the workflow engine (To Merge is reached through a passing review verdict, Done through a successful merge), so an invalid move returns an explanatory error.",
     inputSchema: {
       type: "object",
       properties: {
@@ -802,7 +802,7 @@ const CHAT_TOOLS = [
         status: {
           type: "string",
           enum: ["backlog", "todo", "in_progress", "review"],
-          description: "Target board column.",
+          description: "Target ticket status.",
         },
         reason: {
           type: "string",
@@ -842,7 +842,7 @@ const CHAT_TOOLS = [
   {
     name: "start_build",
     description:
-      "Launch a coding agent on an Arij ticket (creates a git worktree and a build session). Only for buildable columns (backlog/todo/in_progress/review); fails if an agent is already working on the ticket. Ask the user before using this unless they clearly requested a build.",
+      "Launch a coding agent on an Arij ticket (creates a git worktree and a build session). Only for buildable statuses (backlog/todo/in_progress/review); fails if an agent is already working on the ticket. Ask the user before using this unless they clearly requested a build.",
     inputSchema: {
       type: "object",
       properties: {
@@ -859,7 +859,9 @@ const CHAT_TOOLS = [
   },
 ];
 
-const TOOLS = TOOLSET === "chat" ? CHAT_TOOLS : AGENT_TOOLS;
+const configuredToolNames = readEnv("ARIJ_MCP_ALLOWED_TOOLS");
+const allowedNames = configuredToolNames ? new Set(JSON.parse(configuredToolNames)) : null;
+const TOOLS = TOOLSET === "chat" ? CHAT_TOOLS : AGENT_TOOLS.filter((tool) => !allowedNames || allowedNames.has(tool.name));
 const TOOL_NAMES = new Set(TOOLS.map((tool) => tool.name));
 
 /** Wrap a message as a tool-level error result (never a protocol failure). */

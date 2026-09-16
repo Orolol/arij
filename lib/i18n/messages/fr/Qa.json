@@ -37,7 +37,14 @@
     "label": "La rubrique",
     "helper": "ce que chaque reviewer vérifie — injectée dans son prompt",
     "edit": "éditer →",
-    "footnote": "Review unverifiable (tests KO) = verdict à part : le ticket remonte en Your turn au lieu de passer.",
-    "projectRules": "+ {count, plural, one {# règle projet} other {# règles projet}}"
+    "footnote": "Review unverifiable (tests KO) = verdict à part : le ticket remonte en Your turn au lieu de passer."
+  },
+  "report": {
+    "retry": "Réessayer",
+    "generationSession": "Ouvrir la session de génération des tickets"
+  },
+  "checkDialog": {
+    "updatePreset": "Mettre à jour le modèle",
+    "deletePreset": "Supprimer le modèle"
   }
 }

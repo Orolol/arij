@@ -270,7 +270,7 @@ export async function runVerification(
 
   // A lost report row must never fail the run: the commands already
   // executed and their verdict is computed. This mirrors the regression
-  // gate's persistence stance (lib/pipeline/verify.ts). The loss is
+  // gate's persistence stance (lib/pipeline/regression-gate.ts). The loss is
   // REPORTED rather than swallowed, so a caller does not announce a verdict
   // that no durable reader will ever see.
   let persisted = true;

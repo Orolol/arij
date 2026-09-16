@@ -286,9 +286,7 @@ async function readGrid(page: Page): Promise<GridReading> {
     }));
 
     const today = grid.querySelector('[data-testid="desk-today-tile"]');
-    const todayFooter = [...(today?.querySelectorAll('[data-slot="mono"]') ?? [])].find((el) =>
-      (el.textContent ?? "").includes("projet"),
-    );
+    const todayFooter = today?.querySelector(':scope > [data-slot="mono"]');
     const queued = grid.querySelector('[data-testid="desk-queued-tile"]');
     const cards = [...grid.querySelectorAll('[data-testid="desk-live-session"]')].map((card) => {
       const title = card.querySelector("button.line-clamp-2");
@@ -394,7 +392,7 @@ function expectLegibleMobileGrid(
   //    unclamped line inside its tile.
   const today = reading.cells.find((cell) => cell.testId === "desk-today-tile")!;
   expect(reading.todayFooter, `${where}: no TODAY footer`).not.toBeNull();
-  expect(reading.todayFooter!.text).toBe("$1.42 · 2 projets · 9 sessions");
+  expect(reading.todayFooter!.text).toBe("$1.42 · 2 projects · 9 sessions");
   expect(
     reading.todayFooter!.scrollWidth,
     `${where}: the TODAY footer is clamped — ${reading.todayFooter!.scrollWidth}px of line in ` +

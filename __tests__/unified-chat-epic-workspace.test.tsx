@@ -9,7 +9,7 @@
  *  5. Running indicators on chat tabs
  */
 
-import { createRef } from "react";
+import { createRef, useReducer } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -18,9 +18,9 @@ import userEvent from "@testing-library/user-event";
 // Mocks
 // ---------------------------------------------------------------------------
 
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ refresh: vi.fn() }),
-}));
+vi.mock("next/navigation", async () =>
+  (await import("@/__tests__/helpers/next-navigation-mock")).nextNavigationMock(),
+);
 
 let conversationCounter = 2;
 let mockConversations: Array<{
@@ -64,16 +64,23 @@ const mockRefreshConversations = vi.fn();
 const mockDeleteConversation = vi.fn();
 
 vi.mock("@/hooks/useConversations", () => ({
-  useConversations: () => ({
-    conversations: mockConversations,
-    activeId: mockActiveId,
-    setActiveId: mockSetActiveId,
-    createConversation: mockCreateConversation,
-    updateConversation: mockUpdateConversation,
-    deleteConversation: mockDeleteConversation,
-    refresh: mockRefreshConversations,
-    loading: false,
-  }),
+  useConversations: () => {
+    const [, renderAgain] = useReducer((count: number) => count + 1, 0);
+    return {
+      conversations: mockConversations,
+      activeId: mockActiveId,
+      setActiveId: (id: string | null) => { mockSetActiveId(id); renderAgain(); },
+      createConversation: async (input: Parameters<typeof mockCreateConversation>[0]) => {
+        const created = await mockCreateConversation(input);
+        renderAgain();
+        return created;
+      },
+      updateConversation: mockUpdateConversation,
+      deleteConversation: mockDeleteConversation,
+      refresh: mockRefreshConversations,
+      loading: false,
+    };
+  },
 }));
 
 let mockMessages: Array<{

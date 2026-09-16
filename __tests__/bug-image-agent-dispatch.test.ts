@@ -48,11 +48,6 @@ vi.mock("@/lib/documents/memory", () => ({
 
 vi.mock("@/lib/documents/query", () => ({ listProjectDocuments: vi.fn(() => []) }));
 
-vi.mock("@/lib/notifications/create", () => ({
-  createUnresolvedMentionsNotification: vi.fn(),
-  buildEpicTargetUrl: vi.fn(() => "/board"),
-}));
-
 vi.mock("@/lib/workflow/log", () => ({ logTransition: vi.fn() }));
 // The build route's workflow bookkeeping is out of scope for a prompt-text
 // test: stub it out so the real transition engine (and its extra DB reads)

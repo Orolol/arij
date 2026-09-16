@@ -1,7 +1,10 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
-import { usePolling } from "@/hooks/usePolling";
+import { useMemo } from "react";
+import { usePolledResource } from "@/hooks/usePolledResource";
+const loadError = () => "Unable to load pipeline runs";
+const isRuns = (value: unknown): value is PipelineRunSnapshot[] => Array.isArray(value);
+const EMPTY_RUNS: PipelineRunSnapshot[] = [];
 import {
   isPipelineRunActive,
   type PipelineRunSnapshot,
@@ -68,30 +71,14 @@ export function usePipelineRuns(
   enabled: boolean = true,
   intervalMs: number = 5000
 ) {
-  const [runs, setRuns] = useState<PipelineRunSnapshot[]>([]);
-  const [loading, setLoading] = useState(true);
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch(`/api/projects/${projectId}/pipeline/runs`);
-      const json = await res.json();
-      if (Array.isArray(json?.data)) {
-        setRuns(json.data as PipelineRunSnapshot[]);
-      }
-    } catch {
-      // ignore — chips are decorative
-    }
-    setLoading(false);
-  }, [projectId]);
-
-  usePolling(load, intervalMs, enabled);
-
+  const { data, loading, error, refresh } = usePolledResource<PipelineRunSnapshot[]>(enabled && projectId ? `/api/projects/${projectId}/pipeline/runs` : null, intervalMs, loadError, { validateData: isRuns });
+  const runs = data ?? EMPTY_RUNS;
   const sessionIndex = useMemo(() => indexPipelineSessions(runs), [runs]);
 
   return {
     runs,
     loading,
     sessionIndex,
-    refresh: load,
+    error, refresh,
   };
 }

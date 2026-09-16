@@ -1,10 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { Infinity as InfinityIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePolledResource } from "@/hooks/usePolledResource";
 import type { AutoModeStatus } from "@/lib/auto-mode/status";
+
+const statusError = () => "Unable to load Full Auto status";
 
 interface AutoModeToggleProps {
   projectId: string;
@@ -29,37 +32,15 @@ export function AutoModeToggle({
   pollIntervalMs = 5000,
 }: AutoModeToggleProps) {
   const t = useTranslations("AutoMode");
-  const [status, setStatus] = useState<AutoModeStatus | null>(null);
-
-  // One effect owns both the initial read and the poll, and every setState
-  // happens in a fetch callback rather than in the effect body (the board is
-  // the external system being subscribed to here).
+  const { data: status, refresh } = usePolledResource<AutoModeStatus>(
+    `/api/projects/${projectId}/auto-mode`, pollIntervalMs || null, statusError,
+  );
+  const lastTrigger = useRef(refreshTrigger);
   useEffect(() => {
-    let cancelled = false;
-
-    const load = (): void => {
-      fetch(`/api/projects/${projectId}/auto-mode`)
-        .then((r) => r.json())
-        .then((d) => {
-          if (cancelled || !d?.data) return;
-          setStatus(d.data as AutoModeStatus);
-        })
-        .catch(() => {
-          // A failed status read must never break the board toolbar.
-        });
-    };
-
-    load();
-    if (!pollIntervalMs) return () => {
-      cancelled = true;
-    };
-
-    const timer = setInterval(load, pollIntervalMs);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [projectId, refreshTrigger, pollIntervalMs]);
+    if (lastTrigger.current === refreshTrigger) return;
+    lastTrigger.current = refreshTrigger;
+    void refresh();
+  }, [refreshTrigger, refresh]);
 
   const active = status?.enabled === true;
   const badge = active

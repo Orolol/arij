@@ -436,6 +436,11 @@ describe("isCheckLive / checkStatusLabel", () => {
     expect(isCheckLive({ status: "running", sessionStatus: null })).toBe(false);
   });
 
+  it("does not invent liveness for an unknown session lifecycle status", () => {
+    expect(isCheckLive({ status: "running", sessionStatus: "unknown" })).toBe(false);
+    expect(checkStatusLabel({ status: "running", sessionStatus: "unknown" })).toBe("interrupted");
+  });
+
   it("never calls a finished report live, whatever its session says", () => {
     expect(isCheckLive({ status: "completed", sessionStatus: "running" })).toBe(
       false,

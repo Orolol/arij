@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useState } from "react";
 import { useTranslations } from "next-intl";
 
-import { usePolling } from "@/hooks/usePolling";
+import { useSessionPolling } from "./useSessionPolling";
 
 import type {
   SessionDiff,
@@ -44,50 +44,37 @@ export function useSessionFiles(
   // the translator identity, which changes on every render.
   const t = useTranslations("SessionLive");
   const readFailedCopy = t("files.readFailed");
-  const [ticket, setTicket] = useState<SessionFilesTicket | null>(null);
-  const [project, setProject] = useState<SessionFilesProject | null>(null);
-  const [diff, setDiff] = useState<SessionDiff | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  // A slow git call must not stack behind the poll.
-  const inFlight = useRef(false);
+  const key = JSON.stringify([projectId, sessionId]);
+  const [state, setState] = useState<(SessionFilesState & { key: string }) | null>(null);
 
-  const load = useCallback(async () => {
-    if (inFlight.current) return;
-    inFlight.current = true;
+  const load = useCallback(async (signal: AbortSignal) => {
+    let data: SessionFilesResponse | null = null;
     try {
       const res = await fetch(
-        `/api/projects/${projectId}/sessions/${sessionId}/files`
+        `/api/projects/${projectId}/sessions/${sessionId}/files`,
+        { signal },
       );
-      if (!res.ok) throw new Error(`Files request failed (${res.status})`);
-      const body = (await res.json()) as { data?: SessionFilesResponse };
-      if (!body.data) throw new Error("Files response had no data");
-      setTicket(body.data.ticket);
-      setProject(body.data.project);
-      setDiff(body.data.diff);
-      setError(null);
+      if (res.ok) {
+        const body = (await res.json()) as { data: SessionFilesResponse | null };
+        data = body.data;
+      }
     } catch {
       // Never throws: this is ambient detail on a page that must keep working.
-      setError(readFailedCopy);
-    } finally {
-      inFlight.current = false;
-      setLoading(false);
     }
-  }, [projectId, sessionId, readFailedCopy]);
+    if (signal.aborted) return;
+    if (data) {
+      setState({ ...data, key, loading: false, error: null });
+    } else {
+      setState((previous) => ({
+        ticket: previous?.key === key ? previous.ticket : null,
+        project: previous?.key === key ? previous.project : null,
+        diff: previous?.key === key ? previous.diff : null,
+        key, loading: false, error: readFailedCopy,
+      }));
+    }
+  }, [projectId, sessionId, key, readFailedCopy]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useSessionPolling(key, load, isRunning, 15000, { immediate: true });
 
-  usePolling(load, 15000, isRunning, { immediate: false });
-
-  // One more read when the run ends, so the final diff lands even though the
-  // poll above has just switched itself off.
-  const wasRunning = useRef(isRunning);
-  useEffect(() => {
-    if (wasRunning.current && !isRunning) void load();
-    wasRunning.current = isRunning;
-  }, [isRunning, load]);
-
-  return { ticket, project, diff, loading, error };
+  return state?.key === key ? state : { ticket: null, project: null, diff: null, loading: true, error: null };
 }

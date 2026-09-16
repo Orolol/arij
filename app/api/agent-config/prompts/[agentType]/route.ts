@@ -1,63 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
-import { db } from "@/lib/db";
-import { agentPrompts } from "@/lib/db/schema";
-import { createId } from "@/lib/utils/nanoid";
-import { isAgentType } from "@/lib/agent-config/constants";
-import { updateAgentPromptSchema } from "@/lib/validation/schemas";
-import { validateBody, isValidationError } from "@/lib/validation/validate";
+import { NextRequest } from "next/server";
+import {
+  handleDeleteAgentPrompt,
+  handlePutAgentPrompt,
+} from "@/lib/agent-config/prompt-routes";
 
 type Params = { params: Promise<{ agentType: string }> };
 
 export async function PUT(request: NextRequest, { params }: Params) {
   const { agentType } = await params;
-  if (!isAgentType(agentType)) {
-    return NextResponse.json({ error: `Unknown agent type: ${agentType}` }, { status: 400 });
-  }
+  return handlePutAgentPrompt(request, agentType, "global");
+}
 
-  const validated = await validateBody(updateAgentPromptSchema, request);
-  if (isValidationError(validated)) return validated;
-  const { systemPrompt } = validated.data;
-
-  const now = new Date().toISOString();
-  const existing = db
-    .select({
-      id: agentPrompts.id,
-    })
-    .from(agentPrompts)
-    .where(
-      and(eq(agentPrompts.agentType, agentType), eq(agentPrompts.scope, "global"))
-    )
-    .get();
-
-  if (existing) {
-    db.update(agentPrompts)
-      .set({
-        systemPrompt,
-        updatedAt: now,
-      })
-      .where(eq(agentPrompts.id, existing.id))
-      .run();
-  } else {
-    db.insert(agentPrompts)
-      .values({
-        id: createId(),
-        agentType,
-        systemPrompt,
-        scope: "global",
-        createdAt: now,
-        updatedAt: now,
-      })
-      .run();
-  }
-
-  const updated = db
-    .select()
-    .from(agentPrompts)
-    .where(
-      and(eq(agentPrompts.agentType, agentType), eq(agentPrompts.scope, "global"))
-    )
-    .get();
-
-  return NextResponse.json({ data: updated });
+export async function DELETE(_request: NextRequest, { params }: Params) {
+  const { agentType } = await params;
+  return handleDeleteAgentPrompt(agentType, "global");
 }

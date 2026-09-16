@@ -19,6 +19,7 @@ interface PermanentDeleteDialogProps {
   description: string;
   confirmLabel: string;
   deleting: boolean;
+  locked?: boolean;
   onConfirm: () => Promise<void> | void;
 }
 
@@ -29,12 +30,13 @@ export function PermanentDeleteDialog({
   description,
   confirmLabel,
   deleting,
+  locked = false,
   onConfirm,
 }: PermanentDeleteDialogProps) {
   const t = useTranslations("Shared");
 
   async function handleConfirm() {
-    if (deleting) return;
+    if (deleting || locked) return;
     await onConfirm();
   }
 
@@ -63,14 +65,14 @@ export function PermanentDeleteDialog({
           <Button
             variant="outline"
             onClick={() => onOpenChange(false)}
-            disabled={deleting}
+            disabled={deleting || locked}
           >
             {t("cancel")}
           </Button>
           <Button
             variant="destructive"
             onClick={handleConfirm}
-            disabled={deleting}
+            disabled={deleting || locked}
           >
             {deleting && <Loader2 className="h-4 w-4 animate-spin" />}
             {confirmLabel}

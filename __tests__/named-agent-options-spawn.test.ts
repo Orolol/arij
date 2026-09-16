@@ -36,40 +36,13 @@ vi.mock("fs", () => ({
   existsSync: vi.fn(() => false),
 }));
 
-vi.mock("@/lib/claude/logger", () => ({
-  createStreamLog: vi.fn(),
-  appendStreamEvent: vi.fn(),
-  appendStderrEvent: vi.fn(),
-  endStreamLog: vi.fn(),
-}));
-
 import { CodexProvider } from "@/lib/providers/codex";
 import { OhMyPiProvider } from "@/lib/providers/oh-my-pi";
 import { AgyProvider } from "@/lib/providers/agy";
 import { buildClaudeArgs } from "@/lib/claude/spawn";
 import type { ProviderSpawnOptions } from "@/lib/providers/types";
 import type { NamedAgentCliOptions } from "@/lib/providers/options-registry";
-
-type Listener = (...args: unknown[]) => void;
-
-function createFakeChild() {
-  const listeners = new Map<string, Listener[]>();
-  return {
-    stdout: { on: () => {} },
-    stderr: { on: () => {} },
-    stdin: { write: () => {}, end: () => {} },
-    on: (event: string, fn: Listener) => {
-      const arr = listeners.get(event) ?? [];
-      arr.push(fn);
-      listeners.set(event, arr);
-    },
-    kill: vi.fn(),
-    killed: false,
-    pid: 4242,
-    exitCode: null as number | null,
-    signalCode: null as NodeJS.Signals | null,
-  };
-}
+import { createFakeChild } from "./helpers/fake-child";
 
 function baseOptions(
   overrides: Partial<ProviderSpawnOptions> = {},
@@ -187,16 +160,18 @@ describe("codex argv", () => {
     expect(without).not.toContain("model_reasoning_effort=high");
   });
 
-  it("drops --profile on the resume subcommand but keeps -c", () => {
+  it("still passes --profile: the resume subcommand it was dropped for is gone", () => {
+    // `codex exec resume` no longer exists (codex is excluded from every
+    // resume path), so there is no argv shape where --profile is fatal.
     const { with: withOptions } = argvPair(
       spawnOnce,
       { reasoning_effort: "low", profile: "fast" },
       { cliSessionId: "cli-abc", resumeSession: true },
     );
-    expect(withOptions.slice(0, 3)).toEqual(["exec", "resume", "cli-abc"]);
+    expect(withOptions[0]).toBe("exec");
+    expect(withOptions).not.toContain("resume");
     expect(withOptions).toContain("model_reasoning_effort=low");
-    expect(withOptions).not.toContain("-p");
-    expect(withOptions).not.toContain("fast");
+    expect(withOptions[withOptions.indexOf("-p") + 1]).toBe("fast");
   });
 });
 

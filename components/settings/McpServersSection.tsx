@@ -51,10 +51,11 @@ import type { UiLocale } from "@/lib/i18n/locales";
  * (`lib/i18n/catalogue.ts`, pattern 3).
  */
 
-import { useCallback, useEffect, useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
+import { useCallback, useState } from "react";
+import { requestJson } from "@/lib/api/client";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { useScopedMutation } from "@/hooks/useScopedMutation";
+import { PillButton, Stamp } from "@/components/piscine";
 import {
   MCP_SERVER_COMMAND_MAX_LENGTH,
   MCP_SERVER_NAME_MAX_LENGTH,
@@ -72,6 +73,32 @@ interface ProjectPayload {
   servers: McpServerView[];
   inherited: InheritedServer[];
   unsupportedProviders: string[];
+}
+
+type ServerListData = McpServerView[] | ProjectPayload;
+interface ProbeResult { ok: boolean; toolCount: number; toolNames: string[]; error: string | null }
+const NO_SERVERS: McpServerView[] = [];
+const NO_INHERITED: InheritedServer[] = [];
+const NO_PROVIDERS: string[] = [];
+function isServer(value: unknown): value is McpServerView {
+  if (!value || typeof value !== "object") return false;
+  const server = value as McpServerView;
+  return typeof server.id === "string" && typeof server.name === "string"
+    && Array.isArray(server.args) && Boolean(server.env && server.headers);
+}
+const isServers = (value: unknown): value is McpServerView[] => Array.isArray(value) && value.every(isServer);
+function isProjectPayload(value: unknown): value is ProjectPayload {
+  if (!value || typeof value !== "object") return false;
+  const data = value as ProjectPayload;
+  return isServers(data.servers) && isServers(data.inherited) && Array.isArray(data.unsupportedProviders);
+}
+const isDeleted = (value: unknown): value is { id: string; deleted: true } =>
+  Boolean(value && typeof value === "object" && "deleted" in value && value.deleted === true
+    && "id" in value && typeof value.id === "string");
+function isProbeResult(value: unknown): value is ProbeResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as ProbeResult;
+  return typeof result.ok === "boolean" && typeof result.toolCount === "number" && Array.isArray(result.toolNames);
 }
 
 /** Draft state for the add/edit form. Secrets are entered as `KEY=value` lines. */
@@ -170,95 +197,76 @@ function healthLabel(
   copy: HealthCopy,
 ): {
   text: string;
-  variant: "secondary" | "destructive" | "outline";
+  tone: "live" | "failed" | "asks";
 } {
   if (server.lastCheckOk === null || server.lastCheckedAt === null) {
-    return { text: copy.neverTested, variant: "outline" };
+    return { text: copy.neverTested, tone: "asks" };
   }
   const when = formatDateTime(server.lastCheckedAt, { locale, style: "dateTimeSeconds" });
   return server.lastCheckOk
-    ? { text: copy.ok(when), variant: "secondary" }
-    : { text: copy.failed(when), variant: "destructive" };
+    ? { text: copy.ok(when), tone: "live" }
+    : { text: copy.failed(when), tone: "failed" };
 }
 
 export function McpServersSection({ projectId }: { projectId?: string | null }) {
+  return <McpServersWorkspace key={JSON.stringify(projectId ?? null)} projectId={projectId} />;
+}
+
+function McpServersWorkspace({ projectId }: { projectId?: string | null }) {
   const locale = useLocale();
-  const t = useTranslations("SettingsLegacy");
+  const t = useTranslations("Settings");
   const scopedProjectId = projectId ?? null;
   const baseUrl = scopedProjectId
     ? `/api/projects/${scopedProjectId}/mcp-servers`
     : "/api/settings/mcp-servers";
 
-  const [servers, setServers] = useState<McpServerView[]>([]);
-  const [inherited, setInherited] = useState<InheritedServer[]>([]);
-  const [unsupportedProviders, setUnsupportedProviders] = useState<string[]>([]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const errorMessage = useCallback(() => t("mcp.message.loadFailed"), [t]);
+  const { data, loading, error: loadError, refresh, updateData } = usePolledResource<ServerListData>(
+    baseUrl, null, errorMessage, { validateData: scopedProjectId ? isProjectPayload : isServers },
+  );
+  const { run, pending: busy, error: mutationError } = useScopedMutation(baseUrl);
+  const servers = Array.isArray(data) ? data : data?.servers ?? NO_SERVERS;
+  const inherited = data && !Array.isArray(data) ? data.inherited : NO_INHERITED;
+  const unsupportedProviders = data && !Array.isArray(data) ? data.unsupportedProviders : NO_PROVIDERS;
+  const feedback = mutationError ?? loadError ?? message;
 
-  const load = useCallback(async () => {
-    try {
-      const response = await fetch(baseUrl);
-      const body = await response.json();
-      if (!response.ok) {
-        setMessage(body.error ?? t("message.loadFailed"));
-        return;
-      }
-      // Shape-check before setting state. This section is one of a dozen on a
-      // shared settings page: an unexpected payload must degrade to an empty
-      // list, not throw during render and blank every OTHER section with it.
-      const asList = (value: unknown): McpServerView[] =>
-        Array.isArray(value) ? (value as McpServerView[]) : [];
-      if (scopedProjectId) {
-        const data = (body.data ?? {}) as Partial<ProjectPayload>;
-        setServers(asList(data.servers));
-        setInherited(asList(data.inherited) as InheritedServer[]);
-        setUnsupportedProviders(
-          Array.isArray(data.unsupportedProviders)
-            ? data.unsupportedProviders
-            : [],
-        );
-      } else {
-        setServers(asList(body.data));
-      }
-    } catch {
-      setMessage(t("message.loadFailed"));
-    }
-  }, [baseUrl, scopedProjectId, t]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
-
-  async function send(
-    url: string,
-    method: string,
-    payload?: unknown,
-  ): Promise<boolean> {
-    setBusy(true);
-    setMessage(null);
-    try {
-      const response = await fetch(url, {
+  async function send(url: string, method: string, payload?: unknown): Promise<boolean> {
+    if (!data) return false;
+    const result = await run(async () => {
+      setMessage(null);
+      const response = await requestJson<McpServerView | { id: string; deleted: true }>(url, {
         method,
         headers: payload ? { "Content-Type": "application/json" } : undefined,
         body: payload ? JSON.stringify(payload) : undefined,
+        errorMessage: t("mcp.message.requestFailed"),
+        validateData: method === "DELETE" ? isDeleted : isServer,
       });
-      const body = await response.json();
-      if (!response.ok) {
-        // The API returns ONE error shape whether the value broke a length cap,
-        // an enum, or the transport rules — so there is one alert here, not a
-        // special case per field.
-        setMessage(body.error ?? t("message.requestFailed"));
-        return false;
-      }
-      await load();
-      return true;
-    } catch {
-      setMessage(t("message.requestFailed"));
-      return false;
-    } finally {
-      setBusy(false);
-    }
+      if (response.error !== null) throw new Error(response.error);
+      return response.data;
+    }, t("mcp.message.requestFailed"));
+    if (!result) return false;
+    // Apply the sanitized canonical row returned by the mutation. A second
+    // GET must not decide whether this save succeeded or revive removed rows.
+    updateData((current) => {
+      const previous = Array.isArray(current) ? current : current?.servers ?? NO_SERVERS;
+      const rows = isDeleted(result)
+        ? previous.filter((server) => server.id !== result.id)
+        : previous.some((server) => server.id === result.id)
+          ? previous.map((server) => server.id === result.id ? result : server)
+          : [...previous, result];
+      if (Array.isArray(current)) return rows;
+      const names = new Set(rows.map((server) => server.name));
+      return {
+        servers: rows,
+        inherited: (current?.inherited ?? NO_INHERITED).map((server) => ({
+          ...server, shadowed: names.has(server.name),
+        })),
+        unsupportedProviders: current?.unsupportedProviders ?? NO_PROVIDERS,
+      };
+    });
+    return true;
   }
 
   async function handleSave() {
@@ -312,45 +320,26 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
   }
 
   async function handleTest(serverId: string) {
-    setBusy(true);
-    setMessage(null);
-    try {
-      const response = await fetch(`${baseUrl}/${serverId}/test`, {
-        method: "POST",
+    if (!data) return;
+    const result = await run(async () => {
+      setMessage(null);
+      const response = await requestJson<ProbeResult>(`${baseUrl}/${serverId}/test`, {
+        method: "POST", errorMessage: t("mcp.message.testFailed"), validateData: isProbeResult,
       });
-      const body = await response.json();
-      if (!response.ok) {
-        setMessage(body.error ?? t("message.testFailed"));
-        return;
-      }
-      const result = body.data as {
-        ok: boolean;
-        toolCount: number;
-        toolNames: string[];
-        error: string | null;
-      };
-      setMessage(
-        result.ok
-          ? t("message.testConnected", {
-              count: result.toolCount,
-              tools: result.toolNames.join(", ") || t("message.testNoTools"),
-            })
-          : t("message.testRefused", {
-              reason: result.error ?? t("message.testNoReason"),
-            }),
-      );
-      await load();
-    } catch {
-      setMessage(t("message.testFailed"));
-    } finally {
-      setBusy(false);
-    }
+      if (response.error !== null) throw new Error(response.error);
+      return response.data;
+    }, t("mcp.message.testFailed"));
+    if (!result) return;
+    setMessage(result.ok
+      ? t("mcp.message.testConnected", { count: result.toolCount, tools: result.toolNames.join(", ") || t("mcp.message.testNoTools") })
+      : t("mcp.message.testRefused", { reason: result.error ?? t("mcp.message.testNoReason") }));
+    await refresh();
   }
 
   const healthCopy: HealthCopy = {
-    neverTested: t("health.neverTested"),
-    ok: (when) => t("health.ok", { when }),
-    failed: (when) => t("health.failed", { when }),
+    neverTested: t("mcp.health.neverTested"),
+    ok: (when) => t("mcp.health.ok", { when }),
+    failed: (when) => t("mcp.health.failed", { when }),
   };
 
   function startEdit(server: McpServerView) {
@@ -374,12 +363,12 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
 
   return (
     <section
-      className="space-y-3 rounded-md border border-border p-4"
+      className="space-y-4 rounded-[12px] border border-border/40 bg-card p-4"
       data-testid="mcp-servers-section"
     >
       <div>
-        <h2 className="text-lg font-semibold">{t("mcp.heading")}</h2>
-        <p className="text-sm text-muted-foreground">
+        <h2 className="text-base font-semibold">{t("mcp.heading")}</h2>
+        <p className="text-xs text-muted-foreground">
           {t("mcp.intro")}{" "}
           {scopedProjectId ? t("mcp.scopeProject") : t("mcp.scopeGlobal")}{" "}
           {t.rich("mcp.strictConfig", {
@@ -389,14 +378,14 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
         {/* Stated rather than left to be discovered: the fast chat mode is an
             HTTP chat endpoint, not an MCP host, so nothing declared here can
             reach it. Without this line its absence reads as a broken server. */}
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-1 text-[11px] text-muted-foreground">
           {t("mcp.notChatMode")}
         </p>
       </div>
 
       <ul className="space-y-2" data-testid="mcp-servers-list">
-        {servers.length === 0 && (
-          <li className="text-sm text-muted-foreground">
+        {data && servers.length === 0 && (
+          <li className="text-xs text-muted-foreground">
             {scopedProjectId ? t("mcp.emptyProject") : t("mcp.emptyGlobal")}
           </li>
         )}
@@ -405,110 +394,105 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
           return (
             <li
               key={server.id}
-              className="flex flex-wrap items-center gap-2 rounded border border-border p-2 text-sm"
+              className="flex flex-wrap items-center gap-2 rounded-[10px] border border-border/40 bg-background/50 p-2.5 text-xs"
               data-testid={`mcp-server-${server.name}`}
             >
-              <span className="font-medium">{server.name}</span>
-              <Badge variant="outline">{server.transport}</Badge>
+              <span className="font-medium text-foreground">{server.name}</span>
+              <Stamp tone="next">{server.transport}</Stamp>
               {!server.enabled && (
-                <Badge variant="outline">{t("server.disabled")}</Badge>
+                <Stamp tone="conflict">{t("mcp.server.disabled")}</Stamp>
               )}
-              <Badge variant={health.variant}>{health.text}</Badge>
-              {/* Rendered so a typo ("reviewer" for "review_security") shows up
-                  here instead of silently never injecting anywhere. */}
+              <Stamp tone={health.tone}>{health.text}</Stamp>
               {server.agentTypes && server.agentTypes.length > 0 && (
-                <Badge
-                  variant="outline"
+                <span
+                  className="inline-flex"
                   data-testid={`mcp-server-agent-types-${server.name}`}
                 >
-                  {t("server.agentTypes", { list: server.agentTypes.join(", ") })}
-                </Badge>
+                  <Stamp tone="next">
+                    {t("mcp.server.agentTypes", { list: server.agentTypes.join(", ") })}
+                  </Stamp>
+                </span>
               )}
               {server.toolAllowlist && server.toolAllowlist.length > 0 && (
-                <Badge
-                  variant="outline"
+                <span
+                  className="inline-flex"
                   data-testid={`mcp-server-tools-${server.name}`}
                 >
-                  {t("server.tools", { list: server.toolAllowlist.join(", ") })}
-                </Badge>
+                  <Stamp tone="next">
+                    {t("mcp.server.tools", { list: server.toolAllowlist.join(", ") })}
+                  </Stamp>
+                </span>
               )}
-              {/* KEYS only — the API masks every value, so this leaks nothing.
-                  Without it, "has credentials" is invisible: a shadow row
-                  created by "Disable for this project" deliberately carries
-                  none, and the one-click Enable next to it would otherwise
-                  start a credential-less server with no hint as to why it
-                  fails. */}
               {secretKeys(server).length > 0 && (
-                <Badge
-                  variant="outline"
+                <span
+                  className="inline-flex"
                   data-testid={`mcp-server-secret-keys-${server.name}`}
                 >
-                  {t("server.secrets", { list: secretKeys(server).join(", ") })}
-                </Badge>
+                  <Stamp tone="next">
+                    {t("mcp.server.secrets", { list: secretKeys(server).join(", ") })}
+                  </Stamp>
+                </span>
               )}
               {server.usageHint && (
                 <span className="text-muted-foreground">{server.usageHint}</span>
               )}
-              {/* The stored reason, not just the stored verdict. The probe
-                  goes to the trouble of recovering a failing server's own
-                  diagnostic (lib/mcp/probe.ts); showing it only in the
-                  transient message below would lose it on the next reload and
-                  leave a bare "Failed — <date>" that names no cause. */}
               {server.lastCheckOk === false && server.lastCheckError && (
                 <span
-                  className="w-full break-words text-xs text-destructive"
+                  className="w-full break-words text-[11px] text-destructive font-mono"
                   data-testid={`mcp-server-check-error-${server.name}`}
                 >
                   {server.lastCheckError}
                 </span>
               )}
-              <span className="ml-auto flex gap-2">
-                <Button
+              <span className="ml-auto flex items-center gap-1.5">
+                <PillButton
                   size="sm"
                   variant="outline"
-                  disabled={busy}
+                  outlineTone="neutral"
+                  disabled={busy || !data}
                   onClick={() => handleTest(server.id)}
                 >
-                  {t("server.test")}
-                </Button>
-                <Button
+                  {t("mcp.server.test")}
+                </PillButton>
+                <PillButton
                   size="sm"
                   variant="outline"
-                  disabled={busy}
+                  outlineTone="neutral"
+                  disabled={busy || !data}
                   onClick={() => startEdit(server)}
                 >
-                  {t("server.edit")}
-                </Button>
-                <Button
+                  {t("mcp.server.edit")}
+                </PillButton>
+                <PillButton
                   size="sm"
                   variant="outline"
-                  disabled={busy}
+                  outlineTone="neutral"
+                  disabled={busy || !data}
                   onClick={() =>
                     send(`${baseUrl}/${server.id}`, "PATCH", {
                       enabled: !server.enabled,
                     })
                   }
                 >
-                  {server.enabled ? t("server.disable") : t("server.enable")}
-                </Button>
-                <Button
+                  {server.enabled ? t("mcp.server.disable") : t("mcp.server.enable")}
+                </PillButton>
+                <PillButton
                   size="sm"
-                  variant="destructive"
-                  disabled={busy}
+                  variant="outline"
+                  outlineTone="neutral"
+                  labelTone="danger"
+                  disabled={busy || !data}
                   onClick={() => send(`${baseUrl}/${server.id}`, "DELETE")}
                 >
-                  {t("server.delete")}
-                </Button>
+                  {t("mcp.server.delete")}
+                </PillButton>
               </span>
               {scopedProjectId && unsupportedProviders.length > 0 && (
-                // Story requirement: the scope limitation is READ off the
-                // screen, never inferred. These CLIs only read a user-global
-                // MCP registry, so a project-scoped server cannot reach them.
                 <span
-                  className="w-full text-xs text-muted-foreground"
+                  className="w-full text-[11px] text-muted-foreground"
                   data-testid={`mcp-server-unsupported-${server.name}`}
                 >
-                  {t("server.unsupportedProviders", {
+                  {t("mcp.server.unsupportedProviders", {
                     providers: unsupportedProviders.join(", "),
                   })}
                 </span>
@@ -519,99 +503,101 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
       </ul>
 
       {scopedProjectId && (
-        <div className="space-y-2" data-testid="mcp-inherited-list">
-          <h3 className="text-sm font-semibold">{t("inherited.heading")}</h3>
+        <div className="space-y-2 pt-2 border-t border-border/40" data-testid="mcp-inherited-list">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground font-mono">
+            {t("mcp.inherited.heading")}
+          </h3>
           {inherited.length === 0 && (
-            <p className="text-sm text-muted-foreground">
-              {t("inherited.empty")}
+            <p className="text-xs text-muted-foreground">
+              {t("mcp.inherited.empty")}
             </p>
           )}
           {inherited.map((server) => (
             <div
               key={server.id}
-              className="flex flex-wrap items-center gap-2 rounded border border-dashed border-border bg-muted/30 p-2 text-sm"
+              className="flex flex-wrap items-center gap-2 rounded-[10px] border border-dashed border-border/50 bg-muted/20 p-2.5 text-xs"
               data-testid={`mcp-inherited-${server.name}`}
             >
-              <span className="font-medium">{server.name}</span>
-              <Badge variant="outline">{t("inherited.badge")}</Badge>
+              <span className="font-medium text-foreground">{server.name}</span>
+              <Stamp tone="next">{t("mcp.inherited.badge")}</Stamp>
               {server.shadowed && (
-                // An override is a PROJECT row, and a project row cannot reach a
-                // user-global provider — so those CLIs keep loading the global.
-                // An unqualified "overridden here" would state the opposite of
-                // what actually happens on two of the four providers.
-                <Badge variant="secondary">
+                <Stamp tone="conflict">
                   {unsupportedProviders.length > 0
-                    ? t("inherited.overriddenExcept", {
+                    ? t("mcp.inherited.overriddenExcept", {
                         providers: unsupportedProviders.join(", "),
                       })
-                    : t("inherited.overridden")}
-                </Badge>
+                    : t("mcp.inherited.overridden")}
+                </Stamp>
               )}
               {server.usageHint && (
                 <span className="text-muted-foreground">{server.usageHint}</span>
               )}
               <span className="ml-auto">
                 {!server.shadowed && (
-                  <Button
+                  <PillButton
                     size="sm"
                     variant="outline"
-                    disabled={busy}
+                    outlineTone="neutral"
+                    disabled={busy || !data}
                     onClick={() =>
                       send(`${baseUrl}/shadow`, "POST", {
                         globalServerId: server.id,
                       })
                     }
                   >
-                    {t("inherited.disableForProject")}
-                  </Button>
+                    {t("mcp.inherited.disableForProject")}
+                  </PillButton>
                 )}
               </span>
               {!server.shadowed && unsupportedProviders.length > 0 && (
                 <span
-                  className="w-full text-xs text-muted-foreground"
+                  className="w-full text-[11px] text-muted-foreground"
                   data-testid={`mcp-inherited-partial-${server.name}`}
                 >
-                  {t("inherited.partialDisable", {
+                  {t("mcp.inherited.partialDisable", {
                     providers: unsupportedProviders.join(", "),
                   })}
                 </span>
               )}
             </div>
           ))}
-          <p className="text-xs text-muted-foreground">{t("inherited.note")}</p>
+          <p className="text-[11px] text-muted-foreground">{t("mcp.inherited.note")}</p>
         </div>
       )}
 
       {draft === null ? (
-        <Button
+        <PillButton
           size="sm"
-          disabled={busy}
+          variant="filled"
+          disabled={busy || !data}
           onClick={() => setDraft({ ...EMPTY_DRAFT })}
         >
-          {t("form.add")}
-        </Button>
+          {t("mcp.form.add")}
+        </PillButton>
       ) : (
-        <div
-          className="space-y-2 rounded border border-border p-3"
+        <fieldset
+          disabled={busy || !data}
+          className="space-y-3 rounded-[10px] border border-border/40 bg-background/50 p-3"
           data-testid="mcp-server-form"
         >
           <div className="grid gap-2 sm:grid-cols-2">
-            <label className="text-sm">
-              <span className="block text-muted-foreground">
-                {t("form.name")}
+            <label className="text-xs space-y-1 block">
+              <span className="block text-muted-foreground font-medium">
+                {t("mcp.form.name")}
               </span>
-              <Input
+              <input
+                className="h-8 w-full rounded-[6px] border border-border/50 bg-background px-2.5 text-xs font-mono outline-none focus:border-primary"
                 value={draft.name}
                 maxLength={MCP_SERVER_NAME_MAX_LENGTH}
                 onChange={(e) => setDraft({ ...draft, name: e.target.value })}
               />
             </label>
-            <label className="text-sm">
-              <span className="block text-muted-foreground">
-                {t("form.transport")}
+            <label className="text-xs space-y-1 block">
+              <span className="block text-muted-foreground font-medium">
+                {t("mcp.form.transport")}
               </span>
               <select
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+                className="h-8 w-full rounded-[6px] border border-border/50 bg-background px-2.5 text-xs outline-none focus:border-primary cursor-pointer"
                 value={draft.transport}
                 onChange={(e) =>
                   setDraft({
@@ -621,19 +607,20 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
                 }
                 data-testid="mcp-server-transport"
               >
-                <option value="stdio">{t("form.transportStdio")}</option>
-                <option value="http">{t("form.transportHttp")}</option>
+                <option value="stdio">{t("mcp.form.transportStdio")}</option>
+                <option value="http">{t("mcp.form.transportHttp")}</option>
               </select>
             </label>
           </div>
 
           {draft.transport === "stdio" ? (
             <div className="grid gap-2 sm:grid-cols-2">
-              <label className="text-sm">
-                <span className="block text-muted-foreground">
-                  {t("form.command")}
+              <label className="text-xs space-y-1 block">
+                <span className="block text-muted-foreground font-medium">
+                  {t("mcp.form.command")}
                 </span>
-                <Input
+                <input
+                  className="h-8 w-full rounded-[6px] border border-border/50 bg-background px-2.5 text-xs font-mono outline-none focus:border-primary"
                   value={draft.command}
                   maxLength={MCP_SERVER_COMMAND_MAX_LENGTH}
                   onChange={(e) =>
@@ -642,21 +629,22 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
                   data-testid="mcp-server-command"
                 />
               </label>
-              <label className="text-sm">
-                <span className="block text-muted-foreground">
-                  {t("form.args")}
+              <label className="text-xs space-y-1 block">
+                <span className="block text-muted-foreground font-medium">
+                  {t("mcp.form.args")}
                 </span>
                 <textarea
-                  className="min-h-16 w-full rounded-md border border-input bg-transparent p-2 text-sm"
+                  className="min-h-16 w-full rounded-[6px] border border-border/50 bg-background p-2 text-xs font-mono outline-none focus:border-primary resize-y"
                   value={draft.args}
                   onChange={(e) => setDraft({ ...draft, args: e.target.value })}
                 />
               </label>
             </div>
           ) : (
-            <label className="text-sm">
-              <span className="block text-muted-foreground">{t("form.url")}</span>
-              <Input
+            <label className="text-xs space-y-1 block">
+              <span className="block text-muted-foreground font-medium">{t("mcp.form.url")}</span>
+              <input
+                className="h-8 w-full rounded-[6px] border border-border/50 bg-background px-2.5 text-xs font-mono outline-none focus:border-primary"
                 value={draft.url}
                 maxLength={MCP_SERVER_URL_MAX_LENGTH}
                 onChange={(e) => setDraft({ ...draft, url: e.target.value })}
@@ -665,11 +653,12 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
             </label>
           )}
 
-          <label className="text-sm">
-            <span className="block text-muted-foreground">
-              {t("form.usageHint")}
+          <label className="text-xs space-y-1 block">
+            <span className="block text-muted-foreground font-medium">
+              {t("mcp.form.usageHint")}
             </span>
-            <Input
+            <input
+              className="h-8 w-full rounded-[6px] border border-border/50 bg-background px-2.5 text-xs outline-none focus:border-primary"
               value={draft.usageHint}
               maxLength={MCP_SERVER_USAGE_HINT_MAX_LENGTH}
               onChange={(e) =>
@@ -679,16 +668,13 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
           </label>
 
           <div className="grid gap-2 sm:grid-cols-2">
-            <label className="text-sm">
-              <span className="block text-muted-foreground">
-                {t("form.agentTypes")}
+            <label className="text-xs space-y-1 block">
+              <span className="block text-muted-foreground font-medium">
+                {t("mcp.form.agentTypes")}
               </span>
               <textarea
-                className="min-h-16 w-full rounded-md border border-input bg-transparent p-2 text-sm"
-                // NOT COPY: these are the stored agent-type identifiers, and
-                // the tool names below are the servers' own. Both are matched
-                // literally against data, so they stay out of the catalogue.
-                placeholder={t("form.agentTypesPlaceholder")}
+                className="min-h-16 w-full rounded-[6px] border border-border/50 bg-background p-2 text-xs font-mono outline-none focus:border-primary resize-y"
+                placeholder={t("mcp.form.agentTypesPlaceholder")}
                 value={draft.agentTypes}
                 onChange={(e) =>
                   setDraft({ ...draft, agentTypes: e.target.value })
@@ -696,13 +682,13 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
                 data-testid="mcp-server-agent-types"
               />
             </label>
-            <label className="text-sm">
-              <span className="block text-muted-foreground">
-                {t("form.toolAllowlist")}
+            <label className="text-xs space-y-1 block">
+              <span className="block text-muted-foreground font-medium">
+                {t("mcp.form.toolAllowlist")}
               </span>
               <textarea
-                className="min-h-16 w-full rounded-md border border-input bg-transparent p-2 text-sm"
-                placeholder={t("form.toolAllowlistPlaceholder")}
+                className="min-h-16 w-full rounded-[6px] border border-border/50 bg-background p-2 text-xs font-mono outline-none focus:border-primary resize-y"
+                placeholder={t("mcp.form.toolAllowlistPlaceholder")}
                 value={draft.toolAllowlist}
                 onChange={(e) =>
                   setDraft({ ...draft, toolAllowlist: e.target.value })
@@ -712,55 +698,61 @@ export function McpServersSection({ projectId }: { projectId?: string | null }) 
             </label>
           </div>
 
-          <label className="text-sm">
-            <span className="block text-muted-foreground">
+          <label className="text-xs space-y-1 block">
+            <span className="block text-muted-foreground font-medium">
               {draft.transport === "http"
-                ? t("form.secretsHeaders")
-                : t("form.secretsEnv")}{" "}
-              {t("form.secretsNote")}
+                ? t("mcp.form.secretsHeaders")
+                : t("mcp.form.secretsEnv")}{" "}
+              {t("mcp.form.secretsNote")}
             </span>
             <textarea
-              className="min-h-16 w-full rounded-md border border-input bg-transparent p-2 text-sm"
-              // A password-class field: never pre-filled with what is stored,
-              // because the API does not hand secrets back.
-              placeholder={draft.id ? t("form.secretsPlaceholder") : ""}
+              className="min-h-16 w-full rounded-[6px] border border-border/50 bg-background p-2 text-xs font-mono outline-none focus:border-primary resize-y"
+              placeholder={draft.id ? t("mcp.form.secretsPlaceholder") : ""}
               value={draft.secrets}
               onChange={(e) => setDraft({ ...draft, secrets: e.target.value })}
               data-testid="mcp-server-secrets"
             />
           </label>
 
-          <label className="flex items-center gap-2 text-sm">
+          <label className="flex items-center gap-2 text-xs cursor-pointer">
             <input
               type="checkbox"
+              className="rounded accent-primary"
               checked={draft.enabled}
               onChange={(e) =>
                 setDraft({ ...draft, enabled: e.target.checked })
               }
             />
-            {t("form.enabled")}
+            <span className="font-medium text-foreground">{t("mcp.form.enabled")}</span>
           </label>
 
-          <div className="flex gap-2">
-            <Button size="sm" disabled={busy} onClick={handleSave}>
-              {draft.id ? t("form.save") : t("form.create")}
-            </Button>
-            <Button
+          <div className="flex gap-2 pt-1">
+            <PillButton size="sm" variant="filled" disabled={busy || !data} onClick={handleSave}>
+              {draft.id ? t("mcp.form.save") : t("mcp.form.create")}
+            </PillButton>
+            <PillButton
               size="sm"
               variant="outline"
-              disabled={busy}
+              outlineTone="neutral"
+              disabled={busy || !data}
               onClick={() => setDraft(null)}
             >
-              {t("form.cancel")}
-            </Button>
+              {t("mcp.form.cancel")}
+            </PillButton>
           </div>
-        </div>
+        </fieldset>
       )}
 
-      {message && (
-        <p className="text-xs text-muted-foreground" data-testid="mcp-servers-message">
-          {message}
+      {loading && <p role="status" className="text-xs text-muted-foreground">{t("mcp.message.loading")}</p>}
+      {feedback && (
+        <p role={mutationError || loadError ? "alert" : "status"} className="text-xs text-muted-foreground" data-testid="mcp-servers-message">
+          {feedback}
         </p>
+      )}
+      {loadError && (
+        <PillButton variant="outline" outlineTone="neutral" size="sm" onClick={() => void refresh()}>
+          {t("mcp.message.retry")}
+        </PillButton>
       )}
     </section>
   );

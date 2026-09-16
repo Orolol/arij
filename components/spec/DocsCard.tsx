@@ -7,6 +7,7 @@ import { Upload } from "lucide-react";
 import { BandHeader, Mono, QuietLink, StrataBand } from "@/components/piscine";
 import { formatDocumentMention } from "@/lib/documents/mention-format";
 import { cn } from "@/lib/utils";
+import { useDocumentUploads } from "@/hooks/useDocumentUploads";
 
 /** The uploaded-document row as `GET /documents` returns it (a raw table row). */
 export interface DocsCardDocument {
@@ -90,23 +91,30 @@ export function DocsCard({ projectId, initialDocuments, className }: DocsCardPro
     initialDocuments ?? [],
   );
   const [dragging, setDragging] = useState(false);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const readSequence = useRef(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   const load = useCallback(() => {
     if (!projectId) return;
+    const request = ++readSequence.current;
     fetch(`/api/projects/${projectId}/documents`)
       .then(async (res) => (res.ok ? await res.json().catch(() => null) : null))
       .then((json) => {
         // The route returns `{ data: Document[] }`; anything else is a
         // transient shape we simply do not render.
+        if (request !== readSequence.current) return;
         if (json && Array.isArray(json.data)) {
           setDocuments(json.data as DocsCardDocument[]);
+          setLoadError(null);
+        } else {
+          setLoadError(t("docs.errors.load"));
         }
       })
-      .catch(() => {});
-  }, [projectId]);
+      .catch(() => {
+        if (request === readSequence.current) setLoadError(t("docs.errors.load"));
+      });
+  }, [projectId, t]);
 
   const seeded = initialDocuments !== undefined;
   useEffect(() => {
@@ -114,47 +122,12 @@ export function DocsCard({ projectId, initialDocuments, className }: DocsCardPro
     load();
   }, [load, seeded]);
 
-  /**
-   * Sequential upload, stopping at the first failure and surfacing the
-   * server's own message — in particular the 409 for a duplicate filename,
-   * which is the common case when the same file is dropped twice. No retry,
-   * no auto-rename.
-   */
-  const handleFiles = useCallback(
-    async (files: FileList | File[]) => {
-      const list = Array.from(files);
-      if (list.length === 0) return;
-      setUploading(true);
-      setError(null);
-      try {
-        let failed = false;
-        for (const file of list) {
-          const body = new FormData();
-          body.append("file", file);
-          const res = await fetch(`/api/projects/${projectId}/documents`, {
-            method: "POST",
-            body,
-          });
-          const json = (await res.json().catch(() => ({}))) as { error?: string };
-          if (!res.ok) {
-            setError(
-              json.error || t("docs.errors.importFile", { name: file.name }),
-            );
-            failed = true;
-            break;
-          }
-        }
-        if (!failed) load();
-      } catch {
-        setError(t("docs.errors.import"));
-      }
-      // Trailing, not in a `finally` clause: the React Compiler stops at the
-      // clause, and stopping left this component unread by every compiler
-      // rule.
-      setUploading(false);
-    },
-    [projectId, load, t],
-  );
+  const uploadError = useCallback((fileName: string) =>
+    t("docs.errors.importFile", { name: fileName }), [t]);
+  const { upload: handleFiles, uploading, error: uploadFailure } = useDocumentUploads({
+    projectId, onUploaded: load, uploadError,
+  });
+  const error = uploadFailure || loadError;
 
   const visible = documents.slice(0, MAX_VISIBLE);
   const overflow = documents.length - visible.length;
@@ -213,9 +186,9 @@ export function DocsCard({ projectId, initialDocuments, className }: DocsCardPro
         tabIndex={0}
         aria-label={t("docs.dropZone")}
         aria-busy={uploading || undefined}
-        onClick={() => inputRef.current?.click()}
+        onClick={() => { if (!uploading) inputRef.current?.click(); }}
         onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
+          if (!uploading && (event.key === "Enter" || event.key === " ")) {
             event.preventDefault();
             inputRef.current?.click();
           }
@@ -253,6 +226,7 @@ export function DocsCard({ projectId, initialDocuments, className }: DocsCardPro
         ref={inputRef}
         type="file"
         multiple
+        disabled={uploading}
         className="hidden"
         data-testid="docs-file-input"
         onChange={(event) => {

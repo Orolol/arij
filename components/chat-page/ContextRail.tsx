@@ -6,7 +6,8 @@ import { useTranslations } from "next-intl";
 
 import { BandHeader, Mono, StrataBand } from "@/components/piscine";
 
-import { formatTokens, type ChatContextTokens } from "./chat-context-tokens";
+import { formatTokens } from "@/lib/utils/format-usage";
+import { type ChatContextTokens } from "./chat-context-tokens";
 
 /**
  * CONTEXTE — what the chat will actually send, in tokens (frame 11a, right rail).
@@ -58,9 +59,9 @@ function ContextRow({
 export function ContextRail({ tokens }: ContextRailProps) {
   const t = useTranslations("Chat");
   const specValue =
-    tokens.spec === null ? "—" : `${formatTokens(tokens.spec)} tok`;
+    tokens.spec === null ? "—" : `${formatTokens(tokens.spec) ?? "—"} tok`;
   const memoryValue =
-    tokens.memory === null ? "—" : `${formatTokens(tokens.memory)} tok`;
+    tokens.memory === null ? "—" : `${formatTokens(tokens.memory) ?? "—"} tok`;
 
   // Nothing measurable at all — the band folds to its label line rather than
   // printing three em-dashes and calling that context.
@@ -112,7 +113,7 @@ export function ContextRail({ tokens }: ContextRailProps) {
                 {`@${doc.originalFilename}`}
               </Mono>
               <Mono size={10} tone="next-mid" className="ml-auto shrink-0">
-                {formatTokens(doc.tokens)}
+                {formatTokens(doc.tokens) ?? "—"}
               </Mono>
             </span>
           ))}

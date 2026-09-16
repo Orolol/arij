@@ -65,6 +65,16 @@ interface FailureEntry {
   reason: string;
   at: string;
   /**
+   * Consecutive failures at which this ticket parks.
+   *
+   * Per-entry rather than the constant, because a COMPOSITE's try-budget is
+   * its member count: a five-member list must reach member five, and a
+   * two-member one must park at two rather than keep asking for a rank it
+   * does not have. A simple agent, and the second-opinion gate, keep
+   * `AUTO_MODE_MAX_CONSECUTIVE_FAILURES`.
+   */
+  cap: number;
+  /**
    * True for a park set outright by `park()` rather than accumulated by a
    * failure streak. A hard park survives `clearFailures`: an unresolved merge
    * conflict is parked while its (successfully completed) merge-fix session is
@@ -75,6 +85,16 @@ interface FailureEntry {
   hard: boolean;
 }
 
+/**
+ * Whether a failure entry has reached its cap. Three readers — `isParked`,
+ * `parkedTicketIds` and `listParked` — must agree on this or a ticket the
+ * supervisor has stopped dispatching would still be offered to the next
+ * sweep, so the comparison is written once.
+ */
+function entryIsParked(entry: FailureEntry): boolean {
+  return entry.failures >= entry.cap;
+}
+
 /** What one in-flight session of the mode's own dispatch is working on. */
 export interface AutoModeInFlightEntry {
   kind: "build" | "review";
@@ -83,6 +103,15 @@ export interface AutoModeInFlightEntry {
   /** Story id for story-scoped work, else the epic id (the parking key). */
   ticketId: string;
   epicId: string;
+  /**
+   * Consecutive failures this session's agent affords before its ticket
+   * parks. A COMPOSITE's member count is its attempt budget — the list length
+   * is what the ladder spends — so a two-member composite must park at 2
+   * rather than at the default cap, or the fallbacks it exists for would
+   * never be reached. Absent for a simple agent (and for a dispatch that
+   * never reported one): `AUTO_MODE_MAX_CONSECUTIVE_FAILURES`.
+   */
+  attemptBudget?: number;
 }
 
 interface AutoModeProjectState {
@@ -402,16 +431,20 @@ export class AutoModeRegistry {
 
   /**
    * Records one failure for a ticket and returns the new consecutive count.
-   * At AUTO_MODE_MAX_CONSECUTIVE_FAILURES the ticket is parked: `isParked`
-   * turns true and the selectors drop it until the mode is toggled or the
-   * ticket is explicitly cleared.
+   * At the ticket's cap the ticket is parked: `isParked` turns true and the
+   * selectors drop it until the mode is toggled or the ticket is explicitly
+   * cleared.
+   *
+   * `cap` is the dispatched agent's try-budget — a composite's member count,
+   * so its later members are reachable at all. Omitted, the default cap
+   * applies, which is every simple agent and the second-opinion gate.
    */
   recordFailure(
     projectId: string,
     ticketId: string,
     epicId: string,
     reason: string,
-    at: string = new Date().toISOString()
+    options: { at?: string; cap?: number } = {}
   ): number {
     const state = this.stateFor(projectId);
     const previous = state.failures.get(ticketId);
@@ -421,10 +454,27 @@ export class AutoModeRegistry {
       epicId,
       failures,
       reason,
-      at,
+      at: options.at ?? new Date().toISOString(),
+      cap: options.cap ?? AUTO_MODE_MAX_CONSECUTIVE_FAILURES,
       hard: false,
     });
     return failures;
+  }
+
+  /**
+   * A ticket's consecutive-failure tally and the reason for the last one,
+   * or a clean `{ failures: 0, reason: null }` when nothing is charged.
+   *
+   * The dispatcher needs BOTH: the count is the attempt ordinal a composite's
+   * rank is derived from, and the reason is what the rank-down entry says the
+   * previous agent was abandoned for.
+   */
+  failureStreak(
+    projectId: string,
+    ticketId: string
+  ): { failures: number; reason: string | null } {
+    const entry = this.states.get(projectId)?.failures.get(ticketId);
+    return { failures: entry?.failures ?? 0, reason: entry?.reason ?? null };
   }
 
   /**
@@ -444,6 +494,7 @@ export class AutoModeRegistry {
       failures: AUTO_MODE_MAX_CONSECUTIVE_FAILURES,
       reason,
       at,
+      cap: AUTO_MODE_MAX_CONSECUTIVE_FAILURES,
       hard: true,
     });
   }
@@ -466,7 +517,7 @@ export class AutoModeRegistry {
 
   isParked(projectId: string, ticketId: string): boolean {
     const entry = this.states.get(projectId)?.failures.get(ticketId);
-    return (entry?.failures ?? 0) >= AUTO_MODE_MAX_CONSECUTIVE_FAILURES;
+    return entry !== undefined && entryIsParked(entry);
   }
 
   /** Ticket ids currently parked, for the selectors' exclusion set. */
@@ -475,9 +526,7 @@ export class AutoModeRegistry {
     if (!state) return new Set();
     const parked = new Set<string>();
     for (const [ticketId, entry] of state.failures) {
-      if (entry.failures >= AUTO_MODE_MAX_CONSECUTIVE_FAILURES) {
-        parked.add(ticketId);
-      }
+      if (entryIsParked(entry)) parked.add(ticketId);
     }
     return parked;
   }
@@ -486,9 +535,7 @@ export class AutoModeRegistry {
     const state = this.states.get(projectId);
     if (!state) return [];
     return Array.from(state.failures.entries())
-      .filter(
-        ([, entry]) => entry.failures >= AUTO_MODE_MAX_CONSECUTIVE_FAILURES
-      )
+      .filter(([, entry]) => entryIsParked(entry))
       .map(([ticketId, entry]) => ({
         ticketId,
         epicId: entry.epicId,

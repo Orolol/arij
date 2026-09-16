@@ -22,5 +22,13 @@
     "replyError": "Failed to post reply",
     "markReadError": "Failed to mark as read",
     "dispatchError": "Failed to dispatch build agent"
+  },
+  "loadError": "Failed to load the inbox.",
+  "retry": "Retry",
+  "pagination": {
+    "label": "Inbox pages",
+    "previous": "Previous",
+    "next": "Next",
+    "page": "Page {page} of {totalPages}"
   }
 }

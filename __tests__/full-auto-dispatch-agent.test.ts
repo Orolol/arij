@@ -101,9 +101,15 @@ vi.mock("fs", () => ({
 }));
 
 const { db } = await import("@/lib/db");
-const { projects, epics, agentSessions, namedAgents, settings } = await import(
-  "@/lib/db/schema"
-);
+const {
+  projects,
+  epics,
+  agentSessions,
+  namedAgents,
+  compositeAgentMembers,
+  settings,
+  ticketActivityLog,
+} = await import("@/lib/db/schema");
 const { processManager } = await import("@/lib/claude/process-manager");
 const { sweepProject } = await import("@/lib/auto-mode/engine");
 const {
@@ -111,6 +117,9 @@ const {
   autoModeBuildAgentSettingKey,
   autoModeEnabledSettingKey,
 } = await import("@/lib/auto-mode/constants");
+const { COMPOSITE_AGENT_PROVIDER } = await import(
+  "@/lib/agent-config/constants"
+);
 
 /** The two agents every case picks between. Seeded once, name-unique. */
 const BUILDER = {
@@ -285,5 +294,142 @@ describe("Full Auto dispatch — the chosen agent reaches the session", () => {
     expect(session).toBeTruthy();
     expect(session!.namedAgentId).toBeNull();
     expect(session!.provider).toBe("claude-code");
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* The composite ladder                                                */
+/* ------------------------------------------------------------------ */
+
+const COMPOSITE_ID = "na-ladder";
+
+/** A composite over BUILDER then OVERRIDE — the ordered fallback list. */
+function seedComposite(): void {
+  db.insert(namedAgents)
+    .values({
+      id: COMPOSITE_ID,
+      name: "Ladder",
+      kind: "composite",
+      provider: COMPOSITE_AGENT_PROVIDER,
+      model: "",
+    })
+    .onConflictDoNothing()
+    .run();
+  db.insert(compositeAgentMembers)
+    .values([
+      { id: "cm-0", compositeId: COMPOSITE_ID, memberId: BUILDER.id, position: 0 },
+      { id: "cm-1", compositeId: COMPOSITE_ID, memberId: OVERRIDE.id, position: 1 },
+    ])
+    .onConflictDoNothing()
+    .run();
+}
+
+/** Every build session of the project, in dispatch order. */
+function buildSessions(projectId: string) {
+  return db
+    .select()
+    .from(agentSessions)
+    .where(eq(agentSessions.projectId, projectId))
+    .all()
+    .filter((row) => row.agentType === "build");
+}
+
+/** The build is a failure from now on — the CLI reports an error result. */
+function failEveryBuild(): void {
+  processManagerState.result = {
+    type: "result",
+    subtype: "error",
+    success: false,
+    error: "boom",
+  };
+}
+
+/** Waits for the launch closure to finalize the row, which is asynchronous. */
+async function waitForTerminal(sessionId: string): Promise<string> {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    const status = db
+      .select({ status: agentSessions.status })
+      .from(agentSessions)
+      .where(eq(agentSessions.id, sessionId))
+      .get()?.status;
+    if (status && status !== "queued" && status !== "running") return status;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`Session ${sessionId} never reached a terminal status`);
+}
+
+function autoReasons(epicId: string): string[] {
+  return db
+    .select()
+    .from(ticketActivityLog)
+    .where(eq(ticketActivityLog.epicId, epicId))
+    .all()
+    .map((row) => row.reason ?? "");
+}
+
+describe("Full Auto dispatch — a composite descends its own ladder", () => {
+  it("runs the next member after a failed build, then parks at the end of the list", async () => {
+    const { projectId, epicId } = seedProject();
+    seedComposite();
+    putSetting(autoModeBuildAgentSettingKey(projectId), COMPOSITE_ID);
+    failEveryBuild();
+
+    // Attempt 1 — the ticket has no failures yet, so rank 0 runs.
+    await sweepProject(projectId);
+    const [first] = buildSessions(projectId);
+    expect(first.namedAgentId).toBe(BUILDER.id);
+    expect(first.compositeAgentId).toBe(COMPOSITE_ID);
+    expect(first.provider).toBe(BUILDER.provider);
+    expect(await waitForTerminal(first.id)).toBe("failed");
+
+    // Attempt 2 — one failure charged, so the list descends to rank 1. This
+    // is the whole point of a composite, and it is the behaviour that was
+    // missing: the mode used to re-dispatch attempt 1 forever.
+    await sweepProject(projectId);
+    const sessions = buildSessions(projectId);
+    expect(sessions).toHaveLength(2);
+    const second = sessions[1];
+    expect(second.namedAgentId).toBe(OVERRIDE.id);
+    expect(second.compositeAgentId).toBe(COMPOSITE_ID);
+    expect(spawnFor(second.id).provider).toBe(OVERRIDE.provider);
+
+    // …and the feed says why the agent changed, without opening the dead
+    // session.
+    expect(autoReasons(epicId)).toContain(
+      `Auto mode composite fallback: build moved from ${BUILDER.name} to ${OVERRIDE.name} (attempt 2/2) because build session failed`
+    );
+
+    expect(await waitForTerminal(second.id)).toBe("failed");
+
+    // Attempt 3 — the list is spent. The member count IS the cap, so the
+    // ticket parks here instead of re-running the member that just failed.
+    const third = await sweepProject(projectId);
+    expect(third.parked).toContain(epicId);
+    expect(third.buildsDispatched).toEqual([]);
+    expect(buildSessions(projectId)).toHaveLength(2);
+  });
+
+  it("keeps a simple agent on attempt 1 and on the mode's own cap", async () => {
+    const { projectId, epicId } = seedProject();
+    putSetting(autoModeBuildAgentSettingKey(projectId), BUILDER.id);
+    failEveryBuild();
+
+    // Three failures: the default cap, not a composite's shorter list. A
+    // simple agent has no ladder, so nothing about the streak changes WHO runs.
+    for (let sweep = 0; sweep < 3; sweep++) {
+      await sweepProject(projectId);
+      const sessions = buildSessions(projectId);
+      expect(sessions.at(-1)!.namedAgentId).toBe(BUILDER.id);
+      await waitForTerminal(sessions.at(-1)!.id);
+    }
+
+    const fourth = await sweepProject(projectId);
+    expect(fourth.parked).toContain(epicId);
+    expect(buildSessions(projectId)).toHaveLength(3);
+    expect(
+      autoReasons(epicId).filter((reason) =>
+        reason.includes("composite fallback")
+      )
+    ).toEqual([]);
   });
 });

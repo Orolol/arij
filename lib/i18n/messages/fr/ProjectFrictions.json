@@ -1,0 +1,47 @@
+{
+  "page": {
+    "openCount": "{count, plural, one {# ouverte} other {# ouvertes}}",
+    "filtersLabel": "Filtres de frictions",
+    "category": "Catégorie",
+    "allCategories": "Toutes les catégories",
+    "status": "Statut",
+    "open": "Ouvertes",
+    "allStatuses": "Tous les statuts",
+    "loading": "Chargement des frictions",
+    "empty": "Aucune friction ne correspond à ces filtres.",
+    "occurrences": "{count, plural, one {# signalement} other {# signalements}}",
+    "sourceSession": "Session source",
+    "createTicket": "Créer un ticket",
+    "dismiss": "Écarter",
+    "viewTicket": "Voir le ticket",
+    "loadFailed": "Impossible de charger les frictions",
+    "retry": "Réessayer",
+    "dismissFailed": "Échec de la mise à jour de la friction"
+  },
+  "category": {
+    "broken_tooling": "Outils défectueux",
+    "misleading_docs": "Documentation trompeuse",
+    "flaky_test": "Test instable",
+    "unclear_convention": "Convention peu claire",
+    "other": "Autre"
+  },
+  "status": {
+    "new": "Nouveau",
+    "triaged": "Trié",
+    "converted": "Converti",
+    "dismissed": "Écarté"
+  },
+  "draft": {
+    "frictionSuffix": "(friction)",
+    "location": "\n\nFichier : `{path}`",
+    "recurrence": "\n\nSignalé {count, plural, one {# fois} other {# fois}} par les agents."
+  },
+  "actions": {
+    "markTriaged": "Marquer comme trié"
+  },
+  "createDialog": {
+    "title": "Créer un ticket à partir d'une friction",
+    "description": "Examinez le rapport de l'agent, puis modifiez le ticket avant de le créer.",
+    "submit": "Créer le ticket"
+  }
+}

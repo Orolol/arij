@@ -18,6 +18,7 @@ import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
 import { tryExportArjiJson } from "@/lib/sync/export";
+import { commitGeneratedSpec } from "@/lib/projects/spec-write";
 
 const POLL_INTERVAL_MS = 2000;
 
@@ -52,6 +53,17 @@ export interface DispatchSpecUpdateInput {
 
 export interface DispatchSpecUpdateResult {
   sessionId: string;
+  /**
+   * Resolution of the run this dispatch launched: never rejects, and resolves
+   * only AFTER the terminal hook has run — so a caller that awaits it sees the
+   * document the session wrote (or the proof that it wrote nothing). A guard
+   * refusal resolves immediately: there was no run to wait for.
+   *
+   * Exposed for the same reason `dispatchBackgroundSession` exposes its own
+   * `settled`: a caller that needs the effect to have landed can await it
+   * instead of sleeping for a while and hoping.
+   */
+  settled: Promise<void>;
 }
 
 /** Returns the active (queued or running) spec update session for the project, if any. */
@@ -177,7 +189,7 @@ export async function dispatchSpecUpdateSession(
   // Deliberately no epicId: like the memory distill, a spec update is a
   // project-level background run and must not occupy an epic's concurrency
   // slot or anchor to a ticket.
-  const { sessionId } = dispatchBackgroundSession({
+  const { sessionId, settled } = dispatchBackgroundSession({
     agentType: SPEC_UPDATE_AGENT_TYPE,
     projectId: input.projectId,
     prompt,
@@ -192,11 +204,21 @@ export async function dispatchSpecUpdateSession(
     // cleanly: the session row must not claim success over an unchanged
     // document. `evaluate` always runs before `onTerminal`, which is what
     // lets the sanitised output be resolved from the chunks exactly once.
-    evaluate: ({ sessionId: sid, result, outcome }) => {
+    evaluate: ({ sessionId: sid, result, outcome, completedAt }) => {
       output =
         result?.success && outcome === "answered"
           ? sanitizeUpdatedSpec(resolveSessionOutput(result, sid, ""))
           : "";
+      if (output) {
+        try {
+          commitGeneratedSpec(input.projectId, project.spec, { spec: output }, { updatedAt: completedAt });
+        } catch (error) {
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : "Failed to save the updated specification.",
+          };
+        }
+      }
       return {
         success: Boolean(result?.success && outcome === "answered" && output),
         error: output
@@ -209,24 +231,10 @@ export async function dispatchSpecUpdateSession(
               : "The spec update session failed without reporting an error."),
       };
     },
-    onTerminal: ({ completedAt }) => {
-      if (!output) {
-        return;
-      }
-
-      try {
-        db.update(projects)
-          .set({ spec: output, updatedAt: completedAt })
-          .where(eq(projects.id, input.projectId))
-          .run();
-      } catch (error) {
-        console.error("[spec-update] Failed to save updated spec", error);
-        return;
-      }
-
-      tryExportArjiJson(input.projectId);
+    onTerminal: ({ success }) => {
+      if (success) tryExportArjiJson(input.projectId);
     },
   });
 
-  return { sessionId };
+  return { sessionId, settled: settled.then(() => undefined) };
 }

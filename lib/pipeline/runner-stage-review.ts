@@ -33,6 +33,9 @@ export async function handleReviewStageSuccess(
     return handleStageFailure(ctx);
   }
 
+  if (assessment.verdictSource) {
+    callbacks.onTrace?.(`Review verdict channel: ${assessment.verdictSource}${assessment.structuredVerdict ? ` (${assessment.structuredVerdict})` : ""}`, state.handle.sessionId);
+  }
   if (!assessment.blocking) {
     // Success end-state: green review awaiting human sign-off. The
     // pipeline NEVER auto-approves — review → done stays human-gated by
@@ -51,18 +54,9 @@ export async function handleReviewStageSuccess(
     // and exhausting it fails the run with a forensic, exactly like a
     // reviewer that crashed.
     //
-    // The `blockingCount` half is not a detail. A broken channel does not
-    // mean no evidence: assessReviewOutcome runs ingestProseFindings first,
-    // and Arij parsed that report itself, independent of MCP. Those rows
-    // carry agent_session_id NULL, so they never prove the channel worked —
-    // the review stays unverifiable WITH a non-empty findings list. Sending
-    // that to the ladder would discard real, anchored findings and re-ingest
-    // the same report on every fresh review window, leaving duplicate open
-    // rows nothing ever fixes. When there is something to fix, fix it: the
-    // rows are open, so review → done still refuses, and the session still
-    // has no verdict and no rows of its own, so the merge gate still calls
-    // it not clean. Nothing becomes mergeable — the fix cycle just gets the
-    // findings it was denied.
+    // Recovered prose findings carry the review session id and are assessed
+    // on every dispatch path. Retry only when neither channel supplied
+    // actionable evidence; an anchored blocker should enter the fix cycle.
     return handleStageFailure(ctx);
   }
 

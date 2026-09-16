@@ -1,3 +1,4 @@
+import { GLOBAL_PROMPT_SETTING_KEY } from "@/lib/settings/keys";
 import { withAgentResolutionErrors } from "@/lib/api/agent-resolution-response";
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
@@ -5,11 +6,7 @@ import { chatMessages, chatAttachments, chatConversations, settings, epics } fro
 import { eq, desc, and, inArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
-import {
-  spawnClaudeStream,
-  spawnClaude,
-  type StreamChunk,
-} from "@/lib/claude/spawn";
+import type { StreamChunk } from "@/lib/providers/types";
 import { buildChatPrompt, buildEpicRefinementPrompt, buildEpicFinalizationPrompt } from "@/lib/claude/prompt-builder";
 import { getProvider, type ProviderType } from "@/lib/providers";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
@@ -384,7 +381,7 @@ export const POST = withAgentResolutionErrors(async function POST(
     resolvedAgent.provider === OPENAI_COMPATIBLE_PROVIDER && openAiConfig !== null;
 
   if (isEpicCreation) {
-    const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
+    const settingsRow = db.select().from(settings).where(eq(settings.key, GLOBAL_PROMPT_SETTING_KEY)).get();
     const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
     const existingEpics = db
       .select({
@@ -777,7 +774,7 @@ export const POST = withAgentResolutionErrors(async function POST(
 
   // Claude chat turns run in "chat" mode (permission mode "default" with a
   // read-only repo allowlist). Prompt-contract conversations remain in plan.
-  const claudeChatMode = isEpicCreationConversationAgentType(conversationType)
+  const cliChatMode = isEpicCreationConversationAgentType(conversationType)
     ? ("plan" as const)
     : ("chat" as const);
 
@@ -797,7 +794,7 @@ export const POST = withAgentResolutionErrors(async function POST(
       provider: persistentProvider,
       prompt: turnPrompt,
       cwd: project.gitRepoPath || process.cwd(),
-      mode: claudeChatMode,
+      mode: cliChatMode,
       model: resolvedAgent.model,
       cliSessionId: turnCliSessionId,
       resumeSession: turnResumeSession,
@@ -948,17 +945,15 @@ export const POST = withAgentResolutionErrors(async function POST(
     conversationType,
   });
 
-  // Every non-Claude provider: non-streaming, spawned through its own provider
-  if (resolvedAgent.provider !== "claude-code") {
-    // "openai-compatible" is not a CLI provider: that branch returned above.
-    const dynamicProvider = getProvider(resolvedAgent.provider as ProviderType);
+  const dynamicProvider = getProvider(resolvedAgent.provider as ProviderType);
+  // Resume returns one document; fresh turns use incremental output when supported.
+  if (!dynamicProvider.spawnStream || resumeSession) {
     let activeProviderSession = dynamicProvider.spawn({
       sessionId: `chat-${createId()}`,
       prompt: effectivePrompt,
       cwd: project.gitRepoPath || process.cwd(),
-      mode: "plan",
+      mode: cliChatMode,
       model: resolvedAgent.model,
-      logIdentifier: conversationId || `chat-${projectId}`,
       cliSessionId,
       resumeSession,
       mcp: cliToolChannel?.mcp,
@@ -1005,12 +1000,12 @@ export const POST = withAgentResolutionErrors(async function POST(
               sessionId: `chat-${createId()}`,
               prompt,
               cwd: project.gitRepoPath || process.cwd(),
-              mode: "plan",
+              mode: cliChatMode,
               model: resolvedAgent.model,
-              logIdentifier: conversationId || `chat-${projectId}`,
               cliSessionId,
               resumeSession: false,
               mcp: cliToolChannel?.mcp,
+              cliOptions: resolvedAgent.cliOptions,
             });
             result = await activeProviderSession.promise;
           }
@@ -1055,105 +1050,13 @@ export const POST = withAgentResolutionErrors(async function POST(
     return sseResponse(sseStream);
   }
 
-  // Claude resume-first path: attempt resume non-streaming, fallback to fresh prompt.
-  if (resumeSession) {
-    let currentKill = () => {};
-
-    activityRegistry.register({
-      id: activityId,
-      projectId,
-      type: "chat",
-      label: activityLabel,
-      provider: "claude-code",
-      namedAgentName: resolvedAgent.name ?? null,
-      startedAt: new Date().toISOString(),
-      kill: () => currentKill(),
-    });
-
-    const sseStream = new ReadableStream({
-      async start(controller) {
-        controller.enqueue(
-          encoder.encode(`data: ${JSON.stringify({ status: "Resuming conversation..." })}\n\n`)
-        );
-
-        try {
-          let resultSessionId = cliSessionId;
-          let attempt = spawnClaude({
-            mode: claudeChatMode,
-            prompt: effectivePrompt,
-            model: resolvedAgent.model,
-            cwd: project.gitRepoPath || undefined,
-            logIdentifier: conversationId || `chat-${projectId}`,
-            cliSessionId: resultSessionId,
-            resumeSession: true,
-            mcp: cliToolChannel?.mcp,
-            cliOptions: resolvedAgent.cliOptions,
-          });
-          currentKill = attempt.kill;
-          let result = await attempt.promise;
-
-          if (!result.success && isResumeSessionExpiredError(result.error)) {
-            resultSessionId = crypto.randomUUID();
-            attempt = spawnClaude({
-              mode: claudeChatMode,
-              prompt,
-              model: resolvedAgent.model,
-              cwd: project.gitRepoPath || undefined,
-              logIdentifier: conversationId || `chat-${projectId}`,
-              cliSessionId: resultSessionId,
-              mcp: cliToolChannel?.mcp,
-              cliOptions: resolvedAgent.cliOptions,
-            });
-            currentKill = attempt.kill;
-            result = await attempt.promise;
-          }
-
-          cliToolChannel?.release();
-
-          const fullContent = result.success
-            ? parseClaudeOutput(result.result || "").content || "(empty response)"
-            : `Error: ${result.error || "Provider request failed"}`;
-          const resolvedCliSessionId = result.cliSessionId ?? resultSessionId;
-
-          if (result.success) {
-            persistConversationSessionId(resolvedCliSessionId);
-          }
-
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ delta: fullContent })}\n\n`)
-          );
-
-          activityRegistry.unregister(activityId);
-          saveAssistantAndTitle(controller, fullContent, result.success ? "active" : "error");
-        } catch (error) {
-          cliToolChannel?.release();
-          const failureMessage =
-            error instanceof Error ? `Error: ${error.message}` : "Error: Provider request failed";
-          controller.enqueue(
-            encoder.encode(`data: ${JSON.stringify({ delta: failureMessage })}\n\n`)
-          );
-          activityRegistry.unregister(activityId);
-          saveAssistantAndTitle(controller, failureMessage, "error");
-        }
-      },
-      cancel() {
-        cliToolChannel?.release();
-        activityRegistry.unregister(activityId);
-        currentKill();
-        setConversationStatus("active");
-      },
-    });
-
-    return sseResponse(sseStream);
-  }
-
-  // Claude Code fresh-session path: preserve stream-json UX.
-  const { stream: claudeStream, kill } = spawnClaudeStream({
-    mode: claudeChatMode,
+  // The provider owns the incremental protocol.
+  const { stream: providerStream, kill } = dynamicProvider.spawnStream({
+    sessionId: `chat-${createId()}`,
+    mode: cliChatMode,
     prompt: effectivePrompt,
     model: resolvedAgent.model,
-    cwd: project.gitRepoPath || undefined,
-    logIdentifier: conversationId || `chat-${projectId}`,
+    cwd: project.gitRepoPath || process.cwd(),
     cliSessionId,
     mcp: cliToolChannel?.mcp,
     cliOptions: resolvedAgent.cliOptions,
@@ -1164,7 +1067,7 @@ export const POST = withAgentResolutionErrors(async function POST(
     projectId,
     type: "chat",
     label: activityLabel,
-    provider: "claude-code",
+    provider: resolvedAgent.provider,
     namedAgentName: resolvedAgent.name ?? null,
     startedAt: new Date().toISOString(),
     kill,
@@ -1175,7 +1078,7 @@ export const POST = withAgentResolutionErrors(async function POST(
 
   const sseStream = new ReadableStream({
     async start(controller) {
-      const reader = claudeStream.getReader();
+      const reader = providerStream.getReader();
 
       try {
         while (true) {

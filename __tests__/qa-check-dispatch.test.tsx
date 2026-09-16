@@ -60,7 +60,7 @@ function payload(overrides: Partial<QaPayload> = {}): QaPayload {
     queued: [],
     findings: [],
     verdicts: [],
-    rubric: { items: ["Tests"], projectRuleCount: 0 },
+    rubric: { items: ["Tests"] },
     reviewable: [],
     checks: [],
     checkTotals: {},

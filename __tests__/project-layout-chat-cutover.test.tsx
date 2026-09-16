@@ -16,16 +16,17 @@
  */
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const nav = vi.hoisted(() => ({
   pathname: "/projects/proj-1",
+  projectId: "proj-1",
   push: vi.fn(),
 }));
 
 vi.mock("next/navigation", () => ({
-  useParams: () => ({ projectId: "proj-1" }),
+  useParams: () => ({ projectId: nav.projectId }),
   usePathname: () => nav.pathname,
   useRouter: () => ({ push: nav.push }),
 }));
@@ -40,16 +41,18 @@ describe("project layout chrome", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     nav.pathname = "/projects/proj-1";
+    nav.projectId = "proj-1";
     nav.push = vi.fn();
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () =>
         Promise.resolve({
-          data: {
+          data: [{
+            id: "proj-1",
             name: "Project One",
             gitRepoPath: "/tmp/repo",
             githubOwnerRepo: "owner/repo",
-          },
+          }, { id: "proj-2", name: "Project Two", gitRepoPath: null, githubOwnerRepo: null }],
         }),
     });
   });
@@ -63,7 +66,7 @@ describe("project layout chrome", () => {
     // The shell's only load is the project summary; wait for it so the
     // repo-dependent controls have settled before anything is asserted.
     await waitFor(() => {
-      expect(global.fetch).toHaveBeenCalledWith("/api/projects/proj-1");
+      expect(global.fetch).toHaveBeenCalledWith("/api/projects");
     });
   }
 
@@ -252,4 +255,46 @@ describe("project layout chrome", () => {
     await renderLayout();
     expect(screen.queryByTestId("repo-status-bar")).not.toBeInTheDocument();
   });
+  it("resets nested project drafts and ignores metadata from the previous project", async () => {
+    let finishOld!: (response: Response) => void;
+    vi.mocked(global.fetch).mockReturnValueOnce(new Promise<Response>((resolve) => { finishOld = resolve; }));
+    const { rerender } = render(<ProjectLayout><input aria-label="Draft" defaultValue="" /></ProjectLayout>);
+    fireEvent.change(screen.getByRole("textbox", { name: "Draft" }), { target: { value: "old project draft" } });
+    nav.projectId = "proj-2";
+    nav.pathname = "/projects/proj-2";
+    vi.mocked(global.fetch).mockResolvedValue({ ok: true, json: async () => ({ data: [{ id: "proj-2", gitRepoPath: null }] }) } as Response);
+    rerender(<ProjectLayout><input aria-label="Draft" defaultValue="" /></ProjectLayout>);
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      finishOld({ ok: true, json: async () => ({ data: [{ id: "proj-1", gitRepoPath: "/old-project" }] }) } as Response);
+    });
+    expect(screen.getByRole("textbox", { name: "Draft" })).toHaveValue("");
+    expect(screen.queryByTitle("Import from arji.json (overrides DB)")).not.toBeInTheDocument();
+  });
+
+  it("reports a refused import and permits a retry", async () => {
+    await renderLayout();
+    const button = await screen.findByTitle("Import from arji.json (overrides DB)");
+    vi.mocked(global.fetch).mockResolvedValueOnce({ ok: false, json: async () => ({ error: "Invalid import" }) } as Response);
+    fireEvent.click(button);
+    expect(await screen.findByRole("alert")).toHaveTextContent("Invalid import");
+    expect(button).toBeEnabled();
+  });
+
+  it("does not notify a newly opened project when an old import completes", async () => {
+    const { rerender } = render(<ProjectLayout><div /></ProjectLayout>);
+    const button = await screen.findByTitle("Import from arji.json (overrides DB)");
+    let finishImport!: (response: Response) => void;
+    vi.mocked(global.fetch).mockReturnValueOnce(new Promise<Response>((resolve) => { finishImport = resolve; }));
+    const onSync = vi.fn();
+    window.addEventListener("arji:synced", onSync);
+    fireEvent.click(button);
+    nav.projectId = "proj-2";
+    nav.pathname = "/projects/proj-2";
+    rerender(<ProjectLayout><div /></ProjectLayout>);
+    await act(async () => { finishImport({ ok: true, json: async () => ({ data: {} }) } as Response); });
+    expect(onSync).not.toHaveBeenCalled();
+    window.removeEventListener("arji:synced", onSync);
+  });
+
 });

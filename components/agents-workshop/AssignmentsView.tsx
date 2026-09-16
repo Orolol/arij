@@ -5,6 +5,8 @@ import { useTranslations } from "next-intl";
 import { Loader2 } from "lucide-react";
 
 import { ScopeSwitcher } from "@/components/agents-workshop/ScopeSwitcher";
+import { AgentConfigError } from "./AgentConfigError";
+import { useAssignmentMutation } from "./useAssignmentMutation";
 import {
   assignmentAgentSubLabel,
   sourceLabelKey,
@@ -21,7 +23,6 @@ import { useAgentAssignments, useNamedAgents } from "@/hooks/useAgentConfig";
 import {
   AGENT_TYPES,
   AGENT_TYPE_LABELS,
-  type AgentType,
 } from "@/lib/agent-config/constants";
 
 /**
@@ -43,6 +44,10 @@ function PageLoading() {
 }
 
 export function AssignmentsView({ projectId }: { projectId?: string }) {
+  return <AssignmentsContent key={projectId ?? "global"} projectId={projectId} />;
+}
+
+function AssignmentsContent({ projectId }: { projectId?: string }) {
   const t = useTranslations("AgentsWorkshop");
   // Namespace-less, for the KEY REFERENCES `agent-initials.ts` holds.
   const tKey = useTranslations();
@@ -62,42 +67,15 @@ export function AssignmentsView({ projectId }: { projectId?: string }) {
   );
   const scopedProjectId = scope === "project" ? projectId : undefined;
 
-  const { data, loading, assignAgent } = useAgentAssignments(
+  const { data, loading, error: loadError, refresh, assignAgent } = useAgentAssignments(
     scope,
     scopedProjectId,
   );
-  const { data: namedAgents, loading: agentsLoading } = useNamedAgents();
+  const { data: namedAgents, loading: agentsLoading, error: agentsError, refresh: refreshAgents } = useNamedAgents();
 
-  const [savingRole, setSavingRole] = useState<AgentType | null>(null);
-  // Per role, never one shared string: one failure must not blank the others.
-  const [errors, setErrors] = useState<Partial<Record<AgentType, string>>>({});
+  const { savingRoles, errors, updateAssignment } = useAssignmentMutation(`${scope}:${scopedProjectId ?? ""}`, assignAgent);
 
   const byRole = new Map(data.map((entry) => [entry.agentType, entry]));
-
-  async function updateAssignment(
-    agentType: AgentType,
-    namedAgentId: string | null,
-  ) {
-    setSavingRole(agentType);
-    setErrors((current) => ({ ...current, [agentType]: undefined }));
-    try {
-      const result = await assignAgent(agentType, namedAgentId);
-      if (!result.ok) {
-        setErrors((current) => ({
-          ...current,
-          [agentType]: result.error || t("assignments.updateFailed"),
-        }));
-      }
-    } catch {
-      setErrors((current) => ({
-        ...current,
-        [agentType]: t("assignments.updateFailedRetry"),
-      }));
-    }
-    // Trailing, not in a `finally` clause: the React Compiler stops at the
-    // clause, and stopping left this component unread by every compiler rule.
-    setSavingRole(null);
-  }
 
   if (loading || agentsLoading) return <PageLoading />;
 
@@ -123,6 +101,9 @@ export function AssignmentsView({ projectId }: { projectId?: string }) {
         scope={scope}
         onScopeChange={setScope}
       />
+
+      {loadError && <AgentConfigError onRetry={refresh} />}
+      {agentsError && <AgentConfigError onRetry={refreshAgents} />}
 
       {namedAgents.length === 0 ? (
         <p className="font-sans text-[12.5px] text-muted-foreground">
@@ -160,7 +141,7 @@ export function AssignmentsView({ projectId }: { projectId?: string }) {
                   fill="transparent"
                   label={label}
                   disabled={
-                    namedAgents.length === 0 || savingRole === agentType
+                    namedAgents.length === 0 || savingRoles.includes(agentType) || loadError || agentsError
                   }
                 >
                   <DropdownMenuItem

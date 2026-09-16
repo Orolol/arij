@@ -1,6 +1,5 @@
 "use client";
 
-import { useTranslations } from "next-intl";
 import { Check } from "lucide-react";
 
 import { cn } from "@/lib/utils";
@@ -9,24 +8,14 @@ import { cn } from "@/lib/utils";
  * The checklist chips of LA RUBRIQUE — the bold headings of the feature-review
  * checklist the reviewers are actually handed, read from the real prompt
  * section rather than restated here.
- *
- * The trailing translucent chip counts the project's own enabled custom review
- * agents. It carries no check icon: those rules are not part of the shared
- * checklist, they are added on top of it.
  */
 export interface RubricChipsProps {
   items: readonly string[];
-  projectRuleCount: number;
   className?: string;
 }
 
-export function RubricChips({
-  items,
-  projectRuleCount,
-  className,
-}: RubricChipsProps) {
-  const t = useTranslations("Qa");
-
+export function RubricChips({ items, className }: RubricChipsProps) {
+  // No copy here: every chip is a checklist item, resolved by the caller.
   return (
     <div className={cn("flex flex-wrap gap-[7px]", className)}>
       {items.map((item) => (
@@ -43,15 +32,6 @@ export function RubricChips({
           {item}
         </span>
       ))}
-
-      {projectRuleCount > 0 ? (
-        <span
-          data-testid="qa-rubric-project-rules"
-          className="flex h-[27px] items-center rounded-full bg-card-translucent px-[11px] font-sans text-[12px] text-strata-next-mid"
-        >
-          {t("rubric.projectRules", { count: projectRuleCount })}
-        </span>
-      ) : null}
     </div>
   );
 }

@@ -1,24 +1,21 @@
 import { agentMaxConcurrentSettingKey } from "@/lib/agents/scheduler-constants";
-import {
-  nightCircuitBreakerSettingKey,
-  nightCostCapSettingKey,
-} from "@/lib/night/constants";
+import { } from "@/lib/night/constants";
 import {
   pipelineEnabledSettingKey,
   pipelineGraderEnabledSettingKey,
   pipelineMaxAttemptsSettingKey,
   pipelineMaxFixCyclesSettingKey,
 } from "@/lib/pipeline/constants";
-import {
-  dreamingAfterNightRunSettingKey,
-  dreamingLastCutoffSettingKey,
-} from "@/lib/workflow/dreaming-constants";
+import { ciAutofixEnabledSettingKey } from "@/lib/routines/settings";
 import {
   verifyCommandsSettingKey,
   verifyTimeoutMsSettingKey,
 } from "@/lib/verify/verify-constants";
 import { webhookSettingKey } from "@/lib/webhooks/send";
-import { ciAutofixEnabledSettingKey } from "@/lib/routines/settings";
+import {
+  dreamingAfterNightRunSettingKey,
+  dreamingLastCutoffSettingKey,
+} from "@/lib/workflow/dreaming-constants";
 
 /**
  * Every `<key>:<projectId>` settings row a project can own.
@@ -42,8 +39,6 @@ export function perProjectSettingKeys(projectId: string): string[] {
     pipelineMaxFixCyclesSettingKey(projectId),
     verifyCommandsSettingKey(projectId),
     verifyTimeoutMsSettingKey(projectId),
-    nightCircuitBreakerSettingKey(projectId),
-    nightCostCapSettingKey(projectId),
     dreamingAfterNightRunSettingKey(projectId),
     dreamingLastCutoffSettingKey(projectId),
     ciAutofixEnabledSettingKey(projectId),

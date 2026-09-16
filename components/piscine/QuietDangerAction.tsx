@@ -22,6 +22,7 @@ export interface QuietDangerActionProps {
   /** Usually lucide `trash-2`. Drawn at 12×12 in the label colour. */
   icon?: LucideIcon;
   onClick: () => void;
+  disabled?: boolean;
   size?: 11.5 | 12;
   /**
    * `data-testid` on the button itself — same contract as `QuietLink`.
@@ -36,6 +37,7 @@ export interface QuietDangerActionProps {
 export function QuietDangerAction({
   icon: Icon,
   onClick,
+  disabled,
   size = 12,
   testId,
   className,
@@ -47,10 +49,11 @@ export function QuietDangerAction({
       data-slot="quiet-danger-action"
       data-testid={testId}
       onClick={onClick}
+      disabled={disabled}
       className={cn(
         "inline-flex items-center gap-1.5 border-0 bg-transparent p-0",
         "font-sans font-normal leading-none text-destructive",
-        "cursor-pointer no-underline shadow-none outline-none",
+        "cursor-pointer no-underline shadow-none outline-none disabled:opacity-50 disabled:pointer-events-none",
         "hover:brightness-[0.92] dark:hover:brightness-[1.12]",
         "transition-[filter,opacity] duration-150 motion-reduce:transition-none",
         "focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring",

@@ -1,8 +1,10 @@
 "use client";
 
+import { useCallback } from "react";
 import { useTranslations } from "next-intl";
-
-import { useState, useEffect, useCallback } from "react";
+import { requestJson } from "@/lib/api/client";
+import { usePolledResource } from "@/hooks/usePolledResource";
+import { useScopedMutation } from "@/hooks/useScopedMutation";
 
 export interface DependencyRecord {
   id: string;
@@ -19,77 +21,48 @@ export interface EpicDependencyData {
   successors: DependencyRecord[];
 }
 
+const NO_DEPENDENCIES: DependencyRecord[] = [];
+function isDependencyData(value: unknown): value is EpicDependencyData {
+  if (!value || typeof value !== "object") return false;
+  const data = value as EpicDependencyData;
+  return Array.isArray(data.predecessors) && Array.isArray(data.successors);
+}
+const isDependencies = (value: unknown): value is DependencyRecord[] => Array.isArray(value);
+
 export function useEpicDependencies(projectId: string, epicId: string | null) {
   const tErrors = useTranslations("ClientErrors");
-  const [data, setData] = useState<EpicDependencyData>({
-    predecessors: [],
-    successors: [],
-  });
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchDeps = useCallback(async () => {
-    if (!epicId) return;
-    setLoading(true);
-    try {
-      const res = await fetch(
-        `/api/projects/${projectId}/epics/${epicId}/dependencies`
-      );
-      const json = await res.json();
-      if (res.ok && json.data) {
-        setData(json.data);
-      }
-    } catch {
-      // silently fail
-    } finally {
-      setLoading(false);
-    }
-  }, [projectId, epicId]);
-
-  useEffect(() => {
-    fetchDeps();
-  }, [fetchDeps]);
-
-  const saveDependencies = useCallback(
-    async (dependsOnIds: string[]) => {
-      if (!epicId) return;
-      setSaving(true);
-      setError(null);
-      try {
-        const res = await fetch(
-          `/api/projects/${projectId}/epics/${epicId}/dependencies`,
-          {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ dependsOnIds }),
-          }
-        );
-        const json = await res.json();
-        if (!res.ok) {
-          setError(json.error || tErrors("failedToUpdateDependencies"));
-          return false;
-        }
-        await fetchDeps();
-        return true;
-      } catch {
-        setError(tErrors("failedToUpdateDependencies"));
-        return false;
-      } finally {
-        setSaving(false);
-      }
-    },
-    [projectId, epicId, fetchDeps, tErrors]
+  const url = epicId ? `/api/projects/${projectId}/epics/${epicId}/dependencies` : null;
+  const errorMessage = useCallback(() => tErrors("failedToLoadDependencies"), [tErrors]);
+  const { data, loading, error, refresh: reload, updateData } = usePolledResource<EpicDependencyData>(
+    url, null, errorMessage, { validateData: isDependencyData },
   );
+  const { run, pending: saving, error: mutationError, clearError } = useScopedMutation(url);
+
+  const saveDependencies = useCallback(async (dependsOnIds: string[]) => {
+    if (!url || !data) return false;
+    return Boolean(await run(async () => {
+      const response = await requestJson<DependencyRecord[]>(url, {
+        method: "PUT", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ dependsOnIds }), errorMessage: tErrors("failedToUpdateDependencies"),
+        validateData: isDependencies,
+      });
+      if (response.error !== null) throw new Error(response.error);
+      // PUT returns the canonical predecessor records. Preserve the unrelated
+      // successors and invalidate any GET issued before this confirmed write.
+      updateData((current) => ({
+        predecessors: response.data,
+        successors: current?.successors ?? NO_DEPENDENCIES,
+      }));
+      return true;
+    }, tErrors("failedToUpdateDependencies")));
+  }, [url, data, run, updateData, tErrors]);
+
+  const refresh = useCallback(async () => { clearError(); await reload(); }, [clearError, reload]);
 
   return {
-    predecessors: data.predecessors,
-    successors: data.successors,
-    loading,
-    saving,
-    error,
-    saveDependencies,
-    refresh: fetchDeps,
-    clearError: () => setError(null),
+    predecessors: data?.predecessors ?? NO_DEPENDENCIES,
+    successors: data?.successors ?? NO_DEPENDENCIES,
+    loading, saving, ready: data !== null, error: mutationError ?? error,
+    saveDependencies, refresh, clearError,
   };
 }

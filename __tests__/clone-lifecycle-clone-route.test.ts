@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  dbMockState,
   mockJsonRequest,
   mockNextRequest,
   resetDbMockState,
@@ -115,7 +116,14 @@ describe("POST /api/projects/clone", () => {
       input: "owner/repo",
       destination: DEST,
       token: "ghp_secret",
+      timeoutMs: 600_000,
     });
+  });
+
+  it.each([["12000", 12000], ["invalid", 600000], ["0", 600000]])("uses the configured clone deadline %s", async (value, expected) => {
+    dbMockState.getQueue.push({ value });
+    await post({ url: "owner/repo" });
+    expect(mockCloneGitHubRepository).toHaveBeenCalledWith(expect.objectContaining({ timeoutMs: expected }));
   });
 
   it("rejects input that is not a GitHub repository", async () => {
@@ -218,7 +226,7 @@ describe("POST /api/projects/clone", () => {
       expect.objectContaining({
         projectId: null,
         operation: "clone",
-        status: "failure",
+        status: "failed",
       })
     );
   });

@@ -1,14 +1,15 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Check, Trash2, User, Bot } from "lucide-react";
 import type { ReviewComment } from "@/hooks/useReviewComments";
 import { formatDateTime } from "@/lib/i18n/format";
 import { MarkdownContent } from "@/components/chat/MarkdownContent";
+import { Stamp } from "@/components/piscine";
+import { cn } from "@/lib/utils";
 
 interface InlineCommentThreadProps {
+  disabled?: boolean;
   comments: ReviewComment[];
   onUpdate: (id: string, updates: { body?: string; status?: string }) => Promise<unknown>;
   onDelete: (id: string) => Promise<unknown>;
@@ -18,6 +19,7 @@ export function InlineCommentThread({
   comments,
   onUpdate,
   onDelete,
+  disabled,
 }: InlineCommentThreadProps) {
   const locale = useLocale();
   const t = useTranslations("Review");
@@ -26,15 +28,14 @@ export function InlineCommentThread({
       {comments.map((comment) => (
         <div
           key={comment.id}
-          className={`border rounded-lg p-2 text-xs ${
-            comment.status === "resolved"
-              ? "border-border/50 bg-muted/30 opacity-60"
-              : "border-blue-500/30 bg-blue-500/5"
-          }`}
+          className={cn(
+            "rounded-[10px] p-2.5 text-xs border border-border/40 bg-card",
+            comment.status === "resolved" && "opacity-60",
+          )}
         >
           <div className="flex items-center gap-2 mb-1">
             {comment.author === "agent" ? (
-              <Bot className="h-3 w-3 text-blue-500" />
+              <Bot className="h-3 w-3 text-muted-foreground" />
             ) : (
               <User className="h-3 w-3 text-muted-foreground" />
             )}
@@ -45,31 +46,33 @@ export function InlineCommentThread({
               {formatDateTime(comment.createdAt, { locale, style: "dayTime" })}
             </span>
             {comment.status === "resolved" && (
-              <Badge variant="outline" className="text-[10px] h-4 px-1">
+              <Stamp tone="land">
                 {t("thread.resolved")}
-              </Badge>
+              </Stamp>
             )}
             <div className="flex-1" />
             {comment.status === "open" && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-5 w-5"
+              <button
+                type="button"
+                className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:text-foreground cursor-pointer bg-transparent border-0 disabled:opacity-50"
                 onClick={() => onUpdate(comment.id, { status: "resolved" })}
                 title={t("thread.resolve")}
+                aria-label={t("thread.resolve")}
+                disabled={disabled}
               >
                 <Check className="h-3 w-3" />
-              </Button>
+              </button>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-5 w-5 text-destructive"
+            <button
+              type="button"
+              className="h-5 w-5 flex items-center justify-center rounded text-destructive/80 hover:text-destructive cursor-pointer bg-transparent border-0 disabled:opacity-50"
               onClick={() => onDelete(comment.id)}
               title={t("thread.delete")}
+              aria-label={t("thread.delete")}
+              disabled={disabled}
             >
               <Trash2 className="h-3 w-3" />
-            </Button>
+            </button>
           </div>
           <div className="text-xs">
             <MarkdownContent content={comment.body} />

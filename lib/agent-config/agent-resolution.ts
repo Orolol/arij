@@ -50,15 +50,6 @@ export interface ResolvedAgentProvider {
   namedAgent?: NamedAgentLite | null;
 }
 
-export interface ResolvedAgentConfig {
-  agentType: AgentType;
-  provider: AgentProvider;
-  model?: string;
-  source: AgentResolveSource;
-  scope: string;
-  namedAgentId: string | null;
-}
-
 /** Name of the seeded global default agent (inserted by lib/db/index.ts). */
 export const GLOBAL_DEFAULT_AGENT_NAME = "Claude Code";
 

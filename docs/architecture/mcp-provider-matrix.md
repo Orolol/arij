@@ -298,6 +298,16 @@ off without the suite ever running. Containment comes from the disposable
 per-ticket worktree, the same thing that has always contained the claude-code
 agents running `--permission-mode bypassPermissions`.
 
+That containment is enforced, not assumed. `CodexProvider.preflight` refuses a
+`plan`, `chat` or `analyze` spawn whose cwd is not inside `.arij-worktrees`
+(`lib/providers/spawn-containment.ts`): the session fails with an actionable
+message naming the providers that do have a read-only posture. Measured on
+2026-09-10 before the gate, chat turns, spec generation, QA epic extraction,
+conversation titling (cwd = Arij's own repository), dreaming, memory
+distillation and forensic diagnostics all ran codex with full write access to
+the main checkout. Build, review, merge and grading sessions are unaffected:
+they run in a worktree, in `code` mode.
+
 Unlike claude's `--mcp-config`, codex's `-c` mechanism has no file form, so the
 token rides in argv. Accepted, local-only, and masked everywhere downstream —
 see the comment on `buildCodexMcpOverrideArgs`.
@@ -478,7 +488,7 @@ would otherwise get a silently writable "read-only" session.
 | Path | Hook | Scope |
 |---|---|---|
 | One-shot | `OhMyPiProvider.preflight()` (`BaseCliProvider.spawn`) | Every mode whose `toolAllowlist()` returns a list — plan, chat, analyze |
-| Persistent RPC chat | `ompAdapter.preflight` (`spawnPersistentProcess`) | Always: persistent chat is always `--tools read,grep,glob` |
+| Persistent RPC chat | `ompAdapter.preflight` (`runPersistentChatTurn`) | Always: persistent chat is always `--tools read,grep,glob` |
 
 Below `OMP_MIN_ALLOWLIST_VERSION` (`18.0.6`) the spawn is refused with an
 upgrade message and no process starts; on the persistent path the refusal
@@ -488,8 +498,11 @@ claims no isolation, so it is deliberately ungated and runs on any version.
 The gate fails closed — an unreadable `omp --version` is not evidence of
 safety — with one exception: a **missing** binary is left to the spawn's own
 "CLI not found" error, since nothing runs and there is no isolation to
-protect. Only a *trusted* verdict is memoised, so a user who reacts to the
-error by running `omp update` is unblocked without restarting the server.
+protect. The probe uses asynchronous `execFile` with a five-second timeout;
+concurrent callers share the same pending probe. A trusted verdict is memoised
+for the server lifetime. Refusals are cached for five seconds, so an upgrade
+is picked up without restarting the server. Both spawn paths await this gate
+before allocating MCP resources or launching an agent.
 
 Raising `OMP_MIN_ALLOWLIST_VERSION` is only correct against a fresh
 measurement of the allowlist on that release. Coverage:

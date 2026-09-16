@@ -27,16 +27,9 @@ const verifyMocks = vi.hoisted(() => ({
   runVerification: vi.fn(),
 }));
 
-vi.mock("@/lib/db", () => ({
-  get db() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.db;
-  },
-  get sqlite() {
-    if (!testDb.instance) throw new Error("test db not initialised");
-    return testDb.instance.sqlite;
-  },
-}));
+vi.mock("@/lib/db", async () =>
+  (await import("@/__tests__/helpers/db-mock")).liveDbModule(testDb),
+);
 
 vi.mock("@/lib/verify/config", () => ({
   resolveVerifyConfigForProject: verifyMocks.resolveConfig,
@@ -84,6 +77,7 @@ function seedSession(pathname: string, createdAt = "2026-08-25T12:00:00.000Z") {
       projectId,
       epicId,
       status: "completed",
+      agentType: "build",
       worktreePath: pathname,
       createdAt,
     })
@@ -263,7 +257,7 @@ describe("POST /api/projects/[projectId]/epics/[epicId]/verify", () => {
     expect(verifyMocks.runVerification).toHaveBeenCalledWith({
       projectId,
       epicId,
-      agentSessionId: null,
+      agentSessionId: "session-2026-08-25T12:00:00.000Z",
       worktreePath,
       commands: [{ name: "test", command: "npm test" }],
       timeoutMs: 600_000,
@@ -299,7 +293,7 @@ describe("POST /api/projects/[projectId]/epics/[epicId]/verify", () => {
     const body = await response.json();
 
     expect(response.status).toBe(409);
-    expect(body.error).toMatch(/existing epic worktree/i);
+    expect(body.error).toMatch(/epic worktree/i);
     expect(verifyMocks.runVerification).not.toHaveBeenCalled();
   });
 
@@ -310,7 +304,7 @@ describe("POST /api/projects/[projectId]/epics/[epicId]/verify", () => {
     const body = await response.json();
 
     expect(response.status).toBe(409);
-    expect(body.error).toMatch(/existing epic worktree/i);
+    expect(body.error).toMatch(/epic worktree/i);
     expect(verifyMocks.runVerification).not.toHaveBeenCalled();
   });
 

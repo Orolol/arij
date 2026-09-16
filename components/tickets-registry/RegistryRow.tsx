@@ -196,7 +196,7 @@ function StateCell({ row }: { row: Row }) {
     // YOUR TURN, so what reaches here is `changes_requested` or `no_branch`.
     return (
       <span className="line-clamp-1 min-w-0 text-[12px] text-muted-foreground">
-        {row.mergeBlockerLine ?? ""}
+        {row.mergeBlockerKey ? t(row.mergeBlockerKey) : (row.mergeBlockerLine ?? "")}
       </span>
     );
   }

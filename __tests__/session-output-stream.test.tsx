@@ -20,7 +20,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import {
   SessionOutputStream,
   type SessionStreamSeed,
-} from "@/components/sessions/SessionOutputStream";
+} from "@/components/session-live/SessionOutputStream";
 import type { BoundedSessionChunk } from "@/lib/agent-sessions/chunks";
 
 const originalFetch = global.fetch;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect } from "react";
 
 interface BatchSelectionState {
   /** All selected ticket IDs (user-selected + auto-included) */
@@ -26,104 +26,47 @@ function normalizeTicketIds(ticketIds: Iterable<string>) {
   return Array.from(new Set(ticketIds));
 }
 
-function sameSelection(a: string[], b: string[]) {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i += 1) {
-    if (a[i] !== b[i]) return false;
-  }
-  return true;
-}
-
 export function useBatchSelection(projectId: string) {
   const [state, setState] = useState<BatchSelectionState>(createEmptySelectionState);
   const [loading, setLoading] = useState(false);
   const fetchController = useRef<AbortController | null>(null);
 
-  const resolveTransitive = useCallback(
-    async (ticketIds: string[]) => {
-      const selectedTicketIds = normalizeTicketIds(ticketIds);
+  const [selectionProjectId, setSelectionProjectId] = useState(projectId);
+  if (selectionProjectId !== projectId) {
+    setSelectionProjectId(projectId);
+    setState(createEmptySelectionState());
+    setLoading(false);
+  }
 
-      if (selectedTicketIds.length === 0) {
-        fetchController.current?.abort();
-        setLoading(false);
-        setState(createEmptySelectionState());
-        return;
-      }
+  useEffect(() => () => { fetchController.current?.abort(); }, [projectId]);
 
-      const userSelected = new Set(selectedTicketIds);
+  const resolveTransitive = useCallback(async (selectedTicketIds: string[]) => {
+    fetchController.current?.abort();
+    const controller = new AbortController();
+    fetchController.current = controller;
+    setLoading(true);
 
-      // Cancel any in-flight request
-      fetchController.current?.abort();
-      const controller = new AbortController();
-      fetchController.current = controller;
-
-      setLoading(true);
-      try {
-        const res = await fetch(
-          `/api/projects/${projectId}/dependencies/transitive`,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ticketIds: selectedTicketIds }),
-            signal: controller.signal,
-          }
-        );
-
-        if (!res.ok) {
-          // Fallback: just use user selection
-          setState((prev) => {
-            if (!sameSelection(prev.selectedTicketIds, selectedTicketIds)) {
-              return prev;
-            }
-            return {
-              allSelected: new Set(userSelected),
-              userSelected: new Set(userSelected),
-              autoIncluded: new Set(),
-              selectedTicketIds,
-            };
-          });
-        } else {
-          const json = await res.json();
-          const all = new Set<string>(json.data?.all ?? selectedTicketIds);
-          const auto = new Set<string>(json.data?.autoIncluded ?? []);
-
-          setState((prev) => {
-            if (!sameSelection(prev.selectedTicketIds, selectedTicketIds)) {
-              return prev;
-            }
-            return {
-              allSelected: all,
-              userSelected: new Set(userSelected),
-              autoIncluded: auto,
-              selectedTicketIds,
-            };
-          });
-        }
-      } catch (e) {
-        // A superseded request is not a failed one; anything else falls back
-        // to the user selection.
-        if ((e as Error).name !== "AbortError") {
-          setState((prev) => {
-            if (!sameSelection(prev.selectedTicketIds, selectedTicketIds)) {
-              return prev;
-            }
-            return {
-              allSelected: new Set(userSelected),
-              userSelected: new Set(userSelected),
-              autoIncluded: new Set(),
-              selectedTicketIds,
-            };
-          });
-        }
-      }
-      // Every path above lands here — what the `finally` clause did before
-      // it; the React Compiler stops at a `finally` clause.
-      if (fetchController.current === controller) {
-        setLoading(false);
-      }
-    },
-    [projectId]
-  );
+    const userSelected = new Set(selectedTicketIds);
+    let allSelected = new Set(userSelected);
+    let autoIncluded = new Set<string>();
+    const res = await fetch(`/api/projects/${projectId}/dependencies/transitive`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ticketIds: selectedTicketIds }),
+      signal: controller.signal,
+    }).catch(() => null);
+    const json = res?.ok ? await res.json().catch(() => null) : null;
+    if (json?.data) {
+      allSelected = new Set([...userSelected, ...(json.data.all ?? [])]);
+      autoIncluded = new Set((json.data.autoIncluded ?? []).filter(
+        (id: string) => !userSelected.has(id),
+      ));
+    }
+    // Identity, not matching IDs: A → B → A must not revive A's first request.
+    if (controller.signal.aborted || fetchController.current !== controller) return;
+    setState({ allSelected, userSelected, autoIncluded, selectedTicketIds });
+    setLoading(false);
+  }, [projectId]);
 
   const setSelectedTicketIds = useCallback(
     (ticketIds: string[]) => {

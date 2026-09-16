@@ -3,54 +3,16 @@ import { db } from "@/lib/db";
 import { agentSessions, epics, userStories } from "@/lib/db/schema";
 import { eq, and, inArray } from "drizzle-orm";
 import { getSessionStatusForApi } from "@/lib/agent-sessions/lifecycle";
+import {
+  classifySessionActivity,
+  type UnifiedActivity,
+} from "@/lib/agent-sessions/active-activity";
 import { activityRegistry } from "@/lib/activity-registry";
 import {
   getSessionLastActivityAt,
   isSessionStale,
 } from "@/lib/agents/watchdog";
-import {
-  DREAMING_AGENT_TYPE,
-  MEMORY_WRITER_AGENT_TYPES,
-} from "@/lib/workflow/dreaming-constants";
-import { REFINEMENT_AGENT_TYPE } from "@/lib/refinement/constants";
-
-export interface UnifiedActivity {
-  id: string;
-  epicId: string | null;
-  userStoryId: string | null;
-  type:
-    | "build"
-    | "review"
-    | "merge"
-    | "chat"
-    | "spec_generation"
-    | "release"
-    | "memory"
-    | "qa"
-    | "grading"
-    | "refinement";
-  label: string;
-  status: string;
-  mode: string;
-  provider: string;
-  namedAgentName: string | null;
-  startedAt: string;
-  source: "db" | "registry";
-  cancellable: boolean;
-  /**
-   * Freshest lifecycle/output signal for DB sessions, using the same
-   * definition as the sessions list. Registry activities return null because
-   * they stream outside the durable session/chunk stores.
-   */
-  lastActivityAt: string | null;
-  /**
-   * True when lastActivityAt is older than the session's watchdog threshold
-   * (settings `watchdog_threshold_minutes[:<agentType>]`, default 5m) —
-   * same predicate the watchdog uses to notify, so the monitor's amber
-   * state and the stall notification always agree.
-   */
-  stale: boolean;
-}
+import { DREAMING_AGENT_TYPE } from "@/lib/workflow/dreaming-constants";
 
 /**
  * WHAT THIS DELIBERATELY DOES NOT READ: `agent_sessions.prompt`.
@@ -85,71 +47,11 @@ export interface UnifiedActivity {
  *    "Merging" cards.
  *
  * `lib/control-desk/aggregate.ts`'s `inferTaskType` dropped the same tests for
- * the same reasons and left this route to its own ticket. The two
- * classifications are meant to agree, and now do.
+ * the same reasons. Both now read {@link classifySessionActivity} — the two
+ * classifications are one function, spelled differently at each surface.
  *
  * Pinned by `__tests__/sessions-active-route-projection.test.ts`.
  */
-function inferDbActivityType(row: {
-  agentType: string | null;
-  orchestrationMode: string | null;
-  mode: string | null;
-}): UnifiedActivity["type"] {
-  if (row.agentType === "release_notes") {
-    return "release";
-  }
-
-  if (row.agentType === "grading") {
-    return "grading";
-  }
-
-  // Board refinement carries no epicId and runs in code mode, so neither the
-  // ticket join nor the mode heuristic below would classify it — without
-  // this the monitor would announce a planning pass as "Building".
-  if (row.agentType === REFINEMENT_AGENT_TYPE) {
-    return "refinement";
-  }
-
-  // Review agents run in code mode (the no-edit rule is a prompt contract),
-  // so the `mode === "plan"` fallback below no longer catches them —
-  // classify by agent type. Covers review_code, review_second_opinion, and
-  // every custom review_* type.
-  if (row.agentType?.startsWith("review_")) {
-    return "review";
-  }
-
-  if (
-    row.agentType === "tech_check" ||
-    row.agentType === "e2e_test" ||
-    row.agentType === "failure_digest"
-  ) {
-    return "qa";
-  }
-
-  // Before the mode heuristic below: both memory writers run in plan mode, so
-  // the `mode === "plan"` fallback would file them as reviews and the monitor
-  // would say "Reviewing" while an agent is rewriting the project memory.
-  if (row.agentType && MEMORY_WRITER_AGENT_TYPES.includes(row.agentType)) {
-    return "memory";
-  }
-
-  if (row.agentType === "merge") {
-    return "merge";
-  }
-
-  if (row.orchestrationMode === "team") {
-    return "build";
-  }
-
-  // Last resort, on `mode` alone: see the note above for the prompt tests
-  // that used to sit here.
-  if (row.mode === "plan") {
-    return "review";
-  }
-
-  return "build";
-}
-
 function buildDbActivityLabel(
   type: UnifiedActivity["type"],
   row: {
@@ -252,7 +154,7 @@ export async function GET(
   const now = new Date();
 
   const dbActivities: UnifiedActivity[] = rows.map((row) => {
-    const type = inferDbActivityType(row);
+    const type = classifySessionActivity(row);
     const label =
       row.orchestrationMode === "team"
         ? "Team Build"
