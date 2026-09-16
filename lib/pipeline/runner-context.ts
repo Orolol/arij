@@ -145,16 +145,18 @@ export async function sizeStageBudget(
 ): Promise<void> {
   const { options, state } = ctx;
   state.stageMaxAttempts = options.maxAttempts;
-  if (!options.attemptBudget) return;
-  try {
-    const budget = await options.attemptBudget(stage);
-    if (Number.isFinite(budget) && budget >= 1) {
-      state.stageMaxAttempts = Math.floor(budget);
+  if (options.attemptBudget) {
+    try {
+      const budget = await options.attemptBudget(stage);
+      if (Number.isFinite(budget) && budget >= 1) {
+        state.stageMaxAttempts = Math.floor(budget);
+      }
+    } catch (error) {
+      console.warn(
+        "[pipeline] Failed to size the attempt ladder; using the configured cap:",
+        error instanceof Error ? error.message : error
+      );
     }
-  } catch (error) {
-    console.warn(
-      "[pipeline] Failed to size the attempt ladder; using the configured cap:",
-      error instanceof Error ? error.message : error
-    );
   }
+  ctx.callbacks.onStageBudget?.(stage, state.stageMaxAttempts);
 }

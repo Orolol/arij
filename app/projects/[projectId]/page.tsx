@@ -7,7 +7,7 @@ import { ToastStack, type ToastItem } from "@/components/toast/ToastStack";
 import { useToastStack } from "@/components/toast/useToastStack";
 import { ProjectDeskDialogs } from "@/components/desk/ProjectDeskDialogs";
 import { NowDesk } from "@/components/desk/NowDesk";
-import { TicketOverlay } from "@/components/ticket/TicketOverlay";
+import { TicketOverlay, type TicketOverlayView } from "@/components/ticket/TicketOverlay";
 import { UnifiedChatPanel, type UnifiedChatPanelHandle } from "@/components/chat/UnifiedChatPanel";
 import { useBatchSelection } from "@/hooks/useBatchSelection";
 import { ProjectBatchToolbar } from "@/components/desk/ProjectBatchToolbar";
@@ -41,6 +41,9 @@ export default function ProjectDeskPage() {
 
 function ProjectDesk({ projectId }: { projectId: string }) {
   const t = useTranslations("Desk");
+  // The overlay's outcome words are shared with TicketOverlayProvider (`/`,
+  // `/qa`, `/chat`): the same gesture confirms with the same sentence here.
+  const tTicket = useTranslations("Ticket");
   const batch = useBatchSelection(projectId);
   const [namedAgentId, setNamedAgentId] = useState<string | null>(null);
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -51,6 +54,9 @@ function ProjectDesk({ projectId }: { projectId: string }) {
   const [nightSummaryRunId, setNightSummaryRunId] = useState<string | null>(null);
   const { toasts, raise: addToast, dismiss: dismissRaised } = useToastStack();
   const [activeDetailTicketId, setActiveDetailTicketId] = useState<string | null>(null);
+  // Which face the overlay opens on. Reset by every plain open so the diff a
+  // CONFLICT row asked for does not stick to the next ticket.
+  const [activeDetailView, setActiveDetailView] = useState<TicketOverlayView>("ticket");
   const panelRef = useRef<UnifiedChatPanelHandle>(null);
 
   // Real-time events via SSE — the desk polls /api/control-desk on its own, but
@@ -76,8 +82,13 @@ function ProjectDesk({ projectId }: { projectId: string }) {
   });
   const refreshKey = refreshTrigger + pollTick;
 
-  function handlePrimaryTicketClick(epicId: string) {
+  function openDetail(epicId: string, view: TicketOverlayView) {
     setActiveDetailTicketId(epicId);
+    setActiveDetailView(view);
+  }
+
+  function handlePrimaryTicketClick(epicId: string) {
+    openDetail(epicId, "ticket");
   }
 
   function handleCloseDetailPanel() {
@@ -110,9 +121,9 @@ function ProjectDesk({ projectId }: { projectId: string }) {
   const href = `/projects/${projectId}`;
   useConsumedQueryParam("deleted", href, (value) => {
     if (value === "story") setDeletedNotice(t("projectDesk.storyDeleted"));
-    if (value === "epic") setDeletedNotice(t("projectDesk.epicDeleted"));
+    if (value === "epic") setDeletedNotice(tTicket("feedback.deleted"));
   });
-  useConsumedQueryParam("ticket", href, setActiveDetailTicketId);
+  useConsumedQueryParam("ticket", href, handlePrimaryTicketClick);
   useConsumedQueryParam("panel", href, (value) => {
     if (value === "new-epic") panelRef.current?.openNewEpic();
     if (value === "new-epic-manual") setEpicDialogOpen(true);
@@ -199,7 +210,7 @@ function ProjectDesk({ projectId }: { projectId: string }) {
                 onChanged={() => setRefreshTrigger((t) => t + 1)}
                 selectedEpicIds={batch.allSelected}
                 onToggleSelect={batch.toggle}
-                onOpenTicket={handlePrimaryTicketClick}
+                onOpenTicket={(epicId, options) => openDetail(epicId, options?.view ?? "ticket")}
               />
             </div>
           </div>
@@ -214,23 +225,25 @@ function ProjectDesk({ projectId }: { projectId: string }) {
           epicId={activeDetailTicketId}
           open
           refreshTrigger={refreshKey}
+          initialView={activeDetailView}
           onClose={handleCloseDetailPanel}
+          onOpenTicket={handlePrimaryTicketClick}
           onAgentConflict={({ message, sessionUrl }) =>
             addToast(
               "error",
               message,
               sessionUrl
-                ? { href: sessionUrl, label: t("projectDesk.openActiveSession") }
+                ? { href: sessionUrl, label: tTicket("feedback.openActiveSession") }
                 : undefined
             )
           }
           onMerged={() => {
             setRefreshTrigger((t) => t + 1);
-            addToast("success", t("projectDesk.branchMerged"));
+            addToast("success", tTicket("feedback.merged"));
           }}
           onDeleted={() => {
             setRefreshTrigger((t) => t + 1);
-            addToast("success", t("projectDesk.epicDeleted"));
+            addToast("success", tTicket("feedback.deleted"));
           }}
         />
       )}

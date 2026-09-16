@@ -36,9 +36,10 @@ interface EpicDetail {
   linkedEpicId: string | null;
   images: string | null;
   readableId: string | null;
+  /** Set on tickets imported from GitHub; the meta line's "from GH #n". */
+  githubIssueNumber: number | null;
   createdAt: string | null;
   updatedAt: string | null;
-
 }
 
 interface DetailState {
@@ -51,9 +52,12 @@ export function useEpicDetail(projectId: string, epicId: string | null) {
   const tErrors = useTranslations("ClientErrors");
   const target = projectId && epicId ? `/api/projects/${projectId}/epics/${epicId}` : null;
   const [polling, setPolling] = useState(false);
-  const errorMessage = useCallback(() => tErrors("networkErrorTheUpdateWasNotApplied"), [tErrors]);
-  const detail = usePolledResource<DetailState>(target, polling ? 5000 : null, errorMessage);
-  const verification = usePolledResource<VerificationReport | null>(target ? `${target}/verify` : null, null, errorMessage, {
+  // A READ failure names a failed read: the overlay's pending block shows it
+  // when a ticket cannot be opened, where "the update was not applied" (the
+  // PATCH's copy) would describe a write nobody made.
+  const readErrorMessage = useCallback(() => tErrors("failedToLoadTicket"), [tErrors]);
+  const detail = usePolledResource<DetailState>(target, polling ? 5000 : null, readErrorMessage);
+  const verification = usePolledResource<VerificationReport | null>(target ? `${target}/verify` : null, null, readErrorMessage, {
     validateData: isNullableVerification,
   });
   const mutation = useScopedMutation(target);

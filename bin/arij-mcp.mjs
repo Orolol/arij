@@ -429,7 +429,7 @@ const AGENT_TOOLS = [
   {
     name: "reorder_tickets",
     description:
-      "Re-rank Backlog/To do tickets by writing their board positions (0 = top of the status). Position is the registry's ordering source within each status. Send every ticket of the status you are ordering, each id once; this never changes a ticket's status.",
+      "Re-rank Backlog/To do tickets by writing their board positions (0 = top of the status). Position is the registry's ordering source within each status, the same order the ticket overlay's up/down (POST …/position) writes. Send every ticket of the status you are ordering, each id once; this never changes a ticket's status.",
     inputSchema: {
       type: "object",
       properties: {

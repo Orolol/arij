@@ -220,6 +220,12 @@ export interface PipelineRunnerCallbacks {
     stageAttempt: number,
     fixCycles: number
   ): void;
+  /**
+   * The attempt budget of the stage being entered was sized (once per stage
+   * entry, initial build included). Lets the registry show "attempt n/max"
+   * with the budget the ladder actually climbs.
+   */
+  onStageBudget?(stage: PipelineStageKind, maxAttempts: number): void;
   /** A stage session was created (initial build excluded — the caller registered it). */
   onSessionAdded?(sessionId: string, stage: PipelineStage): void;
   /** One activity-trace line (exact PIPELINE_REASONS string). */

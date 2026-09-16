@@ -31,7 +31,8 @@ Read `components/piscine/index.ts` first — it is the shared vocabulary
   app's only chrome. A screen renders **no page header of its own** — no logo,
   no nav, no ⌘K. There is no left rail.
 - No drag and drop for ticket ordering; re-ordering happens in the ticket
-  overlay or Refinement. The docs uploader uses a native HTML5 file target.
+  overlay (`POST /api/projects/:id/epics/:epicId/position`, up/down/top/bottom)
+  or Refinement. The docs uploader uses a native HTML5 file target.
 
 ## File Structure
 - `app/` — Next.js routes and layouts. `/` is the cross-project control desk

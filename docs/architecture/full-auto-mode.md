@@ -179,7 +179,7 @@ sorts with `compareExecutionOrder` (`lib/kanban/queue.ts`), and
 so the band shows the supervisor's own order rather than a lookalike.
 
 The column rank exists because `position` is written **per column** — creation
-uses `MAX(position) + 1` scoped to the target status, and the reorder route
+uses `MAX(position) + 1` scoped to the target status, and the reorder core
 rewrites each column as 0..n-1 — so every column has its own position 0 and
 position alone cannot order a candidate set that spans two of them. **In
 Progress ranks before To Do**: a ticket sitting there came back from a negative
@@ -188,17 +188,18 @@ that explicit rule the cross-column tie would fall through to SQLite's row
 order, i.e. creation order, which nothing surfaces and nothing can reach.
 
 **How priority reaches the scheduler.** It has to be turned into `position` by
-something, and since the rebuild the only live writer is the agent: the
-refinement pass calls `set_priority` and then `reorder_tickets`
+something: the refinement pass calls `set_priority` and then `reorder_tickets`
 (`app/api/mcp/reorder-tickets/route.ts`), which re-ranks Backlog / To do
 through the shared core `lib/workflow/reorder.ts` — the same core, with
 `reorderOnly`, so a ticket the server has moved on from is skipped rather than
 transitioned. The old "Sort by priority" column-header action is **gone**: it
-lived in the legacy `hooks/useKanban.ts`, which has been removed.
-`POST /api/projects/:projectId/epics/reorder` still exists and still
-runs the same core, but it currently has no caller in the UI. A human who wants
-a different execution order re-ranks through Refinement, or changes the
-ticket's status/priority from the 6a overlay.
+lived in the legacy `hooks/useKanban.ts`, and the drag route
+`POST /api/projects/:projectId/epics/reorder` went with it. A human who wants a
+different execution order moves one ticket at a time with
+`POST /api/projects/:projectId/epics/:epicId/position`
+(`{ move: "up" | "down" | "top" | "bottom" }`), which recomputes the column
+server-side and renumbers it 0..n-1 through the same core, or re-ranks through
+Refinement.
 
 **Only To Do and In Progress are buildable.** `BUILDABLE_EPIC_STATUSES` is
 `{todo, in_progress}` — Backlog is the staging area, not the queue, and moving

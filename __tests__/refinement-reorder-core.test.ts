@@ -1,6 +1,6 @@
 /**
  * The shared transactional reorder core (lib/workflow/reorder.ts), which the
- * board drag route and the refinement MCP tool both call.
+ * manual position route and the refinement MCP tool both call.
  *
  * Focus: the `reorderOnly` contract. A caller that is only re-ranking passes
  * the column it believes each ticket is in; a ticket that has moved on is
@@ -119,11 +119,55 @@ describe("reorderTickets — reorderOnly", () => {
     expect(positionOf(b)).toBe(1);
   });
 
+  // Kept from the deleted epics/reorder route test: the MCP reorder_tickets
+  // tool still relies on it when a ticket ships between its read and its write.
+  it("skips a ticket released since the caller read it instead of refusing the whole request", () => {
+    db().update(epics).set({ status: "released", position: 3 }).where(eq(epics.id, b)).run();
+
+    const result = reorderTickets(
+      projectId,
+      [
+        { id: b, status: "backlog", position: 0 },
+        { id: a, status: "backlog", position: 1 },
+      ],
+      { actor: "agent", source: "refinement", reorderOnly: true }
+    );
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.updatedIds).toEqual([a]);
+    expect(result.skippedIds).toEqual([b]);
+    expect(positionOf(a)).toBe(1);
+    const released = db().select().from(epics).where(eq(epics.id, b)).get();
+    expect(released?.status).toBe("released");
+    expect(released?.position).toBe(3);
+  });
+
+  it("re-ranks without stamping updatedAt: a rank is not an edit of the ticket", () => {
+    const stamp = "2020-01-01T00:00:00.000Z";
+    db().update(epics).set({ updatedAt: stamp }).run();
+
+    const result = reorderTickets(
+      projectId,
+      [
+        { id: b, status: "backlog", position: 0 },
+        { id: a, status: "backlog", position: 1 },
+      ],
+      { actor: "agent", source: "refinement", reorderOnly: true }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(positionOf(b)).toBe(0);
+    for (const row of db().select().from(epics).all()) {
+      expect(row.updatedAt).toBe(stamp);
+    }
+  });
+
   it("without reorderOnly a mismatch is a requested move, not a skip", () => {
     const result = reorderTickets(
       projectId,
       [{ id: a, status: "todo", position: 0 }],
-      { actor: "user", source: "drag" }
+      { actor: "user", source: "api" }
     );
 
     expect(result.ok).toBe(true);

@@ -144,7 +144,7 @@ describe("applyTransition", () => {
       fromStatus: "backlog",
       toStatus: "backlog",
       actor: "user",
-      source: "drag",
+      source: "api",
     });
     expect(result.valid).toBe(true);
     expect(mockEmitTicketMoved).not.toHaveBeenCalled();
@@ -161,7 +161,7 @@ describe("applyTransition", () => {
       fromStatus: "backlog",
       toStatus: "todo",
       actor: "user",
-      source: "drag",
+      source: "api",
       reason: "Manual move",
     });
     expect(result.valid).toBe(true);
@@ -197,7 +197,7 @@ describe("applyTransition", () => {
       fromStatus: "backlog",
       toStatus: "done",
       actor: "user",
-      source: "drag",
+      source: "api",
     });
     expect(result.valid).toBe(false);
     expect(result.error).toContain("Invalid transition");
@@ -214,7 +214,7 @@ describe("applyTransition", () => {
       fromStatus: "backlog",
       toStatus: "done",
       actor: "user",
-      source: "drag",
+      source: "api",
       reason: "Manual move",
     });
     expect(result.valid).toBe(false);
@@ -243,7 +243,7 @@ describe("applyTransition", () => {
       fromStatus: "backlog",
       toStatus: "todo",
       actor: "user",
-      source: "drag",
+      source: "api",
       validateOnly: true,
     });
     expect(result.valid).toBe(true);
@@ -264,15 +264,15 @@ describe("applyTransition", () => {
       fromStatus: "review",
       toStatus: "done",
       actor: "user",
-      source: "drag",
+      source: "api",
     });
     expect(result.valid).toBe(false);
     expect(result.error).toContain("Invalid transition");
   });
 
   it("allows to_merge -> done only for the merge source", async () => {
-    // The merge IS the approval: there is no manual approve step, so a drag
-    // (or any other source) onto Done is refused, while the merge routes'
+    // The merge IS the approval: there is no manual approve step, so a manual
+    // move (or any other source) onto Done is refused, while the merge routes'
     // source passes through the same service call.
     const { applyTransition } = await import(
       "@/lib/workflow/transition-service"
@@ -286,9 +286,9 @@ describe("applyTransition", () => {
       validateOnly: true,
     };
 
-    const dragged = applyTransition({ ...opts, source: "drag" });
-    expect(dragged.valid).toBe(false);
-    expect(dragged.error).toContain("successful merge");
+    const manual = applyTransition({ ...opts, source: "api" });
+    expect(manual.valid).toBe(false);
+    expect(manual.error).toContain("successful merge");
 
     const merged = applyTransition({ ...opts, source: "merge" });
     expect(merged.valid).toBe(true);
@@ -426,13 +426,13 @@ describe("applyTransition — owning session exemption", () => {
       fromStatus: "in_progress",
       toStatus: "review",
       actor: "user",
-      source: "drag",
+      source: "api",
     });
 
     expect(result.valid).toBe(true);
   });
 
-  it("refuses a user drag while a build session is live", async () => {
+  it("refuses a manual user move while a build session is live", async () => {
     const { applyTransition } = await import(
       "@/lib/workflow/transition-service"
     );
@@ -446,7 +446,7 @@ describe("applyTransition — owning session exemption", () => {
       fromStatus: "in_progress",
       toStatus: "review",
       actor: "user",
-      source: "drag",
+      source: "api",
     });
 
     expect(result.valid).toBe(false);

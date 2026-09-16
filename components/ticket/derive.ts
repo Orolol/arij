@@ -12,6 +12,11 @@ import type { TimelineKind } from "@/components/piscine";
 import type { EpicActivityEntry } from "@/hooks/useEpicActivity";
 import type { FeedItem } from "@/lib/kanban/activity-feed";
 import { MCP_CREATE_BUG_ACTIVITY_PREFIX } from "@/lib/mcp/create-bug-contract";
+import {
+  isPipelineRunActive,
+  type PipelineRunSnapshot,
+  type PipelineStage,
+} from "@/lib/pipeline/constants";
 import type { ProjectTone } from "@/lib/piscine/tokens";
 import type { TicketDerivedCopy } from "./copy";
 import { formatRelative } from "@/lib/i18n/format";
@@ -76,17 +81,45 @@ const REVIEW_DONE = new Set(["to_merge", "done", "released"]);
 const LAND_DONE = new Set(["done", "released"]);
 
 /**
+ * Chain index of the step a registry stage is working on. Build and fix both
+ * write code (BUILD); grading and review both judge it (REVIEW). The forensic
+ * diagnostic belongs to no step: it explains a stage that already failed.
+ */
+const RUN_STAGE_STEP: Partial<Record<PipelineStage, number>> = {
+  build: 1,
+  fix: 1,
+  grading: 2,
+  review: 2,
+};
+
+/**
  * The four-step chain in the PIPELINE card, derived from the board column.
  *
  * `live` is conjoined with `isRunning` on purpose: `PipelineChain` draws a
  * live step as a *breathing* dot, and in this design motion means something is
  * actually alive. A ticket parked in `in_progress` with no session shows BUILD
  * as a pending ring, which is the truth.
+ *
+ * `runStage` is the stage of the ticket's ACTIVE pipeline run, when there is
+ * one. The registry then outranks the column: a fix cycle leaves the ticket
+ * in review for a while, yet the work in flight is a build. An active run is
+ * alive even between two sessions (the runner is assessing), so the marker
+ * breathes without a running session.
  */
 export function pipelineSteps(
   status: string,
   isRunning: boolean,
+  runStage?: PipelineStage | null,
 ): PipelineStep[] {
+  const labels = ["SPEC", "BUILD", "REVIEW", "LAND"] as const;
+  const runStep = runStage ? RUN_STAGE_STEP[runStage] : undefined;
+  if (runStep !== undefined) {
+    return labels.map((label, index) => ({
+      label,
+      state: index < runStep ? "done" : index === runStep ? "live" : "pending",
+    }));
+  }
+
   const step = (
     label: string,
     done: boolean,
@@ -95,17 +128,97 @@ export function pipelineSteps(
     label,
     state: done
       ? "done"
-      : isRunning && status === liveColumn
+      : isRunning && runStage !== "forensic" && status === liveColumn
         ? "live"
         : "pending",
   });
 
   return [
-    step("SPEC", SPEC_DONE.has(status), "backlog"),
-    step("BUILD", BUILD_DONE.has(status), "in_progress"),
-    step("REVIEW", REVIEW_DONE.has(status), "review"),
-    step("LAND", LAND_DONE.has(status), "to_merge"),
+    step(labels[0], SPEC_DONE.has(status), "backlog"),
+    step(labels[1], BUILD_DONE.has(status), "in_progress"),
+    step(labels[2], REVIEW_DONE.has(status), "review"),
+    step(labels[3], LAND_DONE.has(status), "to_merge"),
   ];
+}
+
+/** A counter with its cap; `max` is null when the snapshot carries none. */
+export interface PipelineRunCounter {
+  count: number;
+  max: number | null;
+}
+
+/**
+ * What the PIPELINE card says about the ticket's latest registry run. Words
+ * are resolved by the card; this is the data shape, so it stays testable.
+ */
+export interface PipelineRunLine {
+  /** Every running_* state reads the same — the stage says which. */
+  state: "running" | "succeeded" | "failed" | "paused_question" | "cancelled";
+  stage: PipelineStage | null;
+  /** Only while a retryable stage runs: a finished run has no ladder left. */
+  attempt: PipelineRunCounter | null;
+  /** Omitted when there is nothing to say (none spent and none allowed / run over). */
+  fixCycles: PipelineRunCounter | null;
+  /**
+   * The runner's own terminal reason (failed, paused, stopped). Shown
+   * verbatim, like the activity feed's pipeline lines: it names the stage,
+   * the command or the cycle count, and no catalogue key could.
+   */
+  reason: string | null;
+  /**
+   * The story a story-scoped run builds (stories/[storyId]/build registers
+   * under the parent's epicId). Named so the line never reads as the ticket's
+   * own run; null for a ticket-level run.
+   */
+  story: string | null;
+  /**
+   * When a finished run ended. The registry keeps its last runs until a
+   * restart, so an old outcome must carry its age instead of reading as the
+   * ticket's present state.
+   */
+  endedAt: string | null;
+}
+
+export function pipelineRunLine(
+  run: PipelineRunSnapshot,
+  stories: readonly { id: string; title: string }[] = [],
+): PipelineRunLine {
+  const active = isPipelineRunActive(run.state);
+  const state: PipelineRunLine["state"] = active
+    ? "running"
+    : (run.state as Exclude<PipelineRunLine["state"], "running">);
+  const maxFixCycles = run.maxFixCycles ?? null;
+  const showFixCycles = run.fixCycles > 0 || (active && maxFixCycles !== 0);
+
+  return {
+    state,
+    stage: run.stage ?? null,
+    attempt:
+      active && run.stage !== "forensic"
+        ? { count: run.stageAttempt, max: run.stageMaxAttempts ?? null }
+        : null,
+    fixCycles: showFixCycles ? { count: run.fixCycles, max: maxFixCycles } : null,
+    reason:
+      state === "failed" || state === "paused_question" || state === "cancelled"
+        ? run.reason?.trim() || null
+        : null,
+    story: run.userStoryId
+      ? stories.find((story) => story.id === run.userStoryId)?.title?.trim() ||
+        shortId(run.userStoryId)
+      : null,
+    endedAt: active ? null : (run.endedAt ?? null),
+  };
+}
+
+/**
+ * The stage allowed to place the chain's live marker: only the ticket's OWN
+ * active run. A story run reports on one story, and the parent may well sit
+ * in review or to_merge meanwhile — repainting its chain as BUILD live would
+ * describe a state the ticket is not in.
+ */
+export function pipelineRunStage(run: PipelineRunSnapshot | null | undefined): PipelineStage | null {
+  if (!run || run.userStoryId != null || !isPipelineRunActive(run.state)) return null;
+  return run.stage ?? null;
 }
 
 /* ------------------------------------------------------------------ */

@@ -69,7 +69,7 @@ export function ChatPageView({
   initialProjectId,
   initialConversationId,
 }: ChatPageViewProps) {
-  const { openTicket } = useTicketOverlay();
+  const { openTicket, raiseToast: overlayToast } = useTicketOverlay();
 
   /*
     ONE cross-project read, at 8s. The desk polls itself at 4s because it is a
@@ -110,7 +110,11 @@ export function ChatPageView({
     projects.find((row) => row.id === activeProjectId) ?? null;
   const tone = projectTone(project?.colorIndex ?? 0);
 
-  const { toasts, raise, dismiss } = useToastStack();
+  // `/chat` mounts TicketOverlayProvider, whose stack is the route's one
+  // stack: raising into it keeps a merge confirmed from the overlay and a
+  // thread failure from covering each other in the same corner.
+  const toastSink = overlayToast ?? undefined;
+  const { toasts, raise, dismiss } = useToastStack(toastSink);
 
   return (
     <div
@@ -138,7 +142,9 @@ export function ChatPageView({
         <EmptyChatWorkspace />
       )}
 
-      <ToastStack items={toasts} onDismiss={dismiss} testId="chat-toast" />
+      {toastSink ? null : (
+        <ToastStack items={toasts} onDismiss={dismiss} testId="chat-toast" />
+      )}
     </div>
   );
 }

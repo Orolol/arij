@@ -8,8 +8,8 @@
  * UI read the same thing rather than each re-deriving its own view.
  *
  * Ordering comes from the board's `position` column and nothing else. That
- * is the same source drag-and-drop writes and the same one the reorder tool
- * writes; re-deriving an order from status, priority or timestamps would be
+ * is the same source the overlay's manual move writes and the same one the
+ * reorder tool writes; re-deriving an order from status, priority or timestamps would be
  * a second ranking that drifts silently against the board the user sees.
  */
 

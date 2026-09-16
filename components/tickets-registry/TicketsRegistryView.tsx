@@ -34,9 +34,10 @@ import { useTicketsRegistry } from "./useTicketsRegistry";
  * `lib/tickets-registry/aggregate.ts`).
  *
  * READ-ONLY. Every write on this screen happens inside the 6a overlay, which
- * owns it. There is no drag-and-drop and no reorder affordance: `epics.position`
- * is Full Auto's execution-order contract, and a display order written back
- * into it would silently re-order the supervisor's queue.
+ * owns it — re-ranking included (POST …/epics/:epicId/position). There is no
+ * drag-and-drop and no reorder affordance here: `epics.position` is Full
+ * Auto's execution-order contract, and a display order written back into it
+ * would silently re-order the supervisor's queue.
  */
 
 const EMPTY_ROWS: Record<RegistryGroup, RegistryRow[]> = {

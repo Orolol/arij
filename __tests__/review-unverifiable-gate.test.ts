@@ -436,7 +436,7 @@ describe("review -> to_merge guard", () => {
       hasUnverifiableReview: true,
       hasRunningSession: false,
       actor: "user",
-      source: "drag",
+      source: "api",
     });
     expect(result.valid).toBe(false);
     expect(result.error).toMatch(/submit_findings/);

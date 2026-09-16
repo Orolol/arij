@@ -190,9 +190,12 @@ beforeEach(() => {
   // second silently see a spent body.
   vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
     const url = String(input);
+    // The project chip reads the shared project list, not the project row.
     const body = url.endsWith("/activity")
       ? { data: [] }
-      : { data: { name: "Arij" } };
+      : url === "/api/projects"
+        ? { data: [{ id: "proj-1", name: "Arij", status: "active", createdAt: "2026-01-01T00:00:00.000Z" }] }
+        : { data: { name: "Arij" } };
     return new Response(JSON.stringify(body), { status: 200 });
   });
   updateEpic = vi.fn().mockResolvedValue({ ok: true });

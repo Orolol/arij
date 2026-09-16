@@ -5,9 +5,9 @@
  * inside a column. Pure position moves — column changes go through
  * promote_ticket, so the workflow engine stays the only thing that moves a
  * ticket between columns. Both the guard (Backlog / To do only) and the
- * transactional position write come from the shared core the board's
- * drag-and-drop route uses, so agent ordering and drag ordering can never
- * drift apart.
+ * transactional position write come from the shared core the manual
+ * position route (POST …/epics/:epicId/position) uses, so agent ordering and
+ * manual ordering can never drift apart.
  */
 
 import { NextRequest, NextResponse } from "next/server";

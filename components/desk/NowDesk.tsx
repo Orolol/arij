@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/popover";
 import { useControlDesk } from "@/hooks/useControlDesk";
 import { useTicketOverlay } from "@/components/ticket/TicketOverlayProvider";
+import type { TicketOverlayView } from "@/components/ticket/TicketOverlay";
 import { buildRetryDispatch } from "@/lib/agent-sessions/retry-dispatch";
 import type { DeskDismissalKind } from "@/lib/control-desk/aggregate";
 import type {
@@ -63,9 +64,10 @@ import { YourTurnBand } from "./YourTurnBand";
  * already holding. The `/projects/:id` host draws its own control row, so the
  * second row is skipped when the desk is scoped by its host.
  *
- * TOASTS. The desk raises its own unless the host page passes `onToast` — the
- * `/projects/:id` route already owns a toast stack for its dialogs and deep
- * links, and two stacks would overlap in the same corner.
+ * TOASTS. The desk raises its own unless a host owns the route's stack: the
+ * `/projects/:id` page passes `onToast` (it owns a stack for its dialogs and
+ * deep links), and on `/` the TicketOverlayProvider's `raiseToast` is used.
+ * Two stacks would overlap in the same corner.
  */
 export type DeskToastTone = ToastTone;
 export type DeskToastAction = ToastAction;
@@ -89,9 +91,9 @@ export interface NowDeskProps {
    * Host override for "open this ticket". Defaults to the TicketOverlay
    * context. The `/projects/:id` route passes its own so a ticket click lands
    * in the shared panel that route already owns, instead of opening a second
-   * ticket surface on top of it.
+   * ticket surface on top of it. `view: "diff"` is a CONFLICT row's Diff.
    */
-  onOpenTicket?: (epicId: string) => void;
+  onOpenTicket?: (epicId: string, options?: { view?: TicketOverlayView }) => void;
   className?: string;
 }
 
@@ -106,7 +108,7 @@ export function NowDesk({
 }: NowDeskProps) {
   const router = useRouter();
   const t = useTranslations("Desk");
-  const { openTicket } = useTicketOverlay();
+  const { openTicket, raiseToast: overlayToast } = useTicketOverlay();
   /**
    * The desk's scope is its host's route and nothing else now: the header rail
    * that used to filter it in place was a second row of project chips directly
@@ -117,7 +119,10 @@ export function NowDesk({
   const activeProjectId = projectId ?? null;
 
   const { data, refresh } = useControlDesk(activeProjectId);
-  const { toasts, raise, dismiss: dismissToast } = useToastStack(onToast);
+  // Under TicketOverlayProvider (`/`) the provider's stack is the route's one
+  // stack; a second one here would overlap it in the same corner.
+  const toastSink = onToast ?? overlayToast ?? undefined;
+  const { toasts, raise, dismiss: dismissToast } = useToastStack(toastSink);
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
   const landingInFlight = useRef(false);
   const [landingEpicId, setLandingEpicId] = useState<string | null>(null);
@@ -149,9 +154,10 @@ export function NowDesk({
   const autoOn = projects.filter((project) => project.autoModeEnabled).length;
 
   const handleOpenTicket = useCallback(
-    (epicId: string) => {
+    (epicId: string, view?: TicketOverlayView) => {
       if (onOpenTicket) {
-        onOpenTicket(epicId);
+        if (view) onOpenTicket(epicId, { view });
+        else onOpenTicket(epicId);
         return;
       }
       const tickets = data ? [
@@ -164,7 +170,7 @@ export function NowDesk({
         ...data.upNext.flatMap((row) => row.tickets),
       ] : [];
       const owner = tickets.find((row) => row.epicId === epicId)?.projectId ?? activeProjectId;
-      openTicket(epicId, { projectId: owner });
+      openTicket(epicId, view ? { projectId: owner, view } : { projectId: owner });
     },
     [data, activeProjectId, openTicket, onOpenTicket],
   );
@@ -718,7 +724,7 @@ export function NowDesk({
           router.push(`/projects/${item.projectId}/sessions/${item.sessionId}`)
         }
         onResolveConflict={handleResolveConflict}
-        onOpenDiff={(item) => handleOpenTicket(item.epicId)}
+        onOpenDiff={(item) => handleOpenTicket(item.epicId, "diff")}
         onDismiss={handleDismiss}
       />
 
@@ -766,7 +772,7 @@ export function NowDesk({
         onSubmit={handleCompose}
       />
 
-      {onToast ? null : (
+      {toastSink ? null : (
         <ToastStack items={toasts} onDismiss={dismissToast} testId="desk-toast" />
       )}
     </div>

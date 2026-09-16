@@ -267,8 +267,8 @@ export async function createEpic(
 /**
  * The status the server has stored for an epic right now.
  *
- * The board moves a card optimistically and only rolls back once the reorder
- * route answers, so the rendered column is never on its own evidence that a
+ * A UI may show a status change optimistically and only roll back once the
+ * PATCH answers, so the rendered state is never on its own evidence that a
  * transition was accepted. This is.
  */
 export async function storedEpicStatus(

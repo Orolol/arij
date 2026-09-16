@@ -29,7 +29,7 @@ import { isDeliveredStatus, type TicketDependencyEdge } from "@/lib/types/kanban
  * front. Everything else sorts last, among itself.
  *
  * `position` is written PER COLUMN — creation uses `MAX(position) + 1` scoped
- * to the target status, and the reorder route rewrites each column as 0..n-1 —
+ * to the target status, and the reorder core rewrites each column as 0..n-1 —
  * so every column has its own position 0 and position alone is not a total
  * order over a set spanning two columns. The column is the primary key,
  * position the secondary one.
@@ -55,8 +55,8 @@ export interface ExecutionOrderEpic {
  * Within a column, position ASC is the column's visual reading order —
  * position is the single source of truth for execution order, so what the user
  * sees is what the supervisor runs (WYSIWYG). Priority stays a badge and a
- * filter, never a scheduling criterion; the "Sort by priority" action makes it
- * visible in the order by rewriting positions in bulk.
+ * filter, never a scheduling criterion; Refinement's `reorder_tickets` makes
+ * it visible in the order by rewriting positions in bulk.
  *
  * The `id` tiebreak only fires on a malformed board (two rows sharing a
  * position after a partial write). It is arbitrary but deterministic, which

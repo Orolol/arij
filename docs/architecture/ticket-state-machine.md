@@ -53,21 +53,29 @@ The human-driven edges in the table now originate from:
   (the only refinement tool that changes a column) and `reorder_tickets`.
 - **`arji.json` reconciliation** — `lib/sync/import.ts`, guarded.
 
-`POST /api/projects/:projectId/epics/reorder` still exists and still shares its
-transactional core, `lib/workflow/reorder.ts`, with the agent-facing
-`reorder_tickets` MCP tool — that core is live and is why agent ordering and
-any future UI ordering cannot drift. The HTTP route itself, however, has no
-caller left in the app: its legacy client `hooks/useKanban.ts` was removed,
-so the route is now exercised only by tests and is a candidate for removal.
-So the surviving writers of `epics.position` today are the refinement tool and
-`MAX(position) + 1` at creation; the route's doc comment still describes
-drag-and-drop and "Sort by priority", neither of which the UI offers.
+Execution order within a column (`epics.position`) is not a transition, but it
+has a human writer too: `POST /api/projects/:projectId/epics/:epicId/position`
+with `{ move: "up" | "down" | "top" | "bottom" }`. The route recomputes the
+column order server-side (`compareExecutionOrder`) and renumbers the column
+0..n-1 — writing only the rows whose position changes, in one SQLite
+transaction with the read — through `lib/workflow/reorder.ts` with
+`reorderOnly`, `actor: "user"`, `source: "api"`: the core the refinement
+`reorder_tickets` tool shares, so agent ordering and manual ordering cannot
+drift. A pure re-rank does not stamp `updatedAt`; the manual move stamps only
+the ticket it moved. It refuses Done and Released (409): nothing is picked up
+from them. The rank it reports is the ticket's place in its own column, not
+UP NEXT's number (which merges In Progress ahead of To Do and skips blocked or
+waiting tickets). The board's drag route `POST .../epics/reorder` and its
+`source: "drag"` were removed; PATCH no longer accepts `position`. So the
+writers of `epics.position` are that route, the refinement tool,
+`MAX(position) + 1` at creation, and the `arji.json` reconciliation
+(`lib/sync/import.ts`), which writes back the position the file carries.
 
 ## Resulting state machine
 
 | From | To | Trigger/reason | Production source |
 |---|---|---|---|
-| `backlog` | `todo` | planning promotion: the ticket overlay's status control, the refinement `promote_ticket`, or reconciliation | epic PATCH, MCP (`promote_ticket`, `update_ticket_status`), reorder core, sync import |
+| `backlog` | `todo` | planning promotion: the ticket overlay's status control, the refinement `promote_ticket`, or reconciliation | epic PATCH, MCP (`promote_ticket`, `update_ticket_status`), sync import |
 | `backlog` or `todo` | `in_progress` | build accepted; transition completes **before** `queued` session insert. Full Auto is the exception on the source side: it selects and dispatches only from `todo`/`in_progress` (`BUILDABLE_EPIC_STATUSES`), so a `backlog` build comes from a manual dispatch, a batch/night run or a pipeline | `automatic-transitions.ts` via manual build, batch/night, pipeline and Full Auto |
 | `review` or `to_merge` | `in_progress` | story-scoped build of a story left behind (added mid-build, or added to an epic already past In Progress); the epic reopens to finish it. Full Auto allows these parent statuses beyond its buildable set (`STORY_PARENT_BUILDABLE_STATUSES`) and refuses to merge an epic with such a story | `automatic-transitions.ts` via `transitionBuildStarted` |
 | `in_progress` | `review` | successful build (`answered` and legacy successful outcomes); epic scope advances only stories already `in_progress` (a story added mid-build stays `todo`), story scope only promotes the parent after every story is `review`/`done` | `automatic-transitions.ts` |
@@ -77,7 +85,7 @@ drag-and-drop and "Sort by priority", neither of which the UI offers.
 | `to_merge` | `done` | successful merge ONLY (`source: "merge"`), and refused while a `changes_requested` verdict still stands (see below). The merge bulk-resolves the epic's remaining open review comments — the merge IS the approval. Conflicts dispatch a merge-fix agent whose retry finalizes the same way | merge / resolve-merge routes — reached from the desk's READY TO LAND (Land / Land all), the overlay's "Merge into main", YOUR TURN's Resolve conflict — and Full Auto merge |
 | story `review` | story `done` | explicit human story approval (`source: "approve"`, no separate review-agent session required) or the parent epic's merge cascade (`completeReviewedStories`). Story approval never merges or closes the epic | story approve route; merge cascade |
 | `done` | `released` | release creation, system actor only | releases route |
-| any structurally allowed edge | target | manual status change (ticket overlay), API, MCP, or guarded `arji.json` reconciliation | epic/story PATCH, reorder core, MCP, sync import |
+| any structurally allowed edge | target | manual status change (ticket overlay), API, MCP, or guarded `arji.json` reconciliation | epic/story PATCH, MCP, sync import |
 
 The structural edge lists live in `lib/workflow/engine.ts` — `EPIC_TRANSITIONS`
 (with `to_merge` between `review` and `done`) and `STORY_TRANSITIONS` (no
@@ -163,7 +171,7 @@ Full Auto itself does not write status: `lib/auto-mode/select.ts` selects and
 - `app/api/mcp/promote-ticket/route.ts` — the refinement tool's Backlog ⇄ To do move, `source: "refinement"` (the engine refuses that source anywhere else).
 - `app/api/mcp/reorder-tickets/route.ts` — the refinement re-rank; positions only, through the shared core.
 - `app/api/projects/[projectId]/epics/[epicId]/route.ts` — epic PATCH; this is what the ticket overlay's status and priority control writes.
-- `app/api/projects/[projectId]/epics/reorder/route.ts` — bulk position write plus whatever transitions the submitted statuses imply, through `lib/workflow/reorder.ts`. The core is live (`reorder_tickets` calls it); the HTTP route has no caller left (its legacy client `hooks/useKanban.ts` was removed), so this endpoint is currently reachable but unused by the UI.
+- `app/api/projects/[projectId]/epics/[epicId]/position/route.ts` — one manual move inside the ticket's column; positions only (`reorderOnly`), never a status change, through `lib/workflow/reorder.ts`.
 - `app/api/projects/[projectId]/stories/[storyId]/route.ts` and `user-stories/route.ts` — story PATCH variants.
 - `app/api/projects/[projectId]/stories/[storyId]/approve/route.ts` — explicit story approval; never merges nor closes the epic (a decision line records when the last story closed).
 - `app/api/projects/[projectId]/epics/[epicId]/merge/route.ts` — manual merge preflight/finalization (resolves open findings on success) and merge-fix finalization.

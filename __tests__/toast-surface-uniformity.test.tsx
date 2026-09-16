@@ -38,8 +38,11 @@ vi.mock("next/navigation", () => ({
   usePathname: () => "/projects/p1",
 }));
 
+// Null by default: each surface keeps its own stack. The /chat sink case sets
+// it to stand in for TicketOverlayProvider's stack.
+const overlaySink = vi.hoisted(() => ({ current: null as null | ((...args: unknown[]) => void) }));
 vi.mock("@/components/ticket/TicketOverlayProvider", () => ({
-  useTicketOverlay: () => ({ openTicket: vi.fn(), closeTicket: vi.fn() }),
+  useTicketOverlay: () => ({ openTicket: vi.fn(), closeTicket: vi.fn(), raiseToast: overlaySink.current }),
 }));
 
 vi.mock("@/hooks/useNamedAgentsList", () => ({
@@ -237,6 +240,7 @@ beforeEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
   setGitHubConfig({ isConfigured: false, ownerRepo: null, tokenSet: false, loading: false });
+  overlaySink.current = null;
 });
 
 /* ---- 1. /qa ---------------------------------------------------------- */
@@ -287,6 +291,22 @@ describe("toast uniformity — /chat", () => {
       tone: "error",
       message: "Failed to propose the spec addition",
     });
+  });
+});
+
+describe("toast uniformity — /chat under the overlay provider", () => {
+  // `/chat` mounts TicketOverlayProvider, whose stack sits in the same corner:
+  // the workspace raises into it rather than drawing a second one (#122).
+  it("raises into the provider's stack and draws none of its own", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => jsonRes({ data: [] })));
+    const sink = vi.fn();
+    overlaySink.current = sink;
+
+    render(<ChatPageView initialProjectId="p1" />);
+    fireEvent.click(await screen.findByTestId("stub-thread-fail"));
+
+    expect(sink).toHaveBeenCalledWith("error", "Failed to propose the spec addition", undefined);
+    expect(screen.queryByTestId("chat-toast")).not.toBeInTheDocument();
   });
 });
 

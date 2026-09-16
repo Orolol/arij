@@ -28,11 +28,11 @@ import { AgentDispatchDialog } from "@/components/shared/AgentDispatchDialog";
 import { SendToDevDialog } from "@/components/shared/SendToDevDialog";
 import { PermanentDeleteDialog } from "@/components/shared/PermanentDeleteDialog";
 import { DiffViewer } from "@/components/review/DiffViewer";
-import { PillButton, QuietDangerAction } from "@/components/piscine";
+import { Mono, PillButton, QuietDangerAction } from "@/components/piscine";
 import { isAgentAlreadyRunningError } from "@/lib/agents/client-error";
 import { cn } from "@/lib/utils";
 import { useTicketOverlayData } from "@/hooks/useTicketOverlayData";
-import { pipelineSteps, ticketLabel } from "@/components/ticket/derive";
+import { pipelineRunLine, pipelineRunStage, pipelineSteps, ticketLabel } from "@/components/ticket/derive";
 import { AgentActivityBand } from "@/components/ticket/AgentActivityBand";
 import { AgentsBand } from "@/components/ticket/AgentsBand";
 import { ConversationBand } from "@/components/ticket/ConversationBand";
@@ -53,10 +53,24 @@ export interface TicketOverlayProps {
   onClose: () => void;
   onMerged?: () => void;
   onDeleted?: () => void;
+  /**
+   * Where a 409 AGENT_ALREADY_RUNNING goes. Omit it and the refusal is shown
+   * in the pipeline card like any other dispatch failure — never dropped.
+   */
   onAgentConflict?: (args: { message: string; sessionUrl?: string }) => void;
+  /**
+   * Open another ticket of the same project in place of this one — what a
+   * BLOCKS / WAITS ON chip does. The host owns which ticket is open, so the
+   * overlay cannot swap itself.
+   */
+  onOpenTicket?: (epicId: string) => void;
+  /** `"diff"` opens straight onto the full diff (a desk CONFLICT row's Diff). */
+  initialView?: TicketOverlayView;
   /** Project SSE/fallback refresh counter from the host page. */
   refreshTrigger?: number;
 }
+
+export type TicketOverlayView = "ticket" | "diff";
 
 export function TicketOverlay(props: TicketOverlayProps) {
   if (!props.open) return null;
@@ -73,6 +87,8 @@ function TicketOverlayContent({
   onMerged,
   onDeleted,
   onAgentConflict,
+  onOpenTicket,
+  initialView = "ticket",
   refreshTrigger = 0,
 }: TicketOverlayProps) {
   const derivedCopy = useTicketDerivedCopy();
@@ -88,7 +104,7 @@ function TicketOverlayContent({
   const [draft, setDraft] = useState("");
   const [commentError, setCommentError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [diffView, setDiffView] = useState(false);
+  const [diffView, setDiffView] = useState(initialView === "diff");
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [resolveMergeOpen, setResolveMergeOpen] = useState(false);
   const [resolvingMerge, setResolvingMerge] = useState(false);
@@ -121,6 +137,8 @@ function TicketOverlayContent({
   const {
     epic,
     userStories,
+    loading,
+    loadError,
     updateEpic,
     refresh,
     comments,
@@ -174,6 +192,11 @@ function TicketOverlayContent({
     timeline,
     sessionMeta,
     sessionHref,
+    pipelineRun,
+    queuePlacement,
+    queueMoving,
+    queueError,
+    moveInQueue,
     projectName,
     tone,
   } = data;
@@ -241,8 +264,10 @@ function TicketOverlayContent({
   const reportConflict = useCallback(
     (error: unknown) => {
       if (!mounted.current) return false;
-      if (isAgentAlreadyRunningError(error)) {
-        onAgentConflict?.({
+      // Only "handled" when someone took it: without a sink the caller falls
+      // through to its own error line, or the refusal would vanish.
+      if (isAgentAlreadyRunningError(error) && onAgentConflict) {
+        onAgentConflict({
           message: error.message,
           // The server does not always send sessionUrl; the fallback is
           // load-bearing, not belt-and-braces.
@@ -385,9 +410,20 @@ function TicketOverlayContent({
   const titleId = "ticket-overlay-title";
   const label = ticketLabel(epic?.readableId, epicId);
   const projectLabel = (projectName ?? projectId ?? "").slice(0, 12).toUpperCase() || "—";
-  const steps = pipelineSteps(epic?.status ?? "backlog", isRunning);
+  // Only the ticket's OWN active run places the chain's live marker. A
+  // finished run adds its outcome line, and a story run adds a line naming
+  // its story: in both cases the column still drives the chain.
+  const runLine = pipelineRun ? pipelineRunLine(pipelineRun, userStories) : null;
+  const steps = pipelineSteps(
+    epic?.status ?? "backlog",
+    isRunning,
+    pipelineRunStage(pipelineRun),
+  );
   const cancellable =
     (activeSession as { cancellable?: boolean } | null)?.cancellable === true;
+  // No ticket yet: every band below would otherwise paint its fallback
+  // (status "backlog", priority 1, no stories) as if it were the ticket.
+  const pending = !epic;
 
   return (
     <div
@@ -422,7 +458,7 @@ function TicketOverlayContent({
           projectLabel={projectLabel}
           ticketLabel={label}
           tone={tone}
-          title={epic?.title ?? ""}
+          title={epic?.title ?? "…"}
           titleId={titleId}
           agentType={agentType}
           isRunning={isRunning}
@@ -433,7 +469,32 @@ function TicketOverlayContent({
           onClose={onClose}
         />
 
-        {diffView && epicId && epic ? (
+        {pending ? (
+          <div
+            data-testid="ticket-overlay-pending"
+            aria-busy={loading}
+            className="flex min-h-[160px] flex-1 items-center justify-center px-[14px] pb-[14px]"
+          >
+            {/* The literal "Loading..." is banned in this tree (see the file
+                header). "…" only while a read is actually in flight: without
+                a project there is no URL, so nothing loads and nothing fails,
+                and the ellipsis would promise a ticket that never comes. */}
+            {loading ? (
+              <>
+                <Mono size={13} tone="muted">
+                  …
+                </Mono>
+                <span className="sr-only">{t("overlay.pending")}</span>
+              </>
+            ) : (
+              <p role="alert" className="m-0 text-[13px] leading-[1.5] text-destructive">
+                {!projectId || !epicId
+                  ? t("overlay.noProject")
+                  : (loadError ?? tErrors("failedToLoadTicket"))}
+              </p>
+            )}
+          </div>
+        ) : diffView && epicId && epic ? (
           <div className="flex min-h-0 flex-1 flex-col gap-3 px-[14px] pb-[14px]">
             <div className="flex shrink-0">
               <PillButton
@@ -526,6 +587,11 @@ function TicketOverlayContent({
                 statusError={statusError}
                 onStatusChange={handleStatusChange}
                 onPriorityChange={handlePriorityChange}
+                run={runLine}
+                queue={queuePlacement}
+                queueMoving={queueMoving}
+                queueError={queueError}
+                onQueueMove={(move) => void moveInQueue(move)}
               />
               <GitBand
                 branchName={epic?.branchName ?? null}
@@ -553,6 +619,7 @@ function TicketOverlayContent({
                 blocks={blocks}
                 waitsOn={waitsOn}
                 tone={tone}
+                onOpenTicket={onOpenTicket}
                 options={waitsOnOptions}
                 onToggleWaitsOn={toggleWaitsOn}
                 saving={dependencySaving}

@@ -54,12 +54,16 @@ import { useGitHubConfig } from "@/hooks/useGitHubConfig";
 import { useNamedAgentsList } from "@/hooks/useNamedAgentsList";
 import { useProjectEpicsList } from "@/hooks/useProjectEpicsList";
 import { useProjectEvents } from "@/hooks/useProjectEvents";
+import { useProjects } from "@/hooks/useProjects";
+import { useTicketPipelineRun } from "@/hooks/usePipelineRuns";
+import { useTicketQueuePosition } from "@/hooks/useTicketQueuePosition";
 import { useTicketComments } from "@/hooks/useTicketComments";
 import type { ArijActionItem } from "@/components/shared/ArijActionsList";
 import { findUnifiedSession } from "@/lib/agent-sessions/session-list";
 import { aggregateGradingStatus, type GradingStatus } from "@/lib/grading/report";
 import { isVerificationReport } from "@/lib/verify/verify-constants";
 import { buildActivityFeed } from "@/lib/kanban/activity-feed";
+import { projectColorIndexById } from "@/lib/control-desk/aggregate";
 import { projectTone, projectToneIndex, type ProjectTone } from "@/lib/piscine/tokens";
 import {
   activeAgentType,
@@ -122,6 +126,7 @@ export function useTicketOverlayData(
     epic,
     userStories,
     loading,
+    error: loadError,
     updateEpic,
     refresh,
     setPolling,
@@ -205,6 +210,24 @@ export function useTicketOverlayData(
     open && isRunning,
   );
 
+  /**
+   * The PIPELINE card's two live read-outs: the ticket's latest registry run
+   * (stage, attempt, fix cycle, reason) and its rank in its column's queue.
+   * Neither opens a stream or polls an idle ticket — both are re-read from
+   * the event subscription below.
+   */
+  const { run: pipelineRun, refresh: refreshPipelineRun } = useTicketPipelineRun(
+    projectId,
+    activeEpicId,
+  );
+  const {
+    placement: queuePlacement,
+    moving: queueMoving,
+    error: queueError,
+    move: moveInQueue,
+    refresh: refreshQueuePosition,
+  } = useTicketQueuePosition(projectId, activeEpicId, epic?.status ?? null);
+
   /* ---------------- mark-as-read ------------------------------------ */
 
   // Opening a ticket marks it read: move its ticket_read_cursors row to now
@@ -245,16 +268,45 @@ export function useTicketOverlayData(
   // Grader/verify completions arrive as session:completed and ticket:updated.
   // Refresh immediately so the overlay does not wait on the next poll. The
   // subscription only exists while the overlay is mounted.
+  //
+  // A pipeline run has no event of its own: every stage it enters starts a
+  // session and every stage it leaves ends one, so the session events are
+  // what move the card's run line (the hook's slow poll covers the runner's
+  // assessment steps in between).
+  const isThisTicket = (event: { epicId?: string }) =>
+    Boolean(activeEpicId) && event.epicId === activeEpicId;
   const { pollTick } = useProjectEvents(projectId, {
-    "session:completed": () => {
+    "session:started": (event) => {
+      if (isThisTicket(event)) void refreshPipelineRun();
+    },
+    "session:completed": (event) => {
       void refresh();
       void refreshSessions();
       void refreshActivity();
+      if (isThisTicket(event)) void refreshPipelineRun();
+    },
+    "session:failed": (event) => {
+      if (isThisTicket(event)) void refreshPipelineRun();
+    },
+    // A neighbour arriving, leaving or changing column shifts this ticket's
+    // rank and total, and nothing else tells it: the position route only
+    // announces the ticket it moved, and the Refinement tool announces none.
+    "ticket:created": () => {
+      void refreshQueuePosition();
+    },
+    "ticket:moved": () => {
+      void refreshQueuePosition();
+    },
+    "ticket:deleted": () => {
+      void refreshQueuePosition();
     },
     "ticket:updated": (event) => {
       if (!activeEpicId || event.epicId === activeEpicId) {
         void refresh();
         void refreshActivity();
+        // The position route emits this for the moved ticket; a status
+        // change reaches the queue through `epic.status` instead.
+        void refreshQueuePosition();
       }
     },
     "artifact:created": (event) => {
@@ -269,10 +321,15 @@ export function useTicketOverlayData(
   // two GETs per screenshot. The event is the only path that also works under
   // TicketOverlayProvider (no trigger at all). What the event cannot cover is
   // a dropped stream, so the fallback tick this very subscription bumps while
-  // disconnected re-reads them too.
+  // disconnected re-reads them too — and the run and the queue rank, which
+  // ride on the same events.
   useEffect(() => {
-    if (pollTick > 0) void refreshArtifacts();
-  }, [pollTick, refreshArtifacts]);
+    if (pollTick > 0) {
+      void refreshArtifacts();
+      void refreshPipelineRun();
+      void refreshQueuePosition();
+    }
+  }, [pollTick, refreshArtifacts, refreshPipelineRun, refreshQueuePosition]);
 
   /* ---------------- derived-state reset on ticket switch ------------ */
 
@@ -282,8 +339,6 @@ export function useTicketOverlayData(
   const [diffstat, setDiffstat] = useState<DiffTotals>(UNKNOWN_DIFF_TOTALS);
   const [sessionActions, setSessionActions] = useState<ArijActionItem[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [projectName, setProjectName] = useState<string | null>(null);
-  const [projectColorIndex, setProjectColorIndex] = useState<number | null>(null);
   const [verifyRunning, setVerifyRunning] = useState(false);
   const [verifyError, setVerifyError] = useState<string | null>(null);
 
@@ -300,27 +355,19 @@ export function useTicketOverlayData(
 
   /* ---------------- project identity -------------------------------- */
 
-  useEffect(() => {
-    if (!projectId) return;
-    let cancelled = false;
-    fetch(`/api/projects/${projectId}`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((json) => {
-        if (cancelled || !json?.data) return;
-        setProjectName(json.data.name ?? null);
-        // `projects.colorIndex` does not exist yet; the `??` keeps this
-        // working unchanged the day the column lands.
-        setProjectColorIndex(
-          typeof json.data.colorIndex === "number" ? json.data.colorIndex : null,
-        );
-      })
-      .catch(() => {
-        // The chip falls back to the hashed tone and the project id stem.
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
+  // Read from the app-wide project list TopBar already keeps loaded, never
+  // from a GET per open: the overlay remounts on every ticket it shows. The
+  // colour follows the desk's rule (creation order over EVERY project,
+  // archived included) so the chip matches the desk row it was opened from.
+  const { allProjects } = useProjects();
+  const projectName = useMemo(
+    () => allProjects.find((project) => project.id === projectId)?.name ?? null,
+    [allProjects, projectId],
+  );
+  const projectColorIndex = useMemo(
+    () => projectColorIndexById(allProjects).get(projectId) ?? null,
+    [allProjects, projectId],
+  );
 
   const tone: ProjectTone = useMemo(
     () => projectTone(projectToneIndex(projectId, projectColorIndex)),
@@ -602,6 +649,7 @@ export function useTicketOverlayData(
     epic,
     userStories,
     loading,
+    loadError,
     updateEpic,
     refresh,
 
@@ -664,6 +712,12 @@ export function useTicketOverlayData(
     timeline,
     sessionMeta,
     sessionHref,
+
+    pipelineRun,
+    queuePlacement,
+    queueMoving,
+    queueError,
+    moveInQueue,
 
     projectName,
     tone,

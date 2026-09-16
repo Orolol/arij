@@ -80,7 +80,6 @@ export async function PATCH(
     if (body.title !== undefined) updates.title = body.title;
     if (body.description !== undefined) updates.description = body.description;
     if (body.priority !== undefined) updates.priority = body.priority;
-    if (body.position !== undefined) updates.position = body.position;
     if (body.branchName !== undefined) updates.branchName = body.branchName;
 
     db.update(epics).set(updates).where(eq(epics.id, epicId)).run();

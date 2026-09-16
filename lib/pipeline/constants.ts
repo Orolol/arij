@@ -302,6 +302,16 @@ export interface PipelineRunSnapshot {
   stage: PipelineStage | null;
   stageAttempt: number;
   fixCycles: number;
+  /**
+   * Attempts the current stage may spend, as the runner SIZED it at stage
+   * entry — a composite's member count, not the setting — so a reader can
+   * print "attempt n/max" without re-deriving a budget it cannot know.
+   * Optional because older callers (and tests) register runs without caps;
+   * a reader then prints the counter alone.
+   */
+  stageMaxAttempts?: number;
+  /** Fix-cycle cap the run was started with (0 = report-only). */
+  maxFixCycles?: number;
   sessionIds: string[];
   startedAt: string;
   endedAt: string | null;

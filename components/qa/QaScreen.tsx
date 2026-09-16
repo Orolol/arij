@@ -13,7 +13,10 @@ import {
   useDispatchFailureReporter,
   useToastStack,
 } from "@/components/toast/useToastStack";
-import { useTicketOverlay } from "@/components/ticket/TicketOverlayProvider";
+import {
+  useTicketOverlay,
+  type OpenTicketOptions,
+} from "@/components/ticket/TicketOverlayProvider";
 import { useQaFindings } from "@/hooks/useQaFindings";
 import { sumCheckTotals } from "@/lib/qa/aggregate";
 import { QA_COVERAGE_DAYS, type QaFinding, type QaReviewTarget } from "@/lib/qa/types";
@@ -73,11 +76,14 @@ export interface QaScreenProps {
 
 export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
   const t = useTranslations("Qa");
-  const { openTicket } = useTicketOverlay();
+  const { openTicket, raiseToast: overlayToast } = useTicketOverlay();
   const { data, error, refresh } = useQaFindings(projectId ?? null);
 
   const [filter, setFilter] = useState<FindingFilter>("all");
-  const { toasts, raise, dismiss: dismissToast } = useToastStack(onToast);
+  // Under TicketOverlayProvider (`/qa`) the provider's stack is the route's
+  // one stack; a second one here would overlap it in the same corner.
+  const toastSink = onToast ?? overlayToast ?? undefined;
+  const { toasts, raise, dismiss: dismissToast } = useToastStack(toastSink);
   const [pendingIds, setPendingIds] = useState<ReadonlySet<string>>(new Set());
   const [dismissTarget, setDismissTarget] = useState<QaFinding | null>(null);
   const [dismissPending, setDismissPending] = useState(false);
@@ -144,8 +150,9 @@ export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
       : `${data.coveragePercent}%`;
 
   const handleOpenTicket = useCallback(
-    (epicId: string, ownerProjectId?: string | null) => {
-      openTicket(epicId, { projectId: ownerProjectId ?? projectId ?? null });
+    (epicId: string, ownerProjectId?: string | null, view?: OpenTicketOptions["view"]) => {
+      const options = { projectId: ownerProjectId ?? projectId ?? null };
+      openTicket(epicId, view ? { ...options, view } : options);
     },
     [openTicket, projectId],
   );
@@ -403,7 +410,15 @@ export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
           runs={data?.runs ?? []}
           queued={data?.queued ?? []}
           projectsById={projectsById}
-          onOpenTicket={(epicId) => handleOpenTicket(epicId)}
+          // The band hands back an epic id only. Unfiltered, the screen has no
+          // project of its own, and an overlay opened without one has nothing
+          // to read — so the owner comes from the run (or queued run) itself.
+          onOpenTicket={(epicId) => {
+            const owner =
+              data?.runs.find((run) => run.epicId === epicId)?.projectId ??
+              data?.queued.find((run) => run.epicId === epicId)?.projectId;
+            handleOpenTicket(epicId, owner);
+          }}
           onStopRun={handleStopRun}
         />
 
@@ -427,10 +442,8 @@ export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
           projectsById={projectsById}
           pendingIds={pendingIds}
           onFix={handleFix}
-          // One click gets the user to the ticket; its own Diff control reaches
-          // the diff view. `OpenTicketOptions` has no "open on the diff" flag
-          // and `components/ticket/*` is not this packet's to extend.
-          onDiff={(finding) => handleOpenTicket(finding.epicId, finding.projectId)}
+          // "Diff" opens the ticket ON its diff, as the desk's CONFLICT row does.
+          onDiff={(finding) => handleOpenTicket(finding.epicId, finding.projectId, "diff")}
           onDismiss={(finding) => setDismissTarget(finding)}
         />
 
@@ -480,7 +493,7 @@ export function QaScreen({ projectId, onToast, className }: QaScreenProps) {
         pending={dismissPending}
       />
 
-      {onToast ? null : (
+      {toastSink ? null : (
         <ToastStack items={toasts} onDismiss={dismissToast} testId="qa-toast" />
       )}
     </div>

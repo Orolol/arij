@@ -112,24 +112,15 @@ export const setTicketDependenciesSchema = z.object({
 });
 
 /**
- * `POST /api/projects/:id/epics/reorder` — the board's ordering endpoint,
- * used by drag-and-drop and by whole-column sorts.
+ * `POST /api/projects/:id/epics/:epicId/position` — one manual move inside the
+ * ticket's own column. Relative on purpose: the server recomputes the column
+ * order, so a client holding a stale list cannot write its picture of the
+ * queue back. Strict, so an absolute `position` is refused rather than
+ * silently ignored.
  */
-export const reorderTicketsSchema = z.object({
-  items: z.array(
-    z.object({
-      id: z.string().min(1),
-      status: z.string().min(1),
-      position: z.number(),
-    })
-  ),
-  /**
-   * "I am only reordering; never move anything." See `reorderOnly` in
-   * lib/workflow/reorder.ts for why a whole-column sort needs it and
-   * drag-and-drop does not.
-   */
-  reorderOnly: z.boolean().optional(),
-});
+export const moveEpicPositionSchema = z
+  .object({ move: z.enum(["up", "down", "top", "bottom"]) })
+  .strict();
 
 /**
  * A ticket comment, on an epic or a story — the two routes take the same body
@@ -203,7 +194,10 @@ export const updateEpicSchema = z.object({
   status: z
     .enum(["backlog", "todo", "in_progress", "review", "to_merge", "done"])
     .optional(),
-  position: z.number().int().min(0).optional(),
+  // No `position`: the per-column execution order is written only by
+  // lib/workflow/reorder.ts (POST .../position, the refinement MCP tool), which
+  // rewrites the column 0..n-1. The schema is not strict, so a stray
+  // `position` is stripped, not refused.
   branchName: z.string().max(300).nullish(),
 });
 

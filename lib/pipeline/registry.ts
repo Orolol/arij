@@ -30,9 +30,33 @@ function cloneSnapshot(run: PipelineRunSnapshot): PipelineRunSnapshot {
 export type PipelineRunPatch = Partial<
   Pick<
     PipelineRunSnapshot,
-    "state" | "stage" | "stageAttempt" | "fixCycles" | "reason"
+    | "state"
+    | "stage"
+    | "stageAttempt"
+    | "fixCycles"
+    | "stageMaxAttempts"
+    | "reason"
   >
 >;
+
+/**
+ * The registry patch for `onStageChange`.
+ *
+ * Every retryable stage has its cap re-sized on entry (`onStageBudget`), but
+ * the forensic diagnostic is not a ladder and sizes nothing — so entering it
+ * clears the cap, or the failed stage's budget would stay on the snapshot as
+ * if it applied to the diagnostic.
+ */
+export function stageChangePatch(
+  state: PipelineState,
+  stage: PipelineStage,
+  stageAttempt: number,
+  fixCycles: number
+): PipelineRunPatch {
+  const patch: PipelineRunPatch = { state, stage, stageAttempt, fixCycles };
+  if (stage === "forensic") patch.stageMaxAttempts = undefined;
+  return patch;
+}
 
 export class PipelineRegistry {
   /** runId → live snapshot for runs that have not reached a terminal state. */

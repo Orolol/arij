@@ -1,5 +1,7 @@
 {
-  "dependencies": { "retry": "Réessayer" },
+  "dependencies": {
+    "retry": "Réessayer"
+  },
   "git": {
     "retryPr": "Réessayer",
     "loadingPr": "Chargement de la pull request…",
@@ -21,5 +23,37 @@
     "meta": "{count, plural, one {# capture} other {# captures}}",
     "open": "Ouvrir la preuve visuelle : {caption}",
     "retry": "Réessayer"
+  },
+  "overlay": {
+    "pending": "Ouverture du ticket",
+    "noProject": "Impossible d’ouvrir ce ticket : son projet est inconnu"
+  },
+  "feedback": {
+    "merged": "Branche fusionnée dans main",
+    "deleted": "Ticket supprimé définitivement",
+    "openActiveSession": "Ouvrir la session active"
+  },
+  "pipeline": {
+    "run": {
+      "running": "En cours · {stage}",
+      "succeeded": "Dernier run réussi",
+      "failed": "Dernier run en échec",
+      "paused_question": "En pause sur une question",
+      "cancelled": "Dernier run arrêté",
+      "attempt": "tentative {count}/{max}",
+      "attemptOpen": "tentative {count}",
+      "fixCycles": "cycle de correction {count}/{max}",
+      "fixCyclesOpen": "cycle de correction {count}",
+      "story": "user story {title}"
+    },
+    "queue": {
+      "rank": "N° {rank} sur {total} dans {column}",
+      "top": "Placer en tête de colonne",
+      "up": "Monter",
+      "down": "Descendre",
+      "bottom": "Placer en fin de colonne",
+      "moving": "Déplacement…",
+      "moveError": "Impossible de déplacer le ticket"
+    }
   }
 }

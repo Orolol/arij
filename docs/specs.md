@@ -367,7 +367,7 @@ Analyze the codebase in the current directory and produce a structured assessmen
 - Vue spec en markdown avec édition inline
 - Chaque épic et US est éditable individuellement
 - Ajout/suppression manuelle d'épics et US
-- Réordonnancement : **plus de drag & drop**. L'ordre d'exécution est `(rang de statut, position)` — `compareExecutionOrder`, `lib/kanban/queue.ts`. Il se change de deux façons : changer le statut d'un ticket depuis l'overlay (une carte repassée en `in_progress` passe devant tout le `todo`), ou faire réécrire `epics.position` par un agent — la passe **Refinement** repriorise le backlog complet, et l'outil MCP `reorder-tickets` (`app/api/mcp/reorder-tickets`) réordonne une colonne. La priorité (`epics.priority`, éditable dans l'overlay) reste un **filtre / signal de triage**, jamais un critère d'ordonnancement.
+- Réordonnancement : **plus de drag & drop**. L'ordre d'exécution est `(rang de statut, position)` — `compareExecutionOrder`, `lib/kanban/queue.ts`. Il se change de trois façons : changer le statut d'un ticket depuis l'overlay (une carte repassée en `in_progress` passe devant tout le `todo`) ; déplacer le ticket à la main dans sa colonne depuis la carte PIPELINE de l'overlay (haut / monter / descendre / bas, `POST /api/projects/:projectId/epics/:epicId/position`, colonnes `backlog` → `to_merge`, jamais `done` ni `released`) — le rang affiché est celui de la colonne, pas le numéro d'UP NEXT ; ou faire réécrire `epics.position` par un agent — la passe **Refinement** repriorise le backlog complet, et l'outil MCP `reorder-tickets` (`app/api/mcp/reorder-tickets`) réordonne une colonne. La priorité (`epics.priority`, éditable dans l'overlay) reste un **filtre / signal de triage**, jamais un critère d'ordonnancement.
 
 ---
 
@@ -877,7 +877,7 @@ clairement :
 | **Templates de prompts** | Pas d'exposition par projet. Un **prompt global** configurable (settings) injecté dans toutes les sessions CC. |
 | **Écran d'accueil : board ou poste ?** | **Poste de pilotage à strates d'attention.** Ce sont les agents qui font les transitions ; un board à colonnes demandait à l'utilisateur de lire un état qu'il ne pilote plus. |
 | **Statuts** | **Conservés tels quels** en base et dans le moteur de workflow. Seule leur représentation en colonnes disparaît (§11.5). |
-| **Drag & drop** | **Retiré partout.** `epics.position` est le contrat d'ordre d'exécution de Full Auto ; un ordre d'affichage réécrit dedans réordonnerait silencieusement la file du superviseur. La repriorisation passe par le changement de statut, par la passe Refinement ou par l'outil MCP `reorder-tickets`. |
+| **Drag & drop** | **Retiré partout.** `epics.position` est le contrat d'ordre d'exécution de Full Auto ; un ordre d'affichage réécrit dedans réordonnerait silencieusement la file du superviseur. La repriorisation passe par le changement de statut, par le déplacement manuel haut/bas de la carte PIPELINE (`POST …/epics/:epicId/position`), par la passe Refinement ou par l'outil MCP `reorder-tickets`. |
 | **Navigation** | **Une seule barre globale**, montée par le layout racine. Ni rail latéral, ni header par écran ; les contrôles propres à un écran forment sa deuxième rangée. |
 | **Licence** | **MIT** |
 

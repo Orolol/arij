@@ -127,9 +127,9 @@ describe("validateTransition — To Merge requires completed review", () => {
     expect(result.error).toContain("no completed review");
   });
 
-  it("allows a human drag to to_merge with a completed review", () => {
+  it("allows a human move to to_merge with a completed review", () => {
     const result = validateTransition(
-      ctx("review", "to_merge", { hasCompletedReview: true, source: "drag" })
+      ctx("review", "to_merge", { hasCompletedReview: true, source: "api" })
     );
     expect(result.valid).toBe(true);
   });
@@ -182,11 +182,11 @@ describe("validateTransition — agents reach To Merge only through review", () 
 // ---------------------------------------------------------------------------
 
 describe("validateTransition — Done requires the merge", () => {
-  it("rejects to_merge -> done via drag (no merge)", () => {
+  it("rejects to_merge -> done via a manual move (no merge)", () => {
     const result = validateTransition(
       ctx("to_merge", "done", {
         hasCompletedReview: true,
-        source: "drag",
+        source: "api",
       })
     );
     expect(result.valid).toBe(false);
@@ -237,7 +237,7 @@ describe("validateTransition — Done requires the merge", () => {
 
   // Stories are the one exception: no branch of their own, so an explicit
   // human approval or the parent epic's merge cascade closes them.
-  it("allows story review -> done via approve or merge, never via drag", () => {
+  it("allows story review -> done via approve or merge, never via a manual move", () => {
     const story = { targetKind: "story" as const, hasCompletedReview: true };
     expect(
       validateTransition(ctx("review", "done", { ...story, source: "approve" }))
@@ -247,11 +247,11 @@ describe("validateTransition — Done requires the merge", () => {
       validateTransition(ctx("review", "done", { ...story, source: "merge" }))
         .valid
     ).toBe(true);
-    const dragged = validateTransition(
-      ctx("review", "done", { ...story, source: "drag" })
+    const moved = validateTransition(
+      ctx("review", "done", { ...story, source: "api" })
     );
-    expect(dragged.valid).toBe(false);
-    expect(dragged.error).toContain("approving it or by merging");
+    expect(moved.valid).toBe(false);
+    expect(moved.error).toContain("approving it or by merging");
   });
 });
 
@@ -428,13 +428,19 @@ describe("validateTransition — released state", () => {
     expect(result.error).toContain("only the system");
   });
 
-  it("rejects drag to released", () => {
-    const result = validateTransition(
-      ctx("done", "released", { actor: "system", source: "drag" })
-    );
-    expect(result.valid).toBe(false);
-    expect(result.error).toContain("Cannot drag");
-  });
+  // The board's "Cannot drag to Released" guard went with its drag route:
+  // every human-facing writer acts as "user", so the actor guard alone keeps
+  // a person from moving a ticket to Released, whichever route they use.
+  it.each(["api", "approve", "merge", "release"] as const)(
+    "refuses a user moving to released through source %s",
+    (source) => {
+      const result = validateTransition(
+        ctx("done", "released", { actor: "user", source })
+      );
+      expect(result.valid).toBe(false);
+      expect(result.error).toContain("only the system");
+    }
+  );
 
   it("rejects transition away from released", () => {
     const result = validateTransition(
@@ -548,7 +554,7 @@ describe("refinement source guardrail", () => {
 
   it("does not constrain other sources", () => {
     const result = validateTransition(
-      ctx("backlog", "in_progress", { actor: "user", source: "drag" })
+      ctx("backlog", "in_progress", { actor: "user", source: "api" })
     );
     expect(result.valid).toBe(true);
   });

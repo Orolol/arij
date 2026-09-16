@@ -24,7 +24,11 @@ import {
   pipelineMaxAttemptsSettingKey,
   pipelineMaxFixCyclesSettingKey,
 } from "./constants";
-import { pipelineRegistry, listPipelineRunsByProject } from "./registry";
+import {
+  pipelineRegistry,
+  listPipelineRunsByProject,
+  stageChangePatch,
+} from "./registry";
 import { createPipelineStageDriver } from "./stages";
 import {
   runPipeline,
@@ -160,6 +164,10 @@ export function startPipelineRun(input: StartPipelineRunInput): {
 } {
   const runId = createId();
   const startedAt = new Date().toISOString();
+  // Resolved before registration so the snapshot carries its caps from the
+  // first read: the overlay prints "attempt n/max · fix cycle n/max".
+  const configuredMaxAttempts = resolvePipelineMaxAttempts(input.projectId);
+  const maxFixCycles = resolvePipelineMaxFixCycles(input.projectId);
 
   pipelineRegistry.register({
     runId,
@@ -170,6 +178,10 @@ export function startPipelineRun(input: StartPipelineRunInput): {
     stage: "build",
     stageAttempt: 1,
     fixCycles: 0,
+    // Seeded with the configured cap; `onStageBudget` replaces it with the
+    // budget the runner sizes for the build stage (a composite's members).
+    stageMaxAttempts: configuredMaxAttempts,
+    maxFixCycles,
     sessionIds: [input.buildSessionId],
     startedAt,
     endedAt: null,
@@ -231,15 +243,13 @@ export function startPipelineRun(input: StartPipelineRunInput): {
     batchRunId: input.batchRunId ?? null,
   });
 
-  const configuredMaxAttempts = resolvePipelineMaxAttempts(input.projectId);
-
   const engine = runPipeline({
     maxAttempts: configuredMaxAttempts,
     // A composite's member count replaces the configured cap for the stages
     // it runs; `pipeline_max_attempts` no longer governs an agent switch.
     attemptBudget: (stage) =>
       driver.attemptBudget(stage, configuredMaxAttempts),
-    maxFixCycles: resolvePipelineMaxFixCycles(input.projectId),
+    maxFixCycles,
     maxSessions: PIPELINE_MAX_SESSIONS_PER_RUN,
     initialBuild: {
       sessionId: input.buildSessionId,
@@ -312,12 +322,17 @@ export function startPipelineRun(input: StartPipelineRunInput): {
     callbacks: {
       onStageChange: (state, stage, stageAttempt, fixCycles) => {
         try {
-          pipelineRegistry.update(runId, {
-            state,
-            stage,
-            stageAttempt,
-            fixCycles,
-          });
+          pipelineRegistry.update(
+            runId,
+            stageChangePatch(state, stage, stageAttempt, fixCycles)
+          );
+        } catch {
+          // registry updates are best-effort
+        }
+      },
+      onStageBudget: (_stage, stageMaxAttempts) => {
+        try {
+          pipelineRegistry.update(runId, { stageMaxAttempts });
         } catch {
           // registry updates are best-effort
         }

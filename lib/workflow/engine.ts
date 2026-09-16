@@ -1,7 +1,7 @@
 /**
  * Workflow Rule Engine — State machine for epic/ticket transitions.
  *
- * Enforces valid transitions for both manual (UI drag-and-drop, API)
+ * Enforces valid transitions for both manual (the ticket overlay, API)
  * and programmatic (agent-triggered) status changes.
  */
 
@@ -109,7 +109,6 @@ export interface TransitionContext {
   source?:
     | "approve"
     | "merge"
-    | "drag"
     | "api"
     | "build"
     | "review"
@@ -134,8 +133,8 @@ const TRANSITION_GUARDS: TransitionGuard[] = [
     return null;
   },
   // A build session owns in_progress until its terminal handler promotes or
-  // holds the ticket. Letting a concurrent drag move it would recreate the
-  // active-session/orphaned-column state this engine is meant to prevent.
+  // holds the ticket. Letting a concurrent manual move take it would recreate
+  // the active-session/orphaned-column state this engine is meant to prevent.
   // The owning session itself is the owner the lock protects — but only the
   // promotion to review is exempt: the move the terminal handler makes once
   // the work is committed. A demote to todo/backlog by the owner would leave
@@ -191,7 +190,8 @@ const TRANSITION_GUARDS: TransitionGuard[] = [
   },
   // Agents reach To Merge only through a review verdict (the review drivers
   // use source "review"). An agent poking update_ticket_status (source "api")
-  // must not be able to skip the review boundary; humans stay free to drag.
+  // must not be able to skip the review boundary; humans may still move a
+  // ticket there by hand.
   (ctx) => {
     if (
       ctx.toStatus === "to_merge" &&
@@ -236,17 +236,12 @@ const TRANSITION_GUARDS: TransitionGuard[] = [
     }
     return null;
   },
-  // Only system actor can move to released
+  // Only system actor can move to released. This is the whole Released
+  // guard: every human-facing writer (PATCH, the position route) acts as
+  // "user", so no per-source variant is needed.
   (ctx) => {
     if (ctx.toStatus === "released" && ctx.actor !== "system") {
       return "Cannot move to Released: only the system can move tickets to the Released column during release creation.";
-    }
-    return null;
-  },
-  // Cannot drag to released
-  (ctx) => {
-    if (ctx.toStatus === "released" && ctx.source === "drag") {
-      return "Cannot drag tickets to Released: tickets are automatically moved to Released when a release is created.";
     }
     return null;
   },

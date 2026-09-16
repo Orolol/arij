@@ -27,8 +27,11 @@ import { cn } from "@/lib/utils";
  * dispatch also considers stories under review/to_merge parents and available
  * capacity. This band opens tickets; it does not promise immediate execution.
  *
- * NO DRAG-AND-DROP. Order is execution order; re-prioritising happens in the
- * ticket overlay or in Refinement, which rewrite `epics.position` deliberately.
+ * NO DRAG-AND-DROP. Order is execution order; re-ranking happens in the
+ * ticket overlay (POST …/epics/:epicId/position) or in Refinement, which
+ * rewrite `epics.position` deliberately, a whole column at a time. The
+ * overlay's "#n of m in <column>" is that column's rank, not this band's
+ * number: moving past a blocked neighbour changes the one, not the other.
  */
 export interface UpNextBandProps {
   upNext: readonly DeskUpNextProject[];

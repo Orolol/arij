@@ -120,7 +120,13 @@ beforeEach(() => {
     if (url.endsWith("/epics/epic-1")) {
       return new Response(
         JSON.stringify({
-          data: { id: "epic-1", title: "T", status: "review", userStories: [] },
+          // The detail route's real shape: the overlay renders no band
+          // until `data.epic` is there.
+          data: {
+            epic: { id: "epic-1", title: "T", status: "review" },
+            userStories: [],
+            gradingReport: null,
+          },
         }),
         { status: 200 },
       );

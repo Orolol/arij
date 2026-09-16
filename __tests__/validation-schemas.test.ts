@@ -273,9 +273,12 @@ describe("updateEpicSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects invalid position", () => {
+  // position is no longer a PATCH field (see epic-patch-position-ignored):
+  // the non-strict object strips it instead of validating it.
+  it("strips position instead of validating it", () => {
     const result = updateEpicSchema.safeParse({ position: -1 });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    expect(result.data).not.toHaveProperty("position");
   });
 });
 

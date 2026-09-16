@@ -14,7 +14,9 @@
     "deleteTitle": "Delete Epic",
     "deleteDescription": "Permanently delete this epic and all related user stories.",
     "deleteConfirm": "Confirm Delete",
-    "commentError": "Failed to add comment"
+    "commentError": "Failed to add comment",
+    "pending": "Opening ticket",
+    "noProject": "This ticket cannot be opened: its project is unknown"
   },
   "header": {
     "stop": "Stop",
@@ -23,7 +25,28 @@
     "close": "Close ticket"
   },
   "pipeline": {
-    "label": "Pipeline"
+    "label": "Pipeline",
+    "run": {
+      "running": "Running · {stage}",
+      "succeeded": "Last run succeeded",
+      "failed": "Last run failed",
+      "paused_question": "Paused on a question",
+      "cancelled": "Last run stopped",
+      "attempt": "attempt {count}/{max}",
+      "attemptOpen": "attempt {count}",
+      "fixCycles": "fix cycle {count}/{max}",
+      "fixCyclesOpen": "fix cycle {count}",
+      "story": "story {title}"
+    },
+    "queue": {
+      "rank": "#{rank} of {total} in {column}",
+      "top": "Move to the top of the column",
+      "up": "Move up",
+      "down": "Move down",
+      "bottom": "Move to the bottom of the column",
+      "moving": "Moving…",
+      "moveError": "Could not move the ticket"
+    }
   },
   "status": {
     "statusHeading": "Status",
@@ -141,5 +164,10 @@
     "open": "Open visual proof: {caption}",
     "session": "session #{id}",
     "retry": "Retry"
+  },
+  "feedback": {
+    "merged": "Branch merged into main",
+    "deleted": "Ticket deleted permanently",
+    "openActiveSession": "Open active session"
   }
 }
