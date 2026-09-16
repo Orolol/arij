@@ -3,6 +3,13 @@
 Which CLI providers can actually reach Arij's tool channel, how the config is
 handed to each, and what was measured rather than assumed.
 
+**2026-09-15 — bundled Pi fork.** `pi` is selectable again and exclusively
+runs [Orolol/pi](https://github.com/Orolol/pi/tree/arij), included as a pinned
+package. It supports per-spawn stdio/Streamable HTTP MCP, project/global
+extras, tool allowlists and session resume. See [bundled-pi.md](bundled-pi.md)
+for the current contract and tests. The upstream-Pi removal notes below are
+historical and do not describe the bundled fork.
+
 Audited 2026-08-20 after epic E-arij-096, where `review_comments` turned out to
 have been empty for the entire life of the database — every review had silently
 fallen back to prose, and every builder was dispatched without a single
@@ -72,6 +79,7 @@ expansion" is.
 
 | Provider | Binary | Tool spelling | How config is passed | Additional MCP servers |
 |---|---|---|---|---|
+| pi | `arij pi` (bundled fork) | `mcp__arij__<tool>` | `--mcp-config <0600 file>`; built-in tool restrictions retain MCP tools | **per-spawn** — global + project |
 | claude-code | `claude` | `mcp__arij__<tool>` | `--mcp-config <0600 file>` + `--strict-mcp-config`, tools named in `--allowedTools` | **per-spawn** — global + project |
 | codex | `codex` | `mcp__arij__<tool>` | `-c mcp_servers.arij.*` TOML overrides + `--dangerously-bypass-approvals-and-sandbox` | **per-spawn** — global + project |
 | oh-my-pi | `omp` | `mcp__arij_<tool>` (ONE underscore) | `mcp.json` entry (install.sh) + `ARIJ_*` env vars at spawn; MCP tools orthogonal to `--tools` (see below) | **user-global** — global only |

@@ -802,6 +802,7 @@ export const POST = withAgentResolutionErrors(async function POST(
       mode: claudeChatMode,
       model: resolvedAgent.model,
       cliSessionId: turnCliSessionId,
+      cliOptions: resolvedAgent.cliOptions,
       resumeSession: turnResumeSession,
       conversationType,
       idleTimeoutMs: parsePersistentChatDurationSetting(
@@ -952,10 +953,19 @@ export const POST = withAgentResolutionErrors(async function POST(
     conversationType,
   });
 
-  // Every non-Claude provider: non-streaming, spawned through its own provider
+  // Generic CLI path; providers can stream text/status/questions via onEvent.
   if (resolvedAgent.provider !== "claude-code") {
     // "openai-compatible" is not a CLI provider: that branch returned above.
     const dynamicProvider = getProvider(resolvedAgent.provider as ProviderType);
+    let eventSink: ((event: StreamChunk) => void) | null = null;
+    const queuedEvents: StreamChunk[] = [];
+    let cancelled = false;
+    let streamedContent = "";
+    const onEvent = (event: StreamChunk) => {
+      if (cancelled) return;
+      if (eventSink) eventSink(event);
+      else queuedEvents.push(event);
+    };
     let activeProviderSession = dynamicProvider.spawn({
       sessionId: `chat-${createId()}`,
       prompt: effectivePrompt,
@@ -970,6 +980,7 @@ export const POST = withAgentResolutionErrors(async function POST(
       // processManager.start() — the agent's CLI options are carried here,
       // the same way cliToolChannel carries the MCP channel.
       cliOptions: resolvedAgent.cliOptions,
+      onEvent,
     });
 
     activityRegistry.register({
@@ -985,6 +996,13 @@ export const POST = withAgentResolutionErrors(async function POST(
 
     const sseStream = new ReadableStream({
       async start(controller) {
+        eventSink = (event) => {
+          if (event.type === "text") streamedContent += event.text;
+          const payload = event.type === "text" ? { delta: event.text }
+            : event.type === "questions" ? { questions: event.questions } : { status: event.status };
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
+        };
+        for (const event of queuedEvents.splice(0)) eventSink(event);
         controller.enqueue(
           encoder.encode(
             `data: ${JSON.stringify({
@@ -997,6 +1015,7 @@ export const POST = withAgentResolutionErrors(async function POST(
 
         try {
           let result = await activeProviderSession.promise;
+          if (cancelled) return;
 
           // Resume-first: if the remote session expired, retry once with a fresh session.
           if (
@@ -1017,14 +1036,18 @@ export const POST = withAgentResolutionErrors(async function POST(
               cliSessionId,
               resumeSession: false,
               mcp: cliToolChannel?.mcp,
+              cliOptions: resolvedAgent.cliOptions,
+              onEvent,
             });
             result = await activeProviderSession.promise;
           }
 
+          if (cancelled) return;
+
           cliToolChannel?.release();
 
           const fullContent = result.success
-            ? parseClaudeOutput(result.result || "").content || "(empty response)"
+            ? streamedContent || parseClaudeOutput(result.result || "").content || "(empty response)"
             : `Error: ${result.error || "Provider request failed"}`;
           const resolvedCliSessionId = result.cliSessionId ?? cliSessionId;
 
@@ -1032,14 +1055,17 @@ export const POST = withAgentResolutionErrors(async function POST(
             persistConversationSessionId(resolvedCliSessionId);
           }
 
-          controller.enqueue(
+          if (!streamedContent || !result.success) controller.enqueue(
             encoder.encode(`data: ${JSON.stringify({ delta: fullContent })}\n\n`)
           );
 
           activityRegistry.unregister(activityId);
+          eventSink = null;
           saveAssistantAndTitle(controller, fullContent, result.success ? "active" : "error");
         } catch (error) {
           cliToolChannel?.release();
+          if (cancelled) return;
+          eventSink = null;
           const failureMessage =
             error instanceof Error ? `Error: ${error.message}` : "Error: Provider request failed";
 
@@ -1051,6 +1077,8 @@ export const POST = withAgentResolutionErrors(async function POST(
         }
       },
       cancel() {
+        cancelled = true;
+        eventSink = null;
         cliToolChannel?.release();
         activityRegistry.unregister(activityId);
         activeProviderSession.kill();

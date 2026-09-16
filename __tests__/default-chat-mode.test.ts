@@ -255,6 +255,7 @@ describe("resolveDefaultChatMode", () => {
     expect([...PERSISTENT_CHAT_PROVIDER_OPTIONS]).toEqual([
       "claude-code-persistent",
       "oh-my-pi-persistent",
+      "pi-persistent",
     ]);
 
     installClis(["claude-code", "oh-my-pi"]);

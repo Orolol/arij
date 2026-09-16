@@ -677,9 +677,8 @@ describe("pi stream helpers", () => {
 // ---------------------------------------------------------------------------
 
 describe("Resume classification — Pi providers", () => {
-  it("treats oh-my-pi (--resume) as resumable, and dropped pi as not", () => {
+  it("treats oh-my-pi and the bundled Pi fork as resumable", () => {
     expect(isResumableProvider("oh-my-pi")).toBe(true);
-    // Legacy rows may still say "pi"; the provider is gone, so no resume.
-    expect(isResumableProvider("pi")).toBe(false);
+    expect(isResumableProvider("pi")).toBe(true);
   });
 });

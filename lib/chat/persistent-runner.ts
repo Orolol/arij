@@ -11,6 +11,9 @@ import {
   OMP_READONLY_TOOLS,
 } from "@/lib/providers/oh-my-pi";
 import { ompRestrictedToolsBlockReason } from "@/lib/providers/omp-version";
+import { BundledPiProvider } from "@/lib/providers/bundled-pi";
+import { piQuestions } from "@/lib/providers/pi-events";
+import type { NamedAgentCliOptions } from "@/lib/providers/options-registry";
 
 export const DEFAULT_PERSISTENT_CHAT_IDLE_TIMEOUT_MS = 15 * 60 * 1000;
 export const DEFAULT_MAX_WARM_CHAT_CONVERSATIONS = 3;
@@ -48,6 +51,7 @@ export interface PersistentChatTurnOptions {
   cwd: string;
   mode: "plan" | "chat";
   model?: string;
+  cliOptions?: NamedAgentCliOptions;
   cliSessionId?: string;
   resumeSession?: boolean;
   conversationType: string | null;
@@ -95,6 +99,8 @@ interface PersistentProcess {
   child: ChildProcess;
   channel: ReturnType<typeof createChatCliToolChannel>;
   mcpConfigPath: string | null;
+  resourceCleanup?: () => void;
+  configurationKey: string;
   lastUsedAt: number;
   idleTimeoutMs: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
@@ -369,6 +375,7 @@ function cleanupProcess(process: PersistentProcess, error?: Error): void {
   if (process.idleTimer) clearTimeout(process.idleTimer);
   process.idleTimer = null;
   cleanupMcpConfigFile(process.mcpConfigPath);
+  process.resourceCleanup?.();
   process.channel?.release();
   removeProcess(process);
   if (process.activeTurn) {
@@ -410,7 +417,7 @@ interface PersistentProviderAdapter {
   buildSpawn(
     options: PersistentChatTurnOptions,
     channel: ReturnType<typeof createChatCliToolChannel>,
-  ): { args: string[]; env: NodeJS.ProcessEnv; mcpConfigPath: string | null };
+  ): { args: string[]; env: NodeJS.ProcessEnv; mcpConfigPath: string | null; cleanup?: () => void };
   /**
    * Encodes one user turn as the bytes to write to stdin, plus the id the
    * event handler will correlate responses against. Throwing here rejects the
@@ -455,12 +462,24 @@ function spawnPersistentProcess(
   if (blocked) throw new Error(blocked);
 
   const channel = adapter.createChannel(options);
-  const { args, env, mcpConfigPath } = adapter.buildSpawn(options, channel);
-  const child = nodeSpawn(adapter.binary, args, {
-    cwd: options.cwd,
-    env,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+  let prepared: ReturnType<PersistentProviderAdapter["buildSpawn"]>;
+  try { prepared = adapter.buildSpawn(options, channel); }
+  catch (error) { channel?.release(); throw error; }
+  const { args, env, mcpConfigPath } = prepared;
+  let child: ChildProcess;
+  try {
+    child = nodeSpawn(adapter.binary, args, {
+      cwd: options.cwd,
+      env,
+      stdio: ["pipe", "pipe", "pipe"],
+      ...(options.provider === "pi-persistent" ? { detached: true } : {}),
+    });
+  } catch (error) {
+    prepared.cleanup?.();
+    cleanupMcpConfigFile(mcpConfigPath);
+    channel?.release();
+    throw error;
+  }
   child.stdin?.on("error", () => {});
 
   let resolveReady!: () => void;
@@ -496,6 +515,8 @@ function spawnPersistentProcess(
     child,
     channel,
     mcpConfigPath,
+    resourceCleanup: prepared.cleanup,
+    configurationKey: configurationKey(options),
     lastUsedAt: Date.now(),
     idleTimeoutMs: normalizedIdleTimeout(options.idleTimeoutMs),
     idleTimer: null,
@@ -546,6 +567,7 @@ function spawnPersistentProcess(
     terminate(reason) {
       if (persistent.closing) return;
       persistent.closing = true;
+      readyControls.reject(new Error(`Persistent chat session stopped: ${reason}`));
       removeProcess(persistent);
       if (persistent.idleTimer) clearTimeout(persistent.idleTimer);
       persistent.idleTimer = null;
@@ -555,9 +577,19 @@ function spawnPersistentProcess(
         persistent.activeTurn = null;
         turn.reject(new Error(`Persistent chat session stopped: ${reason}`));
       }
-      if (!child.killed) child.kill("SIGTERM");
+      const signal = (value: NodeJS.Signals) => {
+        if (options.provider === "pi-persistent" && child.pid) {
+          try { globalThis.process.kill(-child.pid, value); return; } catch { /* child-only fallback */ }
+        }
+        child.kill(value);
+      };
+      if (!child.killed) signal("SIGTERM");
+      if (options.provider === "pi-persistent") {
+        persistent.channel?.release();
+        persistent.resourceCleanup?.();
+      }
       const forceTimer = setTimeout(() => {
-        if (child.exitCode === null) child.kill("SIGKILL");
+        if (child.exitCode === null) signal("SIGKILL");
         // Defensive cleanup for broken child-process implementations that do
         // not emit close after kill; release remains idempotent.
         cleanupProcess(persistent);
@@ -700,6 +732,11 @@ function processOmpEvent(process: PersistentProcess, raw: string): void {
   if (!turn) return;
   noteTurnProgress(process);
 
+  if (process.provider === "pi-persistent") {
+    const questions = piQuestions(event);
+    if (questions) { turn.onChunk({ type: "questions", questions }); return; }
+  }
+
   if (
     event.type === "response" &&
     event.command === "prompt" &&
@@ -711,7 +748,7 @@ function processOmpEvent(process: PersistentProcess, raw: string): void {
         new Error(
           typeof event.error === "string"
             ? event.error
-            : "Oh My Pi rejected the prompt",
+            : `${process.displayName} rejected the prompt`,
         ),
       );
       return;
@@ -760,7 +797,7 @@ function processOmpEvent(process: PersistentProcess, raw: string): void {
       turn.retryError =
         typeof event.finalError === "string"
           ? event.finalError
-          : "Oh My Pi exhausted its automatic retries.";
+          : `${process.displayName} exhausted its automatic retries.`;
       return;
     }
     // OMP emits this only from its `status: "recovered"` path, i.e. after a
@@ -782,8 +819,8 @@ function processOmpEvent(process: PersistentProcess, raw: string): void {
         typeof message.errorMessage === "string"
           ? message.errorMessage
           : message.stopReason === "aborted"
-            ? "Oh My Pi run was aborted."
-            : "Oh My Pi run ended with an error.";
+            ? `${process.displayName} run was aborted.`
+            : `${process.displayName} run ended with an error.`;
     } else {
       turn.messageError = undefined;
     }
@@ -943,6 +980,68 @@ function spawnOmpProcess(options: PersistentChatTurnOptions): PersistentProcess 
   return spawnPersistentProcess(ompAdapter, options);
 }
 
+const piAdapter: PersistentProviderAdapter = {
+  displayName: "Pi (Arij)",
+  binary: process.execPath,
+  missingBinaryMessage: "Arij's bundled Pi is unavailable. Reinstall Arij with Node >=22.19.",
+  createChannel: (options) => createChatCliToolChannel({ projectId: options.projectId, provider: "pi", conversationType: options.conversationType }),
+  buildSpawn(options, channel) {
+    const provider = new BundledPiProvider();
+    const spawnOptions = { ...options, onChunk: undefined, sessionId: options.conversationId, mcp: channel?.mcp };
+    const context = provider.prepareSpawn(spawnOptions);
+    try {
+      const args = provider.buildArgs(spawnOptions, context);
+      args[args.indexOf("--mode") + 1] = "rpc";
+      args.pop(); // RPC accepts prompts as JSON frames, not --print/stdin text.
+      return { args, env: provider.buildEnv(spawnOptions), mcpConfigPath: null, cleanup: () => provider.cleanupSpawnContext(context) };
+    } catch (error) { provider.cleanupSpawnContext(context); throw error; }
+  },
+  encodeTurnFrame: (_persistent, prompt) => {
+    const requestId = crypto.randomUUID();
+    return { requestId, frame: `${JSON.stringify({ id: requestId, type: "prompt", message: prompt })}\n` };
+  },
+  afterTurnRegistered: (persistent, onId) => {
+    if (persistent.discoveredCliSessionId) onId?.(persistent.discoveredCliSessionId);
+  },
+  attach(persistent, ready) {
+    const id = `arij-state-${crypto.randomUUID()}`;
+    const timer = setTimeout(() => {
+      if (ready.settled()) return;
+      ready.reject(new Error("Pi RPC initialization timed out"));
+      persistent.terminate("initialization timed out");
+    }, 45_000);
+    timer.unref?.();
+    persistent.child.once("spawn", () => {
+      persistent.child.stdin?.write(`${JSON.stringify({ id, type: "get_state" })}\n`);
+    });
+    return {
+      dispose: () => clearTimeout(timer),
+      handleLine(line) {
+        let event;
+        try { event = JSON.parse(line); } catch { return; }
+        processOmpEvent(persistent, line);
+        if (event.type === "response" && event.id === id) {
+          clearTimeout(timer);
+          if (event.success && typeof event.data?.sessionId === "string") ready.resolve();
+          else {
+            ready.reject(new Error("Pi RPC could not establish its session"));
+            persistent.terminate("initialization failed");
+          }
+        }
+        // No custom extension UI is used by Arij. Refuse unexpected dialogs so
+        // a settings/package request cannot wedge a warm process indefinitely.
+        if (event.type === "extension_ui_request" && typeof event.id === "string") {
+          persistent.child.stdin?.write(`${JSON.stringify({ type: "extension_ui_response", id: event.id, cancelled: true })}\n`);
+        }
+      },
+    };
+  },
+};
+
+function configurationKey(options: PersistentChatTurnOptions): string {
+  return JSON.stringify([options.projectId, options.cwd, options.mode, options.model, options.cliOptions ?? {}, options.conversationType]);
+}
+
 
 function evictForCapacity(maxWarmConversations: number, exceptConversationId: string): void {
   const candidates = [...globalState().processes.values()]
@@ -966,7 +1065,7 @@ function evictForCapacity(maxWarmConversations: number, exceptConversationId: st
 
 function getOrSpawn(options: PersistentChatTurnOptions): PersistentProcess {
   const existing = globalState().processes.get(options.conversationId);
-  if (existing && existing.provider === options.provider && !existing.closing) {
+  if (existing && existing.provider === options.provider && existing.configurationKey === configurationKey(options) && !existing.closing) {
     existing.idleTimeoutMs = normalizedIdleTimeout(options.idleTimeoutMs);
     return existing;
   }
@@ -976,7 +1075,7 @@ function getOrSpawn(options: PersistentChatTurnOptions): PersistentProcess {
   const spawned =
     options.provider === "claude-code-persistent"
       ? spawnClaudeProcess(options)
-      : spawnOmpProcess(options);
+      : options.provider === "pi-persistent" ? spawnPersistentProcess(piAdapter, options) : spawnOmpProcess(options);
   globalState().processes.set(options.conversationId, spawned);
   return spawned;
 }
@@ -986,7 +1085,7 @@ export function runPersistentChatTurn(
 ): PersistentChatTurnHandle {
   const existing = globalState().processes.get(options.conversationId);
   const wasWarm = Boolean(
-    existing && existing.provider === options.provider && !existing.closing,
+    existing && existing.provider === options.provider && existing.configurationKey === configurationKey(options) && !existing.closing,
   );
   let process: PersistentProcess | null = null;
   let cancelled = false;

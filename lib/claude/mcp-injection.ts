@@ -373,6 +373,7 @@ export const MCP_CAPABLE_PROVIDERS = [
   "codex",
   "oh-my-pi",
   "agy",
+  "pi",
 ] as const;
 
 export function providerSupportsMcp(provider: string): boolean {

@@ -106,23 +106,26 @@ describe("Unified Chat Agent & Provider Selection (Epic 0OQJfqU5gZ6S)", () => {
     expect(cliOptions.map(([testid]) => testid)).toEqual([
       "chat-option-provider-claude-code-persistent",
       "chat-option-provider-oh-my-pi-persistent",
+      "chat-option-provider-pi-persistent",
       "chat-option-provider-claude-code",
       "chat-option-provider-codex",
       "chat-option-provider-oh-my-pi",
       "chat-option-provider-agy",
+      "chat-option-provider-pi",
     ]);
     expect(cliOptions.map(([, label]) => label)).toEqual([
       "Claude Code — persistent",
       "Oh My Pi — persistent",
+      "Pi (Arij) — persistent",
       "Claude Code (CLI)",
       "Codex (CLI)",
       "Oh My Pi (CLI)",
       "Antigravity (CLI)",
+      "Pi (Arij) (CLI)",
     ]);
 
     // Removed providers no longer appear.
     expect(ids).not.toContain("chat-option-provider-gemini-cli");
-    expect(ids).not.toContain("chat-option-provider-pi");
 
     expect(screen.getByTestId("chat-option-openai-compatible")).toHaveTextContent(
       "OpenAI-compatible",

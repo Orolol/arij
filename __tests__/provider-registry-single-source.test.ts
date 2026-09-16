@@ -301,7 +301,7 @@ describe("every registered provider satisfies the MCP admission rule", () => {
 
   it("still reports no MCP support for the providers the cleanup removed", () => {
     // Non-vacuity: providerSupportsMcp must be able to say no.
-    expect(providerSupportsMcp("pi")).toBe(false);
+    expect(providerSupportsMcp("unregistered-provider")).toBe(false);
     expect(providerSupportsMcp("gemini-cli")).toBe(false);
   });
 });

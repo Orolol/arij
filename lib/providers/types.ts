@@ -7,6 +7,7 @@
 
 import type { NamedAgentCliOptions } from "./options-registry";
 import type { ExtraMcpScope } from "./extra-mcp-scope";
+import type { StreamChunk } from "@/lib/claude/spawn";
 
 /**
  * Every provider here MUST support per-spawn injection of the Arij MCP tool
@@ -14,10 +15,10 @@ import type { ExtraMcpScope } from "./extra-mcp-scope";
  * is how agents reach the board, so a CLI that cannot be handed a per-session
  * MCP config is not eligible. The 2026-08 cleanup removed gemini-cli,
  * mistral-vibe, qwen-code, opencode, deepseek, kimi, zai and pi for exactly
- * that reason; see docs/architecture/mcp-provider-matrix.md before adding
- * one back.
+ * that reason. The `pi` key now refers exclusively to Arij's bundled MCP
+ * fork (Orolol/pi), not an upstream Pi found on PATH.
  */
-export type ProviderType = "claude-code" | "codex" | "oh-my-pi" | "agy";
+export type ProviderType = "claude-code" | "codex" | "oh-my-pi" | "agy" | "pi";
 
 export type ProviderChunkStreamType = "response" | "raw" | "output";
 
@@ -149,12 +150,14 @@ export interface ProviderSpawnOptions {
    * treat it as "plan".
    */
   mode: "plan" | "code" | "analyze" | "chat";
-  /** Explicit list of allowed tools (Claude Code only). */
+  /** Explicit built-in tool allowlist (Claude Code and bundled Pi). */
   allowedTools?: string[];
   /** Model override. */
   model?: string;
   /** Optional chunk callback (used by Codex session persistence). */
   onChunk?: (chunk: ProviderChunk) => void;
+  /** Live conversational events, including structured questions. */
+  onEvent?: (event: StreamChunk) => void;
   /** Optional identifier for NDJSON session logging. */
   logIdentifier?: string;
   /** CLI session UUID for resume support (Claude/Gemini only). */
@@ -182,6 +185,7 @@ export interface ProviderResult {
   cliSessionId?: string;
   /** True when the provider ended by asking a follow-up user question. */
   endedWithQuestion?: boolean;
+  usage?: { inputTokens?: number; outputTokens?: number; totalCostUsd?: number };
 }
 
 export interface ProviderSession {

@@ -82,11 +82,19 @@ toggle in front of it.
 approval that auto-blocks in print mode, which severs the MCP channel — see
 the measurement notes in `lib/providers/oh-my-pi.ts`.
 
-Pi itself is not a selectable provider: it has no MCP support at all, and
-every Arij provider must carry the per-spawn tool channel (see
-`lib/providers/types.ts`). `PiProvider` survives only as omp's base class, and
-it reads the registry through `this.type`, so option translation follows
-whichever subclass is spawning.
+### Pi (Arij fork, 0.85.1-arij.1)
+
+The `pi` provider runs the pinned bundled fork with native per-session MCP.
+It exposes `thinking` as `--thinking`: off, minimal, low, medium, high,
+xhigh, max. Empty uses Pi's configured default. Both Pi and omp inherit
+the result parser in `PiProvider`; their MCP and tool restrictions differ.
+Pi also exposes `permission_mode` for code-producing agents. It is enforced
+by the shipped Arij runtime, not passed as a nonexistent Pi CLI flag.
+`auto`/`acceptEdits` allow file edits and explicitly allowlisted shell tools;
+`manual`/`dontAsk` allow only read tools and explicitly allowlisted mutations;
+`bypassPermissions` uses the mode's tools. These are conservative headless
+policies, not Claude's proprietary automatic classifier. Explicit tool lists
+and read-only mode bounds still apply. See [bundled-pi.md](bundled-pi.md).
 
 ### Antigravity (agy 1.1.22)
 

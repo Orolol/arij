@@ -344,16 +344,17 @@ export function classifySessionOutcome(
  * `markSessionTerminal`'s optional `usage` field (same choke points as the
  * delivery verdict above).
  *
- * Only the Claude Code provider retains its raw result envelope (with
- * `usage` and `total_cost_usd`) in `result.result` — the other providers
- * extract plain text, so this returns `undefined` for them and their usage
- * columns stay NULL. Works for failed runs too: the spawn keeps the raw
+ * Providers may supply normalized usage directly (Pi aggregates its message
+ * and child-task events). Claude Code retains its raw result envelope with
+ * `usage` and `total_cost_usd` in `result.result`. Providers with neither keep
+ * NULL usage columns. Works for failed runs too: the spawn keeps the raw
  * stdout in `result.result` on non-zero exits, so the cost of failed runs
  * is still accounted for when the envelope made it out.
  */
 export function extractSessionUsage(
   result: ClaudeResult | undefined | null,
 ): SessionUsage | undefined {
+  if (result?.usage) return result.usage;
   if (!result?.result) return undefined;
   const usage = extractUsageFromOutput(result.result);
   return usage ?? undefined;
