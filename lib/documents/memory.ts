@@ -73,6 +73,21 @@ export function getProjectMemoryContent(
   }
 }
 
+/**
+ * Strips an accidental full-document code fence from a memory writer's
+ * output (the prompts forbid fences, but a cheap unwrap beats a corrupted
+ * doc). Shared by the distill and the dream so the two writers cannot drift
+ * on what counts as the document body.
+ */
+export function sanitizeMemoryDocument(output: string): string {
+  const trimmed = output.trim();
+  const fenceMatch = trimmed.match(/^```[a-zA-Z]*\n([\s\S]*)\n```$/);
+  if (fenceMatch) {
+    return fenceMatch[1].trim();
+  }
+  return trimmed;
+}
+
 export interface SaveProjectMemoryResult {
   doc: MemoryDocRecord;
   /** True when the content was cut at the token cap. */

@@ -41,7 +41,26 @@
     "label": "Suggestion d'agent"
   },
   "memory": {
-    "helper": "ce que les agents ont appris"
+    "helper": "ce que les agents ont appris",
+    "archive": {
+      "previewLoading": "Chargement de l'instantané…",
+      "previewError": "Impossible de charger l'aperçu de l'instantané.",
+      "previewEmpty": "L'instantané est vide."
+    },
+    "discarded": {
+      "dreaming": "Le dernier rêve a été écarté — {reason}.",
+      "distill": "La dernière distillation a été écartée — {reason}.",
+      "reasons": {
+        "noOutput": "il n'a renvoyé aucun document mémoire",
+        "invalidStructure": "il n'a pas gardé les quatre sections requises",
+        "memoryChanged": "la mémoire a été éditée pendant qu'il tournait, et l'édition a été gardée",
+        "saveFailed": "la mémoire n'a pas pu être enregistrée"
+      },
+      "dismiss": "Fermer"
+    },
+    "dreamSkipped": {
+      "noNewSessions": "Rien à rêver : aucune nouvelle session depuis le dernier rêve."
+    }
   },
   "page": {
     "regenerate": "Régénérer par chat",

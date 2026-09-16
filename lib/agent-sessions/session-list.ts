@@ -39,10 +39,43 @@ export const SESSION_LIST_ERROR_PREVIEW_CHARS = 400;
  */
 export const SESSION_LIST_MAX_PAGES = 10_000;
 
+/**
+ * `?summary=1` on the list route: the Sessions page's synthesis band, counted
+ * in SQL over EVERY agent session of the project — never over a page, and so
+ * never a reason to walk the keyset (#114). Chat conversations have no run
+ * state and are not counted.
+ */
+export interface SessionListSummary {
+  /** Agent sessions currently `running`, whatever their age. */
+  running: number;
+  /** Agent sessions waiting for a slot (`queued`, legacy `pending`). */
+  queued: number;
+  /** Terminal sessions (completed/failed/cancelled) created at or after `since`. */
+  today: number;
+  todayCompleted: number;
+  todayFailed: number;
+  /** Reported cost of those terminal sessions, in USD; 0 when none reported. */
+  todayCostUsd: number;
+  /** The lower bound actually applied, as a UTC ISO timestamp. */
+  since: string;
+}
+
+/** Query parameter that asks the list route for the {@link SessionListSummary}. */
+export const SESSION_LIST_SUMMARY_PARAM = "summary";
+
+/**
+ * Query parameter carrying the start of the caller's "today" — its LOCAL
+ * midnight, which only the browser knows. Any `Date.parse`-able timestamp;
+ * the server's own midnight when omitted.
+ */
+export const SESSION_LIST_SUMMARY_SINCE_PARAM = "since";
+
 /** One page as the route returns it. */
 export interface UnifiedSessionListPage<T = unknown> {
   data: T[];
   nextCursor?: string | null;
+  /** Present only when the request asked for it (`?summary=1`). */
+  summary?: SessionListSummary;
 }
 
 /** Options shared by every reader of the paged list. */
@@ -56,6 +89,68 @@ export interface UnifiedSessionPagingOptions {
    * own cancellation, not as a failed list.
    */
   signal?: AbortSignal;
+  /**
+   * Start after this cursor instead of at the newest row — a `nextCursor`
+   * from a page the caller already holds, so the walk fetches only the rest.
+   */
+  cursor?: string | null;
+}
+
+export interface FetchUnifiedSessionPageOptions {
+  limit?: number;
+  signal?: AbortSignal;
+  cursor?: string | null;
+  /**
+   * Also ask for the {@link SessionListSummary}, with "today" starting at this
+   * instant — the caller's local midnight.
+   */
+  summarySince?: Date;
+}
+
+/**
+ * ONE page of the list — what a screen that paints the newest sessions first
+ * and walks the rest only on demand needs. With `summarySince` the same
+ * round trip carries the synthesis band.
+ */
+export async function fetchUnifiedSessionPage<T = unknown>(
+  projectId: string,
+  { limit, signal, cursor, summarySince }: FetchUnifiedSessionPageOptions = {}
+): Promise<UnifiedSessionListPage<T>> {
+  const url = new URL(
+    `/api/projects/${projectId}/sessions`,
+    window.location.origin
+  );
+  if (limit !== undefined) url.searchParams.set("limit", String(limit));
+  if (cursor) url.searchParams.set("cursor", cursor);
+  if (summarySince) {
+    url.searchParams.set(SESSION_LIST_SUMMARY_PARAM, "1");
+    url.searchParams.set(
+      SESSION_LIST_SUMMARY_SINCE_PARAM,
+      summarySince.toISOString()
+    );
+  }
+
+  const response = await fetch(url.toString(), { signal });
+  if (!response.ok) {
+    throw new Error(`Sessions list request failed (${response.status})`);
+  }
+  const body = (await response.json()) as UnifiedSessionListPage<T>;
+  return {
+    data: Array.isArray(body?.data) ? body.data : [],
+    nextCursor: body?.nextCursor ?? null,
+    ...(isSessionListSummary(body?.summary) ? { summary: body.summary } : {}),
+  };
+}
+
+/** Shape check for a summary read off the wire; a malformed one is dropped. */
+export function isSessionListSummary(value: unknown): value is SessionListSummary {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Record<string, unknown>;
+  return (
+    ["running", "queued", "today", "todayCompleted", "todayFailed", "todayCostUsd"].every(
+      (key) => typeof candidate[key] === "number" && Number.isFinite(candidate[key])
+    ) && typeof candidate.since === "string"
+  );
 }
 
 export interface FetchUnifiedSessionsOptions<T> extends UnifiedSessionPagingOptions {
@@ -94,30 +189,21 @@ export class UnifiedSessionListIncompleteError extends Error {
  */
 async function* pageUnifiedSessions<T>(
   projectId: string,
-  { limit, signal }: UnifiedSessionPagingOptions
+  { limit, signal, cursor: startCursor }: UnifiedSessionPagingOptions
 ): AsyncGenerator<T[], void, undefined> {
-  let cursor: string | null = null;
+  let cursor: string | null = startCursor ?? null;
   let delivered = 0;
   // The cursor is the sort key of the last row already delivered, so a
   // well-behaved server never repeats one. Seeing a repeat means the list is
   // not advancing, and following it again would loop forever.
-  const seenCursors = new Set<string>();
+  const seenCursors = new Set<string>(startCursor ? [startCursor] : []);
 
   for (let page = 0; page < SESSION_LIST_MAX_PAGES; page++) {
-    const url = new URL(
-      `/api/projects/${projectId}/sessions`,
-      window.location.origin
+    const body: UnifiedSessionListPage<T> = await fetchUnifiedSessionPage<T>(
+      projectId,
+      { limit, signal, cursor }
     );
-    if (limit !== undefined) url.searchParams.set("limit", String(limit));
-    if (cursor) url.searchParams.set("cursor", cursor);
-
-    const response = await fetch(url.toString(), { signal });
-    if (!response.ok) {
-      throw new Error(`Sessions list request failed (${response.status})`);
-    }
-
-    const body = (await response.json()) as UnifiedSessionListPage<T>;
-    const rows = body.data ?? [];
+    const rows = body.data;
     delivered += rows.length;
     yield rows;
 
@@ -142,7 +228,9 @@ async function* pageUnifiedSessions<T>(
 /**
  * Fetch the complete unified session list, page by page.
  *
- * Every return from this function is the WHOLE list. A response that cannot
+ * Every return from this function is the WHOLE list after `options.cursor` —
+ * the whole list outright when no cursor is given, so a caller resuming from
+ * a page it already holds prepends that page itself. A response that cannot
  * be completed rejects instead — with `UnifiedSessionListIncompleteError` when
  * the cursor misbehaves, or the underlying fetch error otherwise — so no
  * caller can mistake a prefix for the list. That matters beyond the Sessions
@@ -153,9 +241,9 @@ export async function fetchUnifiedSessions<T = unknown>(
   projectId: string,
   options: FetchUnifiedSessionsOptions<T> = {}
 ): Promise<T[]> {
-  const { limit, signal, onPage } = options;
+  const { limit, signal, cursor, onPage } = options;
   const rows: T[] = [];
-  for await (const page of pageUnifiedSessions<T>(projectId, { limit, signal })) {
+  for await (const page of pageUnifiedSessions<T>(projectId, { limit, signal, cursor })) {
     rows.push(...page);
     onPage?.(rows);
   }
@@ -165,7 +253,9 @@ export async function fetchUnifiedSessions<T = unknown>(
 /**
  * The first row in list order that satisfies `predicate` — which, because the
  * route sorts newest-first across pages, is the NEWEST such row — or `null`
- * once the whole list has been walked without one.
+ * once the whole list has been walked without one. With `options.cursor`,
+ * "the whole list" is the part after that cursor: rows before it are not
+ * searched.
  *
  * Unlike `fetchUnifiedSessions`, this stops at the page holding the match:
  * the pages after it are older rows the caller has already decided not to

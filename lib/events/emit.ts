@@ -3,6 +3,7 @@
  */
 
 import { eventBus, type TicketEventType } from "./bus";
+import type { MemoryDiscardReason } from "@/lib/workflow/dreaming-constants";
 
 function emit(
   type: TicketEventType,
@@ -130,4 +131,32 @@ export function emitReleaseCreated(
   epicIds: string[]
 ) {
   emit("release:created", projectId, undefined, { releaseId, version, epicIds });
+}
+
+export function emitReleaseUpdated(
+  projectId: string,
+  releaseId: string,
+  data: { githubErrors?: string[] } = {}
+) {
+  emit("release:updated", projectId, undefined, { releaseId, ...data });
+}
+
+/**
+ * A memory writer's delivered output was NOT stored. Carries a reason CODE
+ * (the panel translates it; the server does not know the viewer's locale) and
+ * the session whose output — still readable on its page — was dropped.
+ *
+ * An event rather than a notification: the session row already carries the
+ * failure durably (`success: false` + `error`); this only tells an open
+ * memory panel why the document did not move.
+ */
+export function emitMemoryDiscarded(
+  projectId: string,
+  data: {
+    source: "dreaming" | "distill";
+    reason: MemoryDiscardReason;
+    sessionId: string;
+  }
+) {
+  emit("memory:discarded", projectId, undefined, { ...data });
 }

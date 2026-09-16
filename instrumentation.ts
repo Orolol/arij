@@ -48,6 +48,31 @@ export async function register(): Promise<void> {
     const { ensureDbReady } = await import("@/lib/db");
     ensureDbReady();
 
+    // One-shot trim of raw streams and prompts stored before their write-path
+    // caps; its single VACUUM waits for a moment with no active session.
+    // Scheduled, not awaited: it walks every raw stream and must never hold
+    // up the boot; it logs its own outcome and never throws.
+    const { scheduleRawStreamBackfill } = await import(
+      "@/lib/agent-sessions/raw-stream-backfill"
+    );
+    scheduleRawStreamBackfill();
+
+    // Fill `last_non_empty_text` from logs.json for the rows that predate the
+    // column. It used to run on the first session GET of each project, parsing
+    // up to 200 files synchronously inside that request; here it runs once,
+    // off the boot path. Idempotent (NULL rows only), so a hot reload that
+    // re-runs this is harmless.
+    const { backfillRecentSessionLastNonEmptyText } = await import(
+      "@/lib/agent-sessions/backfill"
+    );
+    setImmediate(() => {
+      try {
+        backfillRecentSessionLastNonEmptyText({ limit: 200 });
+      } catch (error) {
+        console.error("[sessions/backfill] last-text backfill failed at boot", error);
+      }
+    });
+
     const { cancelOrphanedQueuedSessions, failOrphanedRunningSessions } =
       await import("@/lib/agent-sessions/boot-cleanup");
     cancelOrphanedQueuedSessions();

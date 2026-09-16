@@ -17,7 +17,7 @@ describe("spec generation ownership", () => {
     const request = deferred();
     fetchMock.mockReturnValue(request.promise);
     const { result } = renderHook(() => useSpecGeneration("p1"));
-    let completion!: Promise<void>;
+    let completion!: Promise<unknown>;
     act(() => { completion = result.current.generateSpec(); void result.current.generateSpec(); });
     expect(fetchMock).toHaveBeenCalledExactlyOnceWith("/api/projects/p1/generate-spec", { method: "POST" });
     expect(result.current.generating).toBe(true);
@@ -31,7 +31,7 @@ describe("spec generation ownership", () => {
     fetchMock.mockReturnValueOnce(request.promise);
     const { result, rerender } = renderHook(({ projectId }) => useSpecGeneration(projectId), { initialProps: { projectId: "p1" } });
     const oldCallback = result.current.generateSpec;
-    let completion!: Promise<void>;
+    let completion!: Promise<unknown>;
     act(() => { completion = oldCallback(); });
     rerender({ projectId: "p2" });
     rerender({ projectId: "p1" });

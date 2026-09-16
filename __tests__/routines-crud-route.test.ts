@@ -310,6 +310,34 @@ describe("project routines CRUD routes", () => {
     expect(createdCiWatch.data.timeOfDay).toBe("00:00");
   });
 
+  it("rejects a retention prompt budget the run itself would refuse", async () => {
+    // runRetentionRoutine throws on a non-positive-integer maxCappedPrompts;
+    // accepting it here would only move the failure to the next scheduled run.
+    for (const maxCappedPrompts of [0, -3, 1.5, "10"]) {
+      const response = await POST(
+        mockJsonRequest({
+          kind: "retention",
+          timeOfDay: "04:30",
+          config: { maxCappedPrompts },
+        }),
+        projectParams(),
+      );
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toContain("maxCappedPrompts");
+    }
+    expect(db.select().from(routines).all()).toHaveLength(0);
+
+    const accepted = await POST(
+      mockJsonRequest({
+        kind: "retention",
+        timeOfDay: "04:30",
+        config: { maxCappedPrompts: 20 },
+      }),
+      projectParams(),
+    );
+    expect(accepted.status).toBe(201);
+  });
+
   it("scopes mutation ids to the route project", async () => {
     db.insert(routines)
       .values({

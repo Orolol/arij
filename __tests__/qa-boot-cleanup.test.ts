@@ -18,6 +18,11 @@ vi.mock("@/lib/db", async () => {
   return { db: created.db, sqlite: created.sqlite, ensureDbReady: vi.fn() };
 });
 
+// The one-shot history trim is scheduled on a later macrotask; left real, it
+// would touch this suite's database after the test body, possibly closed.
+const backfillMocks = vi.hoisted(() => ({ scheduleRawStreamBackfill: vi.fn() }));
+vi.mock("@/lib/agent-sessions/raw-stream-backfill", () => backfillMocks);
+
 const { db } = await import("@/lib/db");
 const { agentSessions, projects, qaReports } = await import("@/lib/db/schema");
 const { checkStatusLabel, isCheckLive, QA_CHECK_INTERRUPTED_STATUS } =
@@ -231,6 +236,7 @@ describe("instrumentation register()", () => {
 
     const { register } = await import("@/instrumentation");
     await register();
+    expect(backfillMocks.scheduleRawStreamBackfill).toHaveBeenCalledTimes(1);
 
     expect(
       db

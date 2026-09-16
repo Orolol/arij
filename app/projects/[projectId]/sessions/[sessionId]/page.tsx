@@ -6,7 +6,10 @@ import { useTranslations } from "next-intl";
 
 import { useSessionPolling } from "@/components/session-live/useSessionPolling";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
-import { fetchSessionArijActions } from "@/lib/agent-sessions/session-detail";
+import {
+  fetchSessionArijActions,
+  fetchSessionLogs,
+} from "@/lib/agent-sessions/session-detail";
 import type { ArijActionItem } from "@/components/shared/ArijActionsList";
 import { LiveSessionScreen } from "@/components/session-live/LiveSessionScreen";
 import { deriveTypeLabel } from "@/components/session-live/SessionHeaderBar";
@@ -15,9 +18,19 @@ import type { SessionDetail } from "@/components/session-live/types";
 /**
  * Frame 8a — the live session.
  *
- * Metadata and the expensive action scan poll independently, including for
- * finished sessions. The composed prompt is fetched only when opened.
+ * Metadata and the expensive action scan poll independently. The composed
+ * prompt is fetched only when opened, and so is `logs.json`
+ * (`handleExportLogs`): neither rides the polled payload.
+ *
+ * Both polls run only while the session is running or queued, and
+ * `useSessionPolling` queues one last read at the transition. A finished
+ * session left open used to re-read the detail route and the actions scan
+ * every 3 seconds forever. The polls leave the stream previews out
+ * (`?omit=streams`) once the raw pager has a seed: the pagers ignore every
+ * later one — except the read that closes a run and the Refresh button,
+ * which take them again so the Response pane mounts seeded.
  */
+
 export default function SessionDetailPage() {
   const params = useParams();
   const projectId = params.projectId as string;
@@ -33,8 +46,18 @@ function SessionDetailContent({ projectId, sessionId }: { projectId: string; ses
   const [session, setSession] = useState<SessionDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /**
+   * The session as last applied, for the poll to decide whether it still
+   * needs stream previews — a ref, so the poll's identity (and with it the
+   * interval) does not change on every read.
+   */
+  const held = useRef<SessionDetail | null>(null);
+  /** The next read asks for the stream previews even if the raw one is seeded. */
+  const streamsWanted = useRef(false);
   const [distilling, setDistilling] = useState(false);
   const [distillError, setDistillError] = useState<string | null>(null);
+  const [exportingLogs, setExportingLogs] = useState(false);
+  const [exportLogsError, setExportLogsError] = useState<string | null>(null);
   const [stopping, setStopping] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
   const [promptOpen, setPromptOpen] = useState(false);
@@ -60,26 +83,59 @@ function SessionDetailContent({ projectId, sessionId }: { projectId: string; ses
     return () => controller.abort();
   }, []);
   const readFailed = t("page.loadFailed");
+  const notFoundCopy = t("page.notFound");
 
   const readSession = useCallback(async (signal: AbortSignal) => {
+    // Previews only while the raw stream has not seeded anything yet (first
+    // read, a queued session, a run that has not written), or when a read
+    // asked for them explicitly: that is when a pager can still take a seed.
+    const withStreams =
+      streamsWanted.current ||
+      (held.current?.chunkStreams?.raw?.chunks?.length ?? 0) === 0;
+    const url = `/api/projects/${projectId}/sessions/${sessionId}${withStreams ? "" : "?omit=streams"}`;
     let ok = false;
+    let status = 0;
     let body: { data?: SessionDetail; error?: string } | null = null;
     try {
-      const res = await fetch(`/api/projects/${projectId}/sessions/${sessionId}`, { signal });
+      const res = await fetch(url, { signal });
       ok = res.ok;
+      status = res.status;
       body = await res.json();
     } catch {
       // Preserve the last good session and expose a retry when nothing loaded.
     }
     if (signal.aborted) return;
     if (ok && body?.data) {
-      setSession(body.data);
+      if (withStreams) streamsWanted.current = false;
+      // A read without previews keeps the ones already held: the band below
+      // reads its seeds (and whether a result exists) from them.
+      const previous = held.current;
+      const next: SessionDetail =
+        body.data.chunkStreams === undefined && previous
+          ? {
+              ...body.data,
+              chunkStreams: previous.chunkStreams,
+              ...(previous.chunkStreamsUnavailable
+                ? { chunkStreamsUnavailable: true }
+                : {}),
+            }
+          : body.data;
+      held.current = next;
+      setSession(next);
       setLoadError(null);
     } else {
-      setLoadError(typeof body?.error === "string" ? body.error : readFailed);
+      // A 404 is an answer, not a transient failure: it is said in the
+      // catalogue's words, and nothing polls it (the session is not live).
+      setLoadError(
+        status === 404
+          ? notFoundCopy
+          : typeof body?.error === "string"
+            ? body.error
+            : readFailed
+      );
     }
     setLoading(false);
-  }, [projectId, sessionId, readFailed]);
+  }, [projectId, sessionId, readFailed, notFoundCopy]);
 
   const readActions = useCallback(async (signal: AbortSignal) => {
     // The chunk-derived half of the actions list is its own request: finding
@@ -103,11 +159,34 @@ function SessionDetailContent({ projectId, sessionId }: { projectId: string; ses
       // Keep the last scanned actions and the durable detail payload on failure.
     }
   }, [projectId, sessionId]);
-  const refreshSession = useSessionPolling(`${projectId}:${sessionId}`, readSession, true, 3000, { immediate: true });
-  const refreshActions = useSessionPolling(`${projectId}:${sessionId}:actions`, readActions, true, 3000, { immediate: true });
+
+  // The first read, then a poll only while the run can still change. `queued`
+  // counts: a queued session starts without the user doing anything. The
+  // Refresh button covers a finished one.
+  const live = session?.status === "running" || session?.status === "queued";
+
+  // The read that closes a run the page SAW live takes the previews again:
+  // the Response pane mounts now, seeded from it. Declared before the polls
+  // so the flag is set when their transition read goes out. Not on first
+  // paint — a session already finished when the page opened needs only the
+  // one read.
+  const wasLive = useRef(false);
+  useEffect(() => {
+    if (wasLive.current && !live) streamsWanted.current = true;
+    wasLive.current = live;
+  }, [live]);
+
+  const refreshSession = useSessionPolling(`${projectId}:${sessionId}`, readSession, live, 3000, { immediate: true });
+  const refreshActions = useSessionPolling(`${projectId}:${sessionId}:actions`, readActions, live, 3000, { immediate: true });
   const loadSession = useCallback(async () => {
     await Promise.all([refreshSession(), refreshActions()]);
   }, [refreshSession, refreshActions]);
+
+  /** The Refresh button: a full read, previews included. */
+  const handleRefresh = useCallback(async () => {
+    streamsWanted.current = true;
+    await loadSession();
+  }, [loadSession]);
 
   /**
    * The prompt is up to 1.8 MB on the live database and is only ever looked
@@ -206,9 +285,30 @@ function SessionDetailContent({ projectId, sessionId }: { projectId: string; ses
     mutationPending.current = false;
   }
 
-  function handleExportLogs() {
-    if (!session?.logs) return;
-    const blob = new Blob([JSON.stringify(session.logs, null, 2)], {
+  /**
+   * `logs.json` is read here, on the click, with `?include=logs` — never on
+   * the poll. The route serves it under its caps; a file too large or
+   * unreadable comes back as null with a flag, and the reason is said rather
+   * than downloading an empty file.
+   */
+  async function handleExportLogs() {
+    setExportingLogs(true);
+    setExportLogsError(null);
+    // `.catch` rather than try/catch: the compiler reads this page, see
+    // `loadPrompt` above.
+    const read = await fetchSessionLogs(projectId, sessionId).catch(() => null);
+    setExportingLogs(false);
+    if (!read) {
+      setExportLogsError(t("info.exportLogsFailed"));
+      return;
+    }
+    if (read.logs === null) {
+      if (read.logsTruncated) setExportLogsError(t("info.exportLogsTooLarge"));
+      else if (read.logsUnavailable) setExportLogsError(t("info.exportLogsUnreadable"));
+      else setExportLogsError(t("info.exportLogsMissing"));
+      return;
+    }
+    const blob = new Blob([JSON.stringify(read.logs, null, 2)], {
       type: "application/json",
     });
     const url = URL.createObjectURL(blob);
@@ -257,8 +357,10 @@ function SessionDetailContent({ projectId, sessionId }: { projectId: string; ses
       onStop={handleCancel}
       stopping={stopping}
       stopError={stopError}
-      onRefresh={loadSession}
+      onRefresh={handleRefresh}
       onExportLogs={handleExportLogs}
+      exportingLogs={exportingLogs}
+      exportLogsError={exportLogsError}
       onDistill={handleDistill}
       distilling={distilling}
       distillError={distillError}

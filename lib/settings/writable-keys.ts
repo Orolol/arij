@@ -99,7 +99,6 @@ export const WRITABLE_SCOPED_SETTING_KEYS: readonly string[] = [
   "auto_mode_review_concurrency",
   "auto_mode_smart_dispatch",
   "ci_autofix_enabled",
-  "dreaming_after_night_run",
   "full_auto_second_opinion",
   "pipeline_enabled",
   "pipeline_grader_enabled",
@@ -121,8 +120,16 @@ export const SERVER_MANAGED_SETTING_KEYS: readonly string[] = [
   // Bookkeeping written by the dreaming pass itself. A client that can move
   // the cutoff can make Dreaming re-read or skip an entire window.
   "dreaming_last_cutoff",
-  // Written by the memory writer to detect a manual edit made mid-dream.
+  // Who wrote the memory document last — a display record for the memory
+  // panel, stamped by every write path. (A manual edit made mid-dream is
+  // caught by the writers' `expectedPrevious` guard, not by this row.)
   "memory_provenance",
+  // Marks of the one-shot trim of pre-cap history at boot
+  // (lib/agent-sessions/raw-stream-backfill.ts): its completion, and the
+  // single VACUUM it still owes. Clearing the first re-runs a full walk of
+  // every raw stream; that is an operator's call, not a client's.
+  "raw_stream_backfill_trimmed_at",
+  "raw_stream_backfill_vacuum_due_at",
   // Capability credentials with their own guarded route
   // (`PUT /api/settings/webhooks`); `GET /api/settings` masks them.
   "webhook_url",

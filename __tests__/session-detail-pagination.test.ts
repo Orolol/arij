@@ -67,6 +67,8 @@ function get(
   );
 }
 
+const getDetail = get;
+
 function seedChunks(streamType: "raw" | "output" | "response", contents: string[]) {
   for (const content of contents) {
     appendSessionChunk({ sessionId: SESSION, streamType, content });
@@ -127,18 +129,120 @@ describe("prompt is opt-in", () => {
 describe("chunk streams", () => {
   it("embeds a bounded preview of each stream, with a cursor for the rest", async () => {
     seedChunks("raw", Array.from({ length: 50 }, (_, i) => `raw-${i}`));
-    seedChunks("output", ["out-1"]);
+    seedChunks("output", Array.from({ length: 30 }, (_, i) => `out-${i}`));
 
     const json = await (await get()).json();
 
-    // 20 is the preview size; the other 30 raw chunks are behind the cursor.
-    expect(json.data.chunkStreams.raw.chunks).toHaveLength(20);
-    expect(json.data.chunkStreams.raw.hasMore).toBe(true);
-    expect(json.data.chunkStreams.raw.nextAfter).toBeGreaterThan(0);
-    expect(json.data.chunkStreams.output.chunks).toHaveLength(1);
-    expect(json.data.chunkStreams.output.hasMore).toBe(false);
+    // `output` keeps its HEAD preview: 20 chunks, the rest behind `after`.
+    expect(json.data.chunkStreams.output.chunks).toHaveLength(20);
+    expect(json.data.chunkStreams.output.chunks[0].content).toBe("out-0");
+    expect(json.data.chunkStreams.output.hasMore).toBe(true);
     expect(json.data.chunkStreams.response.chunks).toEqual([]);
     expect(json.data.chunkStreamsUnavailable).toBeUndefined();
+  });
+
+  it("seeds the raw stream with its END, not its head", async () => {
+    // A finished 112 MB session used to open on its first 64 KiB, ~108
+    // "Load more" clicks away from the end the LIVE LOG is about.
+    seedChunks("raw", Array.from({ length: 50 }, (_, i) => `raw-${i}`));
+
+    const raw = (await (await get()).json()).data.chunkStreams.raw;
+
+    expect(raw.chunks.map((c: { content: string }) => c.content)).toEqual(
+      Array.from({ length: 20 }, (_, i) => `raw-${30 + i}`)
+    );
+    expect(raw.hasEarlier).toBe(true);
+    expect(raw.firstSequence).toBe(raw.chunks[0].sequence);
+    expect(raw.firstOffset).toBe(0);
+    expect(raw.lastSequence).toBe(raw.chunks[19].sequence);
+    // Nothing follows the end: a live follow resumes from the last sequence.
+    expect(raw.hasMore).toBe(false);
+    expect(raw.nextAfter).toBe(raw.lastSequence);
+    expect(raw.nextOffset).toBe(0);
+  });
+
+  it("follows a live session forward from the tail's cursor", async () => {
+    seedChunks("raw", Array.from({ length: 30 }, (_, i) => `raw-${i}`));
+    const raw = (await (await get()).json()).data.chunkStreams.raw;
+
+    seedChunks("raw", ["fresh-1", "fresh-2"]);
+    const next = await (
+      await get({ stream: "raw", after: String(raw.nextAfter) })
+    ).json();
+
+    expect(next.data.chunks.map((c: { content: string }) => c.content)).toEqual([
+      "fresh-1",
+      "fresh-2",
+    ]);
+  });
+
+  it("pages towards the head on ?stream=raw&before=", async () => {
+    seedChunks("raw", Array.from({ length: 50 }, (_, i) => `raw-${i}`));
+    const raw = (await (await get()).json()).data.chunkStreams.raw;
+
+    const earlier = await (
+      await get({ stream: "raw", before: String(raw.firstSequence), limit: "25" })
+    ).json();
+
+    expect(earlier.data.streamType).toBe("raw");
+    expect(earlier.data.chunks.map((c: { content: string }) => c.content)).toEqual(
+      Array.from({ length: 25 }, (_, i) => `raw-${5 + i}`)
+    );
+    expect(earlier.data.hasEarlier).toBe(true);
+    expect(earlier.data).not.toHaveProperty("logs");
+
+    const head = await (
+      await get({
+        stream: "raw",
+        before: String(earlier.data.firstSequence),
+        beforeOffset: String(earlier.data.firstOffset),
+      })
+    ).json();
+    expect(head.data.chunks.map((c: { content: string }) => c.content)).toEqual(
+      Array.from({ length: 5 }, (_, i) => `raw-${i}`)
+    );
+    expect(head.data.hasEarlier).toBe(false);
+  });
+
+  it("walks a legacy oversized raw row out backwards, exactly once", async () => {
+    const blob = Array.from({ length: 700_000 }, (_, i) =>
+      String.fromCharCode(97 + (i % 26))
+    ).join("");
+    seedLegacyChunks(SESSION, "raw", ["head|", blob, "|tail"]);
+
+    let page = (await (await get()).json()).data.chunkStreams.raw;
+    // The seed is still bounded: the end of the blob, never the blob.
+    expect(Buffer.byteLength(JSON.stringify(page), "utf-8")).toBeLessThan(80 * 1024);
+    const parts: string[] = [page.chunks.map((c: { content: string }) => c.content).join("")];
+    for (let guard = 0; page.hasEarlier && guard < 40; guard++) {
+      page = (
+        await (
+          await get({
+            stream: "raw",
+            before: String(page.firstSequence),
+            beforeOffset: String(page.firstOffset),
+          })
+        ).json()
+      ).data;
+      parts.unshift(page.chunks.map((c: { content: string }) => c.content).join(""));
+    }
+
+    expect(parts.join("")).toBe(`head|${blob}|tail`);
+  });
+
+  it("refuses after and before on the same stream page", async () => {
+    const response = await get({ stream: "raw", after: "1", before: "5" });
+    expect(response.status).toBe(400);
+  });
+
+  it("refuses a before cursor it cannot read instead of paging from the head", async () => {
+    seedChunks("raw", ["a", "b", "c"]);
+    // A garbled cursor used to fall through to the forward branch and answer
+    // with a HEAD page in the wrong shape — no firstSequence, no hasEarlier.
+    for (const before of ["abc", "-1", ""]) {
+      const response = await get({ stream: "raw", before });
+      expect(response.status).toBe(400);
+    }
   });
 
   it("serves one stream on ?stream=, with after/limit", async () => {
@@ -232,11 +336,89 @@ describe("chunk streams", () => {
   });
 });
 
+describe("the poll can leave the stream previews out", () => {
+  it("reads no chunk at all on ?omit=streams, and serves the rest of the row", async () => {
+    seedChunks("raw", ["a", "b"]);
+    seedChunks("output", ["out"]);
+    const chunks = await import("@/lib/agent-sessions/chunks");
+    const page = vi.spyOn(chunks, "listSessionChunkPage");
+    const tail = vi.spyOn(chunks, "listSessionChunkTail");
+
+    const json = await (await get({ omit: "streams" })).json();
+
+    expect(page).not.toHaveBeenCalled();
+    expect(tail).not.toHaveBeenCalled();
+    expect(json.data.chunkStreams).toBeUndefined();
+    expect(json.data.chunkStreamsUnavailable).toBeUndefined();
+    expect(json.data.status).toBe("completed");
+    expect(json.data).toHaveProperty("lastNonEmptyText");
+  });
+
+  it("still previews every stream by default", async () => {
+    seedChunks("raw", ["a"]);
+    const json = await (await get()).json();
+    expect(json.data.chunkStreams.raw.chunks).toHaveLength(1);
+    expect(json.data.chunkStreams.output).toBeDefined();
+    expect(json.data.chunkStreams.response).toBeDefined();
+  });
+});
+
+describe("the last-text backfill is off the request path", () => {
+  it("does not run on a detail GET, a stream page or the actions view", async () => {
+    const backfill = await import("@/lib/agent-sessions/backfill");
+    const run = vi.mocked(backfill.runBackfillRecentSessionLastNonEmptyTextOnce);
+    run.mockClear();
+
+    await get();
+    await get({ stream: "raw", after: "0" });
+    await get({ view: "arij-actions" });
+
+    expect(run).not.toHaveBeenCalled();
+  });
+});
+
+describe("logs.json is opt-in", () => {
+  it("is neither read nor served by the default payload", async () => {
+    // The default payload is what the live page polls every 3 seconds; the
+    // same text is in the `response` stream and in `lastNonEmptyText`.
+    const logsPath = path.join(tempDir, "logs.json");
+    fs.writeFileSync(logsPath, JSON.stringify({ success: true, result: "all done" }));
+    db.update(agentSessions).set({ logsPath }).run();
+    const read = vi.spyOn(fs, "readFileSync");
+
+    const json = await (await get()).json();
+
+    expect(json.data).not.toHaveProperty("logs");
+    expect(json.data).not.toHaveProperty("logsTruncated");
+    expect(json.data).not.toHaveProperty("logsUnavailable");
+    // The row's pointer is still there, so a client knows logs exist.
+    expect(json.data.logsPath).toBe(logsPath);
+    expect(read.mock.calls.some(([file]) => String(file) === logsPath)).toBe(false);
+  });
+
+  it("does not flag an unreadable logs.json it was not asked for", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const logsPath = path.join(tempDir, "logs.json");
+    fs.writeFileSync(logsPath, "{ not json");
+    db.update(agentSessions).set({ logsPath }).run();
+
+    const json = await (await get()).json();
+
+    expect(json.data).not.toHaveProperty("logsUnavailable");
+    expect(warn).not.toHaveBeenCalled();
+  });
+});
+
 describe("logs are bounded", () => {
   function writeLogs(body: unknown): void {
     const logsPath = path.join(tempDir, "logs.json");
     fs.writeFileSync(logsPath, JSON.stringify(body));
     db.update(agentSessions).set({ logsPath }).run();
+  }
+
+  // Everything below asks for the document, as the export button does.
+  function get(searchParams: Record<string, string> = {}) {
+    return getDetail({ include: "logs", ...searchParams });
   }
 
   it("serves a small logs.json untouched", async () => {
@@ -356,6 +538,11 @@ describe("worst-case payload", () => {
     const detail = await (await get()).json();
     const detailBytes = Buffer.byteLength(JSON.stringify(detail), "utf-8");
     expect(detailBytes).toBeLessThan(2 * 1024 * 1024);
+    // Asking for the logs too keeps the byte contract.
+    const withLogs = await (await get({ include: "logs" })).json();
+    expect(
+      Buffer.byteLength(JSON.stringify(withLogs), "utf-8")
+    ).toBeLessThan(2 * 1024 * 1024);
 
     // …and so does a full-size page of the worst stream.
     expect(detail.data.lastNonEmptyText.length).toBeLessThan(5000);
@@ -386,6 +573,9 @@ describe("chunk-read failures are explicit", () => {
     vi.spyOn(chunks, "listSessionChunkPage").mockImplementation(() => {
       throw new Error("chunk table is damaged");
     });
+    vi.spyOn(chunks, "listSessionChunkTail").mockImplementation(() => {
+      throw new Error("chunk table is damaged");
+    });
 
     const json = await (await get()).json();
 
@@ -411,5 +601,23 @@ describe("chunk-read failures are explicit", () => {
     // The cursor comes back unchanged: the client resumes where it was, and
     // does not restart the stream from the beginning.
     expect(json.data.nextAfter).toBe(7);
+  });
+
+  it("flags it on a before page, with the cursor unchanged", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const chunks = await import("@/lib/agent-sessions/chunks");
+    vi.spyOn(chunks, "listSessionChunkTail").mockImplementation(() => {
+      throw new Error("chunk table is damaged");
+    });
+
+    const json = await (
+      await get({ stream: "raw", before: "40", beforeOffset: "12" })
+    ).json();
+
+    expect(json.data.chunkStreamsUnavailable).toBe(true);
+    expect(json.data.chunks).toEqual([]);
+    expect(json.data.firstSequence).toBe(40);
+    expect(json.data.firstOffset).toBe(12);
+    expect(json.data.hasEarlier).toBe(true);
   });
 });

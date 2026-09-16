@@ -52,8 +52,8 @@
     "paneResponse": "Response",
     "tailOn": "tail on",
     "tailOff": "tail off",
-    "logsUnavailable": "This session's logs.json could not be read. The raw stream below is what the process actually wrote.",
-    "logsTruncated": "logs.json was too large to serve in full — the stream below is the same output, paged.",
+    "logsUnavailable": "This session's logs.json could not be read.",
+    "logsTruncated": "logs.json is too large to show here.",
     "rawUnavailable": "This session's raw output could not be read — the record may be damaged. This is not the same as a session that produced no output.",
     "waitingOutput": "Waiting for agent output…",
     "logsEmpty": "No logs available",
@@ -64,7 +64,13 @@
     "truncated": "{count, plural, one {One oversized chunk is shown in part.} other {# oversized chunks are shown in part.}}",
     "truncatedLoadMore": " Load more to continue reading it.",
     "streamUnreadable": "This session's output could not be read.",
-    "loadMoreFailed": "Could not load more output."
+    "loadMoreFailed": "Could not load more output.",
+    "loadEarlier": "Load earlier output",
+    "loadEarlierFailed": "Could not load earlier output.",
+    "truncatedLoadEarlier": " Load earlier output to read the start of it.",
+    "logsOnDemand": "Show logs.json",
+    "logsLoading": "Reading logs.json…",
+    "logsLoadFailed": "Could not read logs.json."
   },
   "files": {
     "label": "Files touched",
@@ -145,13 +151,19 @@
     "distilling": "Distilling...",
     "distillTitle": "Merge this session's learnings into the project memory",
     "exportLogs": "Export Logs",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "exportingLogs": "Exporting…",
+    "exportLogsFailed": "Could not export logs.json.",
+    "exportLogsTooLarge": "logs.json is too large to export here.",
+    "exportLogsUnreadable": "logs.json could not be read, so there is nothing to export.",
+    "exportLogsMissing": "This session has no logs.json to export."
   },
   "page": {
     "loading": "Loading...",
     "loadFailed": "Could not load this session.",
     "retry": "Retry",
-    "agentFallback": "Agent"
+    "agentFallback": "Agent",
+    "notFound": "Session not found."
   },
   "actions": {
     "unavailable": "The raw-stream scan failed — this list is the durable half only."

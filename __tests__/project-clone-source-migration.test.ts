@@ -176,6 +176,18 @@ describe("0028_project_clone_source — applied schema", () => {
       conn.exec("ALTER TABLE agent_sessions DROP COLUMN composite_agent_id");
       conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
       conn.exec(fs.readFileSync(path.join(MIGRATIONS_FOLDER, "0022_notifications_read_cursor.sql"), "utf-8"));
+      // 0062_release_published_at adds five columns to `releases`; a rewind
+      // that lands before it has to take them back out, or the replay
+      // fails on a column that is already there.
+      for (const column of [
+        "published_at",
+        "changelog_session_id",
+        "push_to_github",
+        "finalized_at",
+        "finalize_errors",
+      ]) {
+        conn.exec(`ALTER TABLE releases DROP COLUMN ${column}`);
+      }
       const entry = journal.entries.find((e) => e.tag === MIGRATION_TAG);
       conn
         .prepare('DELETE FROM "__drizzle_migrations" WHERE created_at >= ?')

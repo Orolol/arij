@@ -1,7 +1,9 @@
 /**
  * Sessions list page × switching projects while the list is still loading.
  *
- * The page follows the route's keyset cursor to the end, so "loading" is not
+ * Once asked for the older sessions (a filter, the activity sort, "Load
+ * all sessions" — the default view loads one page since lot 07, #114), the
+ * page follows the route's keyset cursor to the end, so "loading" is not
  * one round trip any more — it is one window per page, held open for as long
  * as the project has sessions. Switching projects re-runs the effect, and
  * without a guard the *previous* project's loop keeps running: it keeps
@@ -35,7 +37,7 @@
  * cancellation), and it stops fetching.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import SessionsPage from "@/app/projects/[projectId]/sessions/page";
 
@@ -206,8 +208,10 @@ describe("SessionsPage — switching projects mid-load", () => {
     });
 
     const view = render(<SessionsPage />);
-    // Project A's first page has painted; its second page is still in flight.
+    // Project A's first page has painted; asking for the older sessions puts
+    // its second page in flight.
     await waitFor(() => expect(visibleSessionIds()).toEqual(["A-page1"]));
+    fireEvent.click(screen.getByTestId("sessions-show-older"));
 
     currentProjectId = "proj-b";
     view.rerender(<SessionsPage />);
@@ -250,6 +254,7 @@ describe("SessionsPage — switching projects mid-load", () => {
 
     const view = render(<SessionsPage />);
     await waitFor(() => expect(visibleSessionIds()).toEqual(["A-page1"]));
+    fireEvent.click(screen.getByTestId("sessions-show-older"));
 
     currentProjectId = "proj-b";
     view.rerender(<SessionsPage />);
@@ -284,6 +289,7 @@ describe("SessionsPage — switching projects mid-load", () => {
 
     const view = render(<SessionsPage />);
     await waitFor(() => expect(visibleSessionIds()).toEqual(["A-page1"]));
+    fireEvent.click(screen.getByTestId("sessions-show-older"));
 
     currentProjectId = "proj-b";
     view.rerender(<SessionsPage />);

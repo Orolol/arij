@@ -5,7 +5,13 @@
   },
   "log": {
     "metaTailing": "{provider} · session #{id} · suit le flux",
-    "paneResponse": "Réponse"
+    "paneResponse": "Réponse",
+    "loadEarlier": "Charger la sortie précédente",
+    "loadEarlierFailed": "Impossible de charger la sortie précédente.",
+    "truncatedLoadEarlier": " Chargez la sortie précédente pour en lire le début.",
+    "logsOnDemand": "Afficher logs.json",
+    "logsLoading": "Lecture de logs.json…",
+    "logsLoadFailed": "Impossible de lire logs.json."
   },
   "files": {
     "inProgress": "en cours"
@@ -34,5 +40,12 @@
   },
   "actions": {
     "unavailable": "L'analyse du flux brut a échoué — cette liste ne contient que la moitié durable."
+  },
+  "info": {
+    "exportingLogs": "Export…",
+    "exportLogsFailed": "Impossible d’exporter logs.json.",
+    "exportLogsTooLarge": "logs.json est trop volumineux pour être exporté ici.",
+    "exportLogsUnreadable": "logs.json est illisible : il n’y a rien à exporter.",
+    "exportLogsMissing": "Cette session n’a pas de logs.json à exporter."
   }
 }

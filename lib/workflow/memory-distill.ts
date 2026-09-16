@@ -29,22 +29,20 @@
 
 import { and, eq } from "drizzle-orm";
 import { db } from "@/lib/db";
+import { agentSessions, epics, projects, userStories } from "@/lib/db/schema";
 import {
-  agentSessions,
-  epics,
-  projects,
-  settings,
-  userStories,
-} from "@/lib/db/schema";
-import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
+  dispatchBackgroundSession,
+  type BackgroundSessionRun,
+  type BackgroundSessionVerdict,
+} from "@/lib/agent-sessions/dispatch-background-session";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
-import { extractLastNonEmptyTextFromFile } from "@/lib/agent-sessions/last-text";
 import { buildMemoryDistillPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
 import {
   getProjectMemoryContent,
   isProjectMemoryChangedError,
+  sanitizeMemoryDocument,
   saveProjectMemoryGuarded,
 } from "@/lib/documents/memory";
 import {
@@ -53,10 +51,23 @@ import {
 } from "@/lib/documents/memory-constants";
 import { isNightRunId } from "@/lib/night/constants";
 import { recordMemoryWriteProvenance } from "@/lib/documents/memory-provenance";
-import { emitSessionStarted, emitProjectSessionStarted } from "@/lib/events/emit";
+import {
+  emitMemoryDiscarded,
+  emitProjectSessionStarted,
+  emitSessionStarted,
+} from "@/lib/events/emit";
 import { eventBus } from "@/lib/events/bus";
-import { MEMORY_WRITER_AGENT_TYPES } from "./dreaming-constants";
-import { isDreamingAfterNightRunEnabled } from "./dreaming";
+import {
+  MEMORY_WRITER_AGENT_TYPES,
+  type MemoryDiscardReason,
+} from "./dreaming-constants";
+// The settings module, not the dreaming facade: the stand-down only needs the
+// switch's answer, not the dream's dispatch path.
+import {
+  isDreamingAfterNightRunEnabled,
+  readSettingValue,
+} from "./dreaming-settings";
+import { resolveFinalText } from "./session-final-text";
 import {
   MEMORY_WRITER_BUSY_MESSAGE,
   hasPendingMemoryWriter,
@@ -84,16 +95,9 @@ export const AUTO_DISTILL_SOURCE_AGENT_TYPES: readonly string[] = [
 
 /** Reads the 'memory_auto_distill' setting (DEFAULT OFF when absent). */
 export function isMemoryAutoDistillEnabled(): boolean {
-  try {
-    const row = db
-      .select({ value: settings.value })
-      .from(settings)
-      .where(eq(settings.key, MEMORY_AUTO_DISTILL_SETTING_KEY))
-      .get();
-    return row ? parseMemoryAutoDistillSetting(row.value) : false;
-  } catch {
-    return false;
-  }
+  return parseMemoryAutoDistillSetting(
+    readSettingValue(MEMORY_AUTO_DISTILL_SETTING_KEY)
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -295,7 +299,7 @@ export function nightRunDreamWillFollow(
   session: AutoDistillCandidateSession | null
 ): boolean {
   if (!session?.projectId || !isNightRunId(session.batchRunId)) return false;
-  return isDreamingAfterNightRunEnabled(session.projectId);
+  return isDreamingAfterNightRunEnabled();
 }
 
 /**
@@ -376,8 +380,6 @@ export interface DispatchMemoryDistillInput {
   projectId: string;
   /** Session whose learnings should be distilled (context source). */
   sourceSessionId?: string | null;
-  /** Optional explicit named agent (manual dispatch). */
-  namedAgentId?: string | null;
 }
 
 export interface DispatchMemoryDistillResult {
@@ -482,19 +484,19 @@ function loadSourceSessionContext(
         .get()?.title ?? null;
   }
 
-  // Last textual output — same machinery the rest of the app uses:
-  // the streamed `lastNonEmptyText` column first, then the logs file.
-  let resultSummary: string | null = session.lastNonEmptyText ?? null;
-  if (!resultSummary) {
-    try {
-      resultSummary = extractLastNonEmptyTextFromFile(session.logsPath);
-    } catch {
-      resultSummary = null;
-    }
-  }
-  if (resultSummary && resultSummary.length > MEMORY_DISTILL_SUMMARY_MAX_CHARS) {
-    resultSummary = resultSummary.slice(0, MEMORY_DISTILL_SUMMARY_MAX_CHARS);
-  }
+  // The session's final response, resolved exactly as the dream collector
+  // resolves it: the persisted response/output stream first, the one-line
+  // `last_non_empty_text` column only as a last resort. Reading that column
+  // first handed the distill ONE line of a whole report. A tail, not a head,
+  // because a report's conclusion is its end.
+  const resultSummary = resolveFinalText(
+    {
+      id: session.id,
+      logsPath: session.logsPath,
+      lastNonEmptyText: session.lastNonEmptyText,
+    },
+    MEMORY_DISTILL_SUMMARY_MAX_CHARS
+  );
 
   return {
     epicId: session.epicId ?? null,
@@ -507,17 +509,22 @@ function loadSourceSessionContext(
 }
 
 /**
- * Strips an accidental full-document code fence from the agent's output
- * (the prompt forbids fences, but a cheap unwrap beats a corrupted doc).
+ * The English sentence a distill's session row carries in its `error` column
+ * when its output was not stored (the session page shows it). The memory
+ * panel gets the reason CODE on `memory:discarded` and uses its own copy.
  */
-export function sanitizeDistilledMemory(output: string): string {
-  const trimmed = output.trim();
-  const fenceMatch = trimmed.match(/^```[a-zA-Z]*\n([\s\S]*)\n```$/);
-  if (fenceMatch) {
-    return fenceMatch[1].trim();
-  }
-  return trimmed;
-}
+const DISTILL_DISCARD_ERRORS: Record<
+  // A distill imposes no section structure, so it has no structure refusal.
+  Exclude<MemoryDiscardReason, "invalid_structure">,
+  string
+> = {
+  no_output:
+    "The distill finished without returning a memory document — the memory was left unchanged.",
+  memory_changed:
+    "The memory was edited while the distill ran — the edit was kept and the distill's output discarded.",
+  save_failed:
+    "The distilled memory could not be saved — the memory was left unchanged.",
+};
 
 /**
  * Creates a queued 'memory_distill' session and submits its launch closure to
@@ -559,15 +566,18 @@ export async function dispatchMemoryDistillSession(
 
   const currentMemory = getProjectMemoryContent(input.projectId);
   const systemPrompt = await resolveAgentPrompt("memory_distill", input.projectId);
+  // No per-call override: the distill agent is chosen in Agent Config, the
+  // one surface every background writer reads its agent from.
   const resolvedAgent = resolveAgentByNamedId(
     "memory_distill",
     input.projectId,
-    input.namedAgentId ?? null
+    null
   );
 
   const prompt = buildMemoryDistillPrompt(
-    // Explicit `memory` stops the builder-level injection from re-adding the
-    // doc this prompt already frames as "Current Project Memory".
+    // Defensive `memory: null`: this builder frames the current memory itself
+    // and does not inject the standard section today — the null keeps a future
+    // `withProjectMemory` wrapping from quietly adding the document twice.
     { ...project, memory: null },
     currentMemory,
     {
@@ -587,6 +597,59 @@ export async function dispatchMemoryDistillSession(
   if (hasPendingMemoryWriter(input.projectId)) {
     throw new Error(MEMORY_WRITER_BUSY_MESSAGE);
   }
+
+  // Set by `evaluate` when a delivered distill was NOT stored; read by
+  // `onTerminal`, which always runs after it.
+  let discard: MemoryDiscardReason | null = null;
+  let stored = false;
+
+  /**
+   * The memory write, done BEFORE the session row is finalised so the row
+   * tells the truth: a distill whose output was dropped (a human edit landed
+   * mid-run, or the save threw) must not read as a successful run over an
+   * unchanged memory. Synchronous, so the whole decision fits in the hook.
+   */
+  const evaluate = ({
+    sessionId: sid,
+    result,
+    outcome,
+  }: BackgroundSessionRun): BackgroundSessionVerdict => {
+    // Silent runs, asked questions and failures leave the memory doc
+    // untouched and keep the provider's own verdict.
+    if (!result?.success || outcome !== "answered") {
+      return { success: !!result?.success, error: result?.error ?? null };
+    }
+
+    const output = sanitizeMemoryDocument(resolveSessionOutput(result, sid, ""));
+    if (!output) {
+      discard = "no_output";
+      return { success: false, error: DISTILL_DISCARD_ERRORS.no_output };
+    }
+
+    try {
+      // `expectedPrevious` is the memory this distill actually REASONED FROM,
+      // captured at prompt time above. A plan session runs long enough for
+      // someone to save an edit in the Docs tab meanwhile; writing blindly
+      // would throw that edit away in favour of text derived from the version
+      // before it. The human edit is the newer intent and wins — a distill can
+      // just be run again. (No snapshot: the single archive row is the undo
+      // for the last DREAM, and a distill must not spend it.)
+      saveProjectMemoryGuarded(input.projectId, output, {
+        expectedPrevious: currentMemory,
+      });
+    } catch (error) {
+      if (isProjectMemoryChangedError(error)) {
+        discard = "memory_changed";
+        return { success: false, error: DISTILL_DISCARD_ERRORS.memory_changed };
+      }
+      console.error("[memory-distill] Failed to save distilled memory", error);
+      discard = "save_failed";
+      return { success: false, error: DISTILL_DISCARD_ERRORS.save_failed };
+    }
+
+    stored = true;
+    return { success: true, error: null };
+  };
 
   // Deliberately no epicId on the distill session row: epic-scoped
   // concurrency guards must not treat a background distill as "an agent is
@@ -620,11 +683,13 @@ export async function dispatchMemoryDistillSession(
         // Non-critical event emission
       }
     },
-    onTerminal: ({ sessionId: sid, result, outcome, completedAt }) => {
+    evaluate,
+    onTerminal: ({ sessionId: sid, success, outcome, completedAt }) => {
       try {
         eventBus.emit({
+          // The row's verdict: a discarded distill is a failed distill.
           type:
-            result?.success && outcome === "answered"
+            success && outcome === "answered"
               ? "session:completed"
               : "session:failed",
           projectId: input.projectId,
@@ -634,42 +699,20 @@ export async function dispatchMemoryDistillSession(
       } catch {
         // Non-critical event emission
       }
-      // Only a delivered answer replaces the memory doc — silent runs, asked
-      // questions, and failures leave it untouched.
-      if (!result?.success || outcome !== "answered") {
-        return;
-      }
 
-      const output = sanitizeDistilledMemory(
-        resolveSessionOutput(result, sid, "")
-      );
-      if (!output) {
-        return;
-      }
-
-      try {
-        // `expectedPrevious` is the memory this distill actually REASONED FROM,
-        // captured at prompt time above. A plan session runs long enough for
-        // someone to save an edit in the Docs tab meanwhile; writing blindly
-        // would throw that edit away in favour of text derived from the version
-        // before it. The human edit is the newer intent and wins — a distill can
-        // just be run again. (No snapshot: the single archive row is the undo
-        // for the last DREAM, and a distill must not spend it.)
-        saveProjectMemoryGuarded(input.projectId, output, {
-          expectedPrevious: currentMemory,
-        });
-      } catch (error) {
-        if (isProjectMemoryChangedError(error)) {
-          console.info(
-            "[memory-distill] discarded: the memory was edited while the" +
-              ` distill ran (its output is still readable on session ${sid})`
-          );
-          return;
+      if (discard) {
+        try {
+          emitMemoryDiscarded(input.projectId, {
+            source: "distill",
+            reason: discard,
+            sessionId: sid,
+          });
+        } catch {
+          // Non-critical: the session row already carries the failure.
         }
-        console.error(
-          "[memory-distill] Failed to save distilled memory",
-          error
-        );
+        return;
+      }
+      if (!stored) {
         return;
       }
 

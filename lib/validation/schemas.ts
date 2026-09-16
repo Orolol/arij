@@ -315,6 +315,25 @@ export const createReleaseSchema = z.object({
   namedAgentId: z.string().nullish(),
 });
 
+/**
+ * PATCH /api/projects/:id/releases/:releaseId — the two fields a release can
+ * still change after creation. `title: null` (or blank) clears the title.
+ */
+export const updateReleaseSchema = z
+  .object({
+    title: z.string().max(200, "title is too long").nullish(),
+    changelog: z.string().max(100_000, "changelog is too long").optional(),
+    // Optimistic guards: the value the editor was seeded with. The row can
+    // change under an open editor (the changelog agent delivers, another tab
+    // saves); a mismatch is a 409, never a silent overwrite.
+    expectedTitle: z.string().nullish(),
+    expectedChangelog: z.string().nullish(),
+  })
+  .refine((body) => body.title !== undefined || body.changelog !== undefined, {
+    message: "Nothing to update: send title and/or changelog",
+    path: ["title"],
+  });
+
 // --- Inbox schemas ---
 
 export const markInboxReadSchema = z.object({

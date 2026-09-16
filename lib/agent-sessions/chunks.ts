@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
-import { and, asc, eq, gt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, lt, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { createId } from "@/lib/utils/nanoid";
 import { sqlite } from "@/lib/db";
@@ -13,9 +13,14 @@ import {
 import { extractLastNonEmptyText } from "@/lib/agent-sessions/last-text";
 import {
   chunkElisionMarker,
+  rawStreamTrimMarker,
   SESSION_CHUNK_MAX_STORED_BYTES,
   SESSION_CHUNK_STORED_HEAD_BYTES,
   SESSION_CHUNK_STORED_TAIL_BYTES,
+  SESSION_RAW_STREAM_KEPT_HEAD_CHUNKS,
+  SESSION_RAW_STREAM_MAX_BYTES,
+  SESSION_RAW_STREAM_TRIM_CHUNK_KEY,
+  SESSION_RAW_STREAM_TRIM_TO_RATIO,
 } from "@/lib/agent-sessions/chunk-cap";
 import { capTextHeadTail } from "@/lib/agent-sessions/head-tail-cap";
 // Type-only in the other direction, so this is not a runtime cycle.
@@ -157,6 +162,24 @@ export function truncateUtf8(
 }
 
 /**
+ * The mirror of {@link truncateUtf8}: keep the END of `text` within
+ * `maxBytes` UTF-8 bytes, again without splitting a character. What a tail
+ * reader wants from an oversized chunk — the most recent output, not its
+ * first lines.
+ */
+export function truncateUtf8Tail(
+  text: string,
+  maxBytes: number
+): { text: string; truncated: boolean } {
+  const buffer = Buffer.from(text, "utf8");
+  if (buffer.length <= maxBytes) return { text, truncated: false };
+  // Step forward off continuation bytes so the slice starts on a lead byte.
+  let start = buffer.length - maxBytes;
+  while (start < buffer.length && (buffer[start] & 0xc0) === 0x80) start++;
+  return { text: buffer.subarray(start).toString("utf8"), truncated: true };
+}
+
+/**
  * Cut `content` down to {@link SESSION_CHUNK_MAX_STORED_BYTES}, keeping a head
  * and a tail with an explicit marker between them.
  *
@@ -242,12 +265,119 @@ export interface AppendSessionChunkResult {
   chunk: SessionChunk;
 }
 
+export interface SessionChunkTailOptions {
+  /** Maximum number of chunks in the tail. */
+  limit?: number;
+  /** Byte budget for the tail's total content. */
+  maxBytes?: number;
+  /**
+   * Byte cap on each chunk's content. An oversized chunk is served as its
+   * END; the cursor then points inside it (see `firstOffset`). Clamped to
+   * `maxBytes`, like the forward page.
+   */
+  maxChunkBytes?: number;
+  /**
+   * Exclusive upper bound on `sequence`: the page ends just before it. Omit
+   * or null for the end of the stream. Pass the previous page's
+   * `firstSequence` to walk towards the head.
+   */
+  before?: number | null;
+  /**
+   * Characters at the HEAD of the chunk at `before` still undelivered — the
+   * previous page's `firstOffset`. Non-zero only when that page served just
+   * the end of an oversized chunk; the page then starts with the rest of it.
+   */
+  beforeOffset?: number | null;
+}
+
+export interface SessionChunkTail {
+  streamType: AgentSessionStreamType;
+  /** The most recent chunks (before the cursor), in ascending sequence order. */
+  chunks: BoundedSessionChunk[];
+  /** Sequence of the first chunk served, or null when the page is empty. */
+  firstSequence: number | null;
+  /**
+   * Character offset, within the chunk at `firstSequence`, where the served
+   * slice starts — 0 when that chunk went out whole from its head. Echo it
+   * back as `beforeOffset` with `before: firstSequence`.
+   */
+  firstOffset: number;
+  /** Sequence of the last chunk served — the `after` cursor for a live follow. */
+  lastSequence: number | null;
+  /** True when anything precedes the page: the head of its first chunk, or earlier rows. */
+  hasEarlier: boolean;
+}
+
+/** Options of the write-path cap on a session's raw stream. */
+export interface SessionRawStreamCapOptions {
+  maxBytes?: number;
+  keptHeadChunks?: number;
+  trimToRatio?: number;
+}
+
+/** One batch of the walk that brings historical raw streams under the cap. */
+export interface RawStreamsOverCapOptions {
+  /** Resume strictly after this session id (the previous batch's `lastSessionId`). */
+  afterSessionId?: string | null;
+  /** Sessions examined by this call; omit to walk every remaining one. */
+  maxSessions?: number;
+  /**
+   * Return right after this many sessions were trimmed. A trim deletes a
+   * stream's bulk under the write lock, so a caller sharing the connection
+   * with live requests asks for 1 and yields between calls.
+   */
+  maxTrimmedSessions?: number;
+}
+
+export interface RawStreamsOverCapResult {
+  /** Sessions whose raw stream was weighed. */
+  scannedSessions: number;
+  /** Sessions that were over the cap and got trimmed. */
+  trimmedSessions: number;
+  /** Rows deleted by this call (the marker rows it wrote are not subtracted). */
+  droppedChunks: number;
+  /** Characters of content those rows held — the unit `length()` counts. */
+  droppedBytes: number;
+  /**
+   * 1 when the database refused the write lock (busy/locked): the walk stops
+   * there rather than paying one busy wait per remaining session.
+   */
+  lockedSessions: number;
+  /**
+   * Last session id fully handled — the next call's `afterSessionId`. A
+   * refused session is not counted as handled, so resuming retries it.
+   */
+  lastSessionId: string | null;
+  /** True when no session with a raw stream sorts after `lastSessionId`. */
+  done: boolean;
+}
+
 export interface SessionChunkStore {
   appendChunk: (input: AppendSessionChunkInput) => AppendSessionChunkResult;
   listChunks: (
     sessionId: string,
     streamType: AgentSessionStreamType
   ) => SessionChunk[];
+  /**
+   * The END of a stream: the most recent chunks under a row and byte budget,
+   * returned in ascending order. What the LIVE LOG of a finished session and
+   * a live follow's seed want — `listChunkPage` only reads from the head.
+   */
+  listChunkTail: (
+    sessionId: string,
+    streamType: AgentSessionStreamType,
+    options?: SessionChunkTailOptions
+  ) => SessionChunkTail;
+  /**
+   * The last `maxChars` characters of a stream as one string, or null when
+   * the stream is empty. Reads chunks from the end and stops as soon as the
+   * budget is covered, so a 100 MB stream costs a few rows, not a full scan.
+   */
+  readTail: (
+    sessionId: string,
+    streamType: AgentSessionStreamType,
+    maxChars: number
+  ) => string | null;
   /**
    * Bounded variant of `listChunks`: one keyset page of a single stream,
    * ordered by sequence, capped by row count AND by bytes. Added alongside
@@ -266,6 +396,17 @@ export interface SessionChunkStore {
    * sessions monitor to derive "last output" freshness.
    */
   lastChunkAt: (sessionId: string) => string | null;
+  /**
+   * Apply the write-path raw cap to streams written before it existed. The
+   * cap only fires on an append, so a session that stopped writing before
+   * the cap shipped keeps every byte it ever stored; this walks sessions in
+   * id order and runs the same trim on any whose raw stream is over the cap.
+   * One short IMMEDIATE transaction per session; a session the database
+   * refuses (busy/locked) is counted and skipped, never retried in a loop.
+   * Idempotent: a trimmed stream sits below the cap, so a second walk trims
+   * nothing.
+   */
+  trimRawStreamsOverCap: (options?: RawStreamsOverCapOptions) => RawStreamsOverCapResult;
 }
 
 type ChunkRow = {
@@ -290,9 +431,27 @@ function toSessionChunk(row: ChunkRow): SessionChunk {
 }
 
 export function createSessionChunkStore(
-  database: Database.Database
+  database: Database.Database,
+  rawCap: SessionRawStreamCapOptions = {}
 ): SessionChunkStore {
   const db = drizzle(database, { schema });
+
+  const rawMaxBytes = Math.max(1, rawCap.maxBytes ?? SESSION_RAW_STREAM_MAX_BYTES);
+  const rawKeptHeadChunks = Math.max(
+    0,
+    rawCap.keptHeadChunks ?? SESSION_RAW_STREAM_KEPT_HEAD_CHUNKS
+  );
+  const rawTrimTarget = Math.floor(
+    rawMaxBytes * (rawCap.trimToRatio ?? SESSION_RAW_STREAM_TRIM_TO_RATIO)
+  );
+
+  /**
+   * Raw bytes stored per session, process-local. Seeded from SQLite the first
+   * time a session's raw stream is written to by this process, then kept in
+   * step by the append and trim paths below, so the cap costs one `sum()` per
+   * session lifetime rather than one per chunk.
+   */
+  const rawBytesBySession = new Map<string, number>();
 
   // Built here rather than at module scope so that importing this module
   // stays free of any schema/driver evaluation.
@@ -428,6 +587,484 @@ export function createSessionChunkStore(
     .from(agentSessionChunks)
     .where(eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")))
     .prepare();
+
+  // The tail page: rows before a sequence, newest first, each cut at the
+  // source to its LAST `maxChunkChars` characters so a legacy 8 MB row never
+  // becomes an 8 MB JS string. `length()` still reports the stored size.
+  const tailPageChunksStmt = db
+    .select({
+      ...chunkColumns,
+      content: sql<string>`substr(${agentSessionChunks.content}, max(1, length(${agentSessionChunks.content}) - ${sql.placeholder("maxChunkChars")} + 1))`,
+      contentLength: sql<number>`length(${agentSessionChunks.content})`,
+    })
+    .from(agentSessionChunks)
+    .where(
+      and(
+        eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")),
+        eq(agentSessionChunks.streamType, sql.placeholder("streamType")),
+        lt(agentSessionChunks.sequence, sql.placeholder("before"))
+      )
+    )
+    .orderBy(desc(agentSessionChunks.sequence))
+    .limit(sql.placeholder("limit"))
+    .prepare();
+
+  // The head of a chunk a previous tail page served only the end of: the
+  // characters up to `end`, the last `maxChunkChars` of them.
+  const chunkHeadRemainderStmt = db
+    .select({
+      ...chunkColumns,
+      content: sql<string>`substr(${agentSessionChunks.content}, max(1, ${sql.placeholder("end")} - ${sql.placeholder("maxChunkChars")} + 1), min(${sql.placeholder("end")}, ${sql.placeholder("maxChunkChars")}))`,
+      contentLength: sql<number>`length(${agentSessionChunks.content})`,
+    })
+    .from(agentSessionChunks)
+    .where(
+      and(
+        eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")),
+        eq(agentSessionChunks.streamType, sql.placeholder("streamType")),
+        eq(agentSessionChunks.sequence, sql.placeholder("sequence"))
+      )
+    )
+    .limit(1)
+    .prepare();
+
+  // Existence probe for "anything before this sequence" — no content read.
+  const hasEarlierChunksStmt = db
+    .select({ sequence: agentSessionChunks.sequence })
+    .from(agentSessionChunks)
+    .where(
+      and(
+        eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")),
+        eq(agentSessionChunks.streamType, sql.placeholder("streamType")),
+        lt(agentSessionChunks.sequence, sql.placeholder("before"))
+      )
+    )
+    .limit(1)
+    .prepare();
+
+  // Descending reads: the tail of a stream. `length()` rides along so the
+  // byte-budgeted callers can stop without measuring the content twice.
+  const tailChunksStmt = db
+    .select({
+      ...chunkColumns,
+      contentLength: sql<number>`length(${agentSessionChunks.content})`,
+    })
+    .from(agentSessionChunks)
+    .where(
+      and(
+        eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")),
+        eq(agentSessionChunks.streamType, sql.placeholder("streamType")),
+        lt(agentSessionChunks.sequence, sql.placeholder("before"))
+      )
+    )
+    .orderBy(desc(agentSessionChunks.sequence))
+    .limit(sql.placeholder("limit"))
+    .prepare();
+
+  // The raw-stream cap: what the stream weighs, which rows are trimmable
+  // (everything after the kept head, minus the marker), and the marker row.
+  const rawBytesStmt = db
+    .select({
+      bytes: sql<number>`coalesce(sum(length(${agentSessionChunks.content})), 0)`,
+    })
+    .from(agentSessionChunks)
+    .where(
+      and(
+        eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")),
+        eq(agentSessionChunks.streamType, sql`'raw'`)
+      )
+    )
+    .prepare();
+
+  const rawHeadBoundaryStmt = db
+    .select({ sequence: agentSessionChunks.sequence })
+    .from(agentSessionChunks)
+    .where(
+      and(
+        eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")),
+        eq(agentSessionChunks.streamType, sql`'raw'`)
+      )
+    )
+    .orderBy(asc(agentSessionChunks.sequence))
+    .limit(sql.placeholder("limit"))
+    .prepare();
+
+  const rawTrimCandidatesStmt = db
+    .select({
+      id: agentSessionChunks.id,
+      sequence: agentSessionChunks.sequence,
+      chunkKey: agentSessionChunks.chunkKey,
+      contentLength: sql<number>`length(${agentSessionChunks.content})`,
+    })
+    .from(agentSessionChunks)
+    .where(
+      and(
+        eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")),
+        eq(agentSessionChunks.streamType, sql`'raw'`),
+        gt(agentSessionChunks.sequence, sql.placeholder("afterSequence"))
+      )
+    )
+    .orderBy(asc(agentSessionChunks.sequence))
+    .limit(sql.placeholder("limit"))
+    .prepare();
+
+  const deleteChunkStmt = db
+    .delete(agentSessionChunks)
+    .where(eq(agentSessionChunks.id, sql.placeholder("id")))
+    .prepare();
+
+  const rawTrimMarkerStmt = db
+    .select({
+      id: agentSessionChunks.id,
+      sequence: agentSessionChunks.sequence,
+      content: agentSessionChunks.content,
+    })
+    .from(agentSessionChunks)
+    .where(
+      and(
+        eq(agentSessionChunks.sessionId, sql.placeholder("sessionId")),
+        eq(agentSessionChunks.streamType, sql`'raw'`),
+        eq(agentSessionChunks.chunkKey, sql`${SESSION_RAW_STREAM_TRIM_CHUNK_KEY}`)
+      )
+    )
+    .limit(1)
+    .prepare();
+
+  const updateChunkContentStmt = db
+    .update(agentSessionChunks)
+    .set({ content: sql`${sql.placeholder("content")}` })
+    .where(eq(agentSessionChunks.id, sql.placeholder("id")))
+    .prepare();
+
+  // The backfill walk: sessions that hold a raw stream, in id order. Rides
+  // the (session_id, stream_type, sequence) index, so listing them costs an
+  // index scan rather than a read of the content.
+  const rawSessionIdsStmt = database.prepare<[string, number], { sessionId: string }>(
+    `SELECT DISTINCT session_id AS sessionId FROM agent_session_chunks
+     WHERE session_id > ? AND stream_type = 'raw'
+     ORDER BY session_id LIMIT ?`
+  );
+
+  // Upper bound of a stream's `length()`, read from the record headers only:
+  // `octet_length()` of a column never loads the value's overflow pages, and
+  // a stored character is at least one byte, so a stream whose bytes fit the
+  // cap is under it in characters too. Measured on the live database: 1.6 ms
+  // for a 112 MB stream against 49 ms for `sum(length(content))`.
+  const rawOctetsStmt = database.prepare<[string], { octets: number }>(
+    `SELECT coalesce(sum(octet_length(content)), 0) AS octets
+       FROM agent_session_chunks
+      WHERE session_id = ? AND stream_type = 'raw'`
+  );
+
+  function rawBytesOf(sessionId: string): number {
+    const known = rawBytesBySession.get(sessionId);
+    if (known !== undefined) return known;
+    const seeded = rawBytesStmt.get({ sessionId })?.bytes ?? 0;
+    rawBytesBySession.set(sessionId, seeded);
+    return seeded;
+  }
+
+  /**
+   * Bring a session's raw stream back under the cap: drop its oldest rows
+   * after the kept head, oldest first, until the stream is at the trim
+   * target, and keep one marker row — at the sequence of the first row ever
+   * dropped, so it sits right after the head — saying how much went.
+   * Returns what THIS call dropped (the marker keeps the running total).
+   */
+  function trimRawStream(sessionId: string): {
+    droppedChunks: number;
+    droppedBytes: number;
+  } {
+    const boundaryRows = rawHeadBoundaryStmt.all({
+      sessionId,
+      limit: rawKeptHeadChunks,
+    });
+    const headMaxSequence =
+      boundaryRows.length > 0
+        ? boundaryRows[boundaryRows.length - 1].sequence
+        : 0;
+
+    const marker = rawTrimMarkerStmt.get({ sessionId });
+    let droppedBytes = 0;
+    let droppedChunks = 0;
+    if (marker) {
+      const match = /\[… ([\d,]+) bytes in ([\d,]+) chunks dropped/.exec(marker.content);
+      if (match) {
+        droppedBytes = Number(match[1].replace(/,/g, "")) || 0;
+        droppedChunks = Number(match[2].replace(/,/g, "")) || 0;
+      }
+    }
+
+    let bytes = rawBytesOf(sessionId);
+    let markerSequence = marker?.sequence ?? null;
+    let cursor = headMaxSequence;
+    const previouslyDroppedBytes = droppedBytes;
+    const previouslyDroppedChunks = droppedChunks;
+    while (bytes > rawTrimTarget) {
+      const candidates = rawTrimCandidatesStmt.all({
+        sessionId,
+        afterSequence: cursor,
+        limit: 64,
+      });
+      if (candidates.length === 0) break;
+      let progressed = false;
+      for (const row of candidates) {
+        cursor = row.sequence;
+        if (row.chunkKey === SESSION_RAW_STREAM_TRIM_CHUNK_KEY) continue;
+        deleteChunkStmt.run({ id: row.id });
+        bytes -= row.contentLength;
+        droppedBytes += row.contentLength;
+        droppedChunks += 1;
+        progressed = true;
+        if (markerSequence === null) markerSequence = row.sequence;
+        if (bytes <= rawTrimTarget) break;
+      }
+      if (!progressed) break;
+    }
+
+    const dropped = {
+      droppedChunks: droppedChunks - previouslyDroppedChunks,
+      droppedBytes: droppedBytes - previouslyDroppedBytes,
+    };
+    if (dropped.droppedChunks === 0 || markerSequence === null) {
+      rawBytesBySession.set(sessionId, bytes);
+      return dropped;
+    }
+
+    const content = rawStreamTrimMarker(droppedBytes, droppedChunks);
+    if (marker) {
+      bytes += content.length - marker.content.length;
+      updateChunkContentStmt.run({ id: marker.id, content });
+    } else {
+      // The freed sequence of the first dropped row: unique per session by
+      // construction, and lower than every surviving row after the head.
+      insertChunkStmt.run({
+        id: createId(),
+        sessionId,
+        streamType: "raw",
+        sequence: markerSequence,
+        chunkKey: SESSION_RAW_STREAM_TRIM_CHUNK_KEY,
+        content,
+        createdAt: new Date().toISOString(),
+      });
+      bytes += content.length;
+    }
+    rawBytesBySession.set(sessionId, bytes);
+    return dropped;
+  }
+
+  function trimRawStreamsOverCap(
+    options: RawStreamsOverCapOptions = {}
+  ): RawStreamsOverCapResult {
+    const maxSessions = Math.max(1, options.maxSessions ?? Number.MAX_SAFE_INTEGER);
+    const maxTrimmed = Math.max(1, options.maxTrimmedSessions ?? Number.MAX_SAFE_INTEGER);
+    const result: RawStreamsOverCapResult = {
+      scannedSessions: 0,
+      trimmedSessions: 0,
+      droppedChunks: 0,
+      droppedBytes: 0,
+      lockedSessions: 0,
+      lastSessionId: options.afterSessionId ?? null,
+      done: false,
+    };
+
+    while (result.scannedSessions < maxSessions) {
+      const want = Math.min(64, maxSessions - result.scannedSessions);
+      // One more than wanted, so an exhausted walk is told apart from a full batch.
+      const ids = rawSessionIdsStmt.all(result.lastSessionId ?? "", want + 1);
+      const batch = ids.slice(0, want);
+      const exhausted = ids.length <= want;
+      for (let index = 0; index < batch.length; index += 1) {
+        const { sessionId } = batch[index];
+        result.scannedSessions += 1;
+        // Outside any transaction: the pre-weigh takes no write lock, so the
+        // ~90 % of sessions already under the cap never contend for it.
+        if ((rawOctetsStmt.get(sessionId)?.octets ?? 0) <= rawMaxBytes) {
+          result.lastSessionId = sessionId;
+          continue;
+        }
+        let dropped: { droppedChunks: number; droppedBytes: number } | null;
+        try {
+          // IMMEDIATE: take the write lock up front. A deferred transaction
+          // that reads, then writes, can hit SQLITE_BUSY_SNAPSHOT with no
+          // busy wait at all when another connection committed in between.
+          dropped = db.transaction(
+            () => {
+              // Re-weighed exactly, under the lock and fresh rather than
+              // from the process cache: the cache may have been seeded
+              // before another process moved the stream, and the byte
+              // pre-weigh over-counts multi-byte text.
+              const bytes = rawBytesStmt.get({ sessionId })?.bytes ?? 0;
+              rawBytesBySession.set(sessionId, bytes);
+              return bytes > rawMaxBytes ? trimRawStream(sessionId) : null;
+            },
+            { behavior: "immediate" }
+          );
+        } catch (error) {
+          // The transaction rolled back, so whatever the trim wrote into the
+          // running total is now wrong; drop it and let the next append re-seed.
+          rawBytesBySession.delete(sessionId);
+          if (!isDatabaseBusyError(error)) throw error;
+          // Stop here: the lock is held by another process, and every further
+          // session would block the shared connection for its own busy wait.
+          result.lockedSessions = 1;
+          return result;
+        }
+        result.lastSessionId = sessionId;
+        if (dropped && dropped.droppedChunks > 0) {
+          result.trimmedSessions += 1;
+          result.droppedChunks += dropped.droppedChunks;
+          result.droppedBytes += dropped.droppedBytes;
+          if (result.trimmedSessions >= maxTrimmed) {
+            result.done = exhausted && index === batch.length - 1;
+            return result;
+          }
+        }
+      }
+      if (exhausted) {
+        result.done = true;
+        break;
+      }
+    }
+    return result;
+  }
+
+  function listChunkTail(
+    sessionId: string,
+    streamType: AgentSessionStreamType,
+    options: SessionChunkTailOptions = {}
+  ): SessionChunkTail {
+    const limit = Math.max(1, options.limit ?? SESSION_CHUNK_PAGE_DEFAULT_LIMIT);
+    const maxBytes = Math.max(1, options.maxBytes ?? SESSION_CHUNK_PAGE_MAX_BYTES);
+    // Clamped to the page budget so the first slice always fits: the page
+    // must make progress even when one chunk alone is over budget.
+    const maxChunkBytes = Math.max(
+      1,
+      Math.min(options.maxChunkBytes ?? SESSION_CHUNK_MAX_CONTENT_BYTES, maxBytes)
+    );
+    const start = options.before ?? null;
+    const startOffset = start === null ? 0 : Math.max(0, options.beforeOffset ?? 0);
+    // Newest first while collecting; reversed once at the end.
+    const collected: BoundedSessionChunk[] = [];
+    let usedBytes = 0;
+    let before = start ?? Number.MAX_SAFE_INTEGER;
+    // Where the earliest served slice starts inside its chunk.
+    let firstOffset = 0;
+
+    /**
+     * Add the slice of `row` that ends at character `end`. Returns false when
+     * the page has to stop: the budget refuses it, or only the end of the
+     * chunk fit and the cursor now points inside it.
+     */
+    const take = (
+      row: ChunkRow & { contentLength: number },
+      end: number
+    ): boolean => {
+      const capped = truncateUtf8Tail(row.content, maxChunkBytes);
+      const size = Buffer.byteLength(capped.text, "utf8");
+      if (collected.length > 0 && usedBytes + size > maxBytes) return false;
+
+      const sliceStart = end - countCharacters(capped.text);
+      collected.push({
+        ...toSessionChunk(row),
+        content: capped.text,
+        contentLength: row.contentLength,
+        contentOffset: sliceStart,
+        contentTruncated: sliceStart > 0 || end < row.contentLength,
+      });
+      usedBytes += size;
+      before = row.sequence;
+      firstOffset = sliceStart;
+      return sliceStart === 0;
+    };
+
+    const finish = (): SessionChunkTail => {
+      collected.reverse();
+      const firstSequence = collected[0]?.sequence ?? null;
+      const probeBefore = firstSequence ?? before;
+      return {
+        streamType,
+        chunks: collected,
+        firstSequence,
+        firstOffset: firstSequence === null ? 0 : firstOffset,
+        lastSequence: collected[collected.length - 1]?.sequence ?? null,
+        hasEarlier:
+          (firstSequence !== null && firstOffset > 0) ||
+          Boolean(
+            hasEarlierChunksStmt.get({ sessionId, streamType, before: probeBefore })
+          ),
+      };
+    };
+
+    // Resume inside the chunk the previous page served only the end of.
+    if (start !== null && startOffset > 0) {
+      const remainder = chunkHeadRemainderStmt.get({
+        sessionId,
+        streamType,
+        sequence: start,
+        end: startOffset,
+        maxChunkChars: maxChunkBytes,
+      });
+      // A chunk that shrank or vanished falls through to the rows before it
+      // rather than looping on a cursor that can never move.
+      if (remainder && remainder.contentLength >= startOffset) {
+        if (!take(remainder, startOffset)) return finish();
+      }
+    }
+
+    let exhausted = false;
+    while (collected.length < limit && !exhausted) {
+      const batchSize = Math.min(
+        limit - collected.length,
+        CHUNK_PAGE_BATCH_ROWS,
+        batchRows(Math.max(1, maxBytes - usedBytes), maxChunkBytes)
+      );
+      const rows = tailPageChunksStmt.all({
+        sessionId,
+        streamType,
+        before,
+        // Characters, as SQLite counts them: a cheap upper bound on bytes,
+        // which truncateUtf8Tail then cuts to the exact byte cap.
+        maxChunkChars: maxChunkBytes,
+        limit: batchSize,
+      });
+      if (rows.length < batchSize) exhausted = true;
+      for (const row of rows) {
+        if (!take(row, row.contentLength)) return finish();
+      }
+    }
+
+    return finish();
+  }
+
+  function readTail(
+    sessionId: string,
+    streamType: AgentSessionStreamType,
+    maxChars: number
+  ): string | null {
+    const parts: string[] = [];
+    let chars = 0;
+    let before = Number.MAX_SAFE_INTEGER;
+    while (chars < maxChars) {
+      const rows = tailChunksStmt.all({
+        sessionId,
+        streamType,
+        before,
+        limit: CHUNK_PAGE_BATCH_ROWS,
+      });
+      for (const row of rows) {
+        before = row.sequence;
+        parts.push(row.content);
+        chars += row.contentLength;
+        if (chars >= maxChars) break;
+      }
+      if (rows.length < CHUNK_PAGE_BATCH_ROWS) break;
+    }
+    if (parts.length === 0) return null;
+    const joined = parts.reverse().join("");
+    if (!joined.trim()) return null;
+    return joined.length > maxChars ? joined.slice(-maxChars) : joined;
+  }
 
   const updateLastNonEmptyTextStmt = db
     .update(agentSessions)
@@ -670,6 +1307,15 @@ export function createSessionChunkStore(
           sessionId: input.sessionId,
         });
       }
+    } else if (input.streamType === "raw") {
+      // The per-session cap. `length()` in SQLite counts characters and
+      // `Buffer.byteLength` counts bytes; the running total mixes the two on
+      // purpose only in the sense that both are upper-bounded by bytes — the
+      // seed reads characters, the increments read bytes, and the cap is a
+      // ceiling, not an accounting.
+      const bytes = rawBytesOf(input.sessionId) + Buffer.byteLength(content, "utf8");
+      rawBytesBySession.set(input.sessionId, bytes);
+      if (bytes > rawMaxBytes) trimRawStream(input.sessionId);
     }
 
     return {
@@ -695,10 +1341,26 @@ export function createSessionChunkStore(
     ): SessionChunkPage {
       return listChunkPage(sessionId, streamType, options);
     },
+    listChunkTail,
+    readTail,
     lastChunkAt(sessionId: string): string | null {
       return lastChunkAtStmt.get({ sessionId })?.lastChunkAt ?? null;
     },
+    trimRawStreamsOverCap,
   };
+}
+
+/**
+ * SQLITE_BUSY / SQLITE_LOCKED and their extended codes (`SQLITE_BUSY_SNAPSHOT`,
+ * …): another connection holds the lock. Transient by nature, so a caller
+ * skips and retries later instead of failing.
+ */
+export function isDatabaseBusyError(error: unknown): boolean {
+  const code = (error as { code?: unknown } | null)?.code;
+  return (
+    typeof code === "string" &&
+    (code.startsWith("SQLITE_BUSY") || code.startsWith("SQLITE_LOCKED"))
+  );
 }
 
 let defaultStore: SessionChunkStore | null = null;
@@ -735,6 +1397,37 @@ export function listSessionChunkPage(
   options?: SessionChunkPageOptions
 ): SessionChunkPage {
   return getDefaultStore().listChunkPage(sessionId, streamType, options);
+}
+
+/** The most recent chunks of a stream, ascending — see `SessionChunkStore.listChunkTail`. */
+export function listSessionChunkTail(
+  sessionId: string,
+  streamType: AgentSessionStreamType,
+  options?: SessionChunkTailOptions
+): SessionChunkTail {
+  return getDefaultStore().listChunkTail(sessionId, streamType, options);
+}
+
+/** The last `maxChars` characters of a stream — see `SessionChunkStore.readTail`. */
+export function readSessionStreamTail(
+  sessionId: string,
+  streamType: AgentSessionStreamType,
+  maxChars: number
+): string | null {
+  return getDefaultStore().readTail(sessionId, streamType, maxChars);
+}
+
+/**
+ * One batch of the historical raw-stream trim on the default store. What keeps
+ * it correct beside the write path is the fresh weigh under the write lock,
+ * not a shared cache: instrumentation and each route bundle (and every HMR
+ * generation) may hold their own module instance, hence their own store and
+ * running totals.
+ */
+export function trimRawStreamsOverCap(
+  options?: RawStreamsOverCapOptions
+): RawStreamsOverCapResult {
+  return getDefaultStore().trimRawStreamsOverCap(options);
 }
 
 export function lastSessionChunkAt(sessionId: string): string | null {

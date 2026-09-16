@@ -320,6 +320,31 @@ describe("Releases screen — Create release", () => {
     });
   });
 
+  it("sends the typed title and shows it in the changelog preview (#117)", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+
+    await user.type(screen.getByTestId("release-title-input"), "Autumn");
+    expect(screen.getByTestId("release-changelog").textContent).toContain(
+      "# 0.4.3 — Autumn"
+    );
+
+    await user.click(screen.getByTestId("release-create-button"));
+    await waitFor(() => expect(postBody).not.toThrow());
+    expect(postBody().title).toBe("Autumn");
+  });
+
+  it("clears the title after a release is created", async () => {
+    const user = userEvent.setup();
+    await renderPage();
+
+    await user.type(screen.getByTestId("release-title-input"), "Autumn");
+    await user.click(screen.getByTestId("release-create-button"));
+
+    await screen.findByTestId("release-toast");
+    expect(screen.getByTestId("release-title-input")).toHaveValue("");
+  });
+
   it("raises an ERROR toast and still reloads when a 201 carries githubErrors", async () => {
     const user = userEvent.setup();
     state.create = {

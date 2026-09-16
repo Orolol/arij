@@ -57,6 +57,8 @@ export interface LiveSessionScreenProps {
 
   onRefresh: () => void;
   onExportLogs: () => void;
+  exportingLogs?: boolean;
+  exportLogsError?: string | null;
   onDistill: () => void;
   distilling: boolean;
   distillError: string | null;
@@ -82,6 +84,8 @@ export function LiveSessionScreen({
   stopError,
   onRefresh,
   onExportLogs,
+  exportingLogs,
+  exportLogsError,
   onDistill,
   distilling,
   distillError,
@@ -214,6 +218,8 @@ export function LiveSessionScreen({
             isRunning={isRunning}
             onRefresh={onRefresh}
             onExportLogs={onExportLogs}
+            exportingLogs={exportingLogs}
+            exportLogsError={exportLogsError}
             onDistill={onDistill}
             distilling={distilling}
             distillError={distillError}

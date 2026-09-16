@@ -80,6 +80,11 @@ export interface BaseProviderChunkCallbacks {
   }) => void;
   onOutputChunk?: (chunk: { text: string; emittedAt: string }) => void;
   onResponseChunk?: (chunk: { text: string; emittedAt: string }) => void;
+  /**
+   * Called once the child has closed and before the exit is handled, so a
+   * provider that buffers raw output (a line splitter) can emit what is left.
+   */
+  flush?: () => void;
 }
 
 /**
@@ -570,6 +575,11 @@ export abstract class BaseCliProvider implements AgentProvider {
           await killer.waitForTeardown();
         } else {
           killer.clear();
+        }
+        try {
+          callbacks.flush?.();
+        } catch {
+          /* best-effort */
         }
         try {
           const providerResult = this.handleExit(

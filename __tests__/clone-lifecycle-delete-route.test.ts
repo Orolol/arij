@@ -296,7 +296,6 @@ describe("perProjectSettingKeys", () => {
       "pipeline_max_fix_cycles:proj-1",
       "verify_commands:proj-1",
       "verify_timeout_ms:proj-1",
-      "dreaming_after_night_run:proj-1",
       "dreaming_last_cutoff:proj-1",
       "ci_autofix_enabled:proj-1",
     ]);

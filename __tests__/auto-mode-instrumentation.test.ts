@@ -19,12 +19,19 @@ const bootMocks = vi.hoisted(() => ({
   kickAutoModeForSession: vi.fn(),
   maybeAutoDistillAfterSessionTerminal: vi.fn(async () => {}),
   sendTerminalSessionWebhook: vi.fn(),
+  scheduleRawStreamBackfill: vi.fn(),
 }));
 
 vi.mock("@/lib/db", () => ({
   ensureDbReady: bootMocks.ensureDbReady,
   db: {},
   sqlite: {},
+}));
+
+// The one-shot history trim is scheduled on a later macrotask; left real, it
+// would run against this suite's stub database after the test body.
+vi.mock("@/lib/agent-sessions/raw-stream-backfill", () => ({
+  scheduleRawStreamBackfill: bootMocks.scheduleRawStreamBackfill,
 }));
 
 vi.mock("@/lib/agent-sessions/boot-cleanup", () => ({
@@ -74,6 +81,10 @@ describe("register()", () => {
     await register();
 
     expect(bootMocks.ensureDbReady).toHaveBeenCalled();
+    expect(bootMocks.scheduleRawStreamBackfill).toHaveBeenCalledTimes(1);
+    expect(
+      bootMocks.scheduleRawStreamBackfill.mock.invocationCallOrder[0]
+    ).toBeGreaterThan(bootMocks.ensureDbReady.mock.invocationCallOrder[0]);
     expect(bootMocks.cancelOrphanedQueuedSessions).toHaveBeenCalled();
     expect(bootMocks.failOrphanedRunningSessions).toHaveBeenCalled();
     // The QA report reconciliation reads the session to decide whether a

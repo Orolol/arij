@@ -16,7 +16,9 @@
     "typing": "{agent} rédige…",
     "typingAgentFallback": "L'agent",
     "createEpicPending": "Création…",
-    "generateSpecPending": "Génération…"
+    "generateSpecPending": "Génération…",
+    "generateSpecDone": "Spec écrite — {count, plural, =0 {aucun nouvel epic} one {# epic créé} other {# epics créés}}",
+    "generateSpecEpicsOnly": "{count, plural, one {# epic créé} other {# epics créés}}"
   },
   "composer": {
     "placeholder": "Écris — ⏎ envoie, ⇧⏎ saute une ligne, @ cite un doc",

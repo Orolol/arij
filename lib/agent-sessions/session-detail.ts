@@ -11,9 +11,16 @@
  *
  * The bounded shape:
  * - the row comes back without `prompt` unless `?include=prompt` is passed;
- * - `logs.result` is capped, with a marker in the text when it was cut;
- * - each stream ships a short preview page, and clients that want the rest
- *   page forward with `?stream=<raw|output|response>&after=<sequence>&limit=`.
+ * - `logs.json` is neither read nor served unless `?include=logs` is passed
+ *   (then `logs.result` is capped, with a marker in the text when it was
+ *   cut); the final text lives in the `response` stream and in
+ *   `lastNonEmptyText`, which the default payload already carries;
+ * - `output` and `response` ship a short HEAD preview page, and clients that
+ *   want the rest page forward with `?stream=<name>&after=<sequence>&limit=`;
+ * - `raw` ships its END instead ({@link SessionStreamTailSeed}): the LIVE LOG
+ *   is about the most recent output, so the seed is the last chunks, a live
+ *   session follows forward with `after`, and the reader walks back towards
+ *   the head with `?stream=raw&before=<sequence>&beforeOffset=<chars>`.
  *
  * This module is imported by client components, so it must stay free of any
  * server-only import (`@/lib/db`, `fs`, better-sqlite3). Types from the chunk
@@ -199,6 +206,127 @@ export interface SessionChunkPageResponse {
   hasMore: boolean;
   /** Set when the chunk read failed — distinct from a stream with no output. */
   chunkStreamsUnavailable?: boolean;
+}
+
+/**
+ * The seed of a stream read from its END — what the detail payload carries
+ * for `raw`. It is also a valid forward seed: `nextAfter` is `lastSequence`
+ * (nothing follows the end at read time, so `hasMore` is false), which is the
+ * cursor a running session follows forward from.
+ */
+export interface SessionStreamTailSeed {
+  chunks: BoundedSessionChunk[];
+  /** `lastSequence`: where a live follow resumes. */
+  nextAfter: number | null;
+  nextOffset: number;
+  /** Always false at read time — the seed IS the end of the stream. */
+  hasMore: boolean;
+  /** Sequence of the earliest chunk served; the next `before`. */
+  firstSequence: number | null;
+  /**
+   * Where the earliest served slice starts inside its chunk — non-zero when
+   * only the end of an oversized chunk fit. The next `beforeOffset`.
+   */
+  firstOffset: number;
+  lastSequence: number | null;
+  /** Anything precedes the seed: earlier rows, or the head of its first chunk. */
+  hasEarlier: boolean;
+}
+
+/** One page towards the head of a stream, as `?stream=&before=` returns it. */
+export interface SessionChunkTailPageResponse {
+  sessionId: string;
+  streamType: AgentSessionStreamType;
+  /** Ascending, like every other page. Prepend them. */
+  chunks: BoundedSessionChunk[];
+  firstSequence: number | null;
+  firstOffset: number;
+  lastSequence: number | null;
+  hasEarlier: boolean;
+  /**
+   * Set when the chunk read failed. The cursor then comes back unchanged
+   * (`firstSequence`/`firstOffset` are the ones asked with) so the client
+   * retries from where it was.
+   */
+  chunkStreamsUnavailable?: boolean;
+}
+
+/**
+ * Fetch one page of a stream BEFORE a cursor — the "load earlier" of the LIVE
+ * LOG. Pass the `firstSequence`/`firstOffset` of what is already on screen.
+ * Rejects on a failed response.
+ */
+export async function fetchSessionChunkTailPage(
+  projectId: string,
+  sessionId: string,
+  streamType: AgentSessionStreamType,
+  options: {
+    before: number;
+    beforeOffset?: number | null;
+    limit?: number;
+    signal?: AbortSignal;
+  }
+): Promise<SessionChunkTailPageResponse> {
+  const url = new URL(
+    `/api/projects/${projectId}/sessions/${sessionId}`,
+    window.location.origin
+  );
+  url.searchParams.set("stream", streamType);
+  url.searchParams.set("before", String(options.before));
+  if (options.beforeOffset) {
+    url.searchParams.set("beforeOffset", String(options.beforeOffset));
+  }
+  if (options.limit !== undefined) {
+    url.searchParams.set("limit", String(options.limit));
+  }
+
+  const response = await fetch(url.toString(), { signal: options.signal });
+  if (!response.ok) {
+    throw new Error(`Session stream request failed (${response.status})`);
+  }
+  const body = (await response.json()) as {
+    data?: SessionChunkTailPageResponse;
+  };
+  if (!body.data) throw new Error("Session stream response had no data");
+  return body.data;
+}
+
+/** What `?include=logs` adds to the detail payload. */
+export interface SessionLogsResponse {
+  /** The parsed `logs.json`, capped — or null when absent, too large or unreadable. */
+  logs: unknown;
+  /** The file was too large to serve whole, or its `result` was capped. */
+  logsTruncated: boolean;
+  /** The file exists but could not be read or parsed. */
+  logsUnavailable?: boolean;
+}
+
+/**
+ * Read a session's `logs.json` on demand (export, pre-chunk-store sessions).
+ * Never polled: the default payload no longer carries it. Rejects on a failed
+ * response.
+ */
+export async function fetchSessionLogs(
+  projectId: string,
+  sessionId: string,
+  options: { signal?: AbortSignal } = {}
+): Promise<SessionLogsResponse> {
+  const url = new URL(
+    `/api/projects/${projectId}/sessions/${sessionId}`,
+    window.location.origin
+  );
+  url.searchParams.set("include", "logs");
+  const response = await fetch(url.toString(), { signal: options.signal });
+  if (!response.ok) {
+    throw new Error(`Session logs request failed (${response.status})`);
+  }
+  const body = (await response.json()) as { data?: Partial<SessionLogsResponse> };
+  if (!body.data) throw new Error("Session logs response had no data");
+  return {
+    logs: body.data.logs ?? null,
+    logsTruncated: body.data.logsTruncated === true,
+    ...(body.data.logsUnavailable ? { logsUnavailable: true } : {}),
+  };
 }
 
 /** Fetch one page of one stream. Rejects on a failed response. */

@@ -33,13 +33,22 @@
  *     snapshotted in the SAME transaction (documents row, kind
  *     'memory_archive'), so a failed save can never burn the snapshot — and
  *     only when the stored memory is still the one the dream reasoned from, so
- *     a human edit made mid-dream is never silently overwritten.
+ *     a human edit made mid-dream is never silently overwritten;
+ *   - that write happens in the session's `evaluate` hook, BEFORE the row is
+ *     finalised, so a dream that answered but was not stored (refused
+ *     structure, a human edit mid-run, a failed save) ends `failed` with the
+ *     reason in its `error` column, and a `memory:discarded` event tells the
+ *     memory panel — instead of a "successful" row over an unchanged memory.
  */
 
 import { eq } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
-import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
+import {
+  dispatchBackgroundSession,
+  type BackgroundSessionRun,
+  type BackgroundSessionVerdict,
+} from "@/lib/agent-sessions/dispatch-background-session";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import { buildDreamingPrompt } from "@/lib/claude/prompt-builder";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
@@ -49,11 +58,20 @@ import {
   getProjectMemoryContent,
   isProjectMemoryChangedError,
   replaceProjectMemoryWithSnapshot,
+  sanitizeMemoryDocument,
 } from "@/lib/documents/memory";
 import { recordMemoryWriteProvenance } from "@/lib/documents/memory-provenance";
-import { emitProjectSessionStarted } from "@/lib/events/emit";
+import {
+  emitMemoryDiscarded,
+  emitProjectSessionStarted,
+} from "@/lib/events/emit";
 import { eventBus } from "@/lib/events/bus";
-import { DREAMING_AGENT_TYPE, DREAMING_LOG_PREFIX } from "./dreaming-constants";
+import {
+  DREAMING_AGENT_TYPE,
+  DREAMING_LOG_PREFIX,
+  type DreamGuardCode,
+  type MemoryDiscardReason,
+} from "./dreaming-constants";
 import { hasPendingMemoryWriter } from "./memory-writer-lock";
 import { validateDreamedMemoryStructure } from "./dreaming-digest";
 import {
@@ -63,7 +81,7 @@ import {
 import {
   evaluateDreamGuards,
   evaluateNightRunDreamGuards,
-  sanitizeDreamedMemory,
+  WRITER_PENDING_REASON,
   type DreamDecision,
 } from "./dreaming-policy";
 import { isDreamingAfterNightRunEnabled, recordDreamCutoff } from "./dreaming-settings";
@@ -71,8 +89,8 @@ import { isDreamingAfterNightRunEnabled, recordDreamCutoff } from "./dreaming-se
 // Stable facade for callers; collecting evidence never dispatches or writes memory.
 export { collectDreamDigest, selectDreamCandidates } from "./dreaming-collector";
 export type { CollectDreamDigestOptions, DreamDigestResult } from "./dreaming-collector";
-export { evaluateDreamGuards, evaluateNightRunDreamGuards, sanitizeDreamedMemory } from "./dreaming-policy";
-export type { DreamDecision } from "./dreaming-policy";
+export { evaluateDreamGuards, evaluateNightRunDreamGuards } from "./dreaming-policy";
+export type { DreamDecision, DreamGuardDecision } from "./dreaming-policy";
 export { findLastDreamCutoff, recordDreamCutoff, isDreamingAfterNightRunEnabled } from "./dreaming-settings";
 
 const POLL_INTERVAL_MS = 2000;
@@ -119,8 +137,9 @@ export async function maybeDreamAfterNightRun(
   context: NightRunDreamContext = {}
 ): Promise<NightRunDreamTriggerResult> {
   try {
+    const enabled = isDreamingAfterNightRunEnabled();
     const decision = evaluateNightRunDreamGuards({
-      enabled: isDreamingAfterNightRunEnabled(projectId),
+      enabled,
       abortReason: context.abortReason ?? null,
       costCapUsd: context.costCapUsd ?? null,
       spentUsd: context.spentUsd ?? 0,
@@ -128,7 +147,7 @@ export async function maybeDreamAfterNightRun(
     if (!decision.allowed) {
       // Only the cost/stop denials are worth a journal line; "the setting is
       // off" is the default state of every project and would be pure noise.
-      if (isDreamingAfterNightRunEnabled(projectId)) {
+      if (enabled) {
         console.info(
           `${DREAMING_LOG_PREFIX} skipped for project ${projectId}` +
             ` (night_run ${runId}): ${decision.reason}`
@@ -163,8 +182,6 @@ export interface DispatchDreamingInput {
   projectId: string;
   /** Night run that caused the dream; tagged on the session row. */
   batchRunId?: string | null;
-  /** Optional explicit named agent (manual dispatch). */
-  namedAgentId?: string | null;
   /** What asked for this dream — journal context only. */
   trigger?: "manual" | "night_run";
   /** Collector overrides (tests). */
@@ -176,6 +193,8 @@ export interface DispatchDreamingResult {
   sessionId: string | null;
   dispatched: boolean;
   reason: string;
+  /** The guard's verdict as a code — what a UI translates. */
+  code: DreamGuardCode;
   /** Sessions the digest carries (0 on a refusal). */
   sessionsAnalyzed: number;
   /**
@@ -191,6 +210,22 @@ export interface DispatchDreamingResult {
    */
   settled: Promise<void>;
 }
+
+/**
+ * The English sentence the dream's session row carries in its `error` column
+ * when its output was not stored — the session page shows it verbatim. The
+ * panel gets the CODE (on the `memory:discarded` event) and its own copy.
+ */
+const DREAM_DISCARD_ERRORS: Record<MemoryDiscardReason, string> = {
+  no_output:
+    "The dream finished without returning a memory document — the memory was left unchanged.",
+  invalid_structure:
+    "The dreamed memory did not match the required four-section structure once capped — it was discarded and the memory was left unchanged.",
+  memory_changed:
+    "The memory was edited while the dream ran — the edit was kept and the dream's output discarded.",
+  save_failed:
+    "The dreamed memory could not be saved — the memory was left unchanged.",
+};
 
 /**
  * Creates a queued 'dreaming' session and submits its launch closure to the
@@ -234,6 +269,7 @@ export async function dispatchDreamingSession(
       sessionId: null,
       dispatched: false,
       reason: decision.reason,
+      code: decision.code,
       sessionsAnalyzed: 0,
       settled: Promise.resolve(),
     };
@@ -245,15 +281,18 @@ export async function dispatchDreamingSession(
     DREAMING_AGENT_TYPE,
     input.projectId
   );
+  // No per-call override: the dreaming agent is chosen in Agent Config, the
+  // one surface every background writer reads its agent from.
   const resolvedAgent = resolveAgentByNamedId(
     DREAMING_AGENT_TYPE,
     input.projectId,
-    input.namedAgentId ?? null
+    null
   );
 
   const prompt = buildDreamingPrompt(
-    // Explicit `memory: null` stops the builder-level injection from re-adding
-    // the doc this prompt already frames as "Current Project Memory".
+    // Defensive `memory: null`: this builder frames the current memory itself
+    // and does not inject the standard section today — the null keeps a future
+    // `withProjectMemory` wrapping from quietly adding the document twice.
     { ...project, memory: null },
     currentMemory,
     {
@@ -273,20 +312,105 @@ export async function dispatchDreamingSession(
   // so on Node's single thread this second look is the one that actually makes
   // "never two memory rewrites at once" true rather than merely likely.
   if (hasPendingMemoryWriter(input.projectId)) {
-    const reason =
-      "a memory rewrite (distill or dream) is already pending for this project";
     console.info(
       `${DREAMING_LOG_PREFIX} skipped for project ${input.projectId}` +
-        ` (${input.trigger ?? "manual"}): ${reason} (raced)`
+        ` (${input.trigger ?? "manual"}): ${WRITER_PENDING_REASON} (raced)`
     );
     return {
       sessionId: null,
       dispatched: false,
-      reason,
+      reason: WRITER_PENDING_REASON,
+      code: "writer_pending",
       sessionsAnalyzed: 0,
       settled: Promise.resolve(),
     };
   }
+
+  // Set by `evaluate` when a delivered dream was NOT stored; read by
+  // `onTerminal`, which always runs after it, to announce the discard.
+  let discard: MemoryDiscardReason | null = null;
+  let stored = false;
+
+  /**
+   * The memory write, done BEFORE the session row is finalised so the row can
+   * tell the truth: a dream that answered but whose document was refused or
+   * lost is a failed dream for this workflow, and its row must not claim
+   * success over an unchanged memory (the rule dispatch-background-session
+   * states, and spec-update follows). The write itself is synchronous, so the
+   * whole decision fits in the hook.
+   */
+  const evaluate = ({
+    sessionId: sid,
+    result,
+    outcome,
+  }: BackgroundSessionRun): BackgroundSessionVerdict => {
+    // Silent runs, asked questions and failures leave the memory exactly as it
+    // was, and keep the provider's own verdict: nothing was discarded, the run
+    // simply did not deliver.
+    if (!result?.success || outcome !== "answered") {
+      return { success: !!result?.success, error: result?.error ?? null };
+    }
+
+    const output = sanitizeMemoryDocument(resolveSessionOutput(result, sid, ""));
+    if (!output) {
+      discard = "no_output";
+      return { success: false, error: DREAM_DISCARD_ERRORS.no_output };
+    }
+
+    // Validate what would ACTUALLY BE STORED, not what the agent produced.
+    // `saveProjectMemory` truncates at the cap, so an over-long response can
+    // arrive with all four sections and land with its last one cut off — a
+    // document that stops mid-sentence, injected into every future prompt,
+    // with the digest window marked as learned. Checking the cap-effective
+    // text catches that as well as an agent that ignored the contract.
+    const structure = validateDreamedMemoryStructure(enforceMemoryCap(output));
+    if (!structure.valid) {
+      // Nothing stored, cutoff unmoved, so the next dream reads the same
+      // sessions and gets another attempt. The rejected text stays readable
+      // on the session page.
+      console.warn(
+        `${DREAMING_LOG_PREFIX} discarded for project ${input.projectId}:` +
+          ` the dreamed memory did not match the required structure` +
+          ` (${structure.reason}); session ${sid}`
+      );
+      discard = "invalid_structure";
+      return {
+        success: false,
+        error: `${DREAM_DISCARD_ERRORS.invalid_structure} (${structure.reason})`,
+      };
+    }
+
+    try {
+      // Snapshot and replacement commit together or not at all. A dream
+      // rewrites the whole document, so the pre-dream text is the only way
+      // back — and archiving it separately would let a failed save burn that
+      // snapshot while leaving the live memory untouched.
+      //
+      // `expectedPrevious` is the memory this dream actually REASONED FROM
+      // (captured minutes ago, at prompt time). A dream runs long enough for
+      // someone to save an edit in the Docs tab meanwhile; replacing blindly
+      // would throw that edit away in favour of text derived from the version
+      // before it. The human edit is the newer intent and wins — a dream can
+      // just be run again.
+      replaceProjectMemoryWithSnapshot(input.projectId, output, {
+        expectedPrevious: currentMemory,
+      });
+    } catch (error) {
+      // Either way the window deliberately does NOT advance: a dream whose
+      // output was never stored taught the project nothing, so the next dream
+      // must read the same sessions again rather than skip past them.
+      if (isProjectMemoryChangedError(error)) {
+        discard = "memory_changed";
+        return { success: false, error: DREAM_DISCARD_ERRORS.memory_changed };
+      }
+      console.error(`${DREAMING_LOG_PREFIX} Failed to save dreamed memory`, error);
+      discard = "save_failed";
+      return { success: false, error: DREAM_DISCARD_ERRORS.save_failed };
+    }
+
+    stored = true;
+    return { success: true, error: null };
+  };
 
   // Deliberately no epicId (see the module docblock): a dream spans every
   // ticket, so pinning it to one would both lie and hold that epic's
@@ -308,11 +432,14 @@ export async function dispatchDreamingSession(
         // Non-critical event emission
       }
     },
-    onTerminal: ({ sessionId: sid, result, outcome, completedAt }) => {
+    evaluate,
+    onTerminal: ({ sessionId: sid, success, outcome, completedAt }) => {
       try {
         eventBus.emit({
+          // The row's verdict, not the provider's: a discarded dream is a
+          // failed dream, and the lifecycle event must agree with the row.
           type:
-            result?.success && outcome === "answered"
+            success && outcome === "answered"
               ? "session:completed"
               : "session:failed",
           projectId: input.projectId,
@@ -322,66 +449,20 @@ export async function dispatchDreamingSession(
       } catch {
         // Non-critical event emission
       }
-      // Only a delivered answer replaces the memory — silent runs, asked
-      // questions and failures leave it exactly as it was.
-      if (!result?.success || outcome !== "answered") {
-        return;
-      }
 
-      const output = sanitizeDreamedMemory(
-        resolveSessionOutput(result, sid, "")
-      );
-      if (!output) {
-        return;
-      }
-
-      // Validate what would ACTUALLY BE STORED, not what the agent produced.
-      // `saveProjectMemory` truncates at the cap, so an over-long response can
-      // arrive with all four sections and land with its last one cut off — a
-      // document that stops mid-sentence, injected into every future prompt,
-      // with the digest window marked as learned. Checking the cap-effective
-      // text catches that as well as an agent that ignored the contract.
-      const structure = validateDreamedMemoryStructure(enforceMemoryCap(output));
-      if (!structure.valid) {
-        // Same posture as the mid-dream edit: nothing stored, cutoff unmoved, so
-        // the next dream reads the same sessions and gets another attempt. The
-        // rejected text stays readable on the session page.
-        console.warn(
-          `${DREAMING_LOG_PREFIX} discarded for project ${input.projectId}:` +
-            ` the dreamed memory did not match the required structure` +
-            ` (${structure.reason}); session ${sid}`
-        );
-        return;
-      }
-
-      try {
-        // Snapshot and replacement commit together or not at all. A dream
-        // rewrites the whole document, so the pre-dream text is the only way
-        // back — and archiving it separately would let a failed save burn that
-        // snapshot while leaving the live memory untouched.
-        //
-        // `expectedPrevious` is the memory this dream actually REASONED FROM
-        // (captured minutes ago, at prompt time). A dream runs long enough for
-        // someone to save an edit in the Docs tab meanwhile; replacing blindly
-        // would throw that edit away in favour of text derived from the version
-        // before it. The human edit is the newer intent and wins — a dream can
-        // just be run again.
-        replaceProjectMemoryWithSnapshot(input.projectId, output, {
-          expectedPrevious: currentMemory,
-        });
-      } catch (error) {
-        // Either way the window deliberately does NOT advance: a dream whose
-        // output was never stored taught the project nothing, so the next dream
-        // must read the same sessions again rather than skip past them.
-        if (isProjectMemoryChangedError(error)) {
-          console.info(
-            `${DREAMING_LOG_PREFIX} discarded for project ${input.projectId}:` +
-              ` the memory was edited while the dream ran (its output is still` +
-              ` readable on session ${sid})`
-          );
-          return;
+      if (discard) {
+        try {
+          emitMemoryDiscarded(input.projectId, {
+            source: "dreaming",
+            reason: discard,
+            sessionId: sid,
+          });
+        } catch {
+          // Non-critical: the session row already carries the failure.
         }
-        console.error(`${DREAMING_LOG_PREFIX} Failed to save dreamed memory`, error);
+        return;
+      }
+      if (!stored) {
         return;
       }
 
@@ -428,6 +509,7 @@ export async function dispatchDreamingSession(
     sessionId,
     dispatched: true,
     reason: decision.reason,
+    code: decision.code,
     sessionsAnalyzed: collected.includedCount,
     settled: settled.then(() => undefined),
   };

@@ -30,6 +30,10 @@ describe("0057 chat epic proposal ledger", () => {
       initDb(connection);
       // The schema and migration high-water mark of an installation at 0056.
       connection.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason; DROP TABLE chat_epic_proposals; DELETE FROM __drizzle_migrations WHERE created_at >= 1786715400000;");
+      // 0062_release_published_at replays too, so its five columns go back out.
+      for (const column of ["published_at", "changelog_session_id", "push_to_github", "finalized_at", "finalize_errors"]) {
+        connection.exec(`ALTER TABLE releases DROP COLUMN ${column}`);
+      }
       seed(connection);
       connection.close();
       connection = new Database(filename);

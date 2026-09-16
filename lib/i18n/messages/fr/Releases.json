@@ -8,7 +8,9 @@
   },
   "next": {
     "backToDraft": "← revenir au brouillon",
-    "changelogCompose": "CHANGELOG — GÉNÉRÉ À LA CRÉATION"
+    "changelogCompose": "CHANGELOG — GÉNÉRÉ À LA CRÉATION",
+    "titleLabel": "Titre de la release",
+    "titlePlaceholder": "Titre (facultatif)"
   },
   "summary": {
     "compose": "{count, plural, one {# ticket} other {# tickets}} · tag v{version} sur release/v{version}",
@@ -20,5 +22,21 @@
   },
   "history": {
     "viewChangelog": "voir le changelog →"
+  },
+  "state": {
+    "changelogPending": "changelog en cours",
+    "syncFailed": "synchro en échec"
+  },
+  "edit": {
+    "open": "modifier",
+    "save": "Enregistrer",
+    "saving": "Enregistrement…",
+    "cancel": "annuler",
+    "failed": "Échec de l'enregistrement de la release",
+    "stale": "Cette release a changé pendant que vous la modifiiez. Annulez puis modifiez-la de nouveau pour repartir de la dernière version.",
+    "finalizing": "La release est en cours de tag et de synchronisation — réessayez dans un instant."
+  },
+  "toast": {
+    "backgroundGithubFailed": "Release v{version} : la synchro GitHub a échoué : {error}"
   }
 }

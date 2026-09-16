@@ -534,6 +534,12 @@ Non fait, volontairement :
 - Renuméroter `0057_release_published_at.sql` en `0061_…` (idx 60), la
   rationalisation portant 0057–0060 non commités ; le `when` est déjà au-dessus.
   Mettre à jour `MIGRATION_TAG` dans `__tests__/releases-published-at-migration.test.ts`.
+  Fait au merge d'intégration (integration/audit-2026-09) : main portait
+  finalement 0057–0061 (`0061_review_dismissal_and_git_log`, when
+  1789516800000) ; le fichier est devenu `0062_release_published_at` (idx 61,
+  when 1789516900000, relevé au-dessus de 0061) et
+  `0061_agent_session_tool_calls` du lot 07 est devenu
+  `0063_agent_session_tool_calls` (idx 62, when 1789517000000).
 - `lib/workflow/dreaming-settings.ts` existe aussi (non suivi) dans la
   rationalisation : fusion manuelle — celle-ci retire la clé scopée et ajoute
   `clearDreamCutoff`.

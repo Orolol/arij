@@ -11,10 +11,8 @@
  *     queued/running for the project.
  */
 import { describe, it, expect } from "vitest";
-import {
-  SPEC_REWRITE_AGENT_TYPE,
-  evaluateSpecAutoRewriteGuards,
-} from "@/lib/workflow/spec-auto-rewrite";
+import { evaluateSpecAutoRewriteGuards } from "@/lib/workflow/spec-auto-rewrite";
+import { SPEC_GENERATION_AGENT_TYPE } from "@/lib/workflow/spec-writers";
 import { parseSpecAutoRewriteSetting } from "@/lib/workflow/spec-rewrite-constants";
 
 function evaluate(input: {
@@ -55,7 +53,7 @@ describe("evaluateSpecAutoRewriteGuards", () => {
     // The mutual-exclusion guarantee relies on BOTH writers using
     // 'spec_generation': the manual flow's guard then sees auto sessions
     // and this guard sees manual ones.
-    expect(SPEC_REWRITE_AGENT_TYPE).toBe("spec_generation");
+    expect(SPEC_GENERATION_AGENT_TYPE).toBe("spec_generation");
   });
 });
 

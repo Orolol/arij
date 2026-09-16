@@ -2,6 +2,8 @@
   "loading": "Loading sessions...",
   "empty": "No sessions yet",
   "incomplete": "Could not load every session; the list below may be incomplete.",
+  "loadAll": "Load all sessions",
+  "loadAllPending": "Loading all sessions…",
   "band": {
     "running": "RUNNING",
     "today": "TODAY",

@@ -34,12 +34,12 @@ const {
   ticketComments,
   settings,
 } = await import("@/lib/db/schema");
-const {
-  collectDreamDigest,
-  findLastDreamCutoff,
-  recordDreamCutoff,
-  selectDreamCandidates,
-} = await import("@/lib/workflow/dreaming");
+const { collectDreamDigest, selectDreamCandidates } = await import(
+  "@/lib/workflow/dreaming"
+);
+const { findLastDreamCutoff, recordDreamCutoff } = await import(
+  "@/lib/workflow/dreaming-settings"
+);
 const { FORENSIC_COMMENT_HEADING, forensicDeadSessionMarker } = await import(
   "@/lib/pipeline/forensic"
 );

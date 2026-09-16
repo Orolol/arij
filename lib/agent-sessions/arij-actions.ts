@@ -11,14 +11,15 @@
  *        - ticket_comments rows (author "agent")     -> comments / questions /
  *                                                       review-findings summaries
  *        - session_artifacts rows                     -> visual proofs
- *   2. mcp__arij__* `tool_use` records parsed out of the session's raw chunk
- *      stream — the supplement. The Claude Code provider returns a single
- *      final envelope (no per-turn stream), so for it this list is usually
- *      empty; streaming providers (codex, omp, …) surface read-only calls
- *      (get_ticket) and calls that left no durable artifact (e.g. a rejected
- *      status transition) through this channel. omp never puts the MCP tool
+ *   2. mcp__arij__* tool calls parsed out of the session's raw chunk stream
+ *      — the supplement: read-only calls (get_ticket) and calls that left no
+ *      durable artifact (e.g. a rejected status transition) only exist
+ *      there. Every provider feeds it: claude-code has spawned with
+ *      `--output-format stream-json` since #172 and writes each stream-json
+ *      line as a raw chunk, like codex and omp. omp never puts the MCP tool
  *      name in a name field — its invocations are "write" toolCalls against
- *      an xd:// device URI (see OMP_ARIJ_DEVICE_PREFIX).
+ *      an xd:// device URI (see OMP_ARIJ_DEVICE_PREFIX). Since #236 these
+ *      calls are indexed as the chunks are written (see arij-action-scan.ts).
  *
  * Merging dedupes by kind-count: a tool call whose kind already has a durable
  * artifact is considered "covered" and dropped, so a post_comment call and
@@ -67,6 +68,16 @@ export interface ArijToolCall {
   /** Tool name without the mcp__arij__ prefix (e.g. "get_ticket"). */
   tool: string;
   at: string | null;
+}
+
+/**
+ * A call as the scanner found it, with the provider's id for it when that id
+ * is unique across the session's runs — what the write-path index stores to
+ * refuse a call a resumed run replays. Null for shapes without one, and for
+ * codex, whose item ids restart at item_0 with every exec.
+ */
+export interface ArijToolCallRecord extends ArijToolCall {
+  callId: string | null;
 }
 
 /** Effectful tools mapped to the durable-artifact kind they produce. */
@@ -131,16 +142,36 @@ interface RawChunkLike {
   createdAt: string | null;
 }
 
+/** What dedupe needs to remember between lines. Copied for a snapshot. */
+interface ParseMemory {
+  /** tool_use / omp toolCall ids already counted. */
+  seenIds: Set<string>;
+  /** codex item ids counted on item.started and not completed yet. */
+  openCodexItems: Set<string>;
+}
+
+function newParseMemory(): ParseMemory {
+  return { seenIds: new Set(), openCodexItems: new Set() };
+}
+
+function copyParseMemory(memory: ParseMemory): ParseMemory {
+  return {
+    seenIds: new Set(memory.seenIds),
+    openCodexItems: new Set(memory.openCodexItems),
+  };
+}
+
 function collectToolNames(
   value: unknown,
-  out: ArijToolCall[],
-  seenIds: Set<string>,
+  out: ArijToolCallRecord[],
+  memory: ParseMemory,
   at: string | null
 ): void {
   if (Array.isArray(value)) {
-    for (const item of value) collectToolNames(item, out, seenIds, at);
+    for (const item of value) collectToolNames(item, out, memory, at);
     return;
   }
+  const { seenIds } = memory;
   if (!value || typeof value !== "object") return;
 
   const obj = value as Record<string, unknown>;
@@ -154,13 +185,29 @@ function collectToolNames(
     const id = typeof obj.id === "string" ? obj.id : null;
     if (!id || !seenIds.has(id)) {
       if (id) seenIds.add(id);
-      out.push({ tool: obj.name.slice(ARIJ_MCP_TOOL_PREFIX.length), at });
+      out.push({
+        tool: obj.name.slice(ARIJ_MCP_TOOL_PREFIX.length),
+        at,
+        callId: id,
+      });
     }
   }
 
-  // Codex-style shape: { ..., server: "arij", tool: "post_comment" }
+  // Codex-style shape: { id, type: "mcp_tool_call", server: "arij", tool,
+  //   status }. `codex exec --json` reports one call as item.started
+  // (status in_progress), possibly item.updated, then item.completed — all
+  // with the same item id. Count it on first sight and swallow the rest until
+  // it leaves in_progress. Not a plain seen-set: codex numbers items per exec
+  // (item_0, item_1, …), so a resumed run legitimately reuses a finished id.
   if (obj.server === "arij" && typeof obj.tool === "string") {
-    out.push({ tool: obj.tool, at });
+    const id = typeof obj.id === "string" ? obj.id : null;
+    const { openCodexItems } = memory;
+    if (id && openCodexItems.has(id)) {
+      if (obj.status !== "in_progress") openCodexItems.delete(id);
+    } else {
+      if (id && obj.status === "in_progress") openCodexItems.add(id);
+      out.push({ tool: obj.tool, at, callId: null });
+    }
   }
 
   // omp device-URI shape: { type: "toolCall", id, name: "write",
@@ -184,28 +231,46 @@ function collectToolNames(
       const id = typeof obj.id === "string" ? obj.id : null;
       if (tool && (!id || !seenIds.has(id))) {
         if (id) seenIds.add(id);
-        out.push({ tool, at });
+        out.push({ tool, at, callId: id });
       }
     }
   }
 
   for (const child of Object.values(obj)) {
-    collectToolNames(child, out, seenIds, at);
+    collectToolNames(child, out, memory, at);
   }
 }
+
+/**
+ * The literal JSON text every recognised call shape must contain, as a KEY
+ * and its value: `"name": "mcp__arij__…` (tool_use), `"path": "xd://mcp__arij_…`
+ * (omp; `/` may legally be written `\/`), `"server": "arij"` (codex).
+ *
+ * The scanner runs on every raw chunk as it is written, and nearly every line
+ * of a raw stream is JSON the parser would walk only to find nothing — so a
+ * line that cannot hold a call is not parsed at all. The bare tool prefix
+ * would not do: in the Arij repository itself, reading or grepping its MCP
+ * routes returns text full of `mcp__arij_`, and such a line can weigh
+ * megabytes. Inside a tool result that text is a JSON string, so its quotes
+ * are escaped (`\"name\"`) and it cannot match a key here — the same reason
+ * the parser, which only walks real objects, would not count it anyway.
+ */
+const ARIJ_CALL_HINT =
+  /"name"\s*:\s*"mcp__arij__|"path"\s*:\s*"xd:(?:\\?\/){2}mcp__arij_|"server"\s*:\s*"arij"/;
 
 function parseLine(
   line: string,
   lineAt: string | null,
-  out: ArijToolCall[],
-  seenIds: Set<string>
+  out: ArijToolCallRecord[],
+  memory: ParseMemory
 ): void {
   const trimmed = line.trim();
   if (!trimmed || (!trimmed.startsWith("{") && !trimmed.startsWith("["))) {
     return;
   }
+  if (!ARIJ_CALL_HINT.test(trimmed)) return;
   try {
-    collectToolNames(JSON.parse(trimmed), out, seenIds, lineAt);
+    collectToolNames(JSON.parse(trimmed), out, memory, lineAt);
   } catch {
     // partial or non-JSON line — skip
   }
@@ -245,6 +310,16 @@ export interface ArijToolCallScanner {
    * whose shape carries no id to dedupe on.
    */
   snapshot: () => ArijToolCall[];
+  /**
+   * The calls parsed from COMPLETED lines only, from index `from` on — what a
+   * writer may persist: unlike `snapshot()`, an entry here is final.
+   */
+  committed: (from?: number) => ArijToolCallRecord[];
+  /**
+   * End of stream: parse the unterminated trailing line as a finished one and
+   * commit what it holds. The write path calls it when the process exits.
+   */
+  flush: () => void;
   /** Characters currently held waiting for a newline. */
   pending: () => number;
 }
@@ -253,8 +328,8 @@ export function createArijToolCallScanner(
   options: { maxPendingChars?: number } = {}
 ): ArijToolCallScanner {
   const maxPending = options.maxPendingChars ?? ARIJ_SCAN_MAX_PENDING_CHARS;
-  const calls: ArijToolCall[] = [];
-  const seenIds = new Set<string>();
+  const calls: ArijToolCallRecord[] = [];
+  const memory = newParseMemory();
   let buffer = "";
   let at: string | null = null;
 
@@ -262,17 +337,31 @@ export function createArijToolCallScanner(
     push(content: string, chunkAt: string | null): void {
       buffer += content;
       at = chunkAt;
+      // Most raw chunks are one line split across several writes; re-splitting
+      // the whole carry for a chunk that ends no line is wasted work on the
+      // write path.
+      if (!content.includes("\n")) {
+        if (buffer.length > maxPending) buffer = "";
+        return;
+      }
       const lines = buffer.split("\n");
       buffer = lines.pop() ?? "";
-      for (const line of lines) parseLine(line, at, calls, seenIds);
+      for (const line of lines) parseLine(line, at, calls, memory);
       // Nothing can complete a line this long except more of the same; drop
       // it rather than growing the cached scanner without bound.
       if (buffer.length > maxPending) buffer = "";
     },
     snapshot(): ArijToolCall[] {
       const out = [...calls];
-      if (buffer) parseLine(buffer, at, out, new Set(seenIds));
-      return out;
+      if (buffer) parseLine(buffer, at, out, copyParseMemory(memory));
+      return out.map(({ tool, at: callAt }) => ({ tool, at: callAt }));
+    },
+    committed(from = 0): ArijToolCallRecord[] {
+      return calls.slice(from);
+    },
+    flush(): void {
+      if (buffer) parseLine(buffer, at, calls, memory);
+      buffer = "";
     },
     pending(): number {
       return buffer.length;

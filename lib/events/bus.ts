@@ -16,12 +16,29 @@ export type TicketEventType =
   | "artifact:created"
   | "release:created"
   /**
+   * `release:updated` — a release row changed after its creation: the
+   * background changelog run finished and the tag / GitHub draft followed, or
+   * the title / changelog was edited. Payload: `{ releaseId, githubErrors? }`
+   * — `githubErrors` reports a background GitHub failure as it happens; the
+   * row keeps it too (`finalize_errors`) for pages opened later.
+   */
+  | "release:updated"
+  /**
    * `memory:changed` — emitted after the project memory document is written by
    * ANY path (manual save, restore, Dreaming, distillation). The Spec & Memory
    * panel re-fetches on it so every open view shows the fresh memory without
    * polling. Payload: `{ source: "manual" | "dreaming" | "distill" }`.
    */
-  | "memory:changed";
+  | "memory:changed"
+  /**
+   * `memory:discarded` — a dream or distill DELIVERED but its output was not
+   * stored (invalid structure, a human edit mid-run, a failed write). Without
+   * it the rejection was visible only in the server log: the session row said
+   * success and the memory simply did not move. The panel says so in words.
+   * Payload: `{ source: "dreaming" | "distill", reason: MemoryDiscardReason,
+   * sessionId }` — see `emitMemoryDiscarded` in lib/events/emit.ts.
+   */
+  | "memory:discarded";
 
 export interface TicketEvent {
   type: TicketEventType;

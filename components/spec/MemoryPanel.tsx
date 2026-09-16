@@ -5,7 +5,14 @@ import { formatDateTime } from "@/lib/i18n/format";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { AlertTriangle, FileText, Moon, RotateCcw, Sparkles } from "lucide-react";
+import {
+  AlertTriangle,
+  CircleSlash,
+  FileText,
+  Moon,
+  RotateCcw,
+  Sparkles,
+} from "lucide-react";
 import {
   BandHeader,
   Mono,
@@ -26,9 +33,12 @@ import type {
   MemoryWriteProvenance,
   MemoryWriteSource,
 } from "@/lib/documents/memory-provenance";
+import type { MemoryEnvelope } from "@/lib/documents/memory-envelope";
 import {
   DREAMING_MEMORY_SECTIONS,
   MEMORY_WRITER_AGENT_TYPES,
+  isMemoryDiscardReason,
+  type MemoryDiscardReason,
 } from "@/lib/workflow/dreaming-constants";
 
 export const DREAMING_MEMORY_TEMPLATE = DREAMING_MEMORY_SECTIONS.map(
@@ -41,30 +51,31 @@ export function hasAllDreamingSections(markdown: string): boolean {
   );
 }
 /**
- * The pending-writer payload of the memory envelope (see
- * lib/workflow/memory-writer-lock): the in-flight memory writer, if any.
+ * A memory writer whose delivered output was NOT stored, as announced by the
+ * `memory:discarded` event (lib/events/emit.ts → emitMemoryDiscarded).
  */
-interface PendingMemoryWriter {
+interface MemoryDiscard {
+  source: "dreaming" | "distill";
+  reason: MemoryDiscardReason;
   sessionId: string;
-  agentType: string;
 }
 
 /**
- * The GET /api/projects/[projectId]/memory envelope (spec & memory panel,
- * Story 2 of the "gérer la section mémoire" epic).
+ * Why a writer's output was dropped, one sentence per reason CODE. The server
+ * sends the code, never a sentence: it does not know the viewer's locale.
  */
-interface MemoryEnvelope {
-  content?: string;
-  exists?: boolean;
-  updatedAt?: string | null;
-  maxChars?: number;
-  provenance?: MemoryWriteProvenance | null;
-  archive?: {
-    content?: string;
-    updatedAt?: string | null;
-  } | null;
-  pendingWriter?: PendingMemoryWriter | null;
-}
+const DISCARD_REASON_KEYS: Record<MemoryDiscardReason, TranslationKey> = {
+  no_output: "Spec.memory.discarded.reasons.noOutput",
+  invalid_structure: "Spec.memory.discarded.reasons.invalidStructure",
+  memory_changed: "Spec.memory.discarded.reasons.memoryChanged",
+  save_failed: "Spec.memory.discarded.reasons.saveFailed",
+};
+
+/** The snapshot text behind the archive bar, fetched when a restore is armed. */
+type ArchivePreview =
+  | { status: "loading" }
+  | { status: "ready"; content: string }
+  | { status: "error" };
 
 function isMemoryEnvelope(value: unknown): value is MemoryEnvelope {
   return typeof value === "object" && value !== null && "content" in value && typeof value.content === "string";
@@ -108,9 +119,15 @@ function sourceLabelKey(
  * - token cap indicator and approaching warning;
  * - template skeleton for the 4 Dreaming sections when empty/non-conforming;
  * - last write provenance in header (manual / Dreaming / distillation) + timestamp;
- * - 1-click pre-dream snapshot restore with explicit confirmation;
+ * - 1-click pre-dream snapshot restore with explicit confirmation, previewing
+ *   the snapshot text (fetched on demand from GET /memory/restore);
  * - read-only mode and prominent banner while an agent rewrite is in flight;
  * - live sync via SSE on memory:changed events;
+ * - saves carry the memory they were edited from (`expectedPrevious`); a
+ *   background write locks Save until the draft is discarded, and a 409 from
+ *   the server lands in the same state;
+ * - a writer whose output was dropped (`memory:discarded`) is said in words,
+ *   with the reason translated from its code and a link to the session;
  * - `id="memory-panel"`: notification deep links (/projects/[id]/spec#memory-panel)
  *   scroll straight to this panel.
  *
@@ -143,6 +160,10 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [provenance, setProvenance] = useState<MemoryWriteProvenance | null>(null);
   const [archive, setArchive] = useState<MemoryEnvelope["archive"]>(null);
+  const [archivePreview, setArchivePreview] = useState<ArchivePreview | null>(
+    null
+  );
+  const [discard, setDiscard] = useState<MemoryDiscard | null>(null);
   const [pendingWriter, setPendingWriter] = useState<
     MemoryEnvelope["pendingWriter"]
   >(null);
@@ -185,7 +206,7 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
   const hasMissingSections = missingSections.length > 0;
 
   const applyEnvelope = useCallback(
-    (envelope: MemoryEnvelope, keepLocalEdit: boolean) => {
+    (envelope: Partial<MemoryEnvelope>, keepLocalEdit: boolean) => {
       const incomingContent = envelope.content ?? "";
       const previousSaved = savedContentRef.current;
       setSavedContent(incomingContent);
@@ -232,7 +253,26 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
   }, [loadMemory]);
 
   const { pollTick } = useProjectEvents(projectId, {
-    "memory:changed": () => refetchMemory(),
+    "memory:changed": () => {
+      // A write landed after the discard: the notice is about a past state.
+      setDiscard(null);
+      refetchMemory();
+    },
+    // A writer answered but its output was dropped. The session row carries
+    // the failure durably; this is the word an open panel shows for it.
+    "memory:discarded": (event) => {
+      const source = event.data?.source;
+      const reason = event.data?.reason;
+      const sessionId = event.data?.sessionId;
+      if (
+        (source === "dreaming" || source === "distill") &&
+        isMemoryDiscardReason(reason) &&
+        typeof sessionId === "string"
+      ) {
+        setDiscard({ source, reason, sessionId });
+      }
+      refetchMemory();
+    },
     "session:started": (event) => {
       const agentType = typeof event.data?.agentType === "string" ? event.data.agentType : "";
       if (MEMORY_WRITER_AGENT_TYPES.includes(agentType)) {
@@ -280,7 +320,7 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
 
   async function writeMemory(action: "save" | "restore") {
     if (!projectId || !loaded || pendingWriter || mutationInFlight.current) return;
-    if (action === "save" ? overCap : dirty) return;
+    if (action === "save" ? overCap || backgroundUpdateConflict : dirty) return;
     mutationInFlight.current = true;
     readSequence.current += 1;
     setSaving(action === "save");
@@ -288,13 +328,18 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
     setConfirmingRestore(false);
     setMessage(null);
     setError(null);
+    setDiscard(null);
+    if (action === "restore") setArchivePreview(null);
     const result = await requestJson<MemoryEnvelope>(
       `/api/projects/${projectId}/memory${action === "restore" ? "/restore" : ""}`,
       {
         method: action === "save" ? "PUT" : "POST",
         ...(action === "save" ? {
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content: safeContent }),
+          // What this draft was edited FROM: the server refuses the save when
+          // the stored memory has moved since (a dream landed, say), rather
+          // than replacing text this editor never saw.
+          body: JSON.stringify({ content: safeContent, expectedPrevious: savedContent }),
         } : {}),
         errorMessage: action === "save" ? t("memory.errors.save") : t("memory.errors.restore"),
         validateData: isMemoryEnvelope,
@@ -304,6 +349,13 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
     mutationInFlight.current = false;
     setSaving(false);
     setRestoring(false);
+    if (action === "save" && "code" in result && result.code === "MEMORY_CHANGED") {
+      // The race the SSE event did not win. Same state as a background
+      // update: the draft stays, Save locks, Discard loads the new text.
+      setBackgroundUpdateConflict(true);
+      refetchMemory();
+      return;
+    }
     setError(result.error);
     if (result.data) {
       applyEnvelope(result.data, false);
@@ -314,13 +366,39 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
   function handleSave() { return writeMemory("save"); }
   function handleRestore() { return writeMemory("restore"); }
 
+  /**
+   * Arms the restore AND fetches the snapshot it would put back. The text is
+   * not in the envelope (it would ride every refetch); it is only worth
+   * sending now, when the user is deciding whether to replace the memory.
+   */
+  function armRestore() {
+    if (!projectId) return;
+    setConfirmingRestore(true);
+    setArchivePreview({ status: "loading" });
+    void requestJson<{ content: string }>(`/api/projects/${projectId}/memory/restore`, {
+      errorMessage: "snapshot unavailable",
+      validateData: (value): value is { content: string } =>
+        typeof (value as { content?: unknown } | null)?.content === "string",
+    }).then((result) => {
+      setArchivePreview(
+        result.data ? { status: "ready", content: result.data.content } : { status: "error" },
+      );
+    });
+  }
+
+  function cancelRestore() {
+    setConfirmingRestore(false);
+    setArchivePreview(null);
+  }
+
   async function handleDream() {
     if (!projectId || !loaded || dirty || pendingWriter || mutationInFlight.current) return;
     mutationInFlight.current = true;
     setDreaming(true);
     setMessage(null);
     setError(null);
-    const result = await requestJson<{ sessionId?: string; reason?: string }>(
+    setDiscard(null);
+    const result = await requestJson<{ sessionId?: string | null; code?: string }>(
       `/api/projects/${projectId}/memory/dream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -332,9 +410,16 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
     setDreaming(false);
     setError(result.error);
     if (!result.data) return;
-    const { sessionId, reason } = result.data;
+    const { sessionId, code } = result.data;
     if (!sessionId) {
-      setMessage(reason ? t("memory.nothingToDreamReason", { reason }) : t("memory.nothingToDream"));
+      // Picked by the guard's CODE: the server's `reason` is an English
+      // journal sentence, and splicing it into a translated one is exactly
+      // how a French panel ends up speaking English.
+      setMessage(
+        code === "no_new_sessions"
+          ? t("memory.dreamSkipped.noNewSessions")
+          : t("memory.nothingToDream")
+      );
     } else if (mounted.current) {
       router.push(`/projects/${projectId}/sessions/${sessionId}`);
     }
@@ -467,6 +552,48 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
           </div>
         )}
 
+        {/* A writer answered, but its output was dropped — said in words. */}
+        {discard && (
+          <div data-testid="memory-discard-notice" className="flex-none">
+            <SurfaceCard
+              radius={10}
+              className="flex flex-wrap items-center gap-[8px] px-[11px] py-[9px]"
+            >
+              <CircleSlash
+                size={13}
+                aria-hidden="true"
+                className="shrink-0 text-muted-foreground"
+              />
+              <span className="min-w-0 text-[12px] text-foreground">
+                {discard.source === "distill"
+                  ? t("memory.discarded.distill", {
+                      reason: tKey(DISCARD_REASON_KEYS[discard.reason]),
+                    })
+                  : t("memory.discarded.dreaming", {
+                      reason: tKey(DISCARD_REASON_KEYS[discard.reason]),
+                    })}
+              </span>
+              <div className="ml-auto flex items-center gap-[8px]">
+                <QuietLink
+                  tone="live"
+                  size={11.5}
+                  href={`/projects/${projectId}/sessions/${discard.sessionId}`}
+                >
+                  {t("memory.viewSession")}
+                </QuietLink>
+                <PillButton
+                  variant="outline"
+                  outlineTone="neutral"
+                  size="sm"
+                  onClick={() => setDiscard(null)}
+                >
+                  {t("memory.discarded.dismiss")}
+                </PillButton>
+              </div>
+            </SurfaceCard>
+          </div>
+        )}
+
         {loading ? (
           <p className="text-[12.5px] text-muted-foreground">
             {t("memory.loading")}
@@ -582,7 +709,7 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
                       variant="outline"
                       outlineTone="neutral"
                       size="sm"
-                      onClick={() => setConfirmingRestore(false)}
+                      onClick={cancelRestore}
                       disabled={restoring}
                     >
                       {t("memory.archive.cancel")}
@@ -595,7 +722,7 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
                     size="sm"
                     icon={RotateCcw}
                     className="ml-auto"
-                    onClick={() => setConfirmingRestore(true)}
+                    onClick={armRestore}
                     disabled={restoring || saving || dreaming || dirty || !!pendingWriter}
                     title={
                       dirty
@@ -605,6 +732,31 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
                   >
                     {t("memory.archive.restore")}
                   </PillButton>
+                )}
+                {/* What the restore would put back, read before confirming. */}
+                {confirmingRestore && archivePreview && (
+                  <div
+                    data-testid="memory-archive-preview"
+                    className="max-h-[180px] w-full basis-full overflow-y-auto rounded-[8px] bg-background px-[10px] py-[8px]"
+                  >
+                    {archivePreview.status === "ready" ? (
+                      archivePreview.content.trim() ? (
+                        <pre className="whitespace-pre-wrap break-words font-mono text-[11.5px] leading-[1.55] text-foreground">
+                          {archivePreview.content}
+                        </pre>
+                      ) : (
+                        <p className="text-[12px] text-muted-foreground">
+                          {t("memory.archive.previewEmpty")}
+                        </p>
+                      )
+                    ) : (
+                      <p className="text-[12px] text-muted-foreground">
+                        {archivePreview.status === "loading"
+                          ? t("memory.archive.previewLoading")
+                          : t("memory.archive.previewError")}
+                      </p>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -686,7 +838,17 @@ function MemoryWorkspace({ projectId, mode, className }: MemoryPanelProps & { pr
                   variant="filled"
                   size="sm"
                   onClick={handleSave}
-                  disabled={saving || restoring || dreaming || overCap || !dirty || !!pendingWriter}
+                  // Locked while a background write conflicts with the draft:
+                  // saving would replace text this editor never saw.
+                  disabled={
+                    saving ||
+                    restoring ||
+                    dreaming ||
+                    overCap ||
+                    !dirty ||
+                    !!pendingWriter ||
+                    backgroundUpdateConflict
+                  }
                   pending={saving}
                   pendingLabel={t("memory.savePending")}
                 >

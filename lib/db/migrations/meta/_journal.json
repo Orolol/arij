@@ -428,6 +428,20 @@
       "when": 1789516800000,
       "tag": "0061_review_dismissal_and_git_log",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1789516900000,
+      "tag": "0062_release_published_at",
+      "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "6",
+      "when": 1789517000000,
+      "tag": "0063_agent_session_tool_calls",
+      "breakpoints": true
     }
   ]
 }

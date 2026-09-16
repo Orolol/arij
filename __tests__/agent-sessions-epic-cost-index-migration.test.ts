@@ -181,6 +181,18 @@ describe("0056_agent_sessions_epic_cost_idx", () => {
       conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
       // Restore the pre-0058 shape as well, so its column removal does not stamp away 0056.
       conn.exec("ALTER TABLE named_agents ADD COLUMN readable_agent_name TEXT");
+      // …as of before the ledger: a bookkeeping-less database cannot carry a
+      // column that only ever arrived through a ledgered migration, and
+      // 0062's columns would raise the stamp ceiling over this index.
+      for (const column of [
+        "published_at",
+        "changelog_session_id",
+        "push_to_github",
+        "finalized_at",
+        "finalize_errors",
+      ]) {
+        conn.exec(`ALTER TABLE releases DROP COLUMN ${column}`);
+      }
 
       initDb(conn);
 

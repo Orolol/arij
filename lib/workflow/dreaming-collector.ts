@@ -8,11 +8,9 @@ import {
   ticketComments,
   userStories,
 } from "@/lib/db/schema";
-import { extractLastNonEmptyTextFromFile } from "@/lib/agent-sessions/last-text";
 import {
   FORENSIC_COMMENT_HEADING,
   parseForensicDeadSessionId,
-  readChunkTail,
 } from "@/lib/pipeline/forensic";
 import {
   DREAM_DIGEST_MAX_CHARS,
@@ -31,6 +29,7 @@ import {
   type DreamSessionDigest,
 } from "./dreaming-digest";
 import { findLastDreamCutoff } from "./dreaming-settings";
+import { resolveFinalText } from "./session-final-text";
 
 /** Statuses a session must have reached to be dreamable evidence. */
 const TERMINAL_SESSION_STATUSES: readonly string[] = ["completed", "failed"];
@@ -415,45 +414,6 @@ function assignForensicComments(
 }
 
 /**
- * The tail of a session's final response.
- *
- * Resolution order matters, and the obvious first choice is the wrong one:
- * `agent_sessions.last_non_empty_text` holds only the last non-empty LINE of
- * the newest chunk (see `extractLastNonEmptyText`). Preferring it collapsed a
- * whole review report to one line — and a report's mandated
- * `**Overall Verdict: …**` only survived when it happened to BE that line, so
- * the digest silently lost most verdicts and every closing paragraph.
- *
- * So the persisted chunk streams come first:
- *   - `response` — the final assistant text for streaming providers;
- *   - `output` — where Claude Code's result envelope is persisted
- *     (`result-<sessionId>`) and where other providers put their final output;
- *   - the logs file, then the one-line column, only as last resorts.
- *
- * A TAIL rather than the whole stream: a conclusion (and the verdict line)
- * lives at the end, and the renderer trims it again to its own per-field cap.
- */
-function resolveFinalText(row: DreamCandidateRow): string | null {
-  for (const streamType of ["response", "output"] as const) {
-    const tail = readChunkTail(
-      row.id,
-      streamType,
-      DREAM_FINAL_TEXT_SOURCE_MAX_CHARS
-    );
-    if (tail && tail.trim()) return tail;
-  }
-  try {
-    const fromLogs = extractLastNonEmptyTextFromFile(row.logsPath);
-    if (fromLogs && fromLogs.trim()) return fromLogs;
-  } catch {
-    // Best-effort: an unreadable log file must not break the digest.
-  }
-  return row.lastNonEmptyText && row.lastNonEmptyText.trim()
-    ? row.lastNonEmptyText
-    : null;
-}
-
-/**
  * Builds the cross-session digest for a project: window resolution, candidate
  * selection, per-session enrichment, then the size-budgeted assembly.
  *
@@ -502,7 +462,7 @@ export function collectDreamDigest(
   const sessions: DreamSessionDigest[] = ordered.map((row) => {
     const startMs = parseTimestampMs(sessionAt(row));
     const endMs = sessionTerminalMs(row);
-    const finalText = resolveFinalText(row);
+    const finalText = resolveFinalText(row, DREAM_FINAL_TEXT_SOURCE_MAX_CHARS);
 
     // Exact attribution when the filing session was recorded; the time window
     // only for rows written before migration 0032. Mixing the two would be

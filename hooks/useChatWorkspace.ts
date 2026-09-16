@@ -21,7 +21,9 @@ export function useChatWorkspace(projectId: string, onEpicCreated?: () => void) 
     [conversations.conversations, activeId]);
   const chat = useChat(projectId, activeId, activeConversation?.status);
   const epic = useEpicCreate({ projectId, conversationId: activeId, sendMessage: chat.sendMessage });
-  const spec = useSpecGeneration(projectId);
+  // Grounded on the conversation the user is looking at, not the project's
+  // most recent chat (lot 11, #108).
+  const spec = useSpecGeneration(projectId, { conversationId: activeId });
   const { sendMessage: rawSendMessage } = chat;
   const { createEpic: rawCreateEpic } = epic;
   const { generateSpec: rawGenerateSpec, generating: generatingSpec } = spec;
@@ -55,8 +57,8 @@ export function useChatWorkspace(projectId: string, onEpicCreated?: () => void) 
   }, [busy, hasUserMessage, rawCreateEpic, onEpicCreated, router]);
 
   const generateSpec = useCallback(async () => {
-    if (busy || !hasUserMessage || generatingSpec) return;
-    await rawGenerateSpec();
+    if (busy || !hasUserMessage || generatingSpec) return null;
+    return rawGenerateSpec();
   }, [busy, hasUserMessage, generatingSpec, rawGenerateSpec]);
 
   return {
@@ -77,6 +79,7 @@ export function useChatWorkspace(projectId: string, onEpicCreated?: () => void) 
     sendMessage, selectAgent, createEpic, generateSpec,
     epicCreating: epic.isLoading,
     generatingSpec: spec.generating,
+    specResult: spec.result,
     actionsDisabled: busy || !hasUserMessage,
   };
 }

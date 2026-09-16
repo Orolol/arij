@@ -503,5 +503,11 @@ commitées ; lot 11 `0057_release_published_at` → 0061 ; lot 07
 `0061_agent_session_tool_calls` → 0062 ; lot 10 est déjà `0063` (when
 1786716300000, au-dessus de tous). Mettre à jour les `MIGRATION_TAG` des tests
 de migration renumérotés et garder `idx` contigu dans `_journal.json`.
+Mise à jour (merge d'intégration) : la numérotation réelle est
+`0061_review_dismissal_and_git_log` (when 1789516800000),
+`0062_release_published_at` (when 1789516900000),
+`0063_agent_session_tool_calls` (when 1789517000000). La migration du lot 10
+doit donc prendre 0064 et un `when` au-dessus de 1789517000000 : 1786716300000
+serait ignoré silencieusement.
 
 Validation : même mesure que le lot 03 (commune aux deux commits).

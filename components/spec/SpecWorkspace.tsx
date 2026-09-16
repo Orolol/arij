@@ -16,11 +16,33 @@ import { fetchSessionStream } from "@/lib/agent-sessions/session-detail";
 
 interface SessionDetailResponse {
   status?: string;
-  logs?: {
-    result?: string;
-  } | null;
   lastNonEmptyText?: string;
   error?: string;
+}
+
+/**
+ * The agent's final answer: the LAST chunk of the session's `response` stream
+ * (`final-response`), reassembled if a legacy oversized row came out in
+ * slices. The detail route no longer serves `logs.json` on its polled
+ * payload, and that file only ever held the same text. Null when the run
+ * wrote no response, or the read failed — the caller falls back.
+ */
+async function readFinalResponse(
+  projectId: string,
+  sessionId: string
+): Promise<string | null> {
+  try {
+    const { chunks } = await fetchSessionStream(projectId, sessionId, "response");
+    const last = chunks[chunks.length - 1];
+    if (!last) return null;
+    const text = chunks
+      .filter((chunk) => chunk.sequence === last.sequence)
+      .map((chunk) => chunk.content)
+      .join("");
+    return text.trim() ? text : null;
+  } catch {
+    return null;
+  }
 }
 
 interface ProjectSpec { spec: string | null; updatedAt?: string | null }
@@ -158,8 +180,10 @@ export function SpecWorkspace({ projectId, pollIntervalMs = 2000 }: { projectId:
         // Keep the editor locked until the saved result has been loaded.
         const loaded = await refreshSpec();
         if (cancelled || !loaded) return;
+        const finalResponse = await readFinalResponse(projectId, updateSessionId);
+        if (cancelled) return;
         setUpdateStatus("done");
-        setUpdateResponse(session.logs?.result || lastChunk || session.lastNonEmptyText || null);
+        setUpdateResponse(finalResponse || lastChunk || session.lastNonEmptyText || null);
       } else if (session.status === "failed") {
         setUpdateStatus("failed");
         setUpdateError(session.error || t("page.sessionFailed"));

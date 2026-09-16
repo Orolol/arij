@@ -1,9 +1,24 @@
 /** Pure dispatch and output decisions, shared by manual and night-run dreams. */
 import { NIGHT_STOPPED_ABORT_REASON } from "@/lib/night/constants";
+import type { DreamGuardCode } from "./dreaming-constants";
+
+/** Why a dream (or its raced re-check in dreaming.ts) stood down: a writer is in flight. */
+export const WRITER_PENDING_REASON =
+  "a memory rewrite (distill or dream) is already pending for this project";
 
 export interface DreamDecision {
   allowed: boolean;
   reason: string;
+}
+
+/**
+ * The dispatch guard's answer: the journal sentence plus a CODE, so the memory
+ * panel can pick a translated sentence instead of splicing the server's
+ * English into a localised one — and the route can key its 409 on the code
+ * rather than on the wording.
+ */
+export interface DreamGuardDecision extends DreamDecision {
+  code: DreamGuardCode;
 }
 
 /**
@@ -19,21 +34,22 @@ export interface DreamDecision {
 export function evaluateDreamGuards(input: {
   hasPendingMemoryWriter: boolean;
   sessionCount: number;
-}): DreamDecision {
+}): DreamGuardDecision {
   if (input.hasPendingMemoryWriter) {
     return {
       allowed: false,
-      reason:
-        "a memory rewrite (distill or dream) is already pending for this project",
+      reason: WRITER_PENDING_REASON,
+      code: "writer_pending",
     };
   }
   if (input.sessionCount <= 0) {
     return {
       allowed: false,
       reason: "no new sessions since the last dream",
+      code: "no_new_sessions",
     };
   }
-  return { allowed: true, reason: "eligible" };
+  return { allowed: true, reason: "eligible", code: "eligible" };
 }
 
 /**
@@ -69,17 +85,3 @@ export function evaluateNightRunDreamGuards(input: {
   }
   return { allowed: true, reason: "eligible" };
 }
-
-/**
- * Strips an accidental full-document code fence from the agent's output
- * (the prompt forbids fences, but a cheap unwrap beats a corrupted doc).
- */
-export function sanitizeDreamedMemory(output: string): string {
-  const trimmed = output.trim();
-  const fenceMatch = trimmed.match(/^```[a-zA-Z]*\n([\s\S]*)\n```$/);
-  if (fenceMatch) {
-    return fenceMatch[1].trim();
-  }
-  return trimmed;
-}
-

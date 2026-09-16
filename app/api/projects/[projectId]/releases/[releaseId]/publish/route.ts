@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { GitHubNotConfiguredError } from "@/lib/github/client";
 import { publishRelease, getRelease } from "@/lib/github/releases";
 import { logSyncOperation } from "@/lib/github/sync-log";
+import { emitReleaseUpdated } from "@/lib/events/emit";
 import {
   getProjectOr404,
   isErrorResponse,
@@ -69,6 +70,19 @@ export async function POST(_request: NextRequest, { params }: Params) {
     });
 
     if (!current.draft) {
+      // Published outside Arij (or by a lost request). Recording it is what
+      // stops the page offering Publish for this release forever — the
+      // backfill of migration 0057 deliberately leaves doubtful rows as
+      // drafts and relies on this answer to heal them.
+      if (!release.publishedAt) {
+        db.update(releases)
+          .set({ publishedAt: new Date().toISOString() })
+          .where(eq(releases.id, releaseId))
+          .run();
+        // The page reloads on this; it only reloads on a successful publish
+        // otherwise, and would keep offering Publish over the 409.
+        emitReleaseUpdated(projectId, releaseId);
+      }
       return NextResponse.json(
         { error: "Release is already published." },
         { status: 409 }
@@ -82,10 +96,12 @@ export async function POST(_request: NextRequest, { params }: Params) {
       releaseId: release.githubReleaseId,
     });
 
-    // 7. Update local release record
+    // 7. Update local release record. `publishedAt` is the one field that
+    // makes a release "published" (#105); `pushedAt` keeps recording when the
+    // draft reached GitHub and is left as it was.
     const now = new Date().toISOString();
     db.update(releases)
-      .set({ githubReleaseUrl: result.htmlUrl, pushedAt: now })
+      .set({ githubReleaseUrl: result.htmlUrl, publishedAt: now })
       .where(eq(releases.id, releaseId))
       .run();
 

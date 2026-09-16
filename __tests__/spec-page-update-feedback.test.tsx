@@ -68,6 +68,12 @@ let sessionQueue: (SessionResponse | Error | "HTTP_500" | "HTTP_404")[] = [];
  * so the fake serves whatever has not been delivered to that cursor yet.
  */
 let outputChunks: string[] = [];
+/**
+ * The session's `response` stream — where the final answer lives. The detail
+ * route no longer serves `logs.json` on its polled payload, so the page reads
+ * the answer from here once the run completes.
+ */
+let responseChunks: string[] = [];
 let patchCalls: unknown[] = [];
 let projectReadFails = false;
 
@@ -93,7 +99,9 @@ vi.stubGlobal(
     if (urlStr.includes("/sessions/sess-1?stream=")) {
       const parsed = new URL(urlStr, "http://localhost:3000");
       const after = Number.parseInt(parsed.searchParams.get("after") ?? "", 10);
-      const chunks = outputChunks
+      const source =
+        parsed.searchParams.get("stream") === "response" ? responseChunks : outputChunks;
+      const chunks = source
         .map((content, index) => ({
           id: `chunk-${index}`,
           sessionId: "sess-1",
@@ -153,6 +161,7 @@ beforeEach(() => {
   pendingUpdateInfo = { pending: false, sessionId: null, status: null };
   sessionQueue = [];
   outputChunks = [];
+  responseChunks = [];
   projectReadFails = false;
 });
 
@@ -185,10 +194,8 @@ describe("SpecPage spec-update feedback", () => {
     );
 
     projectSpec = "# Spec\n\nNew content from the agent.";
-    sessionQueue.push({
-      status: "completed",
-      logs: { result: "Updated the architecture section." },
-    });
+    responseChunks = ["Updated the architecture section."];
+    sessionQueue.push({ status: "completed" });
 
     await waitFor(() =>
       expect(screen.getByTestId("spec-update-progress")).toHaveAttribute(
@@ -220,7 +227,8 @@ describe("SpecPage spec-update feedback", () => {
     await screen.findByTestId("spec-update-progress");
 
     projectReadFails = true;
-    sessionQueue.push({ status: "completed", logs: { result: "Updated the spec." } });
+    responseChunks = ["Updated the spec."];
+    sessionQueue.push({ status: "completed" });
     expect(await screen.findByText("Specification temporarily unavailable")).toBeInTheDocument();
     expect(screen.getByTestId("spec-update-progress")).toHaveAttribute("data-status", "running");
     expect(editor).toHaveValue("# Spec\n\nOld content.");
@@ -229,7 +237,7 @@ describe("SpecPage spec-update feedback", () => {
 
     projectSpec = "# Spec\n\nCanonical agent result.";
     projectReadFails = false;
-    sessionQueue.push({ status: "completed", logs: { result: "Updated the spec." } });
+    sessionQueue.push({ status: "completed" });
     await waitFor(() => expect(screen.getByTestId("spec-update-progress")).toHaveAttribute("data-status", "done"));
     expect(editor).toHaveValue(projectSpec);
     expect(editor).toBeEnabled();
@@ -270,15 +278,30 @@ describe("SpecPage spec-update feedback", () => {
 
     // Follow-up successful poll completes normally
     projectSpec = "# Spec\n\nUpdated.";
-    sessionQueue.push({
-      status: "completed",
-      logs: { result: "All done." },
-    });
+    responseChunks = ["All done."];
+    sessionQueue.push({ status: "completed" });
 
     await waitFor(() =>
       expect(screen.getByTestId("spec-update-progress")).toHaveAttribute(
         "data-status",
         "done",
+      )
+    );
+  });
+
+  it("falls back to the stored last line when the run wrote no response", async () => {
+    render(<SpecPage projectId="proj-1" pollIntervalMs={20} />);
+    await screen.findByTestId("spec-editor");
+
+    fireEvent.click(screen.getByTestId("spec-update-button"));
+    fireEvent.click(screen.getByText("start-update"));
+    await screen.findByTestId("spec-update-progress");
+
+    sessionQueue.push({ status: "completed", lastNonEmptyText: "Spec rewritten." });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("spec-update-response")).toHaveTextContent(
+        "Spec rewritten.",
       )
     );
   });

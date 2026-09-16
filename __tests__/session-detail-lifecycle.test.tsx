@@ -29,7 +29,7 @@ function deferred() {
   return { promise, resolve };
 }
 function json(data: unknown) { return new Response(JSON.stringify({ data })); }
-function session(id: string) { return { id, status: "completed", agentType: "build", provider: "claude-code" }; }
+function session(id: string, status = "completed") { return { id, status, agentType: "build", provider: "claude-code" }; }
 
 beforeEach(() => {
   state.projectId = "p";
@@ -85,9 +85,11 @@ describe("session detail lifecycle", () => {
   it("keeps polling lightweight metadata without stacking expensive action scans", async () => {
     vi.useFakeTimers();
     state.actions.mockReturnValue(new Promise(() => {}));
-    const fetchMock = vi.fn().mockImplementation(async () => json(session("a")));
+    // Only a live session is polled: a finished one is read once (lot 07, #113).
+    const fetchMock = vi.fn().mockImplementation(async () => json(session("a", "running")));
     vi.stubGlobal("fetch", fetchMock);
     render(<SessionDetailPage />);
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
     await act(async () => { await vi.advanceTimersByTimeAsync(6000); });
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(state.actions).toHaveBeenCalledTimes(1);

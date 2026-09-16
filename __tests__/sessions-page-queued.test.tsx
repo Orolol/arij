@@ -124,23 +124,39 @@ function nightRun(overrides: Record<string, unknown>) {
  * run" chip is active — the night-run list. Route by URL so the two never
  * feed each other the wrong payload.
  */
+const EMPTY_SUMMARY = {
+  running: 0,
+  queued: 0,
+  today: 0,
+  todayCompleted: 0,
+  todayFailed: 0,
+  todayCostUsd: 0,
+  since: new Date().toISOString(),
+};
+
 function mockEndpoints({
   sessions = [] as unknown[],
   nightRuns = [] as unknown[],
+  summary = EMPTY_SUMMARY as Record<string, unknown>,
 } = {}) {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: unknown) => ({
       ok: true,
-      json: async () => ({
-        data: String(url).includes("/build/night-runs") ? nightRuns : sessions,
-      }),
+      json: async () =>
+        String(url).includes("/build/night-runs")
+          ? { data: nightRuns }
+          : // The band is the server's aggregate, served with the first page.
+            {
+              data: sessions,
+              ...(String(url).includes("summary=1") ? { summary } : {}),
+            },
     }))
   );
 }
 
-function mockSessions(data: unknown[]) {
-  mockEndpoints({ sessions: data });
+function mockSessions(data: unknown[], summary?: Record<string, unknown>) {
+  mockEndpoints({ sessions: data, ...(summary ? { summary } : {}) });
 }
 
 /**
@@ -186,11 +202,28 @@ describe("SessionsPage — synthesis band", () => {
       }),
       agentSession({ id: "sess-done", status: "completed", totalCostUsd: 0.5 }),
       agentSession({ id: "sess-failed", status: "failed", error: "boom" }),
-    ]);
+    ], {
+      ...EMPTY_SUMMARY,
+      running: 1,
+      queued: 1,
+      today: 2,
+      todayCompleted: 1,
+      todayFailed: 1,
+      todayCostUsd: 0.5,
+    });
   });
 
-  it("counts running, today, success rate and the queue", async () => {
+  it("paints the band from the server's aggregate, asked for from local midnight", async () => {
     await renderPage();
+
+    const listCall = vi
+      .mocked(fetch)
+      .mock.calls.map(([url]) => new URL(String(url), "http://localhost"))
+      .find((url) => url.pathname === "/api/projects/proj-1/sessions");
+    expect(listCall?.searchParams.get("summary")).toBe("1");
+    const midnight = new Date();
+    midnight.setHours(0, 0, 0, 0);
+    expect(listCall?.searchParams.get("since")).toBe(midnight.toISOString());
 
     expect(screen.getByTestId("sessions-band")).toBeInTheDocument();
     expect(screen.getByTestId("sessions-band-running")).toHaveTextContent(
@@ -246,6 +279,22 @@ describe("SessionsPage — empty states", () => {
     expect(screen.queryByText(/1 queued/)).not.toBeInTheDocument();
     expect(screen.getByTestId("sessions-band-running")).toHaveTextContent(
       "None right now"
+    );
+  });
+
+  it("shows a dash, not a zero, when the aggregate did not arrive", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ data: [agentSession({ id: "sess-done" })] }),
+      }))
+    );
+    await renderPage();
+
+    expect(screen.getByTestId("sessions-band-running")).toHaveTextContent("—");
+    expect(screen.getByTestId("sessions-band-queue")).not.toHaveTextContent(
+      "Nothing queued"
     );
   });
 

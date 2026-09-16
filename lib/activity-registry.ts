@@ -1,11 +1,17 @@
 /**
- * In-memory registry for ephemeral agent activities (chat, spec generation, releases)
+ * In-memory registry for ephemeral agent activities (chat, spec generation)
  * that are NOT tracked in the DB agent_sessions table.
+ *
+ * Anything with an `agent_sessions` row must NOT register here as well:
+ * GET /sessions/active concatenates both sources, so the run shows up twice —
+ * once cancellable, once as a ghost id nothing can cancel or open. The
+ * release changelog run did exactly that until it moved to a background
+ * session (#202).
  *
  * Same module-level singleton pattern as processManager.
  */
 
-export type ActivityType = "chat" | "spec_generation" | "release";
+export type ActivityType = "chat" | "spec_generation";
 
 export interface Activity {
   id: string;

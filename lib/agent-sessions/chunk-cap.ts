@@ -96,3 +96,74 @@ export function chunkElisionMarkerSplitter(): RegExp {
 export function isChunkElisionMarker(line: string): boolean {
   return new RegExp(`^${MARKER_SOURCE}$`).test(line.trim());
 }
+
+// ---------------------------------------------------------------------------
+// The per-SESSION cap on the raw stream
+// ---------------------------------------------------------------------------
+
+/**
+ * Ceiling on the UTF-8 bytes a session's `raw` stream keeps, enforced on the
+ * write path.
+ *
+ * The per-chunk cap above bounds one row; nothing bounded the number of rows.
+ * Measured on the live database on 2026-09-11: 300,644 raw rows holding
+ * 869 MB, 90 % of it in 37 sessions above 4 MiB, all builds run by a CLI that
+ * streams a progress frame per pipe read. A time-based retention cannot reach
+ * that shape — the bytes arrive in one afternoon — so the bound sits where the
+ * bytes do: once a session's raw stream passes this ceiling, its oldest rows
+ * after the head are dropped and one marker says how much went.
+ *
+ * What survives is what the readers use: the head (the prompt echo and the
+ * first commands, which the session detail seeds its preview from) and the
+ * tail (where the failure and the verdict live, which forensic diagnostics
+ * and the LIVE LOG read). The middle of a multi-megabyte stream is the part
+ * nobody opens.
+ */
+export const SESSION_RAW_STREAM_MAX_BYTES = 4 * 1024 * 1024;
+
+/**
+ * Raw rows always kept at the head of the stream, whatever the cap. Twenty is
+ * the size of the preview the session detail seeds the LIVE LOG with.
+ */
+export const SESSION_RAW_STREAM_KEPT_HEAD_CHUNKS = 20;
+
+/**
+ * Where a trim stops: below this share of the cap, so that a stream hovering
+ * at the ceiling is trimmed in batches rather than one row per append.
+ */
+export const SESSION_RAW_STREAM_TRIM_TO_RATIO = 0.75;
+
+/**
+ * `chunk_key` of the one row that stands in for the dropped middle of a
+ * capped raw stream. Disjoint from every provider key (`stdout:N`,
+ * `stderr:N`) and from the derived `sha256-…` keys.
+ */
+export const SESSION_RAW_STREAM_TRIM_CHUNK_KEY = "raw-trimmed";
+
+/** The invariant part of the raw-stream trim marker. */
+export const SESSION_RAW_STREAM_TRIM_LABEL = `raw stream capped by Arij at ${
+  SESSION_RAW_STREAM_MAX_BYTES / (1024 * 1024)
+} MiB per session`;
+
+/**
+ * The line stored in the marker row of a trimmed raw stream. One row per
+ * session, rewritten as the total grows; `en-US` for the same reason as the
+ * chunk marker.
+ */
+export function rawStreamTrimMarker(
+  droppedBytes: number,
+  droppedChunks: number
+): string {
+  return `[… ${droppedBytes.toLocaleString("en-US")} bytes in ${droppedChunks.toLocaleString(
+    "en-US"
+  )} chunks dropped — ${SESSION_RAW_STREAM_TRIM_LABEL} …]`;
+}
+
+const TRIM_MARKER_SOURCE = `\\[… [\\d,]+ bytes in [\\d,]+ chunks dropped — ${escapeRegExp(
+  SESSION_RAW_STREAM_TRIM_LABEL
+)} …\\]`;
+
+/** True when `line` is, on its own, a raw-stream trim marker. */
+export function isRawStreamTrimMarker(line: string): boolean {
+  return new RegExp(`^${TRIM_MARKER_SOURCE}$`).test(line.trim());
+}

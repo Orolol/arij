@@ -646,6 +646,21 @@ function ChatWorkspace({
   const showEpicFallback =
     isEpicCreation && hasUserMessage && epicsByMessage.size === 0;
 
+  // Generated from THIS conversation; say what landed and point at the spec,
+  // the same way the "toward the spec" proposal does. An epics-only answer
+  // left the spec untouched, so it neither claims a write nor links to it.
+  async function handleGenerateSpec() {
+    const outcome = await generateSpec();
+    if (!outcome) return;
+    if (outcome.spec === null) {
+      onToast("success", t("thread.generateSpecEpicsOnly", { count: outcome.epicsCreated }));
+    } else {
+      setSpecHref(`/projects/${projectId}/spec`);
+      onToast("success", t("thread.generateSpecDone", { count: outcome.epicsCreated }));
+    }
+    onDeskChanged();
+  }
+
   const footer =
     showEpicFallback || isBrainstorm ? (
       <div className="flex flex-wrap gap-2 px-2 pt-1">
@@ -670,7 +685,7 @@ function ChatWorkspace({
             pending={generatingSpec}
             disabled={actionsDisabled}
             pendingLabel={t("thread.generateSpecPending")}
-            onClick={generateSpec}
+            onClick={() => void handleGenerateSpec()}
           >
             {t("thread.generateSpec")}
           </PillButton>

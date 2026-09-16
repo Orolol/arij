@@ -241,6 +241,12 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
       applyLegacyAdHocDdl(conn);
       if (columnNames(conn, "notifications").includes("message")) conn.exec("ALTER TABLE notifications DROP COLUMN message");
+      // 0062_release_published_at (release published_at / changelog session / finalisation).
+      conn.exec("ALTER TABLE releases DROP COLUMN published_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN changelog_session_id");
+      conn.exec("ALTER TABLE releases DROP COLUMN push_to_github");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalized_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalize_errors");
     });
 
     withDb(file, (conn) => {
@@ -348,6 +354,12 @@ describe("initDb", () => {
       conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
       applyLegacyAdHocDdl(conn);
       if (columnNames(conn, "notifications").includes("message")) conn.exec("ALTER TABLE notifications DROP COLUMN message");
+      // 0062_release_published_at (release published_at / changelog session / finalisation).
+      conn.exec("ALTER TABLE releases DROP COLUMN published_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN changelog_session_id");
+      conn.exec("ALTER TABLE releases DROP COLUMN push_to_github");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalized_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalize_errors");
       conn.exec("DROP TABLE ticket_read_cursors");
     });
 
@@ -486,6 +498,12 @@ describe("migration journal", () => {
       conn.exec("ALTER TABLE review_comments DROP COLUMN dismissed_reason");
       applyLegacyAdHocDdl(conn);
       if (columnNames(conn, "notifications").includes("message")) conn.exec("ALTER TABLE notifications DROP COLUMN message");
+      // 0062_release_published_at (release published_at / changelog session / finalisation).
+      conn.exec("ALTER TABLE releases DROP COLUMN published_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN changelog_session_id");
+      conn.exec("ALTER TABLE releases DROP COLUMN push_to_github");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalized_at");
+      conn.exec("ALTER TABLE releases DROP COLUMN finalize_errors");
 
       expect(() => initDb(conn)).not.toThrow();
 

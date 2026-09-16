@@ -41,7 +41,7 @@ import { createId } from "@/lib/utils/nanoid";
 import { dispatchBackgroundSession } from "@/lib/agent-sessions/dispatch-background-session";
 import { resolveSessionOutput } from "@/lib/claude/resolve-session-output";
 import {
-  listSessionChunks,
+  readSessionStreamTail,
   type AgentSessionStreamType,
 } from "@/lib/agent-sessions/chunks";
 import { resolveAgentPrompt } from "@/lib/agent-config/prompts";
@@ -156,16 +156,15 @@ export function readChunkTail(
   streamType: AgentSessionStreamType,
   maxChars: number
 ): string | null {
-  let joined: string;
+  // Read from the END of the stream and stop once the budget is covered: a
+  // dead omp build can leave a 100 MB raw stream behind, and materialising it
+  // whole to keep 8,000 characters blocked the shared connection for the
+  // duration.
   try {
-    joined = listSessionChunks(sessionId, streamType)
-      .map((chunk) => chunk.content)
-      .join("");
+    return readSessionStreamTail(sessionId, streamType, maxChars);
   } catch {
     return null;
   }
-  if (!joined.trim()) return null;
-  return joined.length > maxChars ? joined.slice(-maxChars) : joined;
 }
 
 interface DeadSessionRow {

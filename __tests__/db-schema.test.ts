@@ -230,6 +230,24 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       createdAt: "created_at",
     },
   },
+  agentSessionToolCalls: {
+    sqlName: "agent_session_tool_calls",
+    columns: {
+      id: "id",
+      sessionId: "session_id",
+      sequence: "sequence",
+      tool: "tool",
+      at: "at",
+      callId: "call_id",
+    },
+  },
+  agentSessionToolCallIndex: {
+    sqlName: "agent_session_tool_call_index",
+    columns: {
+      sessionId: "session_id",
+      createdAt: "created_at",
+    },
+  },
   frictions: {
     sqlName: "frictions",
     columns: {
@@ -282,6 +300,11 @@ const TABLE_COLUMNS: Record<string, { sqlName: string; columns: ColumnSpec }> = 
       githubReleaseId: "github_release_id",
       githubReleaseUrl: "github_release_url",
       pushedAt: "pushed_at",
+      publishedAt: "published_at",
+      changelogSessionId: "changelog_session_id",
+      pushToGitHub: "push_to_github",
+      finalizedAt: "finalized_at",
+      finalizeErrors: "finalize_errors",
       createdAt: "created_at",
     },
   },
@@ -737,6 +760,10 @@ const NULLABLE: [string, string][] = [
   ["releases", "githubReleaseId"],
   ["releases", "githubReleaseUrl"],
   ["releases", "pushedAt"],
+  ["releases", "publishedAt"],
+  ["releases", "changelogSessionId"],
+  ["releases", "finalizedAt"],
+  ["releases", "finalizeErrors"],
   ["gitSyncLog", "branch"],
   ["gitSyncLog", "detail"],
   // A clone is logged before any project row exists — see migration
@@ -876,6 +903,18 @@ const INDEXES: Record<string, IndexSpec[]> = {
       name: "agent_session_chunks_session_stream_sequence_idx",
       unique: false,
       columns: ["session_id", "stream_type", "sequence"],
+    },
+  ],
+  agentSessionToolCalls: [
+    {
+      name: "agent_session_tool_calls_session_sequence_unique",
+      unique: true,
+      columns: ["session_id", "sequence"],
+    },
+    {
+      name: "agent_session_tool_calls_session_call_id_unique",
+      unique: true,
+      columns: ["session_id", "call_id"],
     },
   ],
   frictions: [
@@ -1117,6 +1156,7 @@ const FOREIGN_KEYS: Record<string, ForeignKeySpec[]> = {
   ],
   releases: [
     { columns: ["project_id"], foreignTable: "projects", foreignColumns: ["id"], onDelete: "cascade" },
+    { columns: ["changelog_session_id"], foreignTable: "agent_sessions", foreignColumns: ["id"], onDelete: "set null" },
   ],
   gitSyncLog: [
     { columns: ["project_id"], foreignTable: "projects", foreignColumns: ["id"], onDelete: "cascade" },
@@ -1245,6 +1285,11 @@ describe("db schema: exported types", () => {
       githubReleaseId: 12345,
       githubReleaseUrl: "https://github.com/owner/repo/releases/12345",
       pushedAt: "2025-01-01T00:00:00Z",
+      publishedAt: "2025-01-02T00:00:00Z",
+      changelogSessionId: null,
+      pushToGitHub: true,
+      finalizedAt: "2025-01-01T00:00:00Z",
+      finalizeErrors: null,
       createdAt: "2025-01-01T00:00:00Z",
     };
     const localOnly: schema.Release = {
@@ -1259,6 +1304,11 @@ describe("db schema: exported types", () => {
       githubReleaseId: null,
       githubReleaseUrl: null,
       pushedAt: null,
+      publishedAt: null,
+      changelogSessionId: null,
+      pushToGitHub: false,
+      finalizedAt: null,
+      finalizeErrors: null,
       createdAt: null,
     };
     expect(published.githubReleaseId).toBe(12345);

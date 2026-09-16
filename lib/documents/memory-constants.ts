@@ -110,8 +110,19 @@ export function isInternalMemoryDocKind(kind: string | null | undefined): boolea
  */
 export { MEMORY_AUTO_DISTILL_SETTING_KEY } from "@/lib/settings/keys";
 
-/** Tolerant parse of the settings row value ('true'/'false', default off). */
-export function parseMemoryAutoDistillSetting(value: unknown): boolean {
+/**
+ * Tri-state parse of a boolean settings value: `null` means "not configured",
+ * so a caller can fall through to its default (or the next level of a
+ * project → global chain).
+ *
+ * Accepts every shape the value can reach us in: a real boolean (client, after
+ * GET parsed the row), the JSON-encoded `"true"` the PATCH route writes, and
+ * the double-encoded `'"true"'` a string-valued PATCH produces. That last one
+ * matters: without the JSON pass, GET would report a setting enabled while the
+ * server resolved it OFF — a toggle that lies. Shared by both memory-writer
+ * switches so the two cannot drift on what counts as "on".
+ */
+export function parseBooleanSetting(value: unknown): boolean | null {
   let parsed: unknown = value;
   if (typeof parsed === "string") {
     try {
@@ -121,8 +132,18 @@ export function parseMemoryAutoDistillSetting(value: unknown): boolean {
     }
   }
   if (parsed === true) return true;
-  if (typeof parsed === "string") return parsed.trim().toLowerCase() === "true";
-  return false;
+  if (parsed === false) return false;
+  if (typeof parsed === "string") {
+    const normalized = parsed.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return null;
+}
+
+/** Tolerant parse of the settings row value ('true'/'false', default off). */
+export function parseMemoryAutoDistillSetting(value: unknown): boolean {
+  return parseBooleanSetting(value) ?? false;
 }
 
 /**

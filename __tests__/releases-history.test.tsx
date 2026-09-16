@@ -55,6 +55,20 @@ vi.mock("@/hooks/useReleasePublish", () => ({
   useReleasePublish: () => publishState,
 }));
 
+/** The page's SSE subscription: tests fire its handlers by hand. */
+const events = vi.hoisted(() => ({
+  handlers: {} as Record<string, (event: { data: Record<string, unknown> }) => void>,
+}));
+vi.mock("@/hooks/useProjectEvents", () => ({
+  useProjectEvents: (
+    _projectId: string,
+    handlers: Record<string, (event: { data: Record<string, unknown> }) => void>
+  ) => {
+    events.handlers = handlers;
+    return { pollTick: 0, connectionStatus: "connected" };
+  },
+}));
+
 vi.mock("@/components/shared/NamedAgentSelect", () => ({
   NamedAgentSelect: () => <button type="button">agent</button>,
 }));
@@ -78,7 +92,7 @@ const PROJECT = {
   githubOwnerRepo: "orolol/arij",
 };
 
-/** Published: a GitHub id AND a push. Carries a tag, and one id whose epic is gone. */
+/** Published: the publish route stamped publishedAt. Carries a tag, and one id whose epic is gone. */
 const PUBLISHED = {
   id: "r1",
   version: "0.4.2",
@@ -90,6 +104,7 @@ const PUBLISHED = {
   githubReleaseId: 10,
   githubReleaseUrl: "https://github.com/orolol/arij/releases/10",
   pushedAt: iso(4 * DAY),
+  publishedAt: iso(3 * DAY),
   createdAt: iso(4 * DAY),
 };
 
@@ -105,21 +120,28 @@ const LOCAL = {
   githubReleaseId: null,
   githubReleaseUrl: null,
   pushedAt: null,
+  publishedAt: null,
   createdAt: iso(14 * DAY),
 };
 
-/** Draft: a GitHub id but no push, and no tag. */
+/**
+ * Draft: exactly what POST /releases writes with "GitHub draft" on — a tag,
+ * a GitHub id, `pushedAt` stamped at creation, and no `publishedAt` (#105).
+ * The fixture used to carry `pushedAt: null`, a shape the server never
+ * produced, which is how the unreachable Publish button stayed green.
+ */
 const DRAFT = {
   id: "r3",
   version: "0.4.0",
   title: null,
   changelog: "# 0.4.0\n\n## Features\n- Provider matrix doc\n\n### Notes\n- rien\n",
   epicIds: '["e5"]',
-  releaseBranch: null,
-  gitTag: null,
+  releaseBranch: "release/v0.4.0",
+  gitTag: "v0.4.0",
   githubReleaseId: 9,
-  githubReleaseUrl: null,
-  pushedAt: null,
+  githubReleaseUrl: "https://github.com/orolol/arij/releases/9",
+  pushedAt: iso(31 * DAY),
+  publishedAt: null,
   createdAt: iso(31 * DAY),
 };
 
@@ -151,14 +173,22 @@ const EPICS = [
 const state = vi.hoisted(() => ({
   releases: [] as Record<string, unknown>[],
   epics: [] as Record<string, unknown>[],
+  patch: { ok: true, status: 200, body: { data: {} } as Record<string, unknown> },
 }));
 
 function jsonRes(body: unknown) {
   return { ok: true, status: 200, json: async () => body } as unknown as Response;
 }
 
-const fetchMock = vi.fn(async (input: unknown) => {
+const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
   const url = String(input);
+  if (init?.method === "PATCH") {
+    return {
+      ok: state.patch.ok,
+      status: state.patch.status,
+      json: async () => state.patch.body,
+    } as unknown as Response;
+  }
   if (url === "/api/projects/p1/releases") return jsonRes({ data: state.releases });
   if (url === "/api/projects/p1/epics") return jsonRes({ data: state.epics });
   if (url === "/api/projects/p1") return jsonRes({ data: PROJECT });
@@ -179,6 +209,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   state.releases = [PUBLISHED, LOCAL, DRAFT];
   state.epics = EPICS;
+  state.patch = { ok: true, status: 200, body: { data: {} } };
+  events.handlers = {};
   ghConfig.isConfigured = true;
   publishState.error = null;
   publishState.isPublishing = false;
@@ -206,8 +238,9 @@ describe("Release history — stamps", () => {
     expect(within(local).queryByText("GH DRAFT")).toBeNull();
 
     const draft = screen.getByTestId("release-history-row-r3");
-    expect(within(draft).queryByText("TAG")).toBeNull();
+    expect(within(draft).getByText("TAG")).toBeInTheDocument();
     expect(within(draft).getByText("GH DRAFT")).toBeInTheDocument();
+    expect(within(draft).queryByText("GH RELEASE")).toBeNull();
   });
 
   it("prints the version and its ticket count", async () => {
@@ -383,5 +416,283 @@ describe("Release history — empty", () => {
     expect(screen.getByText("History")).toBeInTheDocument();
     expect(screen.getByText("No releases yet")).toBeInTheDocument();
     expect(screen.queryByTestId("release-history-list")).toBeNull();
+  });
+});
+
+function releaseLoads(): number {
+  return fetchMock.mock.calls.filter(
+    ([url, init]) =>
+      String(url) === "/api/projects/p1/releases" &&
+      (init as RequestInit | undefined)?.method === undefined
+  ).length;
+}
+
+async function inspect(releaseId: string) {
+  const user = userEvent.setup();
+  await renderPage();
+  await user.click(screen.getByTestId(`release-history-row-${releaseId}`));
+  await user.click(
+    within(screen.getByTestId(`release-history-tickets-${releaseId}`)).getByText(
+      "view the changelog →"
+    )
+  );
+  return user;
+}
+
+describe("Release history — editing (#117)", () => {
+  it("edits the title and the changelog of an unpublished release, then reloads", async () => {
+    const user = await inspect("r3");
+    const loadsBefore = releaseLoads();
+
+    await user.click(screen.getByTestId("release-edit-button"));
+
+    const editor = screen.getByTestId("release-changelog-editor");
+    expect(editor).toHaveValue(DRAFT.changelog);
+    await user.clear(editor);
+    await user.type(editor, "# 0.4.0 fixed");
+    await user.type(screen.getByTestId("release-edit-title-input"), "Autumn");
+    await user.click(screen.getByTestId("release-edit-save"));
+
+    const patchCall = fetchMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === "PATCH"
+    );
+    expect(patchCall?.[0]).toBe("/api/projects/p1/releases/r3");
+    // Each changed field travels with the value the editor was seeded with,
+    // so the server can refuse an edit made over a row that has since moved.
+    expect(JSON.parse(String((patchCall?.[1] as RequestInit).body))).toEqual({
+      title: "Autumn",
+      expectedTitle: null,
+      changelog: "# 0.4.0 fixed",
+      expectedChangelog: DRAFT.changelog,
+    });
+    await waitFor(() => expect(releaseLoads()).toBe(loadsBefore + 1));
+    // Back to reading once saved.
+    expect(screen.queryByTestId("release-changelog-editor")).toBeNull();
+  });
+
+  it("keeps the editor open and says why when the edit is refused", async () => {
+    state.patch = {
+      ok: false,
+      status: 502,
+      body: { error: "GitHub refused the edit: rate limited" },
+    };
+    const user = await inspect("r3");
+
+    await user.click(screen.getByTestId("release-edit-button"));
+    await user.type(screen.getByTestId("release-changelog-editor"), "!");
+    await user.click(screen.getByTestId("release-edit-save"));
+
+    expect(await screen.findByTestId("release-edit-error")).toHaveTextContent(
+      "GitHub refused the edit: rate limited"
+    );
+    expect(screen.getByTestId("release-changelog-editor")).toBeInTheDocument();
+  });
+
+  it("discards the draft edit on cancel", async () => {
+    const user = await inspect("r2");
+
+    await user.click(screen.getByTestId("release-edit-button"));
+    await user.click(screen.getByTestId("release-edit-cancel"));
+
+    expect(screen.queryByTestId("release-changelog-editor")).toBeNull();
+    expect(
+      fetchMock.mock.calls.some(
+        ([, init]) => (init as RequestInit | undefined)?.method === "PATCH"
+      )
+    ).toBe(false);
+  });
+
+  it("sends only the fields that changed: a title edit never resends the changelog", async () => {
+    const user = await inspect("r3");
+
+    await user.click(screen.getByTestId("release-edit-button"));
+    await user.type(screen.getByTestId("release-edit-title-input"), "Autumn");
+    await user.click(screen.getByTestId("release-edit-save"));
+
+    const patchCall = fetchMock.mock.calls.find(
+      ([, init]) => (init as RequestInit | undefined)?.method === "PATCH"
+    );
+    expect(JSON.parse(String((patchCall?.[1] as RequestInit).body))).toEqual({
+      title: "Autumn",
+      expectedTitle: null,
+    });
+  });
+
+  it("closes without a request when nothing changed", async () => {
+    const user = await inspect("r3");
+
+    await user.click(screen.getByTestId("release-edit-button"));
+    await user.click(screen.getByTestId("release-edit-save"));
+
+    await waitFor(() =>
+      expect(screen.queryByTestId("release-changelog-editor")).toBeNull()
+    );
+    expect(
+      fetchMock.mock.calls.some(
+        ([, init]) => (init as RequestInit | undefined)?.method === "PATCH"
+      )
+    ).toBe(false);
+  });
+
+  it("says the release moved under the editor when the server reports a stale edit", async () => {
+    state.patch = {
+      ok: false,
+      status: 409,
+      body: { error: "The release changed since it was opened for editing.", code: "release_changed" },
+    };
+    const user = await inspect("r3");
+
+    await user.click(screen.getByTestId("release-edit-button"));
+    await user.type(screen.getByTestId("release-changelog-editor"), "!");
+    await user.click(screen.getByTestId("release-edit-save"));
+
+    expect(await screen.findByTestId("release-edit-error")).toHaveTextContent(
+      "This release changed while you were editing it"
+    );
+  });
+
+  it("says the release is being tagged when the server refuses an edit mid-finalisation", async () => {
+    state.patch = {
+      ok: false,
+      status: 409,
+      body: { error: "The release is being tagged; try again in a moment.", code: "release_finalizing" },
+    };
+    const user = await inspect("r3");
+
+    await user.click(screen.getByTestId("release-edit-button"));
+    await user.type(screen.getByTestId("release-changelog-editor"), "!");
+    await user.click(screen.getByTestId("release-edit-save"));
+
+    expect(await screen.findByTestId("release-edit-error")).toHaveTextContent(
+      "being tagged"
+    );
+  });
+
+  it("offers no edit on a published release", async () => {
+    await inspect("r1");
+    expect(screen.queryByTestId("release-edit-button")).toBeNull();
+  });
+
+  it("shows the release title in inspect mode", async () => {
+    state.releases = [{ ...DRAFT, title: "Autumn" }];
+    await inspect("r3");
+    expect(screen.getByTestId("release-inspect-title")).toHaveTextContent("Autumn");
+  });
+});
+
+describe("Release history — changelog in progress (#109)", () => {
+  const PENDING = {
+    ...LOCAL,
+    id: "r4",
+    version: "0.4.3",
+    gitTag: null,
+    releaseBranch: null,
+    changelog: "# 0.4.3\n\n## Features\n- Something\n",
+    epicIds: '["e3"]',
+    changelogPending: true,
+    createdAt: iso(0),
+  };
+
+  it("says the changelog is still being written, in words", async () => {
+    state.releases = [PENDING, PUBLISHED];
+    await renderPage();
+
+    const row = screen.getByTestId("release-history-row-r4");
+    expect(within(row).getByText("changelog in progress")).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("release-history-row-r1")).queryByText(
+        "changelog in progress"
+      )
+    ).toBeNull();
+  });
+
+  it("reloads when the server announces the release finished", async () => {
+    state.releases = [PENDING];
+    await renderPage();
+    const loadsBefore = releaseLoads();
+
+    events.handlers["release:updated"]?.({ data: { releaseId: "r4" } });
+
+    await waitFor(() => expect(releaseLoads()).toBe(loadsBefore + 1));
+  });
+
+  it("keeps reloading while a release is pending, so the server can reconcile it", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      state.releases = [PENDING];
+      await renderPage();
+      const loadsBefore = releaseLoads();
+
+      // No event arrives: the run was cancelled while queued elsewhere.
+      await vi.advanceTimersByTimeAsync(15_000);
+
+      await waitFor(() => expect(releaseLoads()).toBe(loadsBefore + 1));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not poll when nothing is pending", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      state.releases = [PUBLISHED];
+      await renderPage();
+      const loadsBefore = releaseLoads();
+
+      await vi.advanceTimersByTimeAsync(45_000);
+
+      expect(releaseLoads()).toBe(loadsBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("raises an error toast for a GitHub failure that happened in the background", async () => {
+    state.releases = [PENDING];
+    await renderPage();
+
+    events.handlers["release:updated"]?.({
+      data: {
+        releaseId: "r4",
+        githubErrors: ["GitHub release creation failed: boom"],
+      },
+    });
+
+    const toast = await screen.findByTestId("release-toast");
+    expect(toast).toHaveAttribute("data-toast-type", "error");
+    expect(toast.textContent).toContain("v0.4.3");
+    expect(toast.textContent).toContain("GitHub release creation failed: boom");
+  });
+});
+
+describe("Release history — finalisation failures stay on the row", () => {
+  const FAILED = {
+    ...LOCAL,
+    id: "r5",
+    version: "0.4.4",
+    epicIds: '["e3"]',
+    finalizeErrors: ["GitHub release creation failed: boom", "Tag push failed: no origin"],
+    createdAt: iso(0),
+  };
+
+  it("says so in the history, at every load", async () => {
+    state.releases = [FAILED, PUBLISHED];
+    await renderPage();
+
+    expect(
+      within(screen.getByTestId("release-history-row-r5")).getByText("sync failed")
+    ).toBeInTheDocument();
+    expect(
+      within(screen.getByTestId("release-history-row-r1")).queryByText("sync failed")
+    ).toBeNull();
+  });
+
+  it("spells the failures out in inspect mode", async () => {
+    state.releases = [FAILED];
+    await inspect("r5");
+
+    const errors = screen.getByTestId("release-finalize-errors");
+    expect(errors).toHaveTextContent("GitHub release creation failed: boom");
+    expect(errors).toHaveTextContent("Tag push failed: no origin");
   });
 });

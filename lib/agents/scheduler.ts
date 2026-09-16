@@ -33,8 +33,14 @@ import {
  * activity-registry flows) — a user is sitting in front of those and
  * queueing them behind batch work would read as a hang. The same reasoning
  * exempts the other single-shot request/response agent paths
- * (resolve-merge, release notes, git pull): the user triggers one and
- * watches it. Only batch-style dispatch goes through the queue.
+ * (resolve-merge, git pull): the user triggers one and watches it. Only
+ * batch-style dispatch goes through the queue.
+ *
+ * Release notes are NOT exempt any more: the changelog run is a background
+ * session (lib/agent-sessions/dispatch-background-session.ts) and nobody
+ * waits on the request, so it takes a slot like any other and can queue
+ * behind a night run. A release whose queued run is dropped by `remove()` is
+ * finalised by GET /releases, not by the lost closure.
  *
  * Budget resolution per project (first hit wins; a stored 0 means unlimited):
  *   1. settings key `agent_max_concurrent:<projectId>`

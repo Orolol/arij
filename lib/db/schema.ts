@@ -344,6 +344,74 @@ export const agentSessionChunks = sqliteTable(
 );
 
 /**
+ * The `mcp__arij__*` tool calls a session made, found in its raw stream AS IT
+ * WAS WRITTEN (process-manager's onChunk feeds each raw chunk to the
+ * incremental scanner and inserts what it completes).
+ *
+ * The raw stream used to be the only record of these calls, which made the
+ * Arij-actions list its one full-stream reader: up to ~56 sequential 2 MiB
+ * pages for the largest session on the live database, replayed whenever a
+ * process opened a finished session. Indexed here, the list is one indexed
+ * read and survives the raw stream being trimmed (#235) or pruned.
+ *
+ * `sequence` is the call's order within the session, across resumed runs.
+ */
+export const agentSessionToolCalls = sqliteTable(
+  "agent_session_tool_calls",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    /** Tool name without the `mcp__arij__` prefix (e.g. "get_ticket"). */
+    tool: text("tool").notNull(),
+    /** Emission time of the chunk that completed the call, when known. */
+    at: text("at"),
+    /**
+     * The provider's id for the call when it is unique across the session's
+     * runs (Claude tool_use id, omp toolCall id); null otherwise. Each run
+     * indexes with a fresh scanner, so this is what refuses a call that a
+     * resumed run replays from an earlier one.
+     */
+    callId: text("call_id"),
+  },
+  (table) => ({
+    sessionSequenceUnique: uniqueIndex(
+      "agent_session_tool_calls_session_sequence_unique"
+    ).on(table.sessionId, table.sequence),
+    sessionCallIdUnique: uniqueIndex("agent_session_tool_calls_session_call_id_unique")
+      .on(table.sessionId, table.callId)
+      .where(sql`${table.callId} IS NOT NULL`),
+  })
+);
+
+/**
+ * One row per session whose calls in `agent_session_tool_calls` are complete:
+ * either indexed from its FIRST raw chunk by the write path, or — for a
+ * session written before the index — persisted by the read-side scan once it
+ * had walked the whole stream of a finished session. Its absence is what
+ * tells a reader to fall back to scanning the raw stream: a pre-index session
+ * not yet scanned to its end, and a session whose indexing failed part-way
+ * (the row is deleted then, so a short list is never served as a complete
+ * one).
+ *
+ * A table rather than a column on `agent_sessions`: that row is wide, hot and
+ * rewritten on every status change, and a marker the write path inserts once
+ * does not need to ride along.
+ */
+export const agentSessionToolCallIndex = sqliteTable(
+  "agent_session_tool_call_index",
+  {
+    sessionId: text("session_id")
+      .primaryKey()
+      .notNull()
+      .references(() => agentSessions.id, { onDelete: "cascade" }),
+    createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
+  }
+);
+
+/**
  * Structured DevX friction reported by an agent session.
  *
  * `agentSessionId` intentionally remains an attributed string rather than a
@@ -460,7 +528,39 @@ export const releases = sqliteTable("releases", {
   gitTag: text("git_tag"),
   githubReleaseId: integer("github_release_id"),
   githubReleaseUrl: text("github_release_url"),
+  /** When the tag and the GitHub draft were pushed — NOT when it went public. */
   pushedAt: text("pushed_at"),
+  /**
+   * When the GitHub release left draft. Written only by the publish route, so
+   * a draft created by POST /releases stays a draft (see migration 0057).
+   */
+  publishedAt: text("published_at"),
+  /**
+   * The background `release_notes` session writing this release's changelog.
+   * The release is claimed before the agent runs; while this session is live
+   * the changelog on the row is the fallback and the tag does not exist yet.
+   */
+  // Annotated: epics → releases → agent_sessions → epics is a reference
+  // cycle, and TypeScript cannot infer the three tables' types through it.
+  changelogSessionId: text("changelog_session_id").references(
+    (): AnySQLiteColumn => agentSessions.id,
+    { onDelete: "set null" }
+  ),
+  /**
+   * The POST's push-to-GitHub choice, kept for finalisation: the run's
+   * closure dies with a queued cancellation or a restart, the row does not.
+   */
+  pushToGitHub: integer("push_to_github", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  /**
+   * When the tag, the CHANGELOG commit and the GitHub draft were written (or
+   * attempted). NULL = claimed but not finalised yet: GET /releases finishes
+   * such a release once its changelog run is over.
+   */
+  finalizedAt: text("finalized_at"),
+  /** JSON array of the finalisation failures (branch, tag push, GitHub). */
+  finalizeErrors: text("finalize_errors"),
   createdAt: text("created_at").default(sql`CURRENT_TIMESTAMP`),
 });
 

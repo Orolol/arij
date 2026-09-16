@@ -2,17 +2,22 @@
 
 import { useCallback, useState } from "react";
 import { useTranslations } from "next-intl";
-import { ArrowDown, Pause } from "lucide-react";
+import { ArrowDown, FileJson, Pause } from "lucide-react";
 
 import {
   BandHeader,
   Mono,
+  PillButton,
   ProgressTrack,
   SegmentedControl,
   StrataBand,
   SurfaceCard,
 } from "@/components/piscine";
 import { SessionOutputStream } from "./SessionOutputStream";
+import {
+  fetchSessionLogs,
+  type SessionLogsResponse,
+} from "@/lib/agent-sessions/session-detail";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
 import { cn } from "@/lib/utils";
 
@@ -30,10 +35,20 @@ import type { SessionDetail } from "./types";
  *
  * 1. `tail off` — the frame only ever shows the on-state.
  * 2. A `Log | Response` segmented control, shown ONLY when the session is
- *    finished AND a response stream (or a pre-chunk-store `logs.result`)
- *    exists. Frame 8a has nowhere for the response, and silently dropping a
- *    shipped feature is worse than one extra control on a screen the frame
- *    draws for a RUNNING session — where this control does not appear at all.
+ *    finished AND a final result exists. Frame 8a has nowhere for the
+ *    response, and silently dropping a shipped feature is worse than one
+ *    extra control on a screen the frame draws for a RUNNING session — where
+ *    this control does not appear at all.
+ *
+ * The final result is the `response` stream, or — when a run wrote none —
+ * its `output` stream. That fallback is most of the history: on the live
+ * database the 1,288 claude-code sessions have no response chunk (and no raw
+ * one), and 1,181 of them carry the whole final text as `output`
+ * (`result-<id>`). Same order as the spec page's reading of an update.
+ *
+ * `logs.json` is not on the polled payload. A finished session with no raw
+ * chunks shows its stored last line and reads the file on demand
+ * (`?include=logs`), once, when the reader asks.
  */
 
 type LogPane = "log" | "response";
@@ -51,6 +66,7 @@ export interface LiveLogBandProps {
   projectId: string;
   sessionId: string;
   session: SessionDetail;
+  /** `running` only; the band derives `queued` from the session itself. */
   isRunning: boolean;
   /** `${providerLabel}`, as the header derives it. */
   providerLabel: string;
@@ -94,6 +110,109 @@ function TailToggle({
   );
 }
 
+type LogsOnDemandState =
+  | { phase: "idle" }
+  | { phase: "loading" }
+  | { phase: "failed" }
+  | ({ phase: "loaded" } & SessionLogsResponse);
+
+/**
+ * The fallback of a raw stream with no chunks. The stored last line stands in
+ * straight away; `logs.json` — up to 14.8 MB on the live database, and the
+ * only record of a pre-chunk-store session — is read on a click, once, and
+ * never polled.
+ */
+function SessionLogsOnDemand({
+  projectId,
+  sessionId,
+  lastNonEmptyText,
+  hasLogsFile,
+}: {
+  projectId: string;
+  sessionId: string;
+  lastNonEmptyText: string | null;
+  hasLogsFile: boolean;
+}) {
+  const t = useTranslations("SessionLive");
+  const [state, setState] = useState<LogsOnDemandState>({ phase: "idle" });
+
+  async function load() {
+    setState({ phase: "loading" });
+    try {
+      const read = await fetchSessionLogs(projectId, sessionId);
+      setState({ phase: "loaded", ...read });
+    } catch {
+      setState({ phase: "failed" });
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-[8px]">
+      {lastNonEmptyText && state.phase !== "loaded" && (
+        <Mono
+          as="div"
+          size={11.5}
+          tone="muted"
+          className="whitespace-pre-wrap break-words"
+        >
+          {lastNonEmptyText}
+        </Mono>
+      )}
+      {hasLogsFile && state.phase !== "loaded" && (
+        <PillButton
+          variant="outline"
+          outlineTone="neutral"
+          size="sm"
+          icon={FileJson}
+          onClick={load}
+          pending={state.phase === "loading"}
+          pendingLabel={t("log.logsLoading")}
+          className="self-start"
+          data-testid="session-logs-on-demand"
+        >
+          {t("log.logsOnDemand")}
+        </PillButton>
+      )}
+      {state.phase === "failed" && (
+        <Mono size={11} tone="danger">
+          {t("log.logsLoadFailed")}
+        </Mono>
+      )}
+      {/* Three distinct states, kept distinct: "no logs", "logs too large to
+          serve here" and "the logs file is unreadable" used to collapse into
+          one silent null. 11px, not 10.5: full sentences of prose. */}
+      {state.phase === "loaded" && state.logsUnavailable && (
+        <Mono size={11} tone="danger">
+          {t("log.logsUnavailable")}
+        </Mono>
+      )}
+      {state.phase === "loaded" && state.logsTruncated && (
+        <Mono size={11} tone="live-mid">
+          {t("log.logsTruncated")}
+        </Mono>
+      )}
+      {state.phase === "loaded" && state.logs !== null && (
+        <Mono
+          as="div"
+          size={11.5}
+          tone="muted"
+          className="whitespace-pre-wrap break-words"
+        >
+          {JSON.stringify(state.logs, null, 2)}
+        </Mono>
+      )}
+      {state.phase === "loaded" &&
+        state.logs === null &&
+        !state.logsTruncated &&
+        !state.logsUnavailable && (
+          <Mono size={11.5} tone="muted">
+            {t("log.logsEmpty")}
+          </Mono>
+        )}
+    </div>
+  );
+}
+
 export function LiveLogBand({
   projectId,
   sessionId,
@@ -106,7 +225,8 @@ export function LiveLogBand({
   const tKey = useTranslations();
   const [tailOn, setTailOn] = useState(true);
   const [pinKey, setPinKey] = useState(0);
-  const [pane, setPane] = useState<LogPane>("log");
+  // Null until the reader picks a pane; the default depends on what exists.
+  const [pane, setPane] = useState<LogPane | null>(null);
 
   const releaseTail = useCallback(() => setTailOn(false), []);
 
@@ -116,14 +236,26 @@ export function LiveLogBand({
     setPinKey((key) => key + 1);
   }
 
+  // Live = still able to write. A queued session has not started, but it
+  // will on its own: its log waits for output and follows it when it comes,
+  // and nothing on it points at a logs.json that does not exist yet.
+  const live = isRunning || session.status === "queued";
+
   const responseSeed = session.chunkStreams?.response ?? null;
-  const hasResponse =
-    (responseSeed?.chunks?.length ?? 0) > 0 ||
-    (typeof session.logs?.result === "string" && session.logs.result.length > 0);
+  const outputSeed = session.chunkStreams?.output ?? null;
+  const responseHasChunks = (responseSeed?.chunks?.length ?? 0) > 0;
+  const outputHasChunks = (outputSeed?.chunks?.length ?? 0) > 0;
+  const resultStream = responseHasChunks ? "response" : "output";
+  const resultSeed = responseHasChunks ? responseSeed : outputSeed;
+  const hasResult = responseHasChunks || outputHasChunks;
+  const rawIsEmpty = (session.chunkStreams?.raw?.chunks?.length ?? 0) === 0;
   // A RUNNING session shows exactly what the frame draws: label, meta, tail
-  // toggle, nothing else. The response only exists once the run is over.
-  const showPanes = !isRunning && hasResponse;
-  const activePane: LogPane = showPanes ? pane : "log";
+  // toggle, nothing else. The result only exists once the run is over.
+  const showPanes = !live && hasResult;
+  // With no raw output at all, the log pane holds one stored line at most;
+  // the result is the useful thing to open on.
+  const defaultPane: LogPane = rawIsEmpty ? "response" : "log";
+  const activePane: LogPane = showPanes ? (pane ?? defaultPane) : "log";
 
   // Two explicit calls, never `t(condition ? a : b)`: the key has to be a
   // literal at the call site for the coverage gate and the typed `t` to see it.
@@ -162,44 +294,27 @@ export function LiveLogBand({
         }
       />
 
-      {/* Three distinct states, kept distinct: "no logs", "logs too large to
-          serve here" and "the logs file is unreadable" used to collapse into
-          one silent null. `chunkStreamsUnavailable` is the third and lives on
-          the terminal card itself. */}
-      {/* 11px, not 10.5: both of these are full sentences of prose. The
-          sub-11px allowance is for UPPERCASE TRACKED mono labels only. */}
-      {session.logsUnavailable && (
-        <Mono size={11} tone="danger">
-          {t("log.logsUnavailable")}
-        </Mono>
-      )}
-      {session.logsTruncated && (
-        <Mono size={11} tone="live-mid">
-          {t("log.logsTruncated")}
-        </Mono>
-      )}
-
       {activePane === "log" ? (
         <SessionLogTail
           projectId={projectId}
           sessionId={sessionId}
           seed={session.chunkStreams?.raw ?? null}
           unavailable={session.chunkStreamsUnavailable}
-          isRunning={isRunning}
+          isRunning={live}
           startedAt={session.startedAt ?? null}
-          // Sessions predating the chunk store wrote no chunks at all; their
-          // output only exists in logs.json.
+          // A finished session with no raw chunks: its stored last line, and
+          // logs.json when the reader asks. A live session is still writing
+          // (or about to) — it waits for its chunks, and its logs.json does
+          // not exist yet even though the row already names its path.
           logsFallback={
-            session.logs ? (
-              <Mono
-                as="div"
-                size={11.5}
-                tone="muted"
-                className="whitespace-pre-wrap break-words"
-              >
-                {JSON.stringify(session.logs, null, 2)}
-              </Mono>
-            ) : null
+            live || (!session.lastNonEmptyText && !session.logsPath) ? null : (
+              <SessionLogsOnDemand
+                projectId={projectId}
+                sessionId={sessionId}
+                lastNonEmptyText={session.lastNonEmptyText ?? null}
+                hasLogsFile={Boolean(session.logsPath)}
+              />
+            )
           }
           tailOn={tailOn}
           pinKey={pinKey}
@@ -213,26 +328,12 @@ export function LiveLogBand({
           <SessionOutputStream
             projectId={projectId}
             sessionId={sessionId}
-            streamType="response"
-            seed={responseSeed}
+            streamType={resultStream}
+            seed={resultSeed}
             unavailable={session.chunkStreamsUnavailable}
             isRunning={false}
             waitingLabel={t("log.waitingResponse")}
             emptyLabel={t("log.responseEmpty")}
-            // Sessions predating the chunk store have no response stream;
-            // their text only exists in logs.json.
-            fallback={
-              session.logs?.result ? (
-                <Mono
-                  as="div"
-                  size={11.5}
-                  tone="muted"
-                  className="whitespace-pre-wrap break-words"
-                >
-                  {session.logs.result}
-                </Mono>
-              ) : null
-            }
           />
         </SurfaceCard>
       )}
