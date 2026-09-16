@@ -428,6 +428,7 @@ export const POST = withAgentResolutionErrors(async function POST(
         cwd: project.gitRepoPath || process.cwd(),
         mode: cliChatMode,
         model: resolvedAgent.model,
+        cliOptions: resolvedAgent.cliOptions,
         cliSessionId,
         resumeSession,
         conversationType,

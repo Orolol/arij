@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { AgentProvider } from "@/lib/agent-config/constants";
+import { PROVIDER_OPTIONS } from "@/lib/agent-config/constants";
 
 export interface ProvidersAvailability {
   /** Per-provider availability map, one entry per PROVIDER_OPTIONS value. */
@@ -9,12 +10,9 @@ export interface ProvidersAvailability {
   loading: boolean;
 }
 
-const DEFAULT_PROVIDERS: Record<AgentProvider, boolean> = {
-  "claude-code": false,
-  codex: false,
-  "oh-my-pi": false,
-  agy: false,
-};
+const DEFAULT_PROVIDERS = Object.fromEntries(
+  PROVIDER_OPTIONS.map((provider) => [provider, false]),
+) as Record<AgentProvider, boolean>;
 
 /**
  * Checks availability of all CLI providers.
@@ -30,12 +28,9 @@ export function useProvidersAvailable(): ProvidersAvailability {
       .then((r) => r.json())
       .then((d) => {
         const data = d.data ?? {};
-        setProviders({
-          "claude-code": !!data["claude-code"],
-          codex: !!data.codex,
-          "oh-my-pi": !!data["oh-my-pi"],
-          agy: !!data.agy,
-        });
+        setProviders(Object.fromEntries(
+          PROVIDER_OPTIONS.map((provider) => [provider, !!data[provider]]),
+        ) as Record<AgentProvider, boolean>);
       })
       .catch(() => {
         setProviders({ ...DEFAULT_PROVIDERS });

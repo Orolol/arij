@@ -184,6 +184,25 @@ describe("chat mode", () => {
       "Claude Code (CLI)",
     );
   });
+
+  it("offers Arij's bundled Pi in both groups, in menu order, and no upstream gemini-cli", () => {
+    renderPill("chat");
+
+    const providerOptions = screen
+      .getAllByTestId(/^chat-option-provider-/)
+      .map((node) => [node.getAttribute("data-testid"), node.textContent]);
+    expect(providerOptions).toEqual([
+      ["chat-option-provider-claude-code-persistent", "Claude Code — persistent"],
+      ["chat-option-provider-oh-my-pi-persistent", "Oh My Pi — persistent"],
+      ["chat-option-provider-pi-persistent", "Pi (Arij) — persistent"],
+      ["chat-option-provider-claude-code", "Claude Code (CLI)"],
+      ["chat-option-provider-codex", "Codex (CLI)"],
+      ["chat-option-provider-oh-my-pi", "Oh My Pi (CLI)"],
+      ["chat-option-provider-agy", "Antigravity (CLI)"],
+      ["chat-option-provider-pi", "Pi (Arij) (CLI)"],
+    ]);
+    expect(screen.queryByTestId("chat-option-provider-gemini-cli")).toBeNull();
+  });
 });
 
 describe("dispatch mode", () => {

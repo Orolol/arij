@@ -1,4 +1,5 @@
 import { EventEmitter } from "events";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
@@ -254,6 +255,23 @@ describe("persistent chat runner — Claude Code", () => {
     await expect(turn.promise).rejects.toThrow("closed response controller");
     expect(getPersistentChatSessionState("observer-error")).toBe("cold");
     child.closed();
+  });
+
+  it.each(["cancel", "error"])("cleans Pi's private configuration on %s before RPC readiness", async (ending) => {
+    const handle = runPersistentChatTurn({ ...options(`pi-init-${ending}`), provider: "pi-persistent" });
+    const child = await waitForSpawn();
+    const [, args, spawnOptions] = mocks.spawn.mock.calls[0];
+    const file = args[args.indexOf("--arij-config") + 1];
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    expect(JSON.parse(readFileSync(file, "utf8")).mcpServers.arij.toolAllowlist).toEqual(["get_ticket"]);
+    expect(spawnOptions.env.ARIJ_MCP_TOKEN).toBeUndefined();
+    expect(spawnOptions.detached).toBe(true);
+    if (ending === "cancel") handle.kill();
+    else child.emit("error", new Error("deliberate spawn error"));
+    await expect(handle.promise).rejects.toThrow();
+    expect(existsSync(file)).toBe(false);
+    expect(mocks.release).toHaveBeenCalled();
+    child.closed(1);
   });
 
   it("spawns once, writes later turns to stdin, and streams partial events", async () => {

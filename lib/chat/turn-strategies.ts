@@ -45,7 +45,7 @@ import {
   type PersistentChatProvider,
 } from "@/lib/agent-config/constants";
 import { createId } from "@/lib/utils/nanoid";
-import type { ChatTurnIO, ChatTurnStrategy } from "@/lib/chat/turn-runner";
+import type { ChatTurnEvent, ChatTurnIO, ChatTurnStrategy } from "@/lib/chat/turn-runner";
 
 /**
  * Upper bound on fast-mode tool rounds per turn (each round is one upstream
@@ -232,7 +232,7 @@ export function fastModeStrategy(input: FastModeStrategyInput): ChatTurnStrategy
 }
 
 // ---------------------------------------------------------------------------
-// Warm persistent CLI (claude-code-persistent, oh-my-pi-persistent)
+// Warm persistent CLI (claude-code-persistent, oh-my-pi-persistent, pi-persistent)
 // ---------------------------------------------------------------------------
 
 export interface PersistentStrategyInput
@@ -295,6 +295,9 @@ export function persistentStrategy(input: PersistentStrategyInput): ChatTurnStra
           cwd: input.cwd,
           mode: input.mode,
           model: input.model,
+          // A different agent option set is a different process: the runner
+          // keys warm reuse on it (see configurationKey in persistent-runner).
+          cliOptions: input.cliOptions,
           cliSessionId,
           resumeSession,
           conversationType: input.conversationType,
@@ -390,14 +393,21 @@ export function providerCanStream(provider: ProviderType): boolean {
 }
 
 /**
- * A CLI provider run to completion through its adapter (no token
- * streaming): every resume, and any provider without `spawnStream`. An
- * expired resume session is retried once, fresh.
+ * A CLI provider run to completion through its adapter: every resume, and any
+ * provider without `spawnStream`. An adapter that reports live events through
+ * `onEvent` (bundled Pi: text deltas, status, structured questions) has them
+ * relayed as they arrive, and its final result is then not re-sent. An expired
+ * resume session is retried once, fresh.
  */
 export function providerStrategy(input: ProviderStrategyInput): ChatTurnStrategy {
   let currentKill = () => {};
 
-  const spawn = (prompt: string, cliSessionId: string | undefined, resumeSession: boolean) => {
+  const spawn = (
+    prompt: string,
+    cliSessionId: string | undefined,
+    resumeSession: boolean,
+    onEvent: (event: ChatTurnEvent) => void,
+  ) => {
     // Looked up here, inside run(), not when the strategy is built: the route
     // has already minted the tool channel's MCP token by then, and an adapter
     // lookup that throws outside run() would skip the runner's release.
@@ -415,6 +425,7 @@ export function providerStrategy(input: ProviderStrategyInput): ChatTurnStrategy
       // the same way the tool channel carries the MCP channel. The retry
       // below carries them too: a fresh session is still that agent.
       cliOptions: input.cliOptions,
+      onEvent,
     });
     currentKill = session.kill;
     return session;
@@ -429,17 +440,35 @@ export function providerStrategy(input: ProviderStrategyInput): ChatTurnStrategy
     describeFailure: cliFailure,
     async run(io) {
       io.emit({ type: "status", status: `${PROVIDER_LABELS[input.provider]} processing...` });
-      let cliSessionId = input.cliSessionId;
-      let result = await spawn(input.turnPrompt, cliSessionId, input.resumeSession).promise;
+      let streamedText = false;
+      let live = true;
+      const onEvent = (event: ChatTurnEvent) => {
+        // A provider may flush a last event after its promise settled.
+        if (!live) return;
+        if (event.type === "text") streamedText = true;
+        io.emit(event);
+      };
+      try {
+        let cliSessionId = input.cliSessionId;
+        let result = await spawn(input.turnPrompt, cliSessionId, input.resumeSession, onEvent)
+          .promise;
 
-      if (input.resumeSession && !result.success && isResumeSessionExpiredError(result.error)) {
-        cliSessionId = mintAssignedCliSessionId(input.provider);
-        result = await spawn(input.prompt, cliSessionId, false).promise;
+        if (input.resumeSession && !result.success && isResumeSessionExpiredError(result.error)) {
+          cliSessionId = mintAssignedCliSessionId(input.provider);
+          result = await spawn(input.prompt, cliSessionId, false, onEvent).promise;
+        }
+
+        if (result.success) input.rememberCliSessionId(result.cliSessionId ?? cliSessionId);
+        // The streamed deltas already are the reply; re-sending the result
+        // would store the answer twice.
+        if (!result.success || !streamedText) {
+          const reply = oneShotReply(result);
+          io.emit({ type: "text", text: streamedText ? `\n\n${reply}` : reply });
+        }
+        return { status: result.success ? "active" : "error" };
+      } finally {
+        live = false;
       }
-
-      if (result.success) input.rememberCliSessionId(result.cliSessionId ?? cliSessionId);
-      io.emit({ type: "text", text: oneShotReply(result) });
-      return { status: result.success ? "active" : "error" };
     },
   };
 }

@@ -1,20 +1,9 @@
 /**
  * Pi-family base — the shared CLI contract of the `pi` lineage
- * (npm: @earendil-works/pi-coding-agent), today concretely shipped only as
- * OhMyPiProvider (`omp`, a standalone pi fork). Pi itself is no longer a
- * selectable provider: it has no MCP support at all (upstream
- * earendil-works/pi#563 is still open), and every Arij provider must carry
- * the per-spawn tool channel — see lib/providers/types.ts. The class stays
- * because omp kept pi's `--mode json` event stream byte-compatible, so all
- * the parsing below is shared.
- *
- * Decision (epic H3WaoKFiwd8j, "delete or register?"): NEITHER. Deleting the
- * module breaks `oh-my-pi`, which extends this class; registering `pi` would
- * admit a CLI with no MCP channel, which lib/providers/types.ts forbids. It
- * stays an abstract base with no registry key of its own — reached through
- * inheritance, which is why a key-based audit misreads it as dead code.
- * `__tests__/provider-registry-single-source.test.ts` pins that reachability
- * so the question does not have to be re-litigated from the registry map.
+ * (npm: @earendil-works/pi-coding-agent). OhMyPiProvider wraps omp;
+ * BundledPiProvider wraps Arij's pinned fork with native per-spawn MCP.
+ * Both inherit the JSON result/session parsing here. The shared class stays
+ * abstract; the selectable `pi` key always resolves to the bundled fork.
  *
  * CLI: pi --mode json [--tools <allowlist>] [--session <ID>] [--model <M>] -p <PROMPT>
  *
@@ -34,10 +23,8 @@
  * Output: NDJSON event stream. The final answer is the last assistant
  * `message_end` — the same message pi's own text mode prints.
  *
- * Caveat: pi's parser only treats the argument after `-p` as the prompt when
- * it does not start with `-`, and pi offers no `--` separator. Every prompt
- * Arij builds starts with a heading, so this is unreachable today, but a
- * prompt beginning with a single dash would be dropped as an unknown option.
+ * BundledPiProvider overrides argv transport with stdin and uses the fork's
+ * --builtin-tools flag to retain the MCP channel in restricted modes.
  */
 
 import { BaseCliProvider } from "./base-provider";
@@ -293,11 +280,11 @@ export abstract class PiProvider extends BaseCliProvider {
   /**
    * The six CLI-specific answers are ABSTRACT here, not pi's values.
    *
-   * No concrete subclass wears the `pi` binary: the only one is
-   * OhMyPiProvider (`omp`), which overrides every one of them. Leaving pi's
-   * own defaults on the base made them look like live configuration and made
-   * the failure messages name a CLI Arij cannot select — see the header for
-   * why the base itself stays.
+   * Each concrete subclass answers them for its own binary: OhMyPiProvider
+   * (`omp`) and BundledPiProvider (Arij's pinned fork, launched through
+   * Arij's Node runtime — never an upstream `pi` found on PATH). Leaving
+   * defaults on the base made them look like live configuration shared by
+   * both — see the header for why the base itself stays.
    */
   protected abstract get cliDisplayName(): string;
 

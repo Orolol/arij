@@ -1,4 +1,11 @@
 {
+  "pi": {
+    "permissionHint": "Headless policy: auto/accept edits allow file edits; manual/don't ask require explicit mutating tools. Shell commands require explicit approval outside bypass mode. Read-only modes always stay restricted.",
+    "thinking": {
+      "label": "Thinking",
+      "hint": "Pi's thinking level. Empty uses the configured model's default."
+    }
+  },
   "bool": {
     "on": "on",
     "off": "off"

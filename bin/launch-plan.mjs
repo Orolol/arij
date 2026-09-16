@@ -15,8 +15,9 @@
  * `proxy.ts` into requiring it — and returns the one bootstrap URL that hands
  * it to a browser.
  *
- * Plain `.mjs`, and published: `bin/` is in package.json `files`, and this
- * runs long before anything is compiled.
+ * Plain `.mjs`: Arij is distributed as a git clone (package.json is
+ * `private`, no `files` allowlist), and this runs long before anything is
+ * compiled.
  */
 
 import { randomBytes } from "node:crypto";
@@ -208,7 +209,7 @@ export function extractPort(args) {
 
 /**
  * @typedef {object} LaunchPlan
- * @property {"dev"|"build"|"start"|"help"|"version"|"unknown"} command
+ * @property {"dev"|"build"|"start"|"pi"|"help"|"version"|"unknown"} command
  * @property {string[]} nextArgs   Argument vector for the `next` binary.
  * @property {string|null} host    Resolved bind host; null when none applies.
  * @property {string|null} port    Explicit port, or null for Next's default.
@@ -217,6 +218,7 @@ export function extractPort(args) {
  * @property {Record<string, string>} childEnv  Merged over the child's env.
  * @property {string[]} notices    Lines to print before handing over.
  * @property {string} [unknownCommand]
+ * @property {string[]} [piArgs]  Arguments for `bin/arij-pi.mjs` (command "pi").
  */
 
 /**
@@ -246,6 +248,12 @@ export function resolveLaunchPlan(
   }
   if (first === "--version" || first === "-v") {
     return inertPlan("version");
+  }
+
+  if (first === "pi") {
+    // The bundled Pi CLI: no Next, no socket, no host. Everything after `pi`
+    // belongs to Pi, and it runs in the caller's directory, not Arij's.
+    return { ...inertPlan("pi"), piArgs: args.slice(1) };
   }
 
   let command;

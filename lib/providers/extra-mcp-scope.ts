@@ -43,6 +43,7 @@ export const EXTRA_MCP_SCOPE_BY_PROVIDER: Record<ProviderType, ExtraMcpScope> = 
   codex: "per-spawn",
   "oh-my-pi": "user-global",
   agy: "user-global",
+  pi: "per-spawn",
 };
 
 /**

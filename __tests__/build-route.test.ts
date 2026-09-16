@@ -206,7 +206,7 @@ describe("Build Route", () => {
     mockPullTicketBackIfPromoted.mockReturnValue("in_progress");
   });
 
-  it("rejects team mode when resolved provider is not claude-code", async () => {
+  it("rejects team mode when the provider lacks a delegation runtime", async () => {
     mockResolveAgentByNamedId.mockReturnValue({ provider: "codex" });
 
     const { POST } = await import(
@@ -224,7 +224,7 @@ describe("Build Route", () => {
     const json = await res.json();
     expect(res.status).toBe(400);
     expect(json.error).toContain(
-      "Team mode is only available with Claude Code"
+      "Team mode is available with Claude Code and Pi (Arij)"
     );
     expect(mockState.updateCalls).toEqual([]);
   });
@@ -243,7 +243,8 @@ describe("Build Route", () => {
     expect(json.error).toContain("epicIds array is required");
   });
 
-  it("accepts team=true with claude-code provider", async () => {
+  it.each(["claude-code", "pi"])("accepts team=true with %s provider", async (provider) => {
+    mockResolveAgentByNamedId.mockReturnValue({ provider });
     const { POST } = await import(
       "@/app/api/projects/[projectId]/build/route"
     );
@@ -252,7 +253,7 @@ describe("Build Route", () => {
       mockRequest({
         epicIds: ["epic-1", "epic-2"],
         team: true,
-        provider: "claude-code",
+        provider,
       }),
       { params: Promise.resolve({ projectId: "proj-1" }) }
     );
@@ -260,6 +261,14 @@ describe("Build Route", () => {
     const json = await res.json();
     expect(res.status).toBe(200);
     expect(json.data.orchestrationMode).toBe("team");
+    const { processManager } = await import("@/lib/claude/process-manager");
+    await waitForBackground(
+      () =>
+        expect(processManager.start).toHaveBeenCalledWith("test-session-id", expect.objectContaining({
+          allowedTools: expect.arrayContaining(["Task"]),
+        }), provider),
+      `the team session starting on ${provider} with the Task tool`,
+    );
   });
 
   it("returns launched sessions alongside a parallel ticket's preparation failure", async () => {

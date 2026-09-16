@@ -1,7 +1,7 @@
 /**
  * Provider abstraction types for AI agent backends.
  *
- * Claude Code, Codex, oh-my-pi and agy implement this interface so that build
+ * Claude Code, Codex, oh-my-pi, agy and bundled Pi implement this interface so that build
  * routes, review routes, and the process manager can work with any backend.
  */
 
@@ -14,10 +14,10 @@ import type { ExtraMcpScope } from "./extra-mcp-scope";
  * is how agents reach the board, so a CLI that cannot be handed a per-session
  * MCP config is not eligible. The 2026-08 cleanup removed gemini-cli,
  * mistral-vibe, qwen-code, opencode, deepseek, kimi, zai and pi for exactly
- * that reason; see docs/architecture/mcp-provider-matrix.md before adding
- * one back.
+ * that reason. The `pi` key now refers exclusively to Arij's bundled MCP
+ * fork (Orolol/pi), not an upstream Pi found on PATH.
  */
-export type ProviderType = "claude-code" | "codex" | "oh-my-pi" | "agy";
+export type ProviderType = "claude-code" | "codex" | "oh-my-pi" | "agy" | "pi";
 
 export type ProviderChunkStreamType = "response" | "raw" | "output";
 
@@ -153,12 +153,14 @@ export interface ProviderSpawnOptions {
    * treat it as "plan".
    */
   mode: "plan" | "code" | "analyze" | "chat";
-  /** Explicit list of allowed tools (Claude Code only). */
+  /** Explicit built-in tool allowlist (Claude Code and bundled Pi). */
   allowedTools?: string[];
   /** Model override. */
   model?: string;
   /** Optional chunk callback (used by Codex session persistence). */
   onChunk?: (chunk: ProviderChunk) => void;
+  /** Live conversational events, including structured questions. */
+  onEvent?: (event: StreamChunk) => void;
   /** CLI session UUID the provider resumes from, or one it was assigned. */
   cliSessionId?: string;
   /**
@@ -190,6 +192,7 @@ export interface ProviderResult {
   cliSessionId?: string;
   /** True when the provider ended by asking a follow-up user question. */
   endedWithQuestion?: boolean;
+  usage?: { inputTokens?: number; outputTokens?: number; totalCostUsd?: number };
 }
 
 export interface ProviderSession {

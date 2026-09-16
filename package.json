@@ -5,6 +5,9 @@
   "description": "A local, AI-first project orchestrator with a web interface for managing multi-project workflows with Claude Code as the execution engine.",
   "author": "Gaetan",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/orolol/arij.git"
@@ -36,6 +39,7 @@
     "i18n:check": "node scripts/i18n/build-messages-index.mjs --check && node scripts/i18n/check-keys.mjs"
   },
   "dependencies": {
+    "@arij/pi": "https://github.com/Orolol/pi/releases/download/arij-v0.85.1-arij.1/arij-pi-0.85.1-arij.1.tgz",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@octokit/rest": "^22.0.1",
     "better-sqlite3": "^12.6.2",

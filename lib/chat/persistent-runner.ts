@@ -4,6 +4,7 @@ import { StringDecoder } from "node:string_decoder";
 import { cleanupMcpConfigFile } from "@/lib/claude/mcp-injection";
 import { createClaudeAdapter } from "./persistent-providers/claude";
 import { createOmpAdapter } from "./persistent-providers/oh-my-pi";
+import { createPiAdapter } from "./persistent-providers/pi";
 import type {
   ActiveTurn,
   PersistentChatTurnHandle,
@@ -134,6 +135,7 @@ function cleanupProcess(process: PersistentProcess, error?: Error): void {
   if (process.idleTimer) clearTimeout(process.idleTimer);
   process.idleTimer = null;
   cleanupMcpConfigFile(process.mcpConfigPath);
+  process.resourceCleanup?.();
   process.channel?.release();
   removeProcess(process);
   if (process.activeTurn) {
@@ -160,23 +162,24 @@ function spawnPersistentProcess(
   // turn with this reason and leaves no process registered.
 
   const channel = adapter.createChannel(options);
-  let mcpConfigPath: string | null = null;
+  let prepared: ReturnType<PersistentProviderAdapter["buildSpawn"]> | null = null;
   let child: ChildProcess;
   try {
-    const config = adapter.buildSpawn(options, channel);
-    mcpConfigPath = config.mcpConfigPath;
-    child = nodeSpawn(adapter.binary, config.args, {
+    prepared = adapter.buildSpawn(options, channel);
+    child = nodeSpawn(adapter.binary, prepared.args, {
       cwd: options.cwd,
-      env: config.env,
+      env: prepared.env,
       stdio: ["pipe", "pipe", "pipe"],
       detached: true,
     });
   } catch (error) {
     // A synchronous failure has no child error/close event to release these.
-    cleanupMcpConfigFile(mcpConfigPath);
+    prepared?.cleanup?.();
+    cleanupMcpConfigFile(prepared?.mcpConfigPath ?? null);
     channel?.release();
     throw error;
   }
+  const { mcpConfigPath } = prepared;
 
   const killer = createChildKiller(() => child);
 
@@ -213,6 +216,8 @@ function spawnPersistentProcess(
     child,
     channel,
     mcpConfigPath,
+    resourceCleanup: prepared.cleanup,
+    configurationKey: configurationKey(options),
     lastUsedAt: Date.now(),
     idleTimeoutMs: normalizedIdleTimeout(options.idleTimeoutMs),
     idleTimer: null,
@@ -287,6 +292,13 @@ function spawnPersistentProcess(
         clearStallTimer(turn);
         persistent.activeTurn = null;
         turn.reject(new Error(`Persistent chat session stopped: ${reason}`));
+      }
+      if (persistent.provider === "pi-persistent") {
+        // Pi's private MCP config and token must not outlive the request to
+        // stop, even while the process group is still draining. Both are
+        // idempotent, so cleanupProcess repeating them is harmless.
+        persistent.channel?.release();
+        persistent.resourceCleanup?.();
       }
       killer.kill();
       void killer.waitForTeardown().then(() => cleanupProcess(persistent));
@@ -365,6 +377,25 @@ function asError(error: unknown): Error {
 const lifecycle = { finishTurn, noteTurnProgress, cleanupProcess };
 const claudeAdapter = createClaudeAdapter(lifecycle);
 const ompAdapter = createOmpAdapter(lifecycle);
+const piAdapter = createPiAdapter(lifecycle);
+
+function adapterFor(provider: PersistentChatTurnOptions["provider"]): PersistentProviderAdapter {
+  if (provider === "claude-code-persistent") return claudeAdapter;
+  if (provider === "pi-persistent") return piAdapter;
+  return ompAdapter;
+}
+
+/** Spawn-shaping options: a warm process whose key differs is respawned. */
+function configurationKey(options: PersistentChatTurnOptions): string {
+  return JSON.stringify([
+    options.projectId,
+    options.cwd,
+    options.mode,
+    options.model,
+    options.cliOptions ?? {},
+    options.conversationType,
+  ]);
+}
 
 function evictForCapacity(maxWarmConversations: number, exceptConversationId: string): void {
   const candidates = [...globalState().processes.values()]
@@ -388,17 +419,14 @@ function evictForCapacity(maxWarmConversations: number, exceptConversationId: st
 
 function getOrSpawn(options: PersistentChatTurnOptions): PersistentProcess {
   const existing = globalState().processes.get(options.conversationId);
-  if (existing && existing.provider === options.provider && !existing.closing) {
+  if (existing && existing.provider === options.provider && existing.configurationKey === configurationKey(options) && !existing.closing) {
     existing.idleTimeoutMs = normalizedIdleTimeout(options.idleTimeoutMs);
     return existing;
   }
   existing?.terminate("provider changed");
   const cap = normalizedWarmCap(options.maxWarmConversations);
   evictForCapacity(cap, options.conversationId);
-  const spawned =
-    options.provider === "claude-code-persistent"
-      ? spawnPersistentProcess(claudeAdapter, options)
-      : spawnPersistentProcess(ompAdapter, options);
+  const spawned = spawnPersistentProcess(adapterFor(options.provider), options);
   globalState().processes.set(options.conversationId, spawned);
   return spawned;
 }
@@ -408,13 +436,13 @@ export function runPersistentChatTurn(
 ): PersistentChatTurnHandle {
   const existing = globalState().processes.get(options.conversationId);
   const wasWarm = Boolean(
-    existing && existing.provider === options.provider && !existing.closing,
+    existing && existing.provider === options.provider && existing.configurationKey === configurationKey(options) && !existing.closing,
   );
   let process: PersistentProcess | null = null;
   let cancelled = false;
   const promise = Promise.resolve().then(async () => {
     if (cancelled) throw new Error("Persistent chat turn was cancelled");
-    const adapter = options.provider === "claude-code-persistent" ? claudeAdapter : ompAdapter;
+    const adapter = adapterFor(options.provider);
     const preflight = adapter.preflight?.();
     const blocked = preflight instanceof Promise ? await preflight : preflight;
     if (blocked) throw new Error(blocked);

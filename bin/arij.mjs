@@ -23,6 +23,7 @@ Usage:
   arij              Start the production server (on 127.0.0.1)
   arij dev          Start the development server (on 127.0.0.1)
   arij build        Build for production
+  arij pi [args]    Run the bundled Pi CLI (use /login to authenticate)
   arij --help       Show this help message
   arij --version    Show version
 
@@ -53,6 +54,16 @@ try {
 
   if (plan.command === "version") {
     printVersion();
+    process.exit(0);
+  }
+
+  if (plan.command === "pi") {
+    // Pi resolves the caller's working directory itself, so it keeps it.
+    execFileSync(
+      process.execPath,
+      [resolve(projectRoot, "bin", "arij-pi.mjs"), ...plan.piArgs],
+      { cwd: process.cwd(), stdio: "inherit" },
+    );
     process.exit(0);
   }
 

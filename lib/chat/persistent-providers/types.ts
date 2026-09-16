@@ -2,6 +2,7 @@ import type { ChildProcess } from "child_process";
 import type { StreamChunk } from "@/lib/claude/spawn";
 import type { createChatCliToolChannel } from "@/lib/chat/cli-tool-channel";
 import type { PersistentChatProvider } from "@/lib/agent-config/constants";
+import type { NamedAgentCliOptions } from "@/lib/providers/options-registry";
 
 export type PersistentSessionState = "hot" | "cold";
 
@@ -13,6 +14,7 @@ export interface PersistentChatTurnOptions {
   cwd: string;
   mode: "plan" | "chat";
   model?: string;
+  cliOptions?: NamedAgentCliOptions;
   cliSessionId?: string;
   resumeSession?: boolean;
   conversationType: string | null;
@@ -60,6 +62,10 @@ export interface PersistentProcess {
   child: ChildProcess;
   channel: ReturnType<typeof createChatCliToolChannel>;
   mcpConfigPath: string | null;
+  /** Provider-owned temp resources (bundled Pi's private MCP config dir). */
+  resourceCleanup?: () => void;
+  /** Spawn-shaping options; a warm process is reused only when they match. */
+  configurationKey: string;
   lastUsedAt: number;
   idleTimeoutMs: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
@@ -98,7 +104,7 @@ export interface PersistentProviderAdapter {
   buildSpawn(
     options: PersistentChatTurnOptions,
     channel: ReturnType<typeof createChatCliToolChannel>,
-  ): { args: string[]; env: NodeJS.ProcessEnv; mcpConfigPath: string | null };
+  ): { args: string[]; env: NodeJS.ProcessEnv; mcpConfigPath: string | null; cleanup?: () => void };
   /**
    * Encodes one user turn as the bytes to write to stdin, plus the id the
    * event handler will correlate responses against. Throwing here rejects the

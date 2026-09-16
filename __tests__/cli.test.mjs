@@ -93,6 +93,21 @@ describe("start command launches Next.js server", () => {
     expect(resolveLaunchPlan(["build"], {}).nextArgs).toEqual(["build"]);
   });
 
+  it("should route 'pi' to the bundled Pi launcher, not to next", () => {
+    const plan = resolveLaunchPlan(["pi", "--version", "-H", "0.0.0.0"], {});
+    expect(plan.command).toBe("pi");
+    // Every argument after `pi` belongs to Pi, host flags included.
+    expect(plan.piArgs).toEqual(["--version", "-H", "0.0.0.0"]);
+    expect(plan.nextArgs).toEqual([]);
+    expect(plan.remote).toBe(false);
+    expect(plan.childEnv).toEqual({});
+  });
+
+  it("should spawn bin/arij-pi.mjs with the plan's Pi arguments", () => {
+    const content = readFileSync(cliBin, "utf-8");
+    expect(content).toContain('resolve(projectRoot, "bin", "arij-pi.mjs"), ...plan.piArgs');
+  });
+
   it("should hand that argv to the next binary", () => {
     const content = readFileSync(cliBin, "utf-8");
     expect(content).toContain("execFileSync(getNextBin(), plan.nextArgs");

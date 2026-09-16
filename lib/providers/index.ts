@@ -19,12 +19,14 @@ import { ClaudeCodeProvider } from "./claude-code";
 import { CodexProvider } from "./codex";
 import { OhMyPiProvider } from "./oh-my-pi";
 import { AgyProvider } from "./agy";
+import { BundledPiProvider } from "./bundled-pi";
 
 const providers: Record<ProviderType, AgentProvider> = {
   "claude-code": new ClaudeCodeProvider(),
   codex: new CodexProvider(),
   "oh-my-pi": new OhMyPiProvider(),
   agy: new AgyProvider(),
+  pi: new BundledPiProvider(),
 };
 
 /**
@@ -36,3 +38,4 @@ export function getProvider(type: ProviderType = "claude-code"): AgentProvider {
 }
 
 export type { AgentProvider, ProviderType, ProviderSpawnOptions, ProviderSession, ProviderResult } from "./types";
+export { supportsTeamDelegation } from "./capabilities";

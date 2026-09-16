@@ -178,7 +178,7 @@ function collectToolNames(
 
   // Claude stream-json shape: { type: "tool_use", id, name, input }
   if (
-    obj.type === "tool_use" &&
+    (obj.type === "tool_use" || obj.type === "toolCall") &&
     typeof obj.name === "string" &&
     obj.name.startsWith(ARIJ_MCP_TOOL_PREFIX)
   ) {

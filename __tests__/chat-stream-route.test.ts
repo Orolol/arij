@@ -151,6 +151,49 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
     }));
   });
 
+  it("streams Pi text and structured questions before completion, without duplicating the answer", async () => {
+    const { POST } = await import("@/app/api/projects/[projectId]/chat/stream/route");
+    mockResolveAgentByNamedId.mockReturnValue({ provider: "pi", model: "fixture/test", namedAgentId: "pi-agent" });
+    dbMockState.getQueue = [
+      { id: "proj1", name: "Arij", gitRepoPath: "/tmp" },
+      { id: "pi-chat", type: "chat", provider: "pi", namedAgentId: "pi-agent" },
+    ];
+    dbMockState.allQueue = [[]];
+    let complete!: (value: object) => void;
+    const promise = new Promise((resolve) => { complete = resolve; });
+    // Scoped to pi and restored below: a plain mockReturnValue would outlive
+    // this test (clearAllMocks keeps implementations) and route every later
+    // Claude case through this spawn-only stand-in.
+    const defaultGetProvider = mockGetProvider.getMockImplementation()!;
+    mockGetProvider.mockImplementation((provider) =>
+      provider === "pi" ? { spawn: mockDynamicProviderSpawn } : defaultGetProvider(provider));
+    mockDynamicProviderSpawn.mockReturnValue({ promise, kill: vi.fn() });
+    try {
+      const response = await POST(mockJsonRequest({ content: "hello", conversationId: "pi-chat" }), mockRouteContext({ projectId: "proj1" }));
+      const reader = response.body!.getReader();
+      await reader.read(); // processing status
+      const spawnOptions = mockDynamicProviderSpawn.mock.calls[0][0];
+      spawnOptions.onEvent({ type: "text", text: "Hello " });
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain('"delta":"Hello "');
+      const questions = [{ question: "Ready?", header: "Next", options: [], multiSelect: false }];
+      spawnOptions.onEvent({ type: "questions", questions });
+      expect(new TextDecoder().decode((await reader.read()).value)).toContain('"questions"');
+      spawnOptions.onEvent({ type: "text", text: "world" });
+      complete({ success: true, result: "Hello world", cliSessionId: "pi-real" });
+      let rest = "";
+      for (;;) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        rest += new TextDecoder().decode(chunk.value);
+      }
+      expect(rest).toContain('"delta":"world"');
+      expect(rest).not.toContain('"delta":"Hello world"');
+      expect(dbMockState.insertCalls.some((row) => (row as { content?: string }).content === "Hello world")).toBe(true);
+    } finally {
+      mockGetProvider.mockImplementation(defaultGetProvider);
+    }
+  });
+
   it("enriches Claude prompt with mentioned text and image document context", async () => {
     const docsList = [
       {
@@ -663,6 +706,7 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       provider: "oh-my-pi",
       model: "pi-large",
       namedAgentId: "agent-omp",
+      cliOptions: { thinking: "high" },
     });
 
     const firstSession = {
@@ -723,6 +767,7 @@ describe("POST /api/projects/[projectId]/chat/stream", () => {
       expect.objectContaining({
         prompt: "CHAT_PROMPT",
         resumeSession: false,
+        cliOptions: { thinking: "high" },
       }),
     );
   });

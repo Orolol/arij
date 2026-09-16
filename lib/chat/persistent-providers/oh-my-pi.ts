@@ -1,6 +1,7 @@
 import { createChatCliToolChannel } from "@/lib/chat/cli-tool-channel";
 import { buildOmpSpawnEnv, OMP_READONLY_TOOLS } from "@/lib/providers/oh-my-pi";
 import { ompRestrictedToolsBlockReason } from "@/lib/providers/omp-version";
+import { piQuestions } from "@/lib/providers/pi-events";
 import { isRecord, readProtocolFrame } from "./protocol";
 import type {
   ActiveTurn,
@@ -30,7 +31,12 @@ function pendingOmpError(turn: ActiveTurn): string | undefined {
   return turn.retryError ?? turn.messageError;
 }
 
-function processOmpEvent(
+/**
+ * Handles one RPC event of the pi lineage. Oh My Pi and Arij's bundled Pi
+ * share this protocol; labels come from `process.displayName`, and only the
+ * bundled fork surfaces structured AskUserQuestion calls.
+ */
+export function processOmpEvent(
   process: PersistentProcess,
   event: Record<string, unknown>,
   lifecycle: PersistentLifecycle,
@@ -49,6 +55,14 @@ function processOmpEvent(
   if (!turn) return;
   lifecycle.noteTurnProgress(process);
 
+  if (process.provider === "pi-persistent") {
+    const questions = piQuestions(event);
+    if (questions) {
+      turn.onChunk({ type: "questions", questions });
+      return;
+    }
+  }
+
   if (
     event.type === "response" &&
     event.command === "prompt" &&
@@ -60,7 +74,7 @@ function processOmpEvent(
         new Error(
           typeof event.error === "string"
             ? event.error
-            : "Oh My Pi rejected the prompt",
+            : `${process.displayName} rejected the prompt`,
         ),
       );
       return;
@@ -109,7 +123,7 @@ function processOmpEvent(
       turn.retryError =
         typeof event.finalError === "string"
           ? event.finalError
-          : "Oh My Pi exhausted its automatic retries.";
+          : `${process.displayName} exhausted its automatic retries.`;
       return;
     }
     // OMP emits this only from its `status: "recovered"` path, i.e. after a
@@ -131,8 +145,8 @@ function processOmpEvent(
         typeof message.errorMessage === "string"
           ? message.errorMessage
           : message.stopReason === "aborted"
-            ? "Oh My Pi run was aborted."
-            : "Oh My Pi run ended with an error.";
+            ? `${process.displayName} run was aborted.`
+            : `${process.displayName} run ended with an error.`;
     } else {
       turn.messageError = undefined;
     }

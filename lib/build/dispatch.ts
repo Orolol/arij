@@ -28,6 +28,7 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 import { resolveAgentByNamedId } from "@/lib/agent-config/agent-resolution";
+import { supportsTeamDelegation } from "@/lib/providers/capabilities";
 import { mintAssignedCliSessionId } from "@/lib/agent-sessions/dispatch-background-session";
 import {
   createAgentAlreadyRunningPayload,
@@ -164,7 +165,6 @@ async function prepareBatchBuild(projectId: string, body: Record<string, unknown
     }
   }
 
-  // Team mode is Claude Code exclusive — no sub-agent delegation outside Claude today.
         if (nightRunRegistry.getActiveByProject(projectId)) {
           return NextResponse.json(
             {
@@ -199,10 +199,11 @@ async function prepareBatchBuild(projectId: string, body: Record<string, unknown
           );
         }
 
+  // Only providers with an implemented Task runtime may coordinate a team.
   const resolvedTeamCheck = resolveAgentByNamedId("team_build", projectId, namedAgentId);
-  if (team && resolvedTeamCheck.provider !== "claude-code") {
+  if (team && !supportsTeamDelegation(resolvedTeamCheck.provider)) {
     return NextResponse.json(
-      { error: "Team mode is only available with Claude Code. Other providers do not support sub-agent delegation." },
+      { error: "Team mode is available with Claude Code and Pi (Arij). This provider does not support sub-agent delegation." },
       { status: 400 }
     );
   }
@@ -247,7 +248,7 @@ async function prepareBatchBuild(projectId: string, body: Record<string, unknown
   const projectRef = project;
 
   // -----------------------------------------------------------------------
-  // TEAM MODE — single CC session managing multiple epics via Task tool
+  // TEAM MODE — single coordinator session managing multiple epics via Task tool
   // -----------------------------------------------------------------------
   if (team) {
     try {
@@ -256,9 +257,9 @@ async function prepareBatchBuild(projectId: string, body: Record<string, unknown
         projectId,
         namedAgentId
       );
-      if (resolvedTeamAgent.provider !== "claude-code") {
+      if (!supportsTeamDelegation(resolvedTeamAgent.provider)) {
         return NextResponse.json(
-          { error: "Team mode is only available with Claude Code." },
+          { error: "Team mode is available with Claude Code and Pi (Arij)." },
           { status: 400 }
         );
       }

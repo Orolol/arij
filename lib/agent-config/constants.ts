@@ -184,7 +184,7 @@ export const BUILTIN_AGENT_PROMPTS: Record<AgentType, string> = {
  * injection of the Arij tool channel (lib/providers/types.ts documents the
  * rule); CLIs without that surface were removed in the 2026-08 cleanup.
  */
-export type AgentProvider = "claude-code" | "codex" | "oh-my-pi" | "agy";
+export type AgentProvider = "claude-code" | "codex" | "oh-my-pi" | "agy" | "pi";
 
 export const FALLBACK_PROVIDER: AgentProvider = "claude-code";
 /**
@@ -204,10 +204,12 @@ export const OPENAI_COMPATIBLE_PROVIDER = "openai-compatible" as const;
 export const CLAUDE_CODE_PERSISTENT_PROVIDER =
   "claude-code-persistent" as const;
 export const OH_MY_PI_PERSISTENT_PROVIDER = "oh-my-pi-persistent" as const;
+export const PI_PERSISTENT_PROVIDER = "pi-persistent" as const;
 
 export const PERSISTENT_CHAT_PROVIDER_OPTIONS = [
   CLAUDE_CODE_PERSISTENT_PROVIDER,
   OH_MY_PI_PERSISTENT_PROVIDER,
+  PI_PERSISTENT_PROVIDER,
 ] as const;
 
 export type PersistentChatProvider =
@@ -232,6 +234,7 @@ export const PROVIDER_OPTIONS: AgentProvider[] = [
   "codex",
   "oh-my-pi",
   "agy",
+  "pi",
 ];
 
 export const PROVIDER_LABELS: Record<ChatModeProvider, string> = {
@@ -239,9 +242,11 @@ export const PROVIDER_LABELS: Record<ChatModeProvider, string> = {
   codex: "Codex",
   "oh-my-pi": "Oh My Pi",
   agy: "Antigravity",
+  pi: "Pi (Arij)",
   "openai-compatible": "OpenAI-compatible",
   "claude-code-persistent": "Claude Code — persistent",
   "oh-my-pi-persistent": "Oh My Pi — persistent",
+  "pi-persistent": "Pi (Arij) — persistent",
 };
 
 export function isAgentProvider(value: string): value is AgentProvider {
@@ -303,7 +308,8 @@ export function isPersistentChatProvider(
 /** Provider process used underneath a chat-only persistent mode. */
 export function persistentChatBaseProvider(
   provider: PersistentChatProvider,
-): Extract<AgentProvider, "claude-code" | "oh-my-pi"> {
+): Extract<AgentProvider, "claude-code" | "oh-my-pi" | "pi"> {
+  if (provider === PI_PERSISTENT_PROVIDER) return "pi";
   return provider === CLAUDE_CODE_PERSISTENT_PROVIDER
     ? "claude-code"
     : "oh-my-pi";

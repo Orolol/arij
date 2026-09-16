@@ -184,7 +184,7 @@
     "wavesHint": "Waves",
     "wavesTooltip": "Dependencies build first: epics run in dependency waves, each wave waiting for the previous one. A failed epic (or one that asks a question) skips its dependents.",
     "teamMode": "Team mode",
-    "teamModeTooltip": "Launch a single CC session that coordinates sub-agents for each epic",
+    "teamModeTooltip": "Launch a Claude Code or Pi session that coordinates sub-agents for each epic",
     "autoFix": "Auto-fix",
     "autoFixTooltip": "When a merge fails, automatically launch an agent to resolve conflicts",
     "buildAsTeam": "Build as Team",

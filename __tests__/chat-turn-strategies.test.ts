@@ -199,6 +199,36 @@ describe("providerStrategy", () => {
     expect(input.toolChannel.release).toHaveBeenCalledTimes(1);
     expect(dbMockState.updateCalls.at(-1)).toEqual({ status: "active" });
   });
+
+  it("keeps live-event deltas as the reply and appends a later failure once", async () => {
+    // Bundled Pi reports text through onEvent while its one-shot promise runs.
+    let onEvent!: (event: unknown) => void;
+    mocks.getProvider.mockReturnValue({
+      spawn: (options: { onEvent: (event: unknown) => void }) => {
+        onEvent = options.onEvent;
+        onEvent({ type: "text", text: "Partial" });
+        return {
+          promise: Promise.resolve({ success: false, result: "Partial", error: "model overloaded" }),
+          kill: vi.fn(),
+        };
+      },
+    });
+    const input = cliInput();
+
+    const events = await readEvents(
+      turn(providerStrategy({ ...input, provider: "pi", resumeSession: false })),
+    );
+
+    expect(events.filter((event) => "delta" in event).map((event) => event.delta)).toEqual([
+      "Partial",
+      "\n\nError: model overloaded",
+    ]);
+    expect(assistantInserts()).toEqual([
+      expect.objectContaining({ content: "Partial\n\nError: model overloaded" }),
+    ]);
+    // An event flushed after the turn settled has nowhere to go.
+    expect(() => onEvent({ type: "text", text: " late" })).not.toThrow();
+  });
 });
 
 describe("providerStreamStrategy", () => {

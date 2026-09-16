@@ -288,6 +288,27 @@ const AGY_OPTIONS: ProviderOptionDefinition[] = [
  * no-regression path for any CLI added later and not yet measured.
  */
 const REGISTRY: Partial<Record<ProviderType, ProviderOptionDefinition[]>> = {
+  pi: [{
+    key: "thinking",
+    labelKey: "ProviderOptions.pi.thinking.label",
+    hintKey: "ProviderOptions.pi.thinking.hint",
+    type: "select",
+    default: "",
+    choices: [
+      { value: "off", labelKey: "ProviderOptions.ohMyPi.thinking.choices.off" },
+      { value: "minimal", labelKey: "ProviderOptions.ohMyPi.thinking.choices.minimal" },
+      ...EFFORT_CHOICES,
+    ],
+    toArgs: (value) => ["--thinking", String(value)],
+  }, {
+    key: "permission_mode",
+    labelKey: "ProviderOptions.claudeCode.permissionMode.label",
+    hintKey: "ProviderOptions.pi.permissionHint",
+    type: "select",
+    default: "",
+    choices: CLAUDE_PERMISSION_MODES,
+    codeProducingOnly: true,
+  }],
   "claude-code": CLAUDE_CODE_OPTIONS,
   codex: CODEX_OPTIONS,
   "oh-my-pi": OH_MY_PI_OPTIONS,
