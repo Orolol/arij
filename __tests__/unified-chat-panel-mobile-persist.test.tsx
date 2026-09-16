@@ -5,6 +5,13 @@ vi.mock("next/navigation", async () =>
   (await import("@/__tests__/helpers/next-navigation-mock")).nextNavigationMock(),
 );
 
+class NoopResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+globalThis.ResizeObserver ??= NoopResizeObserver as unknown as typeof ResizeObserver;
+
 let mockConversations = [
   {
     id: "conv1",
@@ -71,28 +78,38 @@ vi.mock("@/hooks/useProvidersAvailable", () => ({
 
 vi.mock("@/hooks/useEpicCreate", () => ({
   useEpicCreate: () => ({
-    createEpic: vi.fn(async () => "epic-1"),
+    draftEpic: vi.fn(async () => true),
     isLoading: false,
     error: null,
-    createdEpic: null,
   }),
 }));
 
-vi.mock("@/components/chat/MessageList", () => ({
-  MessageList: () => <div data-testid="message-list" />,
+vi.mock("@/hooks/useSpecGeneration", () => ({
+  useSpecGeneration: () => ({ generateSpec: vi.fn(), generating: false, error: null }),
 }));
 
-vi.mock("@/components/chat/MessageInput", () => ({
-  MessageInput: ({ disabled, placeholder }: { disabled?: boolean; placeholder?: string }) => (
-    <button data-testid="message-input" data-placeholder={placeholder} disabled={disabled}>
+vi.mock("@/hooks/useControlDesk", () => ({
+  useControlDesk: () => ({ data: null, loading: false, error: null, refresh: vi.fn() }),
+}));
+
+vi.mock("@/hooks/useNamedAgentsList", () => ({
+  useNamedAgentsList: () => ({ agents: [], loading: false, refresh: vi.fn() }),
+}));
+
+// The panel renders the chat page's thread and composer; their own behaviour
+// is pinned by chat-page-thread / chat-page-composer.
+vi.mock("@/components/chat-page/ChatThread", () => ({
+  ChatThread: () => <div data-testid="chat-thread" />,
+}));
+
+vi.mock("@/components/chat-page/ChatComposer", () => ({
+  ChatComposer: ({ disabled }: { disabled?: boolean }) => (
+    <button data-testid="chat-composer" disabled={disabled}>
       input
     </button>
   ),
 }));
 
-vi.mock("@/components/chat/QuestionCards", () => ({
-  QuestionCards: () => null,
-}));
 
 // Mock Sheet components for mobile testing
 vi.mock("@/components/ui/sheet", () => ({
@@ -163,14 +180,14 @@ describe("UnifiedChatPanel mobile responsive behavior", () => {
     const ref = createRef<UnifiedChatPanelHandle>();
 
     render(
-      <UnifiedChatPanel projectId="proj1" ref={ref}>
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()} ref={ref}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
 
     // Expand the panel
     await act(async () => {
-      ref.current?.openChat();
+      fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
     });
 
     // Should render mobile sheet, not desktop split pane
@@ -183,7 +200,7 @@ describe("UnifiedChatPanel mobile responsive behavior", () => {
     setDesktopViewport();
 
     render(
-      <UnifiedChatPanel projectId="proj1">
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
@@ -202,13 +219,13 @@ describe("UnifiedChatPanel mobile responsive behavior", () => {
     const ref = createRef<UnifiedChatPanelHandle>();
 
     render(
-      <UnifiedChatPanel projectId="proj1" ref={ref}>
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()} ref={ref}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
 
     await act(async () => {
-      ref.current?.openChat();
+      fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
     });
 
     expect(screen.getByTestId("unified-panel-mobile-sheet")).toBeInTheDocument();
@@ -227,13 +244,13 @@ describe("UnifiedChatPanel mobile responsive behavior", () => {
     const ref = createRef<UnifiedChatPanelHandle>();
 
     render(
-      <UnifiedChatPanel projectId="proj1" ref={ref}>
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()} ref={ref}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
 
     await act(async () => {
-      ref.current?.openChat();
+      fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
     });
 
     // The collapse and hide buttons should not be present on mobile
@@ -245,7 +262,7 @@ describe("UnifiedChatPanel mobile responsive behavior", () => {
     setDesktopViewport();
 
     render(
-      <UnifiedChatPanel projectId="proj1">
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
@@ -256,25 +273,25 @@ describe("UnifiedChatPanel mobile responsive behavior", () => {
     expect(screen.getByLabelText("Hide panel")).toBeInTheDocument();
   });
 
-  it("renders tab bar and chat content inside the mobile Sheet", async () => {
+  it("renders the roster and the chat content inside the mobile Sheet", async () => {
     setMobileViewport();
 
     const ref = createRef<UnifiedChatPanelHandle>();
 
     render(
-      <UnifiedChatPanel projectId="proj1" ref={ref}>
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()} ref={ref}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
 
     await act(async () => {
-      ref.current?.openChat();
+      fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
     });
 
-    // Chat tab bar should be inside the mobile sheet
-    expect(screen.getByTestId("chat-tab-bar")).toBeInTheDocument();
-    expect(screen.getByTestId("message-list")).toBeInTheDocument();
-    expect(screen.getByTestId("message-input")).toBeInTheDocument();
+    // The roster, thread and composer all live inside the mobile sheet
+    expect(screen.getByTestId("chat-roster")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-thread")).toBeInTheDocument();
+    expect(screen.getByTestId("chat-composer")).toBeInTheDocument();
   });
 });
 
@@ -307,7 +324,7 @@ describe("UnifiedChatPanel panel state persistence", () => {
 
   it("persists panel state to localStorage on change", () => {
     render(
-      <UnifiedChatPanel projectId="proj1">
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
@@ -334,7 +351,7 @@ describe("UnifiedChatPanel panel state persistence", () => {
     window.localStorage.setItem("arij.unified-chat-panel.state.proj1", "expanded");
 
     render(
-      <UnifiedChatPanel projectId="proj1">
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
@@ -348,7 +365,7 @@ describe("UnifiedChatPanel panel state persistence", () => {
     window.localStorage.setItem("arij.unified-chat-panel.state.proj1", "hidden");
 
     render(
-      <UnifiedChatPanel projectId="proj1">
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
@@ -364,7 +381,7 @@ describe("UnifiedChatPanel panel state persistence", () => {
     window.localStorage.setItem("arij.unified-chat-panel.state.proj2", "collapsed");
 
     render(
-      <UnifiedChatPanel projectId="proj1">
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
@@ -380,7 +397,7 @@ describe("UnifiedChatPanel panel state persistence", () => {
     window.localStorage.setItem("arij.unified-chat-panel.state.proj1", "invalid_value");
 
     render(
-      <UnifiedChatPanel projectId="proj1">
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
@@ -391,7 +408,7 @@ describe("UnifiedChatPanel panel state persistence", () => {
 
   it("persists hidden state via hide button", () => {
     render(
-      <UnifiedChatPanel projectId="proj1">
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );

@@ -11,5 +11,6 @@
   "globalErrorDescription": "Une exception critique a interrompu le layout de l'application.",
   "projectErrorTitle": "Impossible de charger l'écran du projet",
   "projectErrorDescription": "Une erreur est survenue lors de l'affichage de ce projet. Vous pouvez réessayer ou revenir au poste de pilotage.",
-  "failedToLoadVisualProofs": "Impossible de charger les preuves visuelles"
+  "failedToLoadVisualProofs": "Impossible de charger les preuves visuelles",
+  "failedToDraftEpic": "Impossible de rédiger l’epic"
 }

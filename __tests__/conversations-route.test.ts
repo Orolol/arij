@@ -1,17 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   dbMockState,
+  mockJsonRequest,
+  mockRouteContext,
   resetDbMockState,
 } from "@/__tests__/helpers/db-mock";
 import type { ResolvedChatMode } from "@/lib/chat/default-chat-mode";
 
 const {
-  runCutoverMigrationOnce,
   resolveAgent: mockResolveAgent,
   resolveDefaultChatMode: mockResolveDefaultChatMode,
   restartPersistentChatSession,
 } = vi.hoisted(() => ({
-  runCutoverMigrationOnce: vi.fn(),
   resolveAgent: vi.fn(() => ({
     provider: "claude-code",
     namedAgentId: null,
@@ -46,10 +46,6 @@ vi.mock("@/lib/chat/default-chat-mode", () => ({
   resolveDefaultChatMode: mockResolveDefaultChatMode,
 }));
 
-vi.mock("@/lib/chat/unified-cutover-migration", () => ({
-  runUnifiedChatCutoverMigrationOnce: runCutoverMigrationOnce,
-}));
-
 vi.mock("@/lib/chat/persistent-runner", () => ({
   getPersistentChatSessionState: vi.fn(() => "cold"),
   restartPersistentChatSession,
@@ -72,7 +68,7 @@ describe("conversations route", () => {
     });
   });
 
-  it("runs cutover migration and normalizes legacy type/status order", async () => {
+  it("normalizes legacy type/status order", async () => {
     // GET first checks the project exists via .get()
     dbMockState.getQueue.push({ id: "proj-1" });
     // …then loads the project's conversations via .all()
@@ -106,7 +102,6 @@ describe("conversations route", () => {
     });
     const json = await response.json();
 
-    expect(runCutoverMigrationOnce).toHaveBeenCalledWith("proj-1");
     expect(json.data).toHaveLength(2);
     expect(json.data[0]).toMatchObject({
       id: "conv-older",
@@ -119,19 +114,52 @@ describe("conversations route", () => {
     });
   });
 
+  it.each([
+    ["chat", "Chat"],
+    ["epic_creation", "New Epic"],
+    ["brainstorm", "Brainstorm"],
+    [undefined, "Brainstorm"],
+  ])("POST gives an unlabelled %s conversation its kind's default label", async (type, label) => {
+    dbMockState.getQueue.push({ id: "proj-1" });
+    dbMockState.getQueue.push({ id: "conv-created" });
+
+    const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
+    await POST(
+      mockJsonRequest({ type, provider: "claude-code" }),
+      mockRouteContext({ projectId: "proj-1" }),
+    );
+
+    expect(dbMockState.insertCalls).toContainEqual(
+      expect.objectContaining({ type: type ?? "brainstorm", label }),
+    );
+  });
+
+  it("POST keeps a label the creator chose", async () => {
+    dbMockState.getQueue.push({ id: "proj-1" });
+    dbMockState.getQueue.push({ id: "conv-created" });
+
+    const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
+    await POST(
+      mockJsonRequest({ type: "chat", label: "Release notes", provider: "claude-code" }),
+      mockRouteContext({ projectId: "proj-1" }),
+    );
+
+    expect(dbMockState.insertCalls).toContainEqual(
+      expect.objectContaining({ label: "Release notes" }),
+    );
+  });
+
   it("POST persists the openai-compatible provider on the conversation", async () => {
     dbMockState.getQueue.push({ id: "proj-1" }); // project exists
     dbMockState.getQueue.push({ id: "conv-created" }); // created row read-back
 
     const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
     const response = await POST(
-      {
-        json: async () => ({
+      mockJsonRequest({
           type: "chat",
           label: "Chat",
           provider: "openai-compatible",
         }),
-      } as never,
       { params: Promise.resolve({ projectId: "proj-1" }) },
     );
     const json = await response.json();
@@ -156,12 +184,10 @@ describe("conversations route", () => {
 
     const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
     await POST(
-      {
-        json: async () => ({
+      mockJsonRequest({
           type: "chat",
           provider: "claude-code-persistent",
         }),
-      } as never,
       { params: Promise.resolve({ projectId: "proj-1" }) },
     );
 
@@ -177,9 +203,7 @@ describe("conversations route", () => {
 
     const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
     await POST(
-      {
-        json: async () => ({ type: "chat", provider: "carrier-pigeon" }),
-      } as never,
+      mockJsonRequest({ type: "chat", provider: "carrier-pigeon" }),
       { params: Promise.resolve({ projectId: "proj-1" }) },
     );
 
@@ -206,7 +230,7 @@ describe("conversations route", () => {
 
     const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
     await POST(
-      { json: async () => ({ type: "chat" }) } as never,
+      mockJsonRequest({ type: "chat" }),
       { params: Promise.resolve({ projectId: "proj-1" }) },
     );
 
@@ -225,9 +249,7 @@ describe("conversations route", () => {
 
     const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
     await POST(
-      {
-        json: async () => ({ type: "chat", namedAgentId: "agent-legacy" }),
-      } as never,
+      mockJsonRequest({ type: "chat", namedAgentId: "agent-legacy" }),
       { params: Promise.resolve({ projectId: "proj-1" }) },
     );
 
@@ -248,8 +270,7 @@ describe("conversations route", () => {
 
     const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
     const response = await POST(
-      {
-        json: async () => ({
+      mockJsonRequest({
           type: "chat",
           // Both keys are sent on purpose: a named agent owns its provider, so
           // the body's provider is what must lose here — not the agent. Same
@@ -258,7 +279,6 @@ describe("conversations route", () => {
           provider: "openai-compatible",
           namedAgentId: "agent-9",
         }),
-      } as never,
       { params: Promise.resolve({ projectId: "proj-1" }) },
     );
 
@@ -278,9 +298,7 @@ describe("conversations route", () => {
 
     const { POST } = await import("@/app/api/projects/[projectId]/conversations/route");
     const response = await POST(
-      {
-        json: async () => ({ type: "chat", namedAgentId: "agent-missing" }),
-      } as never,
+      mockJsonRequest({ type: "chat", namedAgentId: "agent-missing" }),
       { params: Promise.resolve({ projectId: "proj-1" }) },
     );
     const json = await response.json();
@@ -367,6 +385,53 @@ describe("conversations route", () => {
     expect(byId("conv-one-shot").persistentSessionState).toBeNull();
   });
 
+  // The list route already reports a legacy `epic` row as `epic_creation`;
+  // the detail and PATCH responses must agree, or a client comparing types
+  // sees one conversation change kind depending on which route it asked.
+  it("detail GET reports a legacy epic conversation as epic_creation", async () => {
+    dbMockState.getQueue.push({
+      id: "conv-1",
+      projectId: "proj-1",
+      type: "epic",
+      label: "New Epic",
+      provider: "claude-code",
+      namedAgentId: null,
+    });
+
+    const { GET } = await import(
+      "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
+    );
+    const response = await GET(
+      mockJsonRequest({}),
+      mockRouteContext({ projectId: "proj-1", conversationId: "conv-1" }),
+    );
+
+    expect((await response.json()).data.type).toBe("epic_creation");
+  });
+
+  it("PATCH reports a legacy epic conversation as epic_creation", async () => {
+    const row = {
+      id: "conv-1",
+      projectId: "proj-1",
+      type: "epic",
+      label: "New Epic",
+      provider: "claude-code",
+      namedAgentId: null,
+      cliSessionId: null,
+    };
+    dbMockState.getQueue.push(row, { ...row, label: "Renamed" });
+
+    const { PATCH } = await import(
+      "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
+    );
+    const response = await PATCH(
+      mockJsonRequest({ label: "Renamed" }),
+      mockRouteContext({ projectId: "proj-1", conversationId: "conv-1" }),
+    );
+
+    expect((await response.json()).data.type).toBe("epic_creation");
+  });
+
   it("PATCH accepts the openai-compatible provider and clears named-agent linkage", async () => {
     dbMockState.getQueue.push({
       id: "conv-1",
@@ -389,9 +454,7 @@ describe("conversations route", () => {
       "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
     );
     const response = await PATCH(
-      {
-        json: async () => ({ provider: "openai-compatible" }),
-      } as never,
+      mockJsonRequest({ provider: "openai-compatible" }),
       { params: Promise.resolve({ projectId: "proj-1", conversationId: "conv-1" }) },
     );
     const json = await response.json();
@@ -429,9 +492,7 @@ describe("conversations route", () => {
       "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
     );
     await PATCH(
-      {
-        json: async () => ({ provider: "carrier-pigeon" }),
-      } as never,
+      mockJsonRequest({ provider: "carrier-pigeon" }),
       { params: Promise.resolve({ projectId: "proj-1", conversationId: "conv-1" }) },
     );
 
@@ -468,7 +529,7 @@ describe("conversations route", () => {
       "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
     );
     const response = await PATCH(
-      { json: async () => ({ namedAgentId: null }) } as never,
+      mockJsonRequest({ namedAgentId: null }),
       { params: Promise.resolve({ projectId: "proj-1", conversationId: "conv-1" }) },
     );
     const json = await response.json();
@@ -526,7 +587,7 @@ describe("conversations route", () => {
       "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
     );
     const response = await PATCH(
-      { json: async () => ({ namedAgentId: "" }) } as never,
+      mockJsonRequest({ namedAgentId: "" }),
       { params: Promise.resolve({ projectId: "proj-1", conversationId: "conv-1" }) },
     );
 
@@ -567,9 +628,7 @@ describe("conversations route", () => {
       "@/app/api/projects/[projectId]/conversations/[conversationId]/route"
     );
     const response = await PATCH(
-      {
-        json: async () => ({ provider: "oh-my-pi-persistent", namedAgentId: null }),
-      } as never,
+      mockJsonRequest({ provider: "oh-my-pi-persistent", namedAgentId: null }),
       { params: Promise.resolve({ projectId: "proj-1", conversationId: "conv-1" }) },
     );
 

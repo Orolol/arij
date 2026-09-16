@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import * as contract from "@/lib/chat/parity-contract";
 import {
-  LEGACY_CONVERSATION_STATUSES,
   isLegacyConversationGenerating,
   normalizeLegacyConversationStatus,
   resolveLegacyConversationLabel,
@@ -8,20 +8,13 @@ import {
 } from "@/lib/chat/parity-contract";
 
 describe("chat parity contract", () => {
-  it("declares legacy status contract", () => {
-    expect(LEGACY_CONVERSATION_STATUSES).toEqual([
-      "active",
-      "generating",
-      "generated",
-      "error",
-    ]);
-  });
-
-  it("normalizes unknown statuses to active and preserves known statuses", () => {
+  it("normalizes unknown statuses to active and preserves the three written ones", () => {
     expect(normalizeLegacyConversationStatus("active")).toBe("active");
     expect(normalizeLegacyConversationStatus("generating")).toBe("generating");
-    expect(normalizeLegacyConversationStatus("generated")).toBe("generated");
     expect(normalizeLegacyConversationStatus("error")).toBe("error");
+    // `generated` lost its only writer with the epic-create route (ca1883dd);
+    // a row still carrying it reads as an idle conversation.
+    expect(normalizeLegacyConversationStatus("generated")).toBe("active");
     expect(normalizeLegacyConversationStatus("queued")).toBe("active");
     expect(normalizeLegacyConversationStatus(null)).toBe("active");
   });
@@ -40,6 +33,15 @@ describe("chat parity contract", () => {
     expect(resolveLegacyConversationLabel("chat", null)).toBe("Chat");
     expect(resolveLegacyConversationLabel("epic_creation", " ")).toBe("New Epic");
     expect(resolveLegacyConversationLabel("epic", null)).toBe("New Epic");
+  });
+
+  it("exports only what a consumer reads (lot 10, #51)", () => {
+    expect(Object.keys(contract).sort()).toEqual([
+      "isLegacyConversationGenerating",
+      "normalizeLegacyConversationStatus",
+      "resolveLegacyConversationLabel",
+      "sortConversationsForLegacyParity",
+    ]);
   });
 
   it("sorts conversations by createdAt ascending and id tie-breaker", () => {

@@ -22,7 +22,7 @@ interface MessageListProps {
 }
 
 export function MessageList({ messages, loading, streamStatus }: MessageListProps) {
-  const t = useTranslations("ChatLegacy");
+  const t = useTranslations("Chat");
   const bottomRef = useRef<HTMLDivElement>(null);
   const [lightboxImage, setLightboxImage] = useState<LightboxImage | null>(null);
 
@@ -33,7 +33,7 @@ export function MessageList({ messages, loading, streamStatus }: MessageListProp
   if (loading) {
     return (
       <div className="px-[18px] py-[18px] text-[13.5px] text-muted-foreground">
-        {t("messages.loading")}
+        {t("thread.loading")}
       </div>
     );
   }
@@ -41,7 +41,7 @@ export function MessageList({ messages, loading, streamStatus }: MessageListProp
   if (messages.length === 0) {
     return (
       <div className="mt-8 px-[18px] text-center text-[13.5px] text-muted-foreground">
-        {t("messages.empty")}
+        {t("thread.emptyBrainstorm")}
       </div>
     );
   }

@@ -176,7 +176,7 @@ vi.mock("@/hooks/useSpecGeneration", () => ({
 }));
 
 vi.mock("@/hooks/useEpicCreate", () => ({
-  useEpicCreate: () => ({ createEpic: vi.fn(), isLoading: false, error: null }),
+  useEpicCreate: () => ({ draftEpic: vi.fn(), isLoading: false, error: null }),
 }));
 
 vi.mock("@/components/chat-page/chat-context-tokens", () => ({

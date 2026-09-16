@@ -4,7 +4,6 @@
 import en_AgentsWorkshop from "./en/AgentsWorkshop.json";
 import en_AutoMode from "./en/AutoMode.json";
 import en_Chat from "./en/Chat.json";
-import en_ChatLegacy from "./en/ChatLegacy.json";
 import en_ClientErrors from "./en/ClientErrors.json";
 import en_Desk from "./en/Desk.json";
 import en_Documents from "./en/Documents.json";
@@ -42,7 +41,6 @@ import en_Usage from "./en/Usage.json";
 import en_Verify from "./en/Verify.json";
 import fr_AgentsWorkshop from "./fr/AgentsWorkshop.json";
 import fr_Chat from "./fr/Chat.json";
-import fr_ChatLegacy from "./fr/ChatLegacy.json";
 import fr_ClientErrors from "./fr/ClientErrors.json";
 import fr_Desk from "./fr/Desk.json";
 import fr_Documents from "./fr/Documents.json";
@@ -72,7 +70,6 @@ export const en = {
   AgentsWorkshop: en_AgentsWorkshop,
   AutoMode: en_AutoMode,
   Chat: en_Chat,
-  ChatLegacy: en_ChatLegacy,
   ClientErrors: en_ClientErrors,
   Desk: en_Desk,
   Documents: en_Documents,
@@ -113,7 +110,6 @@ export const en = {
 export const fr = {
   AgentsWorkshop: fr_AgentsWorkshop,
   Chat: fr_Chat,
-  ChatLegacy: fr_ChatLegacy,
   ClientErrors: fr_ClientErrors,
   Desk: fr_Desk,
   Documents: fr_Documents,

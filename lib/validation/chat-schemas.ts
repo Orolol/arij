@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// --- Chat message schemas (chat POST + chat/stream POST) ---
+// --- Chat message schema (chat/stream POST) ---
 
 export const chatMessageSchema = z.object({
   content: z.string().nullish(),

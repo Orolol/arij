@@ -9,16 +9,29 @@
     "knows": {
       "label": "LE CHAT SAIT",
       "body": "spec du projet, mémoire, tickets ouverts — cite un doc avec"
-    }
+    },
+    "rename": "Renommer la conversation",
+    "nameLabel": "Nom de la conversation",
+    "delete": "Supprimer la conversation",
+    "status": {
+      "generating": "Réponse en cours…",
+      "error": "Dernière réponse en échec"
+    },
+    "deleteTitle": "Supprimer cette conversation ?",
+    "deleteDescription": "« {name} » et tout son historique de messages seront supprimés.",
+    "renameNotSaved": "Le nom n’a pas été enregistré : une autre modification de cette conversation est encore en cours."
   },
   "thread": {
     "paneLabel": "Fil de la conversation",
     "typing": "{agent} rédige…",
     "typingAgentFallback": "L'agent",
-    "createEpicPending": "Création…",
+    "draftEpic": "Rédiger l'epic",
+    "draftEpicPending": "Rédaction…",
     "generateSpecPending": "Génération…",
     "generateSpecDone": "Spec écrite — {count, plural, =0 {aucun nouvel epic} one {# epic créé} other {# epics créés}}",
-    "generateSpecEpicsOnly": "{count, plural, one {# epic créé} other {# epics créés}}"
+    "generateSpecEpicsOnly": "{count, plural, one {# epic créé} other {# epics créés}}",
+    "viewSpec": "Voir la spec →",
+    "loading": "Chargement des messages…"
   },
   "composer": {
     "placeholder": "Écris — ⏎ envoie, ⇧⏎ saute une ligne, @ cite un doc",
@@ -52,5 +65,24 @@
     "proposePending": "Envoi…",
     "viewSpec": "voir la spec →",
     "proposalSent": "Proposition envoyée à la spec"
+  },
+  "questions": {
+    "step": "Question {current} sur {total}",
+    "submit": "Envoyer les réponses",
+    "next": "Suivante"
+  },
+  "panel": {
+    "resize": "Redimensionner le panneau",
+    "collapse": "Replier le panneau",
+    "hide": "Masquer le panneau",
+    "open": "Ouvrir le panneau de chat",
+    "showStrip": "Afficher la bande du chat"
+  },
+  "conversations": {
+    "loadFailed": "Impossible de charger les conversations.",
+    "createFailed": "Impossible de créer la conversation.",
+    "updateFailed": "Impossible de modifier la conversation.",
+    "deleteFailed": "Impossible de supprimer la conversation.",
+    "restartFailed": "Impossible de redémarrer la conversation."
   }
 }

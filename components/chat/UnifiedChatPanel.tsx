@@ -5,6 +5,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useMemo,
   type ReactNode,
 } from "react";
 import { useTranslations } from "next-intl";
@@ -17,35 +18,46 @@ import {
 import { Button } from "@/components/ui/button";
 import { QuietLink } from "@/components/piscine";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
-import { ChatTabBar } from "@/components/chat/ChatTabBar";
-import {
-  ChatProposalCard,
-  ChatWorkspaceHeader,
-} from "@/components/chat/ChatWorkspaceHeader";
-import { MessageList } from "@/components/chat/MessageList";
-import { MessageInput } from "@/components/chat/MessageInput";
-import { QuestionCards } from "@/components/chat/QuestionCards";
+import { projectTone } from "@/components/piscine";
+import { ChatComposer } from "@/components/chat-page/ChatComposer";
+import { ChatNextSteps } from "@/components/chat-page/ChatNextSteps";
+import { ChatThread } from "@/components/chat-page/ChatThread";
+import { ConversationRoster } from "@/components/chat-page/ConversationRoster";
+import { useConversationAgentLabels } from "@/components/chat-page/useConversationAgentLabels";
+import { useThreadEpics } from "@/components/chat-page/useThreadEpics";
+import { useControlDesk } from "@/hooks/useControlDesk";
 import { usePanelLayout, DIVIDER_WIDTH, type UnifiedPanelState } from "@/hooks/usePanelLayout";
 import { usePolling } from "@/hooks/usePolling";
+import { BRAINSTORM_AGENT_TYPE, EPIC_CREATION_AGENT_TYPE } from "@/lib/chat/conversation-agent";
 import {
-  isLegacyConversationGenerating,
-} from "@/lib/chat/parity-contract";
+  BRAINSTORM_CONVERSATION_LABEL,
+  EPIC_CREATION_CONVERSATION_LABEL,
+} from "@/lib/chat/conversation-labels";
+import { isLegacyConversationGenerating } from "@/lib/chat/parity-contract";
 import { cn } from "@/lib/utils";
 import { useChatWorkspace } from "@/hooks/useChatWorkspace";
 
 export type { UnifiedPanelState };
 
+/**
+ * The page's only way in from outside: `?panel=new-epic` (pushed by the
+ * project layout's New menu) opens the panel on a fresh epic conversation.
+ * The strip is the other entry and is internal. `openChat` / `collapse` /
+ * `hide` had no producer and were removed (lot 10, #48).
+ */
 export interface UnifiedChatPanelHandle {
-  openChat: () => void;
   openNewEpic: () => void;
-  collapse: () => void;
-  hide: () => void;
 }
 
 interface UnifiedChatPanelProps {
   projectId: string;
   children: ReactNode;
+  /** An epic was created from the thread; the board should reload. */
   onEpicCreated?: () => void;
+  /** The in-thread epic cards open the ticket the page already overlays. */
+  onOpenTicket: (epicId: string) => void;
+  /** The in-thread epic cards report success and failure as toasts. */
+  onToast: (tone: "success" | "error", message: string) => void;
   /**
    * Fires whenever the panel occupies board width (expanded on desktop).
    * The board uses it to hide the Released digest and reclaim the space.
@@ -53,23 +65,71 @@ interface UnifiedChatPanelProps {
   onExpandedChange?: (expanded: boolean) => void;
 }
 
+/**
+ * The chat beside the project desk.
+ *
+ * ONE RENDERING GRAMMAR (lot 10, #40). The panel keeps what only a side panel
+ * has — collapse strip, resize divider, hide, Escape, the mobile Sheet,
+ * polling only while visible — and renders the conversation with the chat
+ * page's own components: `ConversationRoster` (compact), `ChatThread` (with
+ * its in-thread epic cards and reader-respecting auto-scroll) and
+ * `ChatComposer` (without the project pill: the scope is this page). The tab
+ * bar, message list, input and proposal card it used to draw are gone.
+ */
 export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPanelProps>(
   function UnifiedChatPanel(
-    { projectId, children, onEpicCreated, onExpandedChange },
+    { projectId, children, onEpicCreated, onOpenTicket, onToast, onExpandedChange },
     ref,
   ) {
-    const t = useTranslations("ChatLegacy");
+    const t = useTranslations("Chat");
     const {
-      conversations, activeId, setActiveId, conversationsLoading,
+      conversations, activeId, setActiveId, conversationsLoading, mutating,
       createConversation, deleteConversation, restartPersistentSession, refreshConversations,
-      messages, loading, error, pendingQuestions, streamStatus,
-      sendMessage, answerQuestions, activeConversation, activeProvider,
-      hasMessages, hasUserMessage, isBrainstorm, isEpicCreation,
-      busy: isCurrentConversationBusy, actionsDisabled, attachmentsDisabled,
-      selectAgent: handleSelectAgentOrProvider, createEpic: handleCreateEpic,
-      epicCreating, generateSpec, generatingSpec, specResult,
-    } = useChatWorkspace(projectId, onEpicCreated);
-    const tabConversations = conversations;
+      renameConversation, renameDisabled,
+      messages, loading, sending, error, pendingQuestions, streamStatus,
+      sendMessage, answerQuestions, activeConversation,
+      activeAgentSelection, agentLocked, attachmentsDisabled,
+      hasUserMessage, isBrainstorm, isEpicCreation, busy, sendStartedAt,
+      selectAgent, draftEpic, epicDrafting, generateSpec, generatingSpec, specResult,
+      actionsDisabled,
+    } = useChatWorkspace(projectId);
+
+    // On /projects/:id the desk aggregate is already polled by the app-level
+    // provider; this reads that shared copy for the epic cards' placement.
+    const { data: desk, refresh: refreshDesk } = useControlDesk(projectId, 8000);
+    const project = useMemo(
+      () => desk?.projects.find((row) => row.id === projectId) ?? null,
+      [desk, projectId],
+    );
+
+    const handleDeskChanged = useCallback(() => {
+      void refreshDesk();
+      onEpicCreated?.();
+    }, [refreshDesk, onEpicCreated]);
+
+    const { agentLabels, activeAgentLabel } = useConversationAgentLabels(
+      conversations,
+      activeConversation,
+    );
+    const {
+      epicsByMessage,
+      resolvedEpicByMessage,
+      resolveTicket,
+      recordEpicBinding,
+      createdHere,
+    } = useThreadEpics({
+      projectId,
+      activeId,
+      activeConversation,
+      messages,
+      desk,
+      onDeskChanged: handleDeskChanged,
+    });
+    const ticketCounts = useMemo(() => {
+      const map = new Map<string, number>();
+      if (activeId) map.set(activeId, createdHere.length);
+      return map;
+    }, [activeId, createdHere.length]);
 
     const {
       containerRef,
@@ -87,7 +147,6 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       setActiveId,
     });
 
-    const canCreateEpic = isEpicCreation && hasUserMessage;
     const hasActiveAgents = conversations.some(
       (conversation) => isLegacyConversationGenerating(conversation.status),
     );
@@ -95,20 +154,10 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
     // Only poll conversation status while the panel is visible.
     usePolling(refreshConversations, 3000, panelState !== "hidden", { immediate: false });
 
-    // The default `label` below is PERSISTED on the conversation row and read
-    // back on every later render, so it stays out of the catalogue: a
-    // translated default would write one locale's word into the database.
-    const createNewConversationTab = useCallback(
-      async (options?: { type?: string; label?: string }) => {
-        const created = await createConversation({
-          type: options?.type || "brainstorm",
-          label: options?.label || "Brainstorm",
-        });
-
-        if (created) {
-          setActiveId(created.id);
-        }
-
+    const createAndSelect = useCallback(
+      async (options: { type: string; label: string }) => {
+        const created = await createConversation(options);
+        if (created) setActiveId(created.id);
         return created;
       },
       [createConversation, setActiveId],
@@ -131,45 +180,42 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
         return;
       }
 
-      if (tabConversations.length > 0) {
-        const fallbackId = tabConversations[0].id;
-        setActiveId(fallbackId);
+      if (conversations.length > 0) {
+        setActiveId(conversations[0].id);
         return;
       }
 
-      await createNewConversationTab({ type: "brainstorm", label: "Brainstorm" });
+      await createAndSelect({ type: BRAINSTORM_AGENT_TYPE, label: BRAINSTORM_CONVERSATION_LABEL });
     }, [
       activeId,
       conversationsLoading,
-      tabConversations,
+      conversations,
       setActiveId,
       setPanelState,
-      createNewConversationTab,
+      createAndSelect,
     ]);
 
     useImperativeHandle(
       ref,
       () => ({
-        openChat() {
-          void openChatConversation();
-        },
         openNewEpic() {
           setPanelState("expanded");
-          void createNewConversationTab({ type: "epic_creation", label: "New Epic" });
-        },
-        collapse() {
-          setPanelState("collapsed");
-        },
-        hide() {
-          setPanelState("hidden");
+          void createAndSelect({
+            type: EPIC_CREATION_AGENT_TYPE,
+            label: EPIC_CREATION_CONVERSATION_LABEL,
+          });
         },
       }),
-      [openChatConversation, createNewConversationTab, setPanelState],
+      [createAndSelect, setPanelState],
     );
 
     useEffect(() => {
       function onEscape(event: KeyboardEvent) {
         if (event.key !== "Escape") return;
+        // Already handled below: the rename field cancels its edit, a Radix
+        // dialog (the delete confirmation) dismisses itself. Collapsing too
+        // would unmount the very thing the key was meant for.
+        if (event.defaultPrevented) return;
         if (panelState !== "expanded") return;
         setPanelState("collapsed");
       }
@@ -183,104 +229,100 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
       onExpandedChange?.(panelState === "expanded" && !isMobile);
     }, [panelState, isMobile, onExpandedChange]);
 
-    async function closeTab(conversationId: string) {
-      if (tabConversations.length <= 1) {
-        return;
-      }
-      await deleteConversation(conversationId);
-    }
-
     const chatWorkspace = (
-      <div className="flex h-full min-h-0 flex-col">
-        <ChatTabBar
-          conversations={tabConversations}
+      <div
+        data-testid="unified-chat-workspace"
+        className="flex h-full min-h-0 flex-col gap-[10px] px-[14px] py-[12px]"
+      >
+        <ConversationRoster
+          variant="compact"
+          conversations={conversations}
           activeId={activeId}
-          onSelectTab={setActiveId}
-          onCloseTab={(conversationId) => void closeTab(conversationId)}
-          onCreateTab={(options) => void createNewConversationTab(options)}
-          trailing={
-            <ChatWorkspaceHeader
-              activeConversation={activeConversation}
-              activeProvider={activeProvider}
-              hasMessages={hasMessages}
-              isBusy={isCurrentConversationBusy}
-              onSelectAgentOrProvider={handleSelectAgentOrProvider}
-              onRestartPersistentSession={() => {
-                if (activeId) void restartPersistentSession(activeId);
-              }}
-            />
+          project={project}
+          agentLabels={agentLabels}
+          ticketCounts={ticketCounts}
+          onSelect={setActiveId}
+          onCreate={(options) => void createAndSelect(options)}
+          createDisabled={conversationsLoading || mutating}
+          onRestartPersistentSession={(conversationId) =>
+            void restartPersistentSession(conversationId)
+          }
+          onRename={(conversationId, label) =>
+            void renameConversation(conversationId, label).then((outcome) => {
+              if (outcome === "busy") onToast("error", t("roster.renameNotSaved"));
+            })
+          }
+          renameDisabled={renameDisabled}
+          onDelete={(conversationId) => deleteConversation(conversationId)}
+        />
+
+        <ChatThread
+          conversationId={activeId}
+          projectId={projectId}
+          messages={messages}
+          loading={loading}
+          sending={sending}
+          streamStatus={streamStatus}
+          agentLabel={activeAgentLabel}
+          sendStartedAt={sendStartedAt}
+          epicsByMessage={epicsByMessage}
+          epicIdByMessage={resolvedEpicByMessage}
+          resolveTicket={resolveTicket}
+          tone={projectTone(project?.colorIndex ?? 0)}
+          namedAgentId={activeConversation?.namedAgentId ?? null}
+          onEpicCreated={recordEpicBinding}
+          onOpenTicket={onOpenTicket}
+          onToast={onToast}
+          error={error}
+          pendingQuestions={pendingQuestions}
+          onAnswerQuestions={answerQuestions}
+          busy={busy}
+          emptyMessage={isEpicCreation ? t("thread.emptyEpic") : t("thread.emptyBrainstorm")}
+          footer={
+            <>
+              <ChatNextSteps
+                showDraftEpic={isEpicCreation && hasUserMessage && epicsByMessage.size === 0}
+                drafting={epicDrafting}
+                onDraftEpic={() => void draftEpic()}
+                showGenerateSpec={isBrainstorm}
+                generatingSpec={generatingSpec}
+                onGenerateSpec={() => void generateSpec()}
+                disabled={actionsDisabled}
+              />
+              {/* The generation used to end in a bare router.refresh(): say
+                  what landed, and point at the spec only when one was written
+                  (an epics-only answer leaves it untouched). */}
+              {specResult ? (
+                <div
+                  role="status"
+                  data-testid="chat-spec-generated"
+                  className="flex flex-wrap items-baseline gap-x-2 px-2 pt-1 text-[12px] text-muted-foreground"
+                >
+                  <span>
+                    {specResult.spec === null
+                      ? t("thread.generateSpecEpicsOnly", { count: specResult.epicsCreated })
+                      : t("thread.generateSpecDone", { count: specResult.epicsCreated })}
+                  </span>
+                  {specResult.spec !== null ? (
+                    <QuietLink href={`/projects/${projectId}/spec`} tone="muted" size={12}>
+                      {t("thread.viewSpec")}
+                    </QuietLink>
+                  ) : null}
+                </div>
+              ) : null}
+            </>
           }
         />
 
-        {error && (
-          <div role="alert" className="mx-[18px] mt-2 rounded-[8px] border border-destructive/50 bg-destructive/10 px-3 py-2 text-[12px] text-destructive">
-            {error}
-          </div>
-        )}
-
-        {/* The generation used to end in a bare router.refresh(): say what
-            landed, and point at the spec only when one was written (an
-            epics-only answer leaves it untouched). */}
-        {specResult && (
-          <div
-            role="status"
-            data-testid="chat-spec-generated"
-            className="mx-[18px] mt-2 flex flex-wrap items-baseline gap-x-2 text-[12px] text-muted-foreground"
-          >
-            <span>
-              {specResult.spec === null
-                ? t("proposal.generateSpecEpicsOnly", { count: specResult.epicsCreated })
-                : t("proposal.generateSpecDone", { count: specResult.epicsCreated })}
-            </span>
-            {specResult.spec !== null && (
-              <QuietLink href={`/projects/${projectId}/spec`} tone="muted" size={12}>
-                {t("proposal.viewSpec")}
-              </QuietLink>
-            )}
-          </div>
-        )}
-
-        <div className="min-h-0 flex-1 overflow-auto">
-          {isEpicCreation && !hasMessages && !loading && (
-            <div className="px-[18px] py-8 text-center text-[13.5px] text-muted-foreground">
-              {t("panel.epicIntro")}
-            </div>
-          )}
-          <MessageList
-            messages={messages}
-            loading={loading}
-            streamStatus={streamStatus}
-          />
-          {pendingQuestions && (
-            <div className="px-[18px] pb-[14px]">
-              <QuestionCards
-                questions={pendingQuestions}
-                onSubmit={answerQuestions}
-                disabled={isCurrentConversationBusy}
-              />
-            </div>
-          )}
-          <ChatProposalCard
-            activeConversation={activeConversation}
-            showGenerateSpec={isBrainstorm}
-            generatingSpec={generatingSpec}
-            onGenerateSpec={generateSpec}
-            disabled={actionsDisabled}
-            showCreateEpic={canCreateEpic}
-            epicCreating={epicCreating}
-            onCreateEpic={handleCreateEpic}
-          />
-        </div>
-
-        <MessageInput
+        <ChatComposer
           projectId={projectId}
           conversationId={activeId}
-          onSend={sendMessage}
-          disabled={isCurrentConversationBusy || !activeConversation}
-          placeholder={
-            isEpicCreation ? t("input.epicPlaceholder") : t("input.placeholder")
-          }
+          agentSelection={activeAgentSelection}
+          onSelectAgent={selectAgent}
+          agentLocked={agentLocked}
           attachmentsDisabled={attachmentsDisabled}
+          disabled={busy || !activeConversation}
+          onSend={sendMessage}
         />
       </div>
     );
@@ -307,6 +349,16 @@ export const UnifiedChatPanel = forwardRef<UnifiedChatPanelHandle, UnifiedChatPa
                 showCloseButton={false}
                 className="w-full max-w-none p-0 sm:max-w-none"
                 data-testid="unified-panel-mobile-sheet"
+                // Radix listens for Escape on the document in the CAPTURE
+                // phase, before any React handler inside the sheet can stop
+                // it. A field that owns Escape (the inline rename cancels its
+                // edit with it) must not also dismiss the whole panel.
+                onEscapeKeyDown={(event) => {
+                  const target = event.target;
+                  if (target instanceof Element && target.closest("[data-owns-escape]")) {
+                    event.preventDefault();
+                  }
+                }}
               >
                 {chatWorkspace}
               </SheetContent>

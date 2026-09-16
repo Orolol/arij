@@ -41,9 +41,14 @@ import { cn } from "@/lib/utils";
 export interface ChatComposerProps {
   projectId: string | null;
   conversationId?: string | null;
-  projects: readonly DeskProject[];
-  project: DeskProject | null;
-  onSelectProject: (projectId: string) => void;
+  /**
+   * The project pill — the page's scope control. Omitted by a host whose
+   * scope is fixed (the project side panel): without `onSelectProject` the
+   * pill is not drawn at all.
+   */
+  projects?: readonly DeskProject[];
+  project?: DeskProject | null;
+  onSelectProject?: (projectId: string) => void;
   /** What the conversation runs on; the pill names it itself. */
   agentSelection: AgentSelection;
   onSelectAgent: (choice: AgentSelection) => void;
@@ -58,8 +63,8 @@ export interface ChatComposerProps {
 export function ChatComposer({
   projectId,
   conversationId,
-  projects,
-  project,
+  projects = [],
+  project = null,
   onSelectProject,
   agentSelection,
   onSelectAgent,
@@ -162,21 +167,23 @@ export function ChatComposer({
           {t("composer.attachImage")}
         </PillButton>
 
-        <SelectPill
-          label={project?.shortName ?? "—"}
-          tone="project"
-          projectTone={projectTone(project?.colorIndex ?? 0)}
-          disabled={projects.length === 0}
-        >
-          {projects.map((candidate) => (
-            <DropdownMenuItem
-              key={candidate.id}
-              onSelect={() => onSelectProject(candidate.id)}
-            >
-              {candidate.name}
-            </DropdownMenuItem>
-          ))}
-        </SelectPill>
+        {onSelectProject ? (
+          <SelectPill
+            label={project?.shortName ?? "—"}
+            tone="project"
+            projectTone={projectTone(project?.colorIndex ?? 0)}
+            disabled={projects.length === 0}
+          >
+            {projects.map((candidate) => (
+              <DropdownMenuItem
+                key={candidate.id}
+                onSelect={() => onSelectProject(candidate.id)}
+              >
+                {candidate.name}
+              </DropdownMenuItem>
+            ))}
+          </SelectPill>
+        ) : null}
 
         {/*
           The cap, its measurement and the reason it is applied here rather

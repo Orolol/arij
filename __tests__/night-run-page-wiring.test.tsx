@@ -79,10 +79,7 @@ vi.mock("@/components/shared/NamedAgentSelect", () => ({
 vi.mock("@/components/chat/UnifiedChatPanel", () => ({
   UnifiedChatPanel: forwardRef(function UnifiedChatPanelMock({ children }: { children: ReactNode }, ref) {
     useImperativeHandle(ref, () => ({
-      openChat: vi.fn(),
       openNewEpic: vi.fn(),
-      collapse: vi.fn(),
-      hide: vi.fn(),
     }));
     return <div data-testid="unified-chat-panel">{children}</div>;
   }),

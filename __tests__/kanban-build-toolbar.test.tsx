@@ -159,13 +159,15 @@ describe("Kanban Build Toolbar", () => {
     });
   });
 
-  it("?panel=chat calls openChat on UnifiedChatPanel ref and strips the param", async () => {
+  // `?panel=chat` had no producer (lot 10, #48): nothing pushes it, so the
+  // page no longer answers it — a stale link is stripped and opens nothing.
+  it("?panel=chat is not an entry point any more: stripped, nothing opened", async () => {
     searchParams = new URLSearchParams("panel=chat");
     render(<KanbanPage />);
 
-    await waitFor(() => expect(mockPanelOpenChat).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(currentUrl()).toBe("/projects/proj1"));
+    expect(mockPanelOpenChat).not.toHaveBeenCalled();
     expect(mockPanelOpenNewEpic).not.toHaveBeenCalled();
-    expect(currentUrl()).toBe("/projects/proj1");
   });
 
   it("?panel=new-epic calls openNewEpic on UnifiedChatPanel ref", async () => {

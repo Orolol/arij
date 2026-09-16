@@ -1,27 +1,8 @@
-export const UNSELECTED_AGENT_TYPE = "unselected";
+const UNSELECTED_AGENT_TYPE = "unselected";
 export const BRAINSTORM_AGENT_TYPE = "brainstorm";
 export const EPIC_CREATION_AGENT_TYPE = "epic_creation";
-export const LEGACY_EPIC_AGENT_TYPE = "epic";
+const LEGACY_EPIC_AGENT_TYPE = "epic";
 export const CHAT_AGENT_TYPE = "chat";
-
-export interface BuiltinConversationAgentType {
-  value: string;
-  label: string;
-  mode: "plan" | "analyze" | "code";
-}
-
-export const BUILTIN_CONVERSATION_AGENT_TYPES: BuiltinConversationAgentType[] = [
-  {
-    value: BRAINSTORM_AGENT_TYPE,
-    label: "Brainstorm",
-    mode: "plan",
-  },
-  {
-    value: EPIC_CREATION_AGENT_TYPE,
-    label: "Epic Creation",
-    mode: "plan",
-  },
-];
 
 export function normalizeConversationAgentType(type: string | null | undefined): string {
   if (!type) return UNSELECTED_AGENT_TYPE;
@@ -53,5 +34,3 @@ export function isToolIneligibleConversationAgentType(
     isBrainstormConversationAgentType(type)
   );
 }
-
-

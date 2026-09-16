@@ -12,12 +12,23 @@
     "sessionLinked": "session linked",
     "restartSession": "Restart persistent chat session",
     "newConversation": "New conversation",
+    "newChat": "Chat",
     "newBrainstorm": "Brainstorm",
     "newEpic": "New Epic",
     "knows": {
       "label": "THE CHAT KNOWS",
       "body": "project spec, memory, open tickets — cite a doc with"
-    }
+    },
+    "rename": "Rename conversation",
+    "nameLabel": "Conversation name",
+    "delete": "Delete conversation",
+    "status": {
+      "generating": "Replying…",
+      "error": "Last reply failed"
+    },
+    "deleteTitle": "Delete this conversation?",
+    "deleteDescription": "“{name}” and its whole message history will be removed.",
+    "renameNotSaved": "The name was not saved: another change to this conversation is still in flight."
   },
   "thread": {
     "paneLabel": "Conversation thread",
@@ -25,12 +36,14 @@
     "typingAgentFallback": "The agent",
     "emptyEpic": "Describe your epic idea and I'll help you structure it with user stories and acceptance criteria.",
     "emptyBrainstorm": "Start a conversation to brainstorm your project with Claude",
-    "createEpic": "Create Epic & Generate Stories",
-    "createEpicPending": "Creating…",
+    "draftEpic": "Draft the epic",
+    "draftEpicPending": "Drafting…",
     "generateSpec": "Generate Spec & Plan",
     "generateSpecPending": "Generating…",
     "generateSpecDone": "Spec written — {count, plural, =0 {no new epic} one {# epic created} other {# epics created}}",
-    "generateSpecEpicsOnly": "{count, plural, one {# epic created} other {# epics created}}"
+    "generateSpecEpicsOnly": "{count, plural, one {# epic created} other {# epics created}}",
+    "viewSpec": "View the spec →",
+    "loading": "Loading messages..."
   },
   "composer": {
     "placeholder": "Write — ⏎ sends, ⇧⏎ new line, @ cites a doc",
@@ -78,5 +91,25 @@
     "viewSpec": "view the spec →",
     "proposalSent": "Proposal sent to the spec",
     "proposalFailed": "Failed to propose the spec addition"
+  },
+  "questions": {
+    "step": "Question {current} of {total}",
+    "submit": "Submit Answers",
+    "next": "Next"
+  },
+  "panel": {
+    "resize": "Resize panel",
+    "collapse": "Collapse panel",
+    "hide": "Hide panel",
+    "open": "Open chat panel",
+    "showStrip": "Show chat strip",
+    "stripLabel": "Chat"
+  },
+  "conversations": {
+    "loadFailed": "Failed to load conversations.",
+    "createFailed": "Failed to create the conversation.",
+    "updateFailed": "Failed to update the conversation.",
+    "deleteFailed": "Failed to delete the conversation.",
+    "restartFailed": "Failed to restart the conversation."
   }
 }

@@ -29,7 +29,7 @@
 
 import fs from "fs";
 import path from "path";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import { db, type ArijDatabase } from "@/lib/db";
 import { chatAttachments } from "@/lib/db/schema";
 import { uploadsDirectoryFor } from "./ticket-images";
@@ -139,6 +139,64 @@ export function claimUploadsForTicket(
   }
 }
 
+/**
+ * Whether an attachment row is `projectId`'s — the one ownership rule every
+ * project-scoped upload route reads, so serving and discarding cannot drift
+ * apart (the GET once served any project's file under any project's URL).
+ *
+ * Rows uploaded before 0030 may carry no project_id; the path they were
+ * written to says the same thing, so fall back to it rather than disowning
+ * the very rows that motivated the column.
+ */
+export function attachmentBelongsToProject(
+  attachment: { projectId: string | null; filePath: string },
+  projectId: string
+): boolean {
+  return attachment.projectId
+    ? attachment.projectId === projectId
+    : attachment.filePath.startsWith(`${uploadsDirectoryFor(projectId)}/`);
+}
+
+/**
+ * Hands a chat message the staged uploads it was sent with.
+ *
+ * The same ownership rule as `attachmentBelongsToProject`, spelled in SQL so
+ * the claim is one statement: a request naming another project's attachment
+ * id (or one a message or ticket already owns) must not re-parent it — its
+ * history URL is built from the message's project, so the image would then
+ * 404 where it used to render. The legacy path prefix is compared with
+ * `substr`, not `LIKE`: nanoid ids contain `_`, which LIKE reads as a
+ * wildcard. Ids that do not qualify are left alone. Returns the rows linked.
+ */
+export function claimUploadsForChatMessage(
+  projectId: string,
+  chatMessageId: string,
+  attachmentIds: readonly string[]
+): number {
+  const ids = [...new Set(attachmentIds)];
+  if (ids.length === 0) return 0;
+
+  const legacyPrefix = `${uploadsDirectoryFor(projectId)}/`;
+  return db
+    .update(chatAttachments)
+    .set({ chatMessageId })
+    .where(
+      and(
+        inArray(chatAttachments.id, ids),
+        isNull(chatAttachments.chatMessageId),
+        isNull(chatAttachments.epicId),
+        or(
+          eq(chatAttachments.projectId, projectId),
+          and(
+            isNull(chatAttachments.projectId),
+            sql`substr(${chatAttachments.filePath}, 1, ${legacyPrefix.length}) = ${legacyPrefix}`
+          )
+        )
+      )
+    )
+    .run().changes;
+}
+
 export type DiscardStagedUploadResult = "discarded" | "not-found" | "claimed";
 
 /**
@@ -165,14 +223,7 @@ export function discardStagedUpload(
 
   if (!attachment) return "not-found";
 
-  // Rows uploaded before 0030 may carry no project_id; the path they were
-  // written to says the same thing, so fall back to it rather than refusing to
-  // clean up the very rows that motivated the column.
-  const belongsToProject = attachment.projectId
-    ? attachment.projectId === projectId
-    : attachment.filePath.startsWith(`${uploadsDirectoryFor(projectId)}/`);
-
-  if (!belongsToProject) return "not-found";
+  if (!attachmentBelongsToProject(attachment, projectId)) return "not-found";
 
   if (attachment.epicId !== null || attachment.chatMessageId !== null) {
     return "claimed";

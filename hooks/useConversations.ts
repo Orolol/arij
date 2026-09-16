@@ -26,8 +26,8 @@ export interface CreateConversationInput {
   namedAgentId?: string | null;
 }
 
+/** What `PATCH /conversations/:id` accepts — the type is fixed at creation. */
 export interface UpdateConversationInput {
-  type?: string;
   label?: string;
   provider?: string;
   namedAgentId?: string | null;
@@ -56,7 +56,7 @@ function withConversations(state: ConversationState, rows: Conversation[]): Conv
 }
 
 export function useConversations(projectId: string) {
-  const t = useTranslations("ChatLegacy");
+  const t = useTranslations("Chat");
   const pending = useRef(new Set<object>());
   const scope = useMemo(() => ({ projectId }), [projectId]);
   const [state, setState] = useState(() => emptyConversations(scope));

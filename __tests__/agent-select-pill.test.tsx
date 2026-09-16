@@ -44,7 +44,6 @@ import {
   type AgentSelection,
 } from "@/components/shared/AgentSelectPill";
 import { catalogueValue } from "@/lib/i18n";
-import { ChatWorkspaceHeader } from "@/components/chat/ChatWorkspaceHeader";
 import { ChatComposer } from "@/components/chat-page/ChatComposer";
 import { DeskComposer } from "@/components/desk/DeskComposer";
 import {
@@ -603,48 +602,14 @@ describe("one conversation, one selection", () => {
     });
   });
 
-  it.each([
-    ["a linked named agent", conversationOn("claude-code", "a1"), "Opus Planner"],
-    ["a persistent mode", conversationOn("oh-my-pi-persistent"), "Oh My Pi — persistent"],
-    ["a provider dropped in a cleanup", conversationOn("gemini-cli"), "gemini-cli"],
-  ])("names %s the same on both chat surfaces", async (_case, conversation, expected) => {
-    await act(async () => {
-      render(
-        <>
-          <ChatComposer
-            projectId="p1"
-            projects={[DESK_PROJECT]}
-            project={DESK_PROJECT}
-            onSelectProject={vi.fn()}
-            agentSelection={selectionForConversation(conversation)}
-            onSelectAgent={vi.fn()}
-            agentLocked={false}
-            onSend={vi.fn()}
-          />
-          <ChatWorkspaceHeader
-            activeConversation={conversation}
-            activeProvider={conversation.provider}
-            hasMessages={false}
-            isBusy={false}
-            onSelectAgentOrProvider={vi.fn()}
-          />
-        </>,
-      );
-    });
-
-    // Both are `chat-agent-select` — the two chat surfaces share the id, and
-    // only the desk overrides it. So the query returns both pills, and the
-    // point is that they read the same without a second hand-written mapping.
-    const triggers = screen.getAllByTestId("chat-agent-select");
-    expect(triggers).toHaveLength(2);
-    expect(triggers[0]).toHaveTextContent(expected);
-    expect(triggers[1].textContent).toBe(triggers[0].textContent);
-  });
+  // The "same label on both chat surfaces" comparison that lived here is
+  // structural now: the project panel mounts this page's `ChatComposer`, so
+  // there is no second picker left to drift from it.
 });
 
 describe("the two pickers `/projects/:id` mounts at once", () => {
   /**
-   * The project route draws the desk composer AND the chat panel's header, so
+   * The project route draws the desk composer AND the chat panel's composer, so
    * one shared trigger id there resolves to two elements — `getByTestId` throws
    * and a Playwright locator fails strict mode. Caught in real Chrome on
    * `/projects/:id`; pinned here on the two components that page mounts, which
@@ -673,12 +638,13 @@ describe("the two pickers `/projects/:id` mounts at once", () => {
           onNamedAgentChange={vi.fn()}
           onSubmit={vi.fn()}
         />
-        <ChatWorkspaceHeader
-          activeConversation={conversation}
-          activeProvider="claude-code"
-          hasMessages={false}
-          isBusy={false}
-          onSelectAgentOrProvider={vi.fn()}
+        <ChatComposer
+          projectId="p1"
+          conversationId={conversation.id}
+          agentSelection={selectionForConversation(conversation)}
+          onSelectAgent={vi.fn()}
+          agentLocked={false}
+          onSend={vi.fn()}
         />
       </>,
     );

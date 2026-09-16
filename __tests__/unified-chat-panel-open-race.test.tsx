@@ -4,9 +4,9 @@
  *
  * `openChatConversation()` used to infer "this project has no conversation"
  * from an empty `conversations` list. The list is also empty while the mount
- * fetch is still in flight, so a click on the collapsed strip (or `openChat()`
- * on the imperative handle) during that window created a second, permanent
- * Brainstorm next to the one the project already had.
+ * fetch is still in flight, so a click on the collapsed strip during that
+ * window created a second, permanent Brainstorm next to the one the project
+ * already had.
  *
  * The mock exposes the hook's own `loading` flag independently of the list so
  * the loading state and the genuinely-empty state are two different fixtures:
@@ -19,6 +19,13 @@ import { createRef } from "react";
 vi.mock("next/navigation", async () =>
   (await import("@/__tests__/helpers/next-navigation-mock")).nextNavigationMock(),
 );
+
+class NoopResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+globalThis.ResizeObserver ??= NoopResizeObserver as unknown as typeof ResizeObserver;
 
 interface MockConversation {
   id: string;
@@ -97,34 +104,44 @@ vi.mock("@/hooks/useProvidersAvailable", () => ({
 
 vi.mock("@/hooks/useEpicCreate", () => ({
   useEpicCreate: () => ({
-    createEpic: vi.fn(async () => "epic-1"),
+    draftEpic: vi.fn(async () => true),
     isLoading: false,
     error: null,
-    createdEpic: null,
   }),
 }));
 
-vi.mock("@/components/chat/MessageList", () => ({
-  MessageList: () => <div data-testid="message-list" />,
+vi.mock("@/hooks/useSpecGeneration", () => ({
+  useSpecGeneration: () => ({ generateSpec: vi.fn(), generating: false, error: null }),
 }));
 
-vi.mock("@/components/chat/MessageInput", () => ({
-  MessageInput: ({ disabled }: { disabled?: boolean }) => (
-    <button data-testid="message-input" disabled={disabled}>
+vi.mock("@/hooks/useControlDesk", () => ({
+  useControlDesk: () => ({ data: null, loading: false, error: null, refresh: vi.fn() }),
+}));
+
+vi.mock("@/hooks/useNamedAgentsList", () => ({
+  useNamedAgentsList: () => ({ agents: [], loading: false, refresh: vi.fn() }),
+}));
+
+// The panel renders the chat page's thread and composer; their own behaviour
+// is pinned by chat-page-thread / chat-page-composer.
+vi.mock("@/components/chat-page/ChatThread", () => ({
+  ChatThread: () => <div data-testid="chat-thread" />,
+}));
+
+vi.mock("@/components/chat-page/ChatComposer", () => ({
+  ChatComposer: ({ disabled }: { disabled?: boolean }) => (
+    <button data-testid="chat-composer" disabled={disabled}>
       input
     </button>
   ),
 }));
 
-vi.mock("@/components/chat/QuestionCards", () => ({
-  QuestionCards: () => null,
-}));
 
 import { UnifiedChatPanel, type UnifiedChatPanelHandle } from "@/components/chat/UnifiedChatPanel";
 
 function renderPanel(ref?: React.Ref<UnifiedChatPanelHandle>) {
   return render(
-    <UnifiedChatPanel projectId="proj1" ref={ref}>
+    <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()} ref={ref}>
       <div data-testid="board-content">board</div>
     </UnifiedChatPanel>,
   );
@@ -168,19 +185,6 @@ describe("UnifiedChatPanel: opening before the conversations fetch lands", () =>
     expect(mockCreateConversation).not.toHaveBeenCalled();
   });
 
-  it("openChat() on the imperative handle while the fetch is in flight creates nothing", async () => {
-    const ref = createRef<UnifiedChatPanelHandle>();
-    renderPanel(ref);
-
-    await act(async () => {
-      ref.current?.openChat();
-    });
-    await flush();
-
-    expect(screen.getByTestId("unified-panel-expanded")).toBeInTheDocument();
-    expect(mockCreateConversation).not.toHaveBeenCalled();
-  });
-
   it("shows the project's existing Brainstorm once the fetch lands, still without creating", async () => {
     const view = renderPanel();
 
@@ -192,13 +196,13 @@ describe("UnifiedChatPanel: opening before the conversations fetch lands", () =>
     mockConversations = [existingBrainstorm];
     mockActiveId = existingBrainstorm.id;
     view.rerender(
-      <UnifiedChatPanel projectId="proj1">
+      <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()}>
         <div data-testid="board-content">board</div>
       </UnifiedChatPanel>,
     );
 
-    expect(screen.getByTestId("conversation-tab-conv1")).toBeInTheDocument();
-    expect(screen.getAllByTestId(/^conversation-tab-/)).toHaveLength(1);
+    expect(screen.getAllByTestId("chat-roster-card")).toHaveLength(1);
+    expect(screen.getByText("Brainstorm", { selector: "span" })).toBeInTheDocument();
     expect(mockCreateConversation).not.toHaveBeenCalled();
   });
 
@@ -229,7 +233,7 @@ describe("UnifiedChatPanel: opening before the conversations fetch lands", () =>
     fireEvent.click(screen.getByTestId("collapsed-chat-strip"));
     await flush();
 
-    expect(screen.getByTestId("conversation-tab-conv1")).toBeInTheDocument();
+    expect(screen.getAllByTestId("chat-roster-card")).toHaveLength(1);
     expect(mockCreateConversation).not.toHaveBeenCalled();
   });
 

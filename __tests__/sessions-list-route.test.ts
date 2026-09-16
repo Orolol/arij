@@ -134,6 +134,25 @@ describe("sessions list route (unified)", () => {
     expect(json.data[2].kind).toBe("agent_session");
   });
 
+  it("reports a legacy epic conversation as epic_creation, like the conversations list", async () => {
+    setupSessionsChain([]);
+    setupConversationsChain([
+      {
+        id: "conv-1",
+        type: "epic",
+        label: "Epic Chat",
+        createdAt: "2026-02-12T01:00:00.000Z",
+        messageCount: 1,
+        lastMessagePreview: null,
+      },
+    ]);
+
+    const { GET } = await import("@/app/api/projects/[projectId]/sessions/route");
+    const response = await GET(mockNextRequest(), mockRouteContext({ projectId: "proj-1" }));
+
+    expect((await response.json()).data[0].type).toBe("epic_creation");
+  });
+
   it("preserves existing agent session shape (backward compatible)", async () => {
     setupSessionsChain([
       {

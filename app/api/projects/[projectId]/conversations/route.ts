@@ -5,13 +5,19 @@ import { eq, and, isNull } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { resolveAgent } from "@/lib/agent-config/agent-resolution";
 import { isChatProvider } from "@/lib/agent-config/constants";
-import { normalizeConversationAgentType } from "@/lib/chat/conversation-agent";
+import {
+  BRAINSTORM_AGENT_TYPE,
+  normalizeConversationAgentType,
+} from "@/lib/chat/conversation-agent";
+import {
+  BRAINSTORM_CONVERSATION_LABEL,
+  defaultConversationLabel,
+} from "@/lib/chat/conversation-labels";
 import { resolveDefaultChatMode } from "@/lib/chat/default-chat-mode";
 import {
   normalizeLegacyConversationStatus,
   sortConversationsForLegacyParity,
 } from "@/lib/chat/parity-contract";
-import { runUnifiedChatCutoverMigrationOnce } from "@/lib/chat/unified-cutover-migration";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { getProjectOr404, isErrorResponse } from "@/lib/api/route-helpers";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
@@ -46,8 +52,6 @@ export async function GET(
     return NextResponse.json({ data: [] });
   }
 
-  runUnifiedChatCutoverMigrationOnce(projectId);
-
   let conversations = db
     .select()
     .from(chatConversations)
@@ -55,7 +59,7 @@ export async function GET(
     .orderBy(chatConversations.createdAt)
     .all();
 
-  // Auto-create a default "Brainstorm" conversation if none exist
+  // Auto-create a default brainstorm conversation if none exist
   if (conversations.length === 0) {
     const id = createId();
     const now = new Date().toISOString();
@@ -65,8 +69,8 @@ export async function GET(
       .values({
         id,
         projectId,
-        type: "brainstorm",
-        label: "Brainstorm",
+        type: BRAINSTORM_AGENT_TYPE,
+        label: BRAINSTORM_CONVERSATION_LABEL,
         provider: resolved.provider,
         namedAgentId: resolved.namedAgentId,
         createdAt: now,
@@ -164,8 +168,12 @@ export async function POST(
     .values({
       id,
       projectId,
-      type: body.type || "brainstorm",
-      label: body.label || "Brainstorm",
+      type: body.type || BRAINSTORM_AGENT_TYPE,
+      // An unlabelled conversation gets its kind's default, for consistency
+      // with what the client creates. Every default is a titling sentinel
+      // (isDefaultConversationLabel), so this does not change which
+      // conversations get a generated title — only the placeholder shown.
+      label: body.label || defaultConversationLabel(body.type),
       epicId: body.epicId || null,
       provider,
       namedAgentId,

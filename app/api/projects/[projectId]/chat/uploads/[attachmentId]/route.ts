@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { chatAttachments } from "@/lib/db/schema";
 import { eq } from "drizzle-orm";
-import { discardStagedUpload } from "@/lib/uploads/attachment-ownership";
+import {
+  attachmentBelongsToProject,
+  discardStagedUpload,
+} from "@/lib/uploads/attachment-ownership";
 import { storedUploadAbsolutePath } from "@/lib/uploads/upload-paths";
 import fs from "fs";
 
@@ -10,7 +13,7 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ projectId: string; attachmentId: string }> }
 ) {
-  const { attachmentId } = await params;
+  const { projectId, attachmentId } = await params;
 
   const attachment = db
     .select()
@@ -18,7 +21,8 @@ export async function GET(
     .where(eq(chatAttachments.id, attachmentId))
     .get();
 
-  if (!attachment) {
+  // Scoped like the DELETE below: another project's id reads as absent.
+  if (!attachment || !attachmentBelongsToProject(attachment, projectId)) {
     return NextResponse.json({ error: "Attachment not found" }, { status: 404 });
   }
 

@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
 import { useConversations } from "@/hooks/useConversations";
 import { useChat } from "@/hooks/useChat";
 import { useEpicCreate } from "@/hooks/useEpicCreate";
@@ -12,9 +11,12 @@ import { isBrainstormConversationAgentType, isEpicCreationConversationAgentType 
 import { isLegacyConversationGenerating } from "@/lib/chat/parity-contract";
 import { OPENAI_COMPATIBLE_PROVIDER } from "@/lib/agent-config/constants";
 
-/** Shared conversation actions for the full page and the project side panel. */
-export function useChatWorkspace(projectId: string, onEpicCreated?: () => void) {
-  const router = useRouter();
+/**
+ * Shared conversation actions for the full page and the project side panel.
+ * Both render the same components (`components/chat-page/*`), so neither
+ * surface may grow an action the other lacks by wiring it here alone.
+ */
+export function useChatWorkspace(projectId: string) {
   const conversations = useConversations(projectId);
   const { activeId, hasPendingMutation, updateConversation } = conversations;
   const activeConversation = useMemo(() => conversations.conversations.find((row) => row.id === activeId) ?? null,
@@ -25,7 +27,7 @@ export function useChatWorkspace(projectId: string, onEpicCreated?: () => void) 
   // most recent chat (lot 11, #108).
   const spec = useSpecGeneration(projectId, { conversationId: activeId });
   const { sendMessage: rawSendMessage } = chat;
-  const { createEpic: rawCreateEpic } = epic;
+  const { draftEpic: rawDraftEpic } = epic;
   const { generateSpec: rawGenerateSpec, generating: generatingSpec } = spec;
   const [lastSend, setLastSend] = useState<{ conversationId: string; at: string } | null>(null);
   const hasMessages = chat.messages.length > 0;
@@ -47,14 +49,25 @@ export function useChatWorkspace(projectId: string, onEpicCreated?: () => void) 
     if (patch) await updateConversation(activeId, patch);
   }, [activeId, busy, hasMessages, updateConversation]);
 
-  const createEpic = useCallback(async () => {
+  // Asks the agent for the epic; the in-thread card it produces is the only
+  // thing that creates one (see hooks/useEpicCreate.ts).
+  const draftEpic = useCallback(async () => {
     if (busy || !hasUserMessage) return;
-    const epicId = await rawCreateEpic();
-    if (epicId) {
-      onEpicCreated?.();
-      router.refresh();
-    }
-  }, [busy, hasUserMessage, rawCreateEpic, onEpicCreated, router]);
+    await rawDraftEpic();
+  }, [busy, hasUserMessage, rawDraftEpic]);
+
+  // Says why a name was NOT saved, so the host can tell the user: a write
+  // already in flight ("busy") used to swallow the rename without a word. A
+  // failed PATCH ("failed") is already surfaced in `error` by useConversations.
+  const renameConversation = useCallback(async (
+    conversationId: string,
+    label: string,
+  ): Promise<"saved" | "busy" | "failed" | "blank"> => {
+    const trimmed = label.trim();
+    if (!trimmed) return "blank";
+    if (hasPendingMutation?.()) return "busy";
+    return (await updateConversation(conversationId, { label: trimmed })) ? "saved" : "failed";
+  }, [hasPendingMutation, updateConversation]);
 
   const generateSpec = useCallback(async () => {
     if (busy || !hasUserMessage || generatingSpec) return null;
@@ -76,8 +89,12 @@ export function useChatWorkspace(projectId: string, onEpicCreated?: () => void) 
     error: conversations.error || epic.error || spec.error || chat.error,
     refreshConversations: conversations.refresh,
     sendStartedAt: lastSend?.conversationId === activeId ? lastSend.at : null,
-    sendMessage, selectAgent, createEpic, generateSpec,
-    epicCreating: epic.isLoading,
+    sendMessage, selectAgent, draftEpic, renameConversation, generateSpec,
+    epicDrafting: epic.isLoading,
+    // Renaming is withheld while any conversation write is in flight or the
+    // active conversation is replying: the first reply's automatic title is
+    // written at the end of that turn and would race a manual name.
+    renameDisabled: Boolean(conversations.mutating) || streamBusy,
     generatingSpec: spec.generating,
     specResult: spec.result,
     actionsDisabled: busy || !hasUserMessage,

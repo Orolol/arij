@@ -70,19 +70,21 @@ vi.mock("@/hooks/useProvidersAvailable", () => ({
 }));
 
 vi.mock("@/hooks/useEpicCreate", () => ({
-  useEpicCreate: () => ({ createEpic: vi.fn(), isLoading: false, error: null, createdEpic: null }),
+  useEpicCreate: () => ({ draftEpic: vi.fn(), isLoading: false, error: null }),
 }));
 
-vi.mock("@/components/chat/MessageList", () => ({
-  MessageList: () => <div data-testid="message-list" />,
+// The panel reads the desk's shared copy for its epic cards; nothing here
+// depends on it.
+vi.mock("@/hooks/useControlDesk", () => ({
+  useControlDesk: () => ({ data: null, loading: false, error: null, refresh: vi.fn() }),
 }));
 
-vi.mock("@/components/chat/MessageInput", () => ({
-  MessageInput: () => <div data-testid="message-input" />,
+vi.mock("@/hooks/useNamedAgentsList", () => ({
+  useNamedAgentsList: () => ({ agents: [], loading: false, refresh: vi.fn() }),
 }));
 
-vi.mock("@/components/chat/QuestionCards", () => ({
-  QuestionCards: () => null,
+vi.mock("@/components/chat-page/ChatComposer", () => ({
+  ChatComposer: () => <div data-testid="chat-composer" />,
 }));
 
 import { UnifiedChatPanel } from "@/components/chat/UnifiedChatPanel";
@@ -108,7 +110,7 @@ function generateSpecCalls() {
 
 async function clickGenerate() {
   render(
-    <UnifiedChatPanel projectId="proj1">
+    <UnifiedChatPanel projectId="proj1" onOpenTicket={vi.fn()} onToast={vi.fn()}>
       <div>board</div>
     </UnifiedChatPanel>,
   );
@@ -116,7 +118,15 @@ async function clickGenerate() {
   await userEvent.click(screen.getByRole("button", { name: "Generate Spec & Plan" }));
 }
 
+class NoopResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
 beforeEach(() => {
+  // The thread's auto-scroll watches its own size.
+  vi.stubGlobal("ResizeObserver", NoopResizeObserver);
   fetchMock.mockReset();
   navigation.refresh.mockClear();
   vi.stubGlobal("fetch", fetchMock);

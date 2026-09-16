@@ -1,13 +1,18 @@
-import { isEpicCreationConversationAgentType } from "@/lib/chat/conversation-agent";
+import { defaultConversationLabel } from "@/lib/chat/conversation-labels";
 
+/**
+ * The statuses the chat stream writes to `chat_conversations.status`: idle,
+ * a turn in flight, or the last turn failed (kept until the next turn).
+ * `generated` used to be listed too; its only writer was the epic-create route
+ * removed in ca1883dd, so a row still carrying it reads as idle.
+ */
 export type LegacyConversationStatus =
   | "active"
   | "generating"
-  | "generated"
   | "error";
 
-export const LEGACY_CONVERSATION_STATUSES: ReadonlyArray<LegacyConversationStatus> =
-  ["active", "generating", "generated", "error"] as const;
+const LEGACY_CONVERSATION_STATUSES: ReadonlyArray<LegacyConversationStatus> =
+  ["active", "generating", "error"] as const;
 
 const legacyConversationStatusSet = new Set<string>(LEGACY_CONVERSATION_STATUSES);
 
@@ -36,10 +41,7 @@ export function resolveLegacyConversationLabel(
       return trimmed;
     }
   }
-  if (type === "chat") {
-    return "Chat";
-  }
-  return isEpicCreationConversationAgentType(type) ? "New Epic" : "Brainstorm";
+  return defaultConversationLabel(type);
 }
 
 interface SortableConversation {
@@ -55,7 +57,7 @@ function parseCreatedAt(createdAt: string | null | undefined): number {
   return Number.isFinite(asMs) ? asMs : 0;
 }
 
-export function compareConversationsByLegacyOrder(
+function compareConversationsByLegacyOrder(
   a: SortableConversation,
   b: SortableConversation,
 ): number {

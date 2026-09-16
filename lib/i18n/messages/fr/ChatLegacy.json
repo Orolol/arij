@@ -1,9 +1,0 @@
-{
-  "conversations": {
-    "loadFailed": "Impossible de charger les conversations.",
-    "createFailed": "Impossible de créer la conversation.",
-    "updateFailed": "Impossible de modifier la conversation.",
-    "deleteFailed": "Impossible de supprimer la conversation.",
-    "restartFailed": "Impossible de redémarrer la conversation."
-  }
-}

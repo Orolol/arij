@@ -5,16 +5,18 @@ vi.mock("@/components/documents/MentionTextarea", () => ({ MentionTextarea: ({ p
 vi.mock("@/components/shared/AgentSelectPill", () => ({ AgentSelectPill: () => null, AGENT_PILL_IN_COMPOSER: "" }));
 import { ChatComposer } from "@/components/chat-page/ChatComposer";
 import { useImageAttachments } from "@/hooks/useImageAttachments";
-import { MessageInput } from "@/components/chat/MessageInput";
 import type { ChatSendResult } from "@/hooks/useChat";
 
 const fetchMock = vi.fn<typeof fetch>();
 const response = (data: unknown) => ({ ok: true, json: async () => ({ data }) }) as Response;
 const attachment = { id: "image-1", fileName: "draft.png", mimeType: "image/png" };
 function deferred<T>() { let resolve!: (value: T) => void; const promise = new Promise<T>((done) => { resolve = done; }); return { promise, resolve }; }
+type ComposerProps = Pick<ComponentProps<typeof ChatComposer>, "projectId" | "conversationId" | "onSend" | "disabled" | "attachmentsDisabled">;
+// Both chat surfaces mount this one composer now: the project panel without the
+// project pill (its scope is fixed), the page with it.
 const renderers = {
-  panel: (props: ComponentProps<typeof MessageInput>) => <MessageInput {...props} />,
-  page: (props: ComponentProps<typeof MessageInput>) => <ChatComposer {...props} projects={[]} project={null} onSelectProject={() => {}} agentSelection={{ namedAgentId: null, provider: "claude-code" }} onSelectAgent={() => {}} agentLocked={false} />,
+  panel: (props: ComposerProps) => <ChatComposer {...props} agentSelection={{ namedAgentId: null, provider: "claude-code" }} onSelectAgent={() => {}} agentLocked={false} />,
+  page: (props: ComposerProps) => <ChatComposer {...props} projects={[]} project={null} onSelectProject={() => {}} agentSelection={{ namedAgentId: null, provider: "claude-code" }} onSelectAgent={() => {}} agentLocked={false} />,
 };
 beforeEach(() => { fetchMock.mockReset(); fetchMock.mockResolvedValue(response(attachment)); vi.stubGlobal("fetch", fetchMock); });
 

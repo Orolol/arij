@@ -4,11 +4,11 @@ import { parseEpicFromConversation, type ParsedEpic } from "@/lib/epic-parsing";
  * The epic ONE assistant message declares, or null.
  *
  * Frame 11a's promise is that a drafted epic appears *in the thread*, attached
- * to the message that wrote it, and stays actionable after the fact. The
- * shipped flow (`hooks/useEpicCreate.ts`) is conversation-scoped: it parses the
- * whole history, newest-first, and renders one card at the FOOT of the flow —
- * so a second epic later in the same conversation hides the first, and nothing
- * is re-actionable from history.
+ * to the message that wrote it, and stays actionable after the fact. The old
+ * flow parsed the whole history and rendered one card at the FOOT of the flow —
+ * so a second epic hid the first, and nothing was re-actionable from history.
+ * This per-message parse is also what `hooks/useEpicCreate.ts` waits for when
+ * it asks the agent to draft an epic: success there means a card here.
  *
  * WHY CALLING THE CONVERSATION PARSER WITH ONE MESSAGE IS SOUND, and not a
  * re-implementation of it:

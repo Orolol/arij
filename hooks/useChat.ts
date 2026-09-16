@@ -128,13 +128,10 @@ export function useChat(projectId: string, conversationId: string | null, conver
     [projectId, conversationId, scope, update, loadMessages, tErrors],
   );
 
-  const setMessages = useCallback((action: React.SetStateAction<ChatMessage[]>) => {
-    update((current) => ({ ...current, messages: typeof action === "function" ? action(current.messages) : action }));
-  }, [update]);
   const answerQuestions = useCallback((formatted: string) => { void sendMessage(formatted); }, [sendMessage]);
 
   return {
-    messages: state.messages, setMessages, loading: state.loading,
+    messages: state.messages, loading: state.loading,
     sending: state.sending, error: state.error, pendingQuestions: state.pendingQuestions,
     streamStatus: state.streamStatus, sendMessage, answerQuestions, refresh: loadMessages,
   };

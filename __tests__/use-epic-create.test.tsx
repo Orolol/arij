@@ -1,8 +1,29 @@
+/**
+ * `useEpicCreate` — the finalisation half of epic creation, and nothing else.
+ *
+ * Lot 10 #52: two paths used to create an epic from one conversation with
+ * different payloads — this hook (`status: "backlog"`, no `type`, parsed from
+ * the whole history) and the in-thread `DraftedEpicCard` (`todo|backlog`,
+ * `type: "feature"`, parsed from one message). The card is now the ONLY
+ * creator. This hook asks the agent to draft the epic until one assistant
+ * message parses on its own — which is exactly the condition under which the
+ * thread renders that card — and never posts to `/epics` itself.
+ */
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useEpicCreate } from "@/hooks/useEpicCreate";
 
-describe("useEpicCreate", () => {
+const EPIC_JSON =
+  '```json\n{"title":"Auth","description":"Auth system","userStories":[{"title":"As a user, I want login so that I can access the app"}]}\n```';
+
+const messagesResponse = (data: unknown) =>
+  ({ ok: true, json: () => Promise.resolve({ data }) }) as Response;
+
+function posts(fetchMock: ReturnType<typeof vi.fn>) {
+  return fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
+}
+
+describe("useEpicCreate (finalisation only)", () => {
   const fetchMock = vi.fn();
 
   beforeEach(() => {
@@ -11,234 +32,85 @@ describe("useEpicCreate", () => {
     global.fetch = fetchMock;
   });
 
-  it("extracts epic data from conversation and posts to /epics", async () => {
-    fetchMock
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: [
-              { role: "user", content: "I want to improve account security." },
-              {
-                role: "assistant",
-                content: `
-Epic Title: Account Security
-Description: Improve authentication and alerts across the platform.
-
-User Stories:
-- As a user, I want two-factor authentication so that my account stays secure.
-Acceptance Criteria:
-- [ ] Users can enable 2FA from settings
-- [ ] Recovery codes are generated
-- As an admin, I want suspicious login alerts so that I can respond quickly.
-Acceptance Criteria:
-- [ ] Alerts are sent for unusual login locations
-`,
-              },
-            ],
-          }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: {
-              id: "epic-1",
-              title: "Account Security",
-              userStoriesCreated: 2,
-            },
-          }),
-      });
-
-    const onEpicCreated = vi.fn();
-    const { result } = renderHook(() =>
-      useEpicCreate({
-        projectId: "proj1",
-        conversationId: "conv1",
-        onEpicCreated,
-      }),
-    );
-
-    let createdId: string | null = null;
-    await act(async () => {
-      createdId = await result.current.createEpic();
-    });
-
-    expect(createdId).toBe("epic-1");
-    expect(fetchMock).toHaveBeenCalledTimes(2);
-    expect(fetchMock).toHaveBeenNthCalledWith(
-      1,
-      "/api/projects/proj1/chat?conversationId=conv1",
-    );
-
-    const createCall = fetchMock.mock.calls[1];
-    expect(createCall[0]).toBe("/api/projects/proj1/epics");
-    expect(createCall[1]).toEqual(
-      expect.objectContaining({
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      }),
-    );
-
-    const payload = JSON.parse((createCall[1] as { body: string }).body);
-    expect(payload.title).toBe("Account Security");
-    expect(payload.sourceConversationId).toBe("conv1");
-    expect(payload.description).toContain("Improve authentication");
-    expect(payload.userStories).toHaveLength(2);
-    expect(payload.userStories[0].title).toContain("As a user");
-
-    await waitFor(() => {
-      expect(result.current.createdEpic).toEqual({
-        epicId: "epic-1",
-        title: "Account Security",
-        userStoriesCreated: 2,
-      });
-    });
-
-    expect(onEpicCreated).toHaveBeenCalledWith({
-      epicId: "epic-1",
-      title: "Account Security",
-      userStoriesCreated: 2,
-    });
-  });
-
-  it("returns a user-friendly error when no conversation is selected", async () => {
-    const { result } = renderHook(() =>
-      useEpicCreate({
-        projectId: "proj1",
-        conversationId: null,
-      }),
-    );
-
-    let createdId: string | null = "placeholder";
-    await act(async () => {
-      createdId = await result.current.createEpic();
-    });
-
-    expect(createdId).toBeNull();
-    expect(fetchMock).not.toHaveBeenCalled();
-    expect(result.current.error).toBe("Select an epic creation conversation first.");
-  });
-
-  it("extracts epic from existing JSON without sending finalization prompts", async () => {
+  it("never creates the epic itself: an epic already drafted in a message is enough", async () => {
     const sendMessage = vi.fn();
-    fetchMock
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: [
-              { role: "user", content: "Create an auth epic" },
-              {
-                role: "assistant",
-                content: '```json\n{"title":"Auth System","description":"Implement authentication","userStories":[{"title":"As a user, I want to log in so that I can access my account","description":"Login flow","acceptanceCriteria":"- [ ] Login form exists"}]}\n```',
-              },
-            ],
-          }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: {
-              id: "epic-auto",
-              title: "Auth System",
-              userStoriesCreated: 1,
-            },
-          }),
-      });
-
-    const { result } = renderHook(() =>
-      useEpicCreate({
-        projectId: "proj1",
-        conversationId: "conv1",
-        sendMessage,
-      }),
+    fetchMock.mockResolvedValueOnce(
+      messagesResponse([
+        { role: "user", content: "Create an auth epic" },
+        { role: "assistant", content: EPIC_JSON },
+      ]),
     );
 
-    let createdId: string | null = null;
+    const { result } = renderHook(() =>
+      useEpicCreate({ projectId: "proj1", conversationId: "conv1", sendMessage }),
+    );
+
+    let drafted = false;
     await act(async () => {
-      createdId = await result.current.createEpic();
+      drafted = await result.current.draftEpic();
     });
 
-    expect(createdId).toBe("epic-auto");
-    // sendMessage should NOT have been called because JSON was found in existing messages
+    expect(drafted).toBe(true);
     expect(sendMessage).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith("/api/projects/proj1/chat?conversationId=conv1");
+    expect(posts(fetchMock)).toHaveLength(0);
+    expect(result.current.error).toBeNull();
   });
 
-  it("falls back to finalization prompts when existing messages lack valid JSON", async () => {
-    const sendMessage = vi.fn();
+  it("asks for the draft when the epic only exists across several messages", async () => {
+    // The conversation-level parser can stitch an epic from prose spread over
+    // two replies, but no single message holds it — so no card would render.
+    const sendMessage = vi.fn().mockResolvedValue({ accepted: true, error: null });
+    const prose = [
+      { role: "user", content: "I want to improve account security." },
+      { role: "assistant", content: "Epic Title: Account Security\nDescription: Improve authentication." },
+      {
+        role: "assistant",
+        content: "User Stories:\n- As a user, I want two-factor authentication so that my account stays secure.",
+      },
+    ];
     fetchMock
-      // First fetch: messages without valid epic JSON
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: [
-              { role: "user", content: "I want auth" },
-              { role: "assistant", content: "Sure, let me help you plan an authentication system." },
-            ],
-          }),
-      })
-      // Second fetch: after finalization prompt, now has JSON
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: [
-              { role: "user", content: "I want auth" },
-              { role: "assistant", content: "Sure, let me help you plan an authentication system." },
-              { role: "user", content: "Generate the final epic with user stories based on our discussion." },
-              {
-                role: "assistant",
-                content: '```json\n{"title":"Auth","description":"Auth system","userStories":[{"title":"As a user, I want login so that I can access the app"}]}\n```',
-              },
-            ],
-          }),
-      })
-      // Third fetch: POST to /epics
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: {
-              id: "epic-fallback",
-              title: "Auth",
-              userStoriesCreated: 1,
-            },
-          }),
-      });
+      .mockResolvedValueOnce(messagesResponse(prose))
+      .mockResolvedValueOnce(
+        messagesResponse([...prose, { role: "user", content: "…" }, { role: "assistant", content: EPIC_JSON }]),
+      );
 
     const { result } = renderHook(() =>
-      useEpicCreate({
-        projectId: "proj1",
-        conversationId: "conv1",
-        sendMessage,
-      }),
+      useEpicCreate({ projectId: "proj1", conversationId: "conv1", sendMessage }),
     );
 
+    let drafted = false;
     await act(async () => {
-      await result.current.createEpic();
+      drafted = await result.current.draftEpic();
     });
 
-    // sendMessage SHOULD have been called since no JSON was found in initial messages
     expect(sendMessage).toHaveBeenCalledTimes(1);
     expect(sendMessage).toHaveBeenCalledWith(
       "Generate the final epic with user stories based on our discussion.",
       [],
       { finalize: true },
     );
+    expect(drafted).toBe(true);
+    expect(posts(fetchMock)).toHaveLength(0);
   });
 
-  /**
-   * `sendMessage` resolves as soon as the client stops reading the SSE stream —
-   * which happens early when the stream is aborted or the user switches
-   * conversation while the CLI is still generating. Parsing right away used to
-   * report "I couldn't extract a full epic yet" seconds before the epic JSON
-   * showed up in the very same conversation.
-   */
-  it("waits for the finalization reply instead of failing on stale messages", async () => {
+  it("returns a user-friendly error when no conversation is selected", async () => {
+    const { result } = renderHook(() =>
+      useEpicCreate({ projectId: "proj1", conversationId: null }),
+    );
+
+    let drafted = true;
+    await act(async () => {
+      drafted = await result.current.draftEpic();
+    });
+
+    expect(drafted).toBe(false);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(result.current.error).toBe("Select an epic creation conversation first.");
+  });
+
+  it("waits for the finalisation reply instead of failing on stale messages", async () => {
     vi.useFakeTimers();
     try {
       const sendMessage = vi.fn().mockResolvedValue(undefined);
@@ -249,50 +121,29 @@ Acceptance Criteria:
       const withEpic = [
         ...stale,
         { role: "user", content: "Generate the final epic with user stories based on our discussion." },
-        {
-          role: "assistant",
-          content:
-            '```json\n{"title":"Auth","description":"Auth system","userStories":[{"title":"As a user, I want login so that I can access the app"}]}\n```',
-        },
+        { role: "assistant", content: EPIC_JSON },
       ];
-      const messagesResponse = (data: unknown) => ({
-        ok: true,
-        json: () => Promise.resolve({ data }),
-      });
 
       fetchMock
         .mockResolvedValueOnce(messagesResponse(stale)) // initial load
         .mockResolvedValueOnce(messagesResponse(stale)) // reply not persisted yet
         .mockResolvedValueOnce(messagesResponse(stale)) // still generating
-        .mockResolvedValueOnce(messagesResponse(withEpic)) // reply landed
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              data: { id: "epic-late", title: "Auth", userStoriesCreated: 1 },
-            }),
-        });
+        .mockResolvedValueOnce(messagesResponse(withEpic)); // reply landed
 
       const { result } = renderHook(() =>
-        useEpicCreate({
-          projectId: "proj1",
-          conversationId: "conv1",
-          sendMessage,
-        }),
+        useEpicCreate({ projectId: "proj1", conversationId: "conv1", sendMessage }),
       );
 
-      let createdId: string | null = null;
+      let drafted = false;
       await act(async () => {
-        const pending = result.current.createEpic().then((id) => {
-          createdId = id;
+        const pending = result.current.draftEpic().then((value) => {
+          drafted = value;
         });
         await vi.advanceTimersByTimeAsync(10_000);
         await pending;
       });
 
-      expect(createdId).toBe("epic-late");
-      // A single finalization prompt was enough — the loop waited instead of
-      // burning its second attempt on a reply that had not landed yet.
+      expect(drafted).toBe(true);
       expect(sendMessage).toHaveBeenCalledTimes(1);
       expect(result.current.error).toBeNull();
     } finally {
@@ -300,148 +151,103 @@ Acceptance Criteria:
     }
   });
 
-  it("surfaces API errors when epic creation fails", async () => {
-    fetchMock
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            data: [
-              { role: "assistant", content: '{"title":"Epic A","description":"Desc","user_stories":[{"title":"As a user, I want x so that y"}]}' },
-            ],
-          }),
-      })
-      .mockResolvedValueOnce({
-        ok: false,
-        json: () => Promise.resolve({ error: "Title is required" }),
-      });
+  it("gives up with a readable error after two unparseable replies", async () => {
+    const sendMessage = vi.fn().mockResolvedValue({ accepted: true, error: null });
+    let replies = 1;
+    fetchMock.mockImplementation(async () => {
+      const list = [{ role: "user", content: "Idea" }];
+      for (let index = 0; index < replies; index += 1) {
+        list.push({ role: "assistant", content: `Still thinking ${index}` });
+      }
+      replies += 1;
+      return messagesResponse(list);
+    });
 
     const { result } = renderHook(() =>
-      useEpicCreate({
-        projectId: "proj1",
-        conversationId: "conv1",
-      }),
+      useEpicCreate({ projectId: "p1", conversationId: "a", sendMessage }),
     );
-
     await act(async () => {
-      await result.current.createEpic();
+      expect(await result.current.draftEpic()).toBe(false);
     });
 
-    expect(result.current.createdEpic).toBeNull();
-    expect(result.current.error).toBe("Title is required");
-  });
-  it("prevents concurrent requests and retries the same proposal through the server", async () => {
-    const messages = [{ role: "assistant", content: JSON.stringify({ title: "One epic", description: "Scope", user_stories: [{ title: "Story" }] }) }];
-    let finish!: (response: Response) => void;
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
-      .mockReturnValueOnce(new Promise<Response>((resolve) => { finish = resolve; }));
-    const { result } = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a" }));
-    let first!: Promise<string | null>;
-    act(() => { first = result.current.createEpic(); void result.current.createEpic(); });
-    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
-    await act(async () => {
-      finish({ ok: true, json: async () => ({ data: { id: "epic-1" } }) } as Response);
-      await first;
-    });
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { id: "epic-1" } }) });
-    await act(async () => { expect(await result.current.createEpic()).toBe("epic-1"); });
-    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
-    expect(posts).toHaveLength(2);
-    expect(posts.map(([, init]) => JSON.parse(init.body))).toEqual([
-      expect.objectContaining({ sourceConversationId: "a", title: "One epic" }),
-      JSON.parse(posts[0][1].body),
-    ]);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(result.current.error).toMatch(/couldn.t extract a full epic/i);
+    expect(posts(fetchMock)).toHaveLength(0);
   });
 
-  it("does not publish a prior conversation's creation error over a different conversation", async () => {
+  it("names the failure as a draft, not a creation, when the run throws without a message", async () => {
+    // A non-Error rejection falls back to the hook's own wording, which must
+    // match the action on screen ("Draft the epic"): nothing is created here.
+    fetchMock.mockRejectedValue("offline");
+    const { result } = renderHook(() =>
+      useEpicCreate({ projectId: "p1", conversationId: "a", sendMessage: vi.fn() }),
+    );
+    await act(async () => {
+      expect(await result.current.draftEpic()).toBe(false);
+    });
+    expect(result.current.error).toBe("Failed to draft the epic");
+  });
+
+  it("stops finalisation immediately when sending the prompt fails", async () => {
+    fetchMock.mockResolvedValue(messagesResponse([{ role: "user", content: "Idea" }]));
+    const sendMessage = vi.fn(async () => false);
+    const { result } = renderHook(() =>
+      useEpicCreate({ projectId: "p1", conversationId: "a", sendMessage }),
+    );
+    await act(async () => {
+      expect(await result.current.draftEpic()).toBe(false);
+    });
+    expect(result.current.error).toBe("Failed to send message");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops finalisation when the accepted prompt's reply fails", async () => {
+    fetchMock.mockResolvedValue(messagesResponse([{ role: "user", content: "Idea" }]));
+    const sendMessage = vi.fn(async () => ({ accepted: true, error: "Connection lost" }));
+    const { result } = renderHook(() =>
+      useEpicCreate({ projectId: "p1", conversationId: "a", sendMessage }),
+    );
+    await act(async () => {
+      expect(await result.current.draftEpic()).toBe(false);
+    });
+    expect(result.current.error).toBe("Connection lost");
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs one finalisation at a time per conversation", async () => {
     let finish!: (response: Response) => void;
     fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => { finish = resolve; }));
-    const { result, rerender } = renderHook(({ conversationId }) => useEpicCreate({ projectId: "p1", conversationId }), { initialProps: { conversationId: "a" } });
-    let first!: Promise<string | null>;
-    act(() => { first = result.current.createEpic(); });
+    const { result } = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a" }));
+    let first!: Promise<boolean>;
+    let second!: Promise<boolean>;
+    act(() => {
+      first = result.current.draftEpic();
+      second = result.current.draftEpic();
+    });
+    await waitFor(() => expect(result.current.isLoading).toBe(true));
+    await act(async () => {
+      finish(messagesResponse([{ role: "assistant", content: EPIC_JSON }]));
+      expect(await first).toBe(true);
+      expect(await second).toBe(false);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.current.isLoading).toBe(false);
+  });
+
+  it("does not publish a prior conversation's error over a different conversation", async () => {
+    let finish!: (response: Response) => void;
+    fetchMock.mockReturnValueOnce(new Promise<Response>((resolve) => { finish = resolve; }));
+    const { result, rerender } = renderHook(
+      ({ conversationId }) => useEpicCreate({ projectId: "p1", conversationId }),
+      { initialProps: { conversationId: "a" } },
+    );
+    let first!: Promise<boolean>;
+    act(() => { first = result.current.draftEpic(); });
     rerender({ conversationId: "b" });
     expect(result.current.error).toBeNull();
     expect(result.current.isLoading).toBe(false);
     await act(async () => { finish({ ok: false } as Response); await first; });
     expect(result.current.error).toBeNull();
   });
-
-  it("stops finalization immediately when sending the prompt fails", async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [{ role: "user", content: "Idea" }] }) });
-    const sendMessage = vi.fn(async () => false);
-    const { result } = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a", sendMessage }));
-    await act(async () => { expect(await result.current.createEpic()).toBeNull(); });
-    expect(result.current.error).toBe("Failed to send message");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("restores an in-flight creation on return and publishes its completion", async () => {
-    const messages = [{ role: "assistant", content: JSON.stringify({ title: "One epic", description: "Scope", user_stories: [{ title: "Story" }] }) }];
-    let finish!: (response: Response) => void;
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
-      .mockReturnValueOnce(new Promise<Response>((resolve) => { finish = resolve; }));
-    const onEpicCreated = vi.fn();
-    const { result, rerender } = renderHook(({ conversationId }) => useEpicCreate({ projectId: "p1", conversationId, onEpicCreated }), { initialProps: { conversationId: "a" } });
-    let first!: Promise<string | null>;
-    act(() => { first = result.current.createEpic(); });
-    await waitFor(() => expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true));
-    rerender({ conversationId: "b" });
-    expect(result.current.isLoading).toBe(false);
-    rerender({ conversationId: "a" });
-    expect(result.current.isLoading).toBe(true);
-    await act(async () => { expect(await result.current.createEpic()).toBeNull(); });
-    await act(async () => {
-      finish({ ok: true, json: async () => ({ data: { id: "epic-1" } }) } as Response);
-      expect(await first).toBe("epic-1");
-    });
-    expect(result.current.isLoading).toBe(false);
-    expect(result.current.createdEpic?.epicId).toBe("epic-1");
-    expect(onEpicCreated).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
-    rerender({ conversationId: "b" });
-    expect(result.current.createdEpic).toBeNull();
-  });
-
-  it("stops finalization when the accepted prompt's reply fails", async () => {
-    fetchMock.mockResolvedValue({ ok: true, json: async () => ({ data: [{ role: "user", content: "Idea" }] }) });
-    const sendMessage = vi.fn(async () => ({ accepted: true, error: "Connection lost" }));
-    const { result } = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a", sendMessage }));
-    await act(async () => { expect(await result.current.createEpic()).toBeNull(); });
-    expect(result.current.error).toBe("Connection lost");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(sendMessage).toHaveBeenCalledTimes(1);
-  });
-
-  it("retries the same conversation proposal after a lost response and a remount", async () => {
-    const messages = [{ role: "assistant", content: JSON.stringify({ title: "One epic", description: "Scope", user_stories: [{ title: "Story" }] }) }];
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
-      .mockRejectedValueOnce(new Error("Connection lost"))
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { id: "epic-1" } }) });
-    const first = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a" }));
-    await act(async () => { expect(await first.result.current.createEpic()).toBeNull(); });
-    first.unmount();
-    const second = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a" }));
-    await act(async () => { expect(await second.result.current.createEpic()).toBe("epic-1"); });
-    const posts = fetchMock.mock.calls.filter(([, init]) => init?.method === "POST");
-    expect(posts).toHaveLength(2);
-    expect(posts[1][1].body).toBe(posts[0][1].body);
-    expect(JSON.parse(posts[1][1].body).sourceConversationId).toBe("a");
-  });
-
-  it("surfaces a deleted proposal instead of returning a stale cached success", async () => {
-    const messages = [{ role: "assistant", content: JSON.stringify({ title: "One epic", description: "Scope", user_stories: [{ title: "Story" }] }) }];
-    fetchMock.mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: { id: "epic-1" } }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ data: messages }) })
-      .mockResolvedValueOnce({ ok: false, json: async () => ({ error: "The epic created from this proposal was deleted" }) });
-    const { result } = renderHook(() => useEpicCreate({ projectId: "p1", conversationId: "a" }));
-    await act(async () => { expect(await result.current.createEpic()).toBe("epic-1"); });
-    await act(async () => { expect(await result.current.createEpic()).toBeNull(); });
-    expect(result.current.error).toContain("was deleted");
-    expect(result.current.createdEpic).toBeNull();
-  });
-
 });

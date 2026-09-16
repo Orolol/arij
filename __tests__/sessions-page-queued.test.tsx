@@ -643,3 +643,35 @@ describe("SessionsPage — night-run history", () => {
     expect(screen.queryByTestId("night-runs-error")).not.toBeInTheDocument();
   });
 });
+
+/**
+ * Every creator writes epic conversations as `epic_creation`; `epic` is only
+ * the legacy value the list route normalizes away. The row icon has to key
+ * on the normalized kind, or no recent epic conversation ever shows it.
+ */
+describe("SessionsPage — chat conversation kind", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it.each(["epic_creation", "epic"])(
+    "marks a %s conversation with the epic icon",
+    async (type) => {
+      mockSessions([chatSession({ id: "conv-epic", type })]);
+      await renderPage();
+
+      const row = await screen.findByTestId("session-row-conv-epic");
+      expect(row.querySelector("svg.lucide-sparkles")).not.toBeNull();
+      expect(row.querySelector("svg.lucide-message-square")).toBeNull();
+    }
+  );
+
+  it("keeps the chat icon for a brainstorm conversation", async () => {
+    mockSessions([chatSession({ id: "conv-brainstorm", type: "brainstorm" })]);
+    await renderPage();
+
+    const row = await screen.findByTestId("session-row-conv-brainstorm");
+    expect(row.querySelector("svg.lucide-sparkles")).toBeNull();
+    expect(row.querySelector("svg.lucide-message-square")).not.toBeNull();
+  });
+});

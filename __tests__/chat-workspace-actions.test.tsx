@@ -1,7 +1,7 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
-vi.mock("@/hooks/useEpicCreate", () => ({ useEpicCreate: () => ({ createEpic: vi.fn(), isLoading: false, error: null }) }));
+vi.mock("@/hooks/useEpicCreate", () => ({ useEpicCreate: () => ({ draftEpic: vi.fn(), isLoading: false, error: null }) }));
 vi.mock("@/hooks/useSpecGeneration", () => ({ useSpecGeneration: () => ({ generateSpec: vi.fn(), generating: false, error: null }) }));
 import { useChatWorkspace } from "@/hooks/useChatWorkspace";
 import { useConversations } from "@/hooks/useConversations";
@@ -37,6 +37,25 @@ describe("shared chat actions", () => {
     expect(result.current.error).toBe("Agent no longer exists");
     expect(result.current.activeProvider).toBe("claude-code");
     expect(result.current.busy).toBe(false);
+  });
+
+  it("reports a rename it could not send instead of dropping it silently", async () => {
+    const { result } = renderHook(() => useChatWorkspace("p1"));
+    await waitFor(() => expect(result.current.activeId).toBe("a"));
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const patch = deferred();
+    fetchMock.mockReturnValueOnce(patch.promise);
+    let first!: Promise<string>;
+    let second!: string;
+    await act(async () => {
+      first = result.current.renameConversation("a", "First");
+      second = await result.current.renameConversation("a", "Second");
+    });
+    expect(second).toBe("busy");
+    expect(result.current.renameDisabled).toBe(true);
+    await act(async () => { patch.resolve(response({ ...conversation, label: "First" })); expect(await first).toBe("saved"); });
+    expect(result.current.renameDisabled).toBe(false);
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1);
   });
 
   it("coalesces repeated permanent conversation creation clicks", async () => {

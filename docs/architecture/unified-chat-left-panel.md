@@ -4,8 +4,8 @@
 surface, "the unified chat left panel". That panel is not gone, but it is no
 longer the only chat surface, and its two documented entry points no longer
 exist. The document is kept rather than superseded because the parity contract
-and the cutover migration below are recorded nowhere else, and both are still
-live code.*
+and the cutover migration below are recorded nowhere else (the migration is
+now a numbered SQL migration).*
 
 ## Two surfaces, one data path
 
@@ -47,10 +47,14 @@ buttons the previous version of this document listed — there is no `Chat`
 button and no `New Epic` button on that page any more. What opens it now:
 
 - the strip itself;
-- `?panel=chat` and `?panel=new-epic`, pushed by the **New** menu the project
-  layout still draws on the board route (`app/projects/[projectId]/layout.tsx`);
-  the page consumes each param once and strips it from the URL, then calls
-  `openChat()` / `openNewEpic()` on the panel ref.
+- `?panel=new-epic`, pushed by the **New** menu the project layout still draws
+  on the board route (`app/projects/[projectId]/layout.tsx`); the page consumes
+  it once, strips it from the URL, then calls `openNewEpic()` — the panel ref's
+  only method. `?panel=chat` had no producer and is no longer answered.
+
+Inside, the panel renders the chat page's own components — a compact
+`ConversationRoster`, `ChatThread` and `ChatComposer` (without the project
+pill) — so both surfaces share one rendering grammar.
 
 The project layout's own header is gone, and with it the old `Chat` header
 button — the layout says so explicitly: two controls for one panel is the
@@ -93,19 +97,14 @@ both the panel and the chat page read `isLegacyConversationGenerating` from it.
 
 ## Cutover migration
 
-- Migration module: `lib/chat/unified-cutover-migration.ts`
-- Trigger: one-time-per-project on conversation load —
-  `runUnifiedChatCutoverMigrationOnce(projectId)` in the conversations route's
-  `GET`. Still wired; the rebuild did not touch it.
-- Behavior:
-  - writes pre-migration backup snapshot
-  - reassigns orphan messages to an existing/fallback conversation without
-    remapping existing IDs
-  - writes integrity/audit report
-
-### Artifacts
-
-- Base directory: `data/migrations/unified-chat-cutover/<projectId>/`
-- Files per run:
-  - `<timestamp>-backup.json`
-  - `<timestamp>-report.json`
+- SQL migration: `lib/db/migrations/0064_chat_orphan_messages_cutover.sql`,
+  applied once per database by the migrator at boot (`initDb`).
+- Behavior: a project with orphan messages (`conversation_id IS NULL`) and no
+  conversation gets one brainstorm conversation; every orphan then joins its
+  project's oldest conversation. Existing IDs are never remapped.
+- History: until 2026-09-16 this ran as `lib/chat/unified-cutover-migration.ts`
+  from the conversations route's `GET`, behind an in-memory guard, so every new
+  server process replayed it per project and wrote a backup + report under
+  `data/migrations/unified-chat-cutover/<projectId>/` each time. None of those
+  reports ever reassigned a message. The directory is no longer written and
+  can be deleted.

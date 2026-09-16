@@ -25,6 +25,13 @@ import {
   Hash,
 } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
+import {
+  BRAINSTORM_AGENT_TYPE,
+  CHAT_AGENT_TYPE,
+  EPIC_CREATION_AGENT_TYPE,
+  isEpicCreationConversationAgentType,
+  normalizeConversationAgentType,
+} from "@/lib/chat/conversation-agent";
 import { cn } from "@/lib/utils";
 import type { TranslationKey } from "@/lib/i18n/catalogue";
 
@@ -53,12 +60,6 @@ interface ChatMessage {
   }[];
   createdAt: string;
 }
-
-const TYPE_LABEL_KEYS: Record<string, TranslationKey> = {
-  brainstorm: "ProjectSessions.conversation.types.brainstorm",
-  epic: "ProjectSessions.conversation.types.epic",
-  chat: "ProjectSessions.conversation.types.chat",
-};
 
 const STATUS_LABEL_KEYS: Record<string, TranslationKey> = {
   active: "ProjectSessions.conversation.statuses.active",
@@ -170,10 +171,23 @@ function ChatDetailContent({ projectId, conversationId }: { projectId: string; c
     );
   }
 
-  const TypeIcon = meta.type === "epic" ? Sparkles : MessageSquare;
+  // Creators write `epic_creation` and this route returns the raw column, so
+  // the legacy literal `epic` alone never matched a recent conversation.
+  const TypeIcon = isEpicCreationConversationAgentType(meta.type)
+    ? Sparkles
+    : MessageSquare;
+  // The stored `type` is an enum value (`epic_creation`), not a word. An
+  // unknown kind still shows its raw value, which is data and never a key.
+  const kind = normalizeConversationAgentType(meta.type);
+  const kindLabel =
+    kind === BRAINSTORM_AGENT_TYPE
+      ? t("conversation.kinds.brainstorm")
+      : kind === EPIC_CREATION_AGENT_TYPE
+        ? t("conversation.kinds.epicCreation")
+        : kind === CHAT_AGENT_TYPE
+          ? t("conversation.kinds.chat")
+          : meta.type;
   const isGenerating = meta.status === "generating";
-  const typeKey = TYPE_LABEL_KEYS[meta.type];
-  const typeLabel = typeKey ? tKey(typeKey) : meta.type;
   const statusKey = meta.status ? STATUS_LABEL_KEYS[meta.status] : null;
   const statusLabel = statusKey ? tKey(statusKey) : meta.status;
 
@@ -189,15 +203,20 @@ function ChatDetailContent({ projectId, conversationId }: { projectId: string; c
       {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
 
       {/* Identity line */}
-      <div className="flex flex-wrap items-center gap-[10px]">
+      <div
+        data-testid="conversation-identity"
+        className="flex flex-wrap items-center gap-[10px]"
+      >
         {isGenerating ? (
           <BreathingDot size={6} />
         ) : (
           <TypeIcon className="h-4 w-4 text-meta" />
         )}
-        <Mono size={11} weight={700} tone="feed-deep" className="shrink-0 uppercase">
-          {typeLabel}
-        </Mono>
+        <span data-testid="conversation-kind" className="shrink-0">
+          <Mono size={11} weight={700} tone="feed-deep" className="uppercase">
+            {kindLabel}
+          </Mono>
+        </span>
         {statusLabel && (
           <Stamp tone={statusStampTone(meta.status ?? "")} dot={isGenerating}>
             {statusLabel}

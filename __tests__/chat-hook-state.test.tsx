@@ -117,7 +117,7 @@ describe("chat history ownership", () => {
     fetchMock.mockResolvedValueOnce(json([])).mockResolvedValueOnce(json([message("persisted")]));
     const { result, rerender } = renderHook(({ status }) => useChat("p1", "conv", status), { initialProps: { status: "generating" } });
     await waitFor(() => expect(result.current.loading).toBe(false));
-    rerender({ status: "generated" });
+    rerender({ status: "active" });
     await waitFor(() => expect(result.current.messages[0]?.id).toBe("persisted"));
   });
 });

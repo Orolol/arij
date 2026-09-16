@@ -7,6 +7,7 @@ import {
   isPersistentChatProvider,
 } from "@/lib/agent-config/constants";
 import { resolveDefaultChatMode } from "@/lib/chat/default-chat-mode";
+import { normalizeConversationAgentType } from "@/lib/chat/conversation-agent";
 import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { validateBody, isValidationError } from "@/lib/validation/validate";
 import { updateConversationSchema } from "@/lib/validation/chat-schemas";
@@ -52,6 +53,8 @@ export async function GET(
   return NextResponse.json({
     data: {
       ...result,
+      // Same spelling as the list route: a legacy `epic` row is epic_creation.
+      type: normalizeConversationAgentType(result.type),
       persistentSessionState: isPersistentChatProvider(result.provider)
         ? getPersistentChatSessionState(result.id)
         : null,
@@ -201,6 +204,7 @@ export async function PATCH(
     data: updated
       ? {
           ...updated,
+          type: normalizeConversationAgentType(updated.type),
           // Legacy-row fallback handled inside resolveCliSessionId().
           cliSessionId: resolveCliSessionId(updated),
           persistentSessionState: isPersistentChatProvider(updated.provider)

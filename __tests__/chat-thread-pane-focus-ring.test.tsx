@@ -165,7 +165,6 @@ vi.mock("@/hooks/useConversations", () => ({
 vi.mock("@/hooks/useChat", () => ({
   useChat: () => ({
     messages: MESSAGES,
-    setMessages: vi.fn(),
     loading: false,
     sending: false,
     error: null,
@@ -191,10 +190,9 @@ vi.mock("@/hooks/useSpecGeneration", () => ({
 
 vi.mock("@/hooks/useEpicCreate", () => ({
   useEpicCreate: () => ({
-    createEpic: vi.fn(),
+    draftEpic: vi.fn(),
     isLoading: false,
     error: null,
-    createdEpic: null,
   }),
 }));
 

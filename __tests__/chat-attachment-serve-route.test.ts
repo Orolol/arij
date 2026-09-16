@@ -104,6 +104,32 @@ describe("GET /api/projects/[projectId]/chat/uploads/[attachmentId]", () => {
     expect(fsMock.readFileSync).not.toHaveBeenCalled();
   });
 
+  // ---- project scoping ----------------------------------------------------
+  //
+  // The DELETE beside this GET scopes by project, so an id from another
+  // project reads as absent; the GET must follow the same ownership rule.
+
+  it("reads another project's attachment as absent", async () => {
+    dbMockState.getQueue.push(attachmentRow);
+
+    const response = await get("att-1", "proj-other");
+
+    expect(response.status).toBe(404);
+    expect(fsMock.readFileSync).not.toHaveBeenCalled();
+  });
+
+  it("attributes a pre-0030 row without project_id by the directory it lives in", async () => {
+    const legacyRow = { ...attachmentRow, projectId: null };
+
+    dbMockState.getQueue.push(legacyRow);
+    expect((await get("att-1", "proj-1")).status).toBe(200);
+
+    dbMockState.getQueue.push(legacyRow);
+    const foreign = await get("att-1", "proj-other");
+    expect(foreign.status).toBe(404);
+    expect(fsMock.readFileSync).toHaveBeenCalledTimes(1);
+  });
+
   // ---- the refused direction ---------------------------------------------
 
   it.each([

@@ -13,7 +13,7 @@ interface QuestionCardsProps {
 }
 
 export function QuestionCards({ questions, onSubmit, disabled }: QuestionCardsProps) {
-  const t = useTranslations("ChatLegacy");
+  const t = useTranslations("Chat");
   const [currentIdx, setCurrentIdx] = useState(0);
   // selections[questionIdx] = set of selected option indices
   const [selections, setSelections] = useState<Map<number, Set<number>>>(

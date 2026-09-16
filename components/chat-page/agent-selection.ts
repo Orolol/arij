@@ -5,12 +5,6 @@ import type {
 } from "@/hooks/useConversations";
 
 /**
- * The picker's own contract, not a second copy of it — one shape for the desk,
- * the chat page and the project panel is the whole point of the merge.
- */
-export type ChatAgentSelectionInput = AgentSelection;
-
-/**
  * What the conversation PATCH must carry for one agent choice.
  *
  * A NAMED AGENT OWNS ITS PROVIDER: the PATCH route re-derives the provider from
@@ -27,7 +21,7 @@ export type ChatAgentSelectionInput = AgentSelection;
  * Shared by every chat surface so they cannot drift apart on the shape.
  */
 export function agentSelectionPatch(
-  selection: ChatAgentSelectionInput,
+  selection: AgentSelection,
 ): UpdateConversationInput | null {
   if (selection.namedAgentId) return { namedAgentId: selection.namedAgentId };
   if (!selection.provider) return null;

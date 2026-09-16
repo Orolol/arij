@@ -29,6 +29,11 @@ import {
  * (`ChatWorkspaceHeader.ChatProposalCard`), which a second epic hid and which
  * could not be re-actioned from history.
  *
+ * THE ONLY EPIC CREATOR on either chat surface: "Draft the epic"
+ * (`hooks/useEpicCreate.ts`) only asks the agent for the reply this card
+ * renders from, so one conversation can no longer create the same epic with
+ * two different payloads.
+ *
  * NOTES THAT BITE IF IGNORED:
  * - `Stamp tone="next"` is `bg-strata-next` on `text-strata-next-deep`, i.e.
  *   INVISIBLE on this card's pool ground. The `bg-card` override is mandatory —

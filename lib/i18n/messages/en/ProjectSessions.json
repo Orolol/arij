@@ -65,9 +65,9 @@
     "created": "Created",
     "messages": "Messages",
     "generating": "Generating...",
-    "types": {
+    "kinds": {
       "brainstorm": "Brainstorm",
-      "epic": "Epic",
+      "epicCreation": "Epic creation",
       "chat": "Chat"
     },
     "statuses": {

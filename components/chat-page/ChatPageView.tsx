@@ -1,20 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Sparkles } from "lucide-react";
 import { useTranslations } from "next-intl";
 
-import { PillButton, projectTone } from "@/components/piscine";
+import { projectTone } from "@/components/piscine";
 import { ToastStack } from "@/components/toast/ToastStack";
 import { useToastStack } from "@/components/toast/useToastStack";
 import { useTicketOverlay } from "@/components/ticket/TicketOverlayProvider";
 import { useControlDesk } from "@/hooks/useControlDesk";
-import { useNamedAgentsList } from "@/hooks/useNamedAgentsList";
 import { usePolling } from "@/hooks/usePolling";
-import {
-  PROVIDER_LABELS,
-  type ChatModeProvider,
-} from "@/lib/agent-config/constants";
 import type { ControlDeskPayload, DeskProject } from "@/lib/control-desk/types";
 import { cn } from "@/lib/utils";
 import { requestJson } from "@/lib/api/client";
@@ -28,15 +22,15 @@ import {
   chatPaneClass,
   type ChatPane,
 } from "./ChatPaneSwitcher";
-import { ChatThread, type ChatThreadResolvedTicket } from "./ChatThread";
+import { ChatNextSteps } from "./ChatNextSteps";
+import { ChatThread } from "./ChatThread";
 import { ContextRail } from "./ContextRail";
 import { ConversationRoster } from "./ConversationRoster";
-import { CreatedHereCard, type CreatedHereEntry } from "./CreatedHereCard";
+import { CreatedHereCard } from "./CreatedHereCard";
 import { TowardSpecBand } from "./TowardSpecBand";
 import { useChatContextTokens } from "./chat-context-tokens";
-import { epicsByMessageId } from "./message-epics";
-import { longPlacement, shortPlacement } from "./placement";
-import { flattenDeskTickets, uniqueTicketsByTitle, normalizeTitle, type DeskTicket } from "./ticket-bindings";
+import { useConversationAgentLabels } from "./useConversationAgentLabels";
+import { useThreadEpics } from "./useThreadEpics";
 
 /**
  * Frame 11a — Chat as a full page.
@@ -69,44 +63,6 @@ export interface ChatPageViewProps {
   initialProjectId?: string;
   /** `?conversation=` — a deep link to one conversation. */
   initialConversationId?: string;
-}
-
-const EPIC_MAP_STORAGE_PREFIX = "arij.chat.epic-by-message.";
-
-/**
- * The in-thread cards' identity has to survive a reload, and the in-memory map
- * does not. Storage is best-effort in both directions: a corrupt or
- * unavailable store falls through to the title heuristics, and never throws.
- */
-function readStoredEpicMap(conversationId: string): Map<string, string> {
-  const map = new Map<string, string>();
-  try {
-    const raw = window.localStorage.getItem(
-      `${EPIC_MAP_STORAGE_PREFIX}${conversationId}`,
-    );
-    if (!raw) return map;
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return map;
-    for (const [messageId, epicId] of Object.entries(
-      parsed as Record<string, unknown>,
-    )) {
-      if (typeof epicId === "string" && epicId) map.set(messageId, epicId);
-    }
-  } catch {
-    // Private mode, a quota error, a hand-edited value — all the same answer.
-  }
-  return map;
-}
-
-function writeStoredEpicMap(conversationId: string, map: Map<string, string>) {
-  try {
-    window.localStorage.setItem(
-      `${EPIC_MAP_STORAGE_PREFIX}${conversationId}`,
-      JSON.stringify(Object.fromEntries(map)),
-    );
-  } catch {
-    // Storage is an optimisation here, never a requirement.
-  }
 }
 
 export function ChatPageView({
@@ -329,26 +285,19 @@ function ChatWorkspace({
 }: ChatWorkspaceProps) {
   const {
     conversations, activeId, setActiveId, conversationsLoading,
-    createConversation, restartPersistentSession, refreshConversations,
+    createConversation, deleteConversation, restartPersistentSession, refreshConversations,
+    renameConversation, renameDisabled,
     messages, loading, sending, error, pendingQuestions, streamStatus,
     sendMessage: handleSend, answerQuestions, activeConversation,
     activeAgentSelection, agentLocked, attachmentsDisabled,
     hasUserMessage, isBrainstorm, isEpicCreation, busy, sendStartedAt,
-    selectAgent: handleSelectAgent, createEpic: handleCreateEpicFallback,
-    epicCreating, generateSpec, generatingSpec, actionsDisabled, mutating,
-  } = useChatWorkspace(projectId, onDeskChanged);
+    selectAgent: handleSelectAgent, draftEpic,
+    epicDrafting, generateSpec, generatingSpec, actionsDisabled, mutating,
+  } = useChatWorkspace(projectId);
 
   const t = useTranslations("Chat");
-  /*
-    `placement.ts` is a pattern-3 table of FULL dotted keys read by a module a
-    hook cannot reach, so it resolves through the namespace-less translator —
-    the same split `components/piscine/TopBar.tsx` makes for `NAV_CATEGORIES`.
-  */
-  const tKey = useTranslations();
 
-  const { agents } = useNamedAgentsList();
-
-  /* ---- conversation bookkeeping, lifted from UnifiedChatPanel ---------- */
+  /* ---- conversation bookkeeping ---------------------------------------- */
 
   // The deep link only applies while the conversation it names still exists,
   // and only once: after that the user's own selection wins.
@@ -366,183 +315,27 @@ function ChatWorkspace({
 
   usePolling(refreshConversations, 3000, true, { immediate: false });
 
-  /* ---- who is talking -------------------------------------------------- */
+  /* ---- who is talking, and the epics the thread drafted ---------------- */
 
-  const agentLabelFor = useCallback(
-    (conversation: { namedAgentId?: string | null; provider: string }) => {
-      if (conversation.namedAgentId) {
-        const named = agents?.find((row) => row.id === conversation.namedAgentId);
-        if (named?.name) return named.name;
-      }
-      const provider = conversation.provider;
-      return (
-        PROVIDER_LABELS[provider as ChatModeProvider] ??
-        provider ??
-        "—"
-      );
-    },
-    [agents],
-  );
-
-  const agentLabels = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const conversation of conversations) {
-      map.set(conversation.id, agentLabelFor(conversation));
-    }
-    return map;
-  }, [conversations, agentLabelFor]);
-
-  const activeAgentLabel = activeConversation
-    ? agentLabelFor(activeConversation)
-    : "—";
-
-  /* ---- per-message epics ----------------------------------------------- */
-
-  // Memoised over `messages`: the JSON candidate scan is O(content) per
-  // message, which is fine per change and NOT fine per render.
-  const epicsByMessage = useMemo(
-    () => epicsByMessageId(messages),
-    [messages],
-  );
-
-  const [epicBindings, setEpicBindings] = useState(() => ({
-    conversationId: activeId, map: activeId ? readStoredEpicMap(activeId) : new Map<string, string>(),
-  }));
-  if (epicBindings.conversationId !== activeId) setEpicBindings({
-    conversationId: activeId, map: activeId ? readStoredEpicMap(activeId) : new Map<string, string>(),
-  });
-  const epicByMessage = epicBindings.map;
-  /** Status seeded by the create response, so placement never starts at `—`. */
-  const [createdMeta, setCreatedMeta] = useState<
-    Map<string, { readableId: string | null; status: string }>
-  >(() => new Map());
-
-  const recordEpicBinding = useCallback(
-    (
-      messageId: string,
-      created: { epicId: string; readableId: string | null; status: string },
-    ) => {
-      if (activeId) {
-        // Persist to the conversation that started the request, even if the
-        // user selected another one before creation completed.
-        const saved = readStoredEpicMap(activeId);
-        saved.set(messageId, created.epicId);
-        writeStoredEpicMap(activeId, saved);
-      }
-      setEpicBindings((current) => current.conversationId === activeId
-        ? { ...current, map: new Map(current.map).set(messageId, created.epicId) } : current);
-      setCreatedMeta((current) => {
-        const next = new Map(current);
-        next.set(created.epicId, {
-          readableId: created.readableId,
-          status: created.status,
-        });
-        return next;
-      });
-      onDeskChanged();
-    },
-    [activeId, onDeskChanged],
-  );
-
-  const deskTickets = useMemo(() => flattenDeskTickets(desk, projectId), [desk, projectId]);
-  const ticketsById = useMemo(() => {
-    const map = new Map<string, DeskTicket>();
-    for (const row of deskTickets) {
-      // The status-bearing row (upNext) is inserted first and must win.
-      if (!map.has(row.epicId) || map.get(row.epicId)?.status === null) {
-        map.set(row.epicId, row);
-      }
-    }
-    return map;
-  }, [deskTickets]);
-
-  /**
-   * §7.4(c): the map is gone after a reload with no storage. Recover the
-   * binding from the conversation's own epic link when exactly one message
-   * declares an epic with that title, then from the desk's tickets by title.
-   * A card that resolves to nothing is still fully actionable — that is the
-   * point — but it must never show a `readableId` it did not resolve.
-   */
-  const resolvedEpicByMessage = useMemo(() => {
-    const map = new Map(epicByMessage);
-
-    const linkedEpicId = activeConversation?.epicId ?? null;
-    const linked = linkedEpicId ? ticketsById.get(linkedEpicId) : null;
-    if (linked) {
-      const matches = [...epicsByMessage.entries()].filter(
-        ([, parsed]) => normalizeTitle(parsed.title) === normalizeTitle(linked.title),
-      );
-      if (matches.length === 1 && !map.has(matches[0][0])) {
-        map.set(matches[0][0], linked.epicId);
-      }
-    }
-
-    const byTitle = uniqueTicketsByTitle(deskTickets);
-    for (const [messageId, parsed] of epicsByMessage) {
-      if (map.has(messageId)) continue;
-      const hit = byTitle.get(normalizeTitle(parsed.title));
-      if (hit) map.set(messageId, hit.epicId);
-    }
-
-    return map;
-  }, [epicByMessage, epicsByMessage, activeConversation, ticketsById, deskTickets]);
-
-  const resolveTicket = useCallback(
-    (epicId: string): ChatThreadResolvedTicket => {
-      const row = ticketsById.get(epicId);
-      const seeded = createdMeta.get(epicId);
-      const readableId = row?.readableId ?? seeded?.readableId ?? null;
-      const status = row?.status ?? null;
-      const rank = row?.rank ?? null;
-      const seededStatus = seeded?.status ?? null;
-      const currentPlacement = longPlacement(status, rank, tKey);
-      const placement = currentPlacement ?? longPlacement(seededStatus, null, tKey);
-      return { readableId, placement };
-    },
-    [ticketsById, createdMeta, tKey],
-  );
-
-  /* ---- the CREATED IN THIS CHAT rail ----------------------------------- */
-
-  const createdHere: CreatedHereEntry[] = useMemo(() => {
-    const ids: string[] = [];
-    const seen = new Set<string>();
-    const push = (epicId: string | null | undefined) => {
-      if (!epicId || seen.has(epicId)) return;
-      seen.add(epicId);
-      ids.push(epicId);
-    };
-
-    push(activeConversation?.epicId);
-    for (const epicId of resolvedEpicByMessage.values()) push(epicId);
-
-    return ids.map((epicId) => {
-      const row = ticketsById.get(epicId);
-      const seeded = createdMeta.get(epicId);
-      const parsed = [...resolvedEpicByMessage.entries()].find(
-        ([, id]) => id === epicId,
-      );
-      const parsedTitle = parsed ? epicsByMessage.get(parsed[0])?.title : null;
-      const status = row?.status ?? null;
-      const rank = row?.rank ?? null;
-      const seededStatus = seeded?.status ?? null;
-      const currentPlacement = shortPlacement(status, rank, tKey);
-      const placement = currentPlacement ?? shortPlacement(seededStatus, null, tKey);
-      return {
-        epicId,
-        readableId: row?.readableId ?? seeded?.readableId ?? null,
-        title: row?.title ?? parsedTitle ?? null,
-        placement,
-      };
-    });
-  }, [
+  const { agentLabels, activeAgentLabel } = useConversationAgentLabels(
+    conversations,
     activeConversation,
-    resolvedEpicByMessage,
-    ticketsById,
-    createdMeta,
+  );
+
+  const {
     epicsByMessage,
-    tKey,
-  ]);
+    resolvedEpicByMessage,
+    resolveTicket,
+    recordEpicBinding,
+    createdHere,
+  } = useThreadEpics({
+    projectId,
+    activeId,
+    activeConversation,
+    messages,
+    desk,
+    onDeskChanged,
+  });
 
   const ticketCounts = useMemo(() => {
     const map = new Map<string, number>();
@@ -640,11 +433,7 @@ function ChatWorkspace({
     onToast("success", t("towardSpec.proposalSent"));
   }, [messages, projectId, onToast, t]);
 
-  /* ---- the fallback epic path ------------------------------------------ */
-
-  // The moment ANY message parses to an epic, the in-thread cards take over.
-  const showEpicFallback =
-    isEpicCreation && hasUserMessage && epicsByMessage.size === 0;
+  /* ---- next steps under the thread ------------------------------------ */
 
   // Generated from THIS conversation; say what landed and point at the spec,
   // the same way the "toward the spec" proposal does. An epics-only answer
@@ -661,37 +450,17 @@ function ChatWorkspace({
     onDeskChanged();
   }
 
-  const footer =
-    showEpicFallback || isBrainstorm ? (
-      <div className="flex flex-wrap gap-2 px-2 pt-1">
-        {showEpicFallback ? (
-          <PillButton
-            variant="outline"
-            size="sm"
-            icon={Sparkles}
-            pending={epicCreating}
-            disabled={actionsDisabled}
-            pendingLabel={t("thread.createEpicPending")}
-            onClick={() => void handleCreateEpicFallback()}
-          >
-            {t("thread.createEpic")}
-          </PillButton>
-        ) : null}
-        {isBrainstorm ? (
-          <PillButton
-            variant="outline"
-            size="sm"
-            icon={Sparkles}
-            pending={generatingSpec}
-            disabled={actionsDisabled}
-            pendingLabel={t("thread.generateSpecPending")}
-            onClick={() => void handleGenerateSpec()}
-          >
-            {t("thread.generateSpec")}
-          </PillButton>
-        ) : null}
-      </div>
-    ) : null;
+  const footer = (
+    <ChatNextSteps
+      showDraftEpic={isEpicCreation && hasUserMessage && epicsByMessage.size === 0}
+      drafting={epicDrafting}
+      onDraftEpic={() => void draftEpic()}
+      showGenerateSpec={isBrainstorm}
+      generatingSpec={generatingSpec}
+      onGenerateSpec={() => void handleGenerateSpec()}
+      disabled={actionsDisabled}
+    />
+  );
 
   const emptyMessage = isEpicCreation
     ? t("thread.emptyEpic")
@@ -713,6 +482,14 @@ function ChatWorkspace({
         onRestartPersistentSession={(conversationId) =>
           void restartPersistentSession(conversationId)
         }
+        onRename={(conversationId, label) =>
+          void renameConversation(conversationId, label).then((outcome) => {
+            if (outcome === "busy") onToast("error", t("roster.renameNotSaved"));
+          })
+        }
+        renameDisabled={renameDisabled}
+        // Confirmed by the roster's PermanentDeleteDialog before it runs.
+        onDelete={(conversationId) => deleteConversation(conversationId)}
         className={chatPaneClass(pane, "conversations")}
       />
 

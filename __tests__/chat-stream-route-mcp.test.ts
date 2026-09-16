@@ -101,8 +101,12 @@ async function drain(response: Response): Promise<void> {
 }
 
 function seedFreshChat() {
+  // A conversation with no stored provider or CLI session: the turn runs on
+  // the resolved agent, on a fresh session. (The route refuses a message
+  // without a conversation, so "fresh" can no longer mean "no row".)
   dbMockState.getQueue = [
     { id: "proj1", name: "Arij", description: "desc", spec: "spec", gitRepoPath: null },
+    { id: "conv1", type: "chat", provider: null, namedAgentId: null, cliSessionId: null, label: "Chat" },
   ];
   dbMockState.allQueue = [[]];
 }
@@ -168,14 +172,14 @@ describe("chat stream route — CLI MCP tool channel wiring", () => {
     const channel = fakeChannel();
     mockCreateChatCliToolChannel.mockReturnValue(channel);
 
-    const response = await post({ content: "Hello" });
+    const response = await post({ content: "Hello", conversationId: "conv1" });
     expect(response.status).toBe(200);
     await drain(response);
 
     expect(mockCreateChatCliToolChannel).toHaveBeenCalledWith({
       projectId: "proj1",
       provider: "claude-code",
-      conversationType: null,
+      conversationType: "chat",
     });
     expect(mockSpawnHelpers.spawnClaudeStream).toHaveBeenCalledWith(
       expect.objectContaining({ prompt: "CHAT_PROMPT", mcp: FAKE_MCP }),
@@ -257,7 +261,7 @@ describe("chat stream route — CLI MCP tool channel wiring", () => {
     seedFreshChat();
     mockCreateChatCliToolChannel.mockReturnValue(fakeChannel());
 
-    await drain(await post({ content: "Hello" }));
+    await drain(await post({ content: "Hello", conversationId: "conv1" }));
 
     expect(mockSpawnHelpers.spawnClaudeStream).toHaveBeenCalledWith(
       expect.objectContaining({ cliOptions: { effort: "high" } }),
@@ -285,7 +289,7 @@ describe("chat stream route — CLI MCP tool channel wiring", () => {
     seedFreshChat();
     mockCreateChatCliToolChannel.mockReturnValue(null);
 
-    const response = await post({ content: "Hello" });
+    const response = await post({ content: "Hello", conversationId: "conv1" });
     expect(response.status).toBe(200);
     await drain(response);
 

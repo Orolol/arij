@@ -114,7 +114,6 @@ function ProjectDesk({ projectId }: { projectId: string }) {
   });
   useConsumedQueryParam("ticket", href, setActiveDetailTicketId);
   useConsumedQueryParam("panel", href, (value) => {
-    if (value === "chat") panelRef.current?.openChat();
     if (value === "new-epic") panelRef.current?.openNewEpic();
     if (value === "new-epic-manual") setEpicDialogOpen(true);
     if (value === "new-bug") setBugDialogOpen(true);
@@ -133,6 +132,8 @@ function ProjectDesk({ projectId }: { projectId: string }) {
           projectId={projectId}
           ref={panelRef}
           onEpicCreated={() => setRefreshTrigger((t) => t + 1)}
+          onOpenTicket={handlePrimaryTicketClick}
+          onToast={addToast}
         >
           <div className="flex h-full flex-col">
             {/* Project-scoped controls the desk's own chrome does not carry:

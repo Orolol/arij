@@ -11,6 +11,7 @@ import { resolveCliSessionId } from "@/lib/db/resolve-cli-session-id";
 import { runBackfillRecentSessionLastNonEmptyTextOnce } from "@/lib/agent-sessions/backfill";
 import { latestActivityTimestamp } from "@/lib/utils/timestamps";
 import { getSessionLastActivityAt } from "@/lib/agents/watchdog";
+import { normalizeConversationAgentType } from "@/lib/chat/conversation-agent";
 import {
   SESSION_LIST_DEFAULT_PAGE_SIZE,
   SESSION_LIST_ERROR_PREVIEW_CHARS,
@@ -307,6 +308,9 @@ export async function GET(
   const normalizedConversations = conversations.map(
     ({ lastMessageAt, ...conv }) => ({
       ...conv,
+      // Same spelling as GET /conversations: a legacy `epic` row is
+      // epic_creation, so the two lists never disagree on a conversation.
+      type: normalizeConversationAgentType(conv.type),
       kind: "chat_session" as const,
       lastActivityAt: latestActivityTimestamp(conv.createdAt, lastMessageAt),
     })

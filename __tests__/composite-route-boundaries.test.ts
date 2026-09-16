@@ -19,7 +19,7 @@ import { errorResponse } from "@/lib/api/route-helpers";
 import { GET as resumable } from "@/app/api/projects/[projectId]/sessions/resumable/route";
 import { GET as reviewResolution } from "@/app/api/projects/[projectId]/review-resolution/route";
 import { POST as chat } from "@/app/api/projects/[projectId]/chat/stream/route";
-import { POST as nonStreamChat } from "@/app/api/projects/[projectId]/chat/route";
+import * as chatHistoryRoute from "@/app/api/projects/[projectId]/chat/route";
 import { PATCH as patchConversation } from "@/app/api/projects/[projectId]/conversations/[conversationId]/route";
 
 const params = { params: Promise.resolve({ projectId: "p", conversationId: "chat" }) };
@@ -88,14 +88,11 @@ describe("empty composite HTTP boundary", () => {
     expect(sqlite.prepare("SELECT count(*) AS n FROM agent_sessions").get()).toEqual({ n: 2 });
   });
 
-  it("non-stream chat refuses an empty explicit composite before storing a message", async () => {
-    emptyComposite();
-    const response = await nonStreamChat(new NextRequest("http://localhost/api/projects/p/chat", {
-      method: "POST", body: JSON.stringify({ content: "Hello", namedAgentId: "c", conversationId: "chat" }),
-    }), params);
-    expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ error: unusableMessage });
-    expect(sqlite.prepare("SELECT count(*) AS n FROM chat_messages").get()).toEqual({ n: 0 });
+  // The non-stream POST /chat had no caller left and had drifted from the
+  // stream (project-wide history, no status, no title, no tool channel). The
+  // stream route above is the only chat entry, so it is the only boundary.
+  it("chat has a single send path: the history route no longer accepts POST", () => {
+    expect(Object.keys(chatHistoryRoute).sort()).toEqual(["GET"]);
   });
 
   it("the boundary preserves successful responses and rethrows unrelated failures", async () => {

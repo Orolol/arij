@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { PROVIDER_LABELS } from "@/lib/agent-config/constants";
+import { isEpicCreationConversationAgentType } from "@/lib/chat/conversation-agent";
 import { SessionOutcomeBadge } from "@/components/shared/SessionOutcomeBadge";
 import { NightRunSummaryDialog } from "@/components/night/NightRunSummaryDialog";
 import {
@@ -1002,7 +1003,11 @@ function ChatSessionRow({
 }) {
   const t = useTranslations("ProjectSessions");
   const isGenerating = session.status === "generating";
-  const TypeIcon = session.type === "epic" ? Sparkles : MessageSquare;
+  // Creators write `epic_creation`; `epic` is the legacy spelling. The
+  // predicate normalizes both, a literal comparison matched neither.
+  const TypeIcon = isEpicCreationConversationAgentType(session.type)
+    ? Sparkles
+    : MessageSquare;
   const providerLabel =
     session.namedAgentName ||
     (session.provider
