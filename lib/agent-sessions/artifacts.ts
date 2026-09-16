@@ -361,3 +361,59 @@ export function attachSessionArtifact(
 
   return artifact;
 }
+
+export interface RemoveSessionArtifactsOptions {
+  /** Parent of <session-id>/artifacts; injectable for isolated tests. */
+  sessionsRoot?: string;
+}
+
+/**
+ * Unlink the durable visual-proof copies of sessions whose rows are gone.
+ *
+ * The copies are deliberately detached from the worktree, so nothing else
+ * reclaims them: the FK cascade removes `session_artifacts` rows but cannot
+ * touch the filesystem, and the retention routine (`lib/routines/retention.ts`)
+ * only prunes session chunks. The permanent delete paths are therefore the
+ * one place these bytes can go — call this AFTER their transaction commits,
+ * so a rolled-back delete never loses a proof whose row survived.
+ *
+ * Only `<root>/<id>/artifacts` is removed: the session directory also holds
+ * other output (logs) that is not this function's to decide about. Ids come
+ * from the database, but they become path segments here, so anything that is
+ * not one plain segment is skipped rather than trusted. Best effort: a failure
+ * to unlink never undoes the delete that already happened. Returns how many
+ * artifact directories were actually removed.
+ */
+export function removeSessionArtifactDirectories(
+  sessionIds: readonly string[],
+  options: RemoveSessionArtifactsOptions = {}
+): number {
+  const sessionsRoot = resolveSessionsRoot(options.sessionsRoot);
+  let removed = 0;
+
+  for (const sessionId of sessionIds) {
+    if (
+      typeof sessionId !== "string" ||
+      sessionId.length === 0 ||
+      sessionId === "." ||
+      sessionId === ".." ||
+      sessionId.includes("\0") ||
+      path.basename(sessionId) !== sessionId
+    ) {
+      continue;
+    }
+
+    const directory = path.join(sessionsRoot, sessionId, "artifacts");
+    if (!isStrictlyWithin(sessionsRoot, directory)) continue;
+
+    try {
+      if (!fs.existsSync(directory)) continue;
+      fs.rmSync(directory, { recursive: true, force: true });
+      removed += 1;
+    } catch {
+      // Best effort: the rows are already gone either way.
+    }
+  }
+
+  return removed;
+}

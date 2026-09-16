@@ -39,6 +39,7 @@ import { ConversationBand } from "@/components/ticket/ConversationBand";
 import { DependenciesBand } from "@/components/ticket/DependenciesBand";
 import { GitBand } from "@/components/ticket/GitBand";
 import { PipelineCard } from "@/components/ticket/PipelineCard";
+import { SessionArtifactsBand } from "@/components/ticket/SessionArtifactsBand";
 import { TicketDescriptionCard } from "@/components/ticket/TicketDescriptionCard";
 import { TicketOverlayHeader } from "@/components/ticket/TicketOverlayHeader";
 import { UserStoriesBand } from "@/components/ticket/UserStoriesBand";
@@ -166,6 +167,9 @@ function TicketOverlayContent({
     runVerification,
     verifyRunning,
     verifyError,
+    artifacts,
+    artifactsError,
+    refreshArtifacts,
     diffstat,
     timeline,
     sessionMeta,
@@ -486,6 +490,14 @@ function TicketOverlayContent({
                 running={verifyRunning}
                 error={verifyError}
                 locked={isRunning || dispatching}
+              />
+              {/* What the change looks like, beside what the commands said
+                  about it. Renders nothing on a ticket with no proof. */}
+              <SessionArtifactsBand
+                projectId={projectId}
+                artifacts={artifacts}
+                error={artifactsError}
+                onRetry={() => void refreshArtifacts()}
               />
               <AgentActivityBand
                 lines={timeline}

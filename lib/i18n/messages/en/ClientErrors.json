@@ -55,5 +55,6 @@
   "globalErrorTitle": "Critical Application Error",
   "globalErrorDescription": "A critical exception crashed the application layout.",
   "projectErrorTitle": "Project screen failed to load",
-  "projectErrorDescription": "An error occurred while rendering this project. You can try refreshing the project or return to the control desk."
+  "projectErrorDescription": "An error occurred while rendering this project. You can try refreshing the project or return to the control desk.",
+  "failedToLoadVisualProofs": "Failed to load visual proofs"
 }

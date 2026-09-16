@@ -15,5 +15,11 @@
   "comment": {
     "expand": "voir tout",
     "collapse": "moins"
+  },
+  "artifacts": {
+    "label": "Preuve visuelle",
+    "meta": "{count, plural, one {# capture} other {# captures}}",
+    "open": "Ouvrir la preuve visuelle : {caption}",
+    "retry": "Réessayer"
   }
 }

@@ -66,6 +66,10 @@ import {
   PROJECTS_ROOT_SETTING_KEY,
   parseProjectsRootSetting,
 } from "@/lib/projects/workspace-constants";
+import {
+  VISUAL_PROOF_ENABLED_SETTING_KEY,
+  parseVisualProofEnabledSetting,
+} from "@/lib/claude/visual-proof-constants";
 import { PROMPT_TOKEN_BUDGET_GLOBAL_SETTING_KEY, parsePromptTokenBudget } from "@/lib/tokens/budget-settings";
 import {
   CLAUDE_WEEKLY_BUDGET_SETTING_KEY,
@@ -306,6 +310,14 @@ const SPECS: readonly SettingFieldSpec[] = [
     key: PIPELINE_GRADER_ENABLED_SETTING_KEY,
     read: (data) =>
       parsePipelineEnabledSetting(data[PIPELINE_GRADER_ENABLED_SETTING_KEY]) ?? false,
+    parse: (editor) => ({ value: bool(editor) }),
+  },
+  {
+    // Opt-in, default OFF: the same parser `isVisualProofEnabled` applies, so
+    // the switch shows exactly what the build prompts will read.
+    key: VISUAL_PROOF_ENABLED_SETTING_KEY,
+    read: (data) =>
+      parseVisualProofEnabledSetting(data[VISUAL_PROOF_ENABLED_SETTING_KEY]) ?? false,
     parse: (editor) => ({ value: bool(editor) }),
   },
   {

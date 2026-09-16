@@ -76,6 +76,8 @@
     "mcpTools": "Outils MCP Arij",
     "mcpToolsSuffix": "· on par défaut",
     "mcpToolsNote": "lire son ticket, commenter, changer le statut, poser une question bloquante, déposer un finding — sans conventions en prose. Off : les nouvelles sessions démarrent sans le canal, les sessions en cours ne bougent pas.",
+    "visualProof": "Capturer une preuve visuelle pendant les builds",
+    "visualProofNote": "chaque build, pipeline ou non : quand le changement est visible et qu'un navigateur est disponible, l'agent en fait une capture et la joint au ticket. Au mieux, nécessite les outils MCP Arij et une UI lançable. Off par défaut.",
     "memoryDistill": "Distiller la mémoire après un build réussi",
     "memoryDistillNote": "un agent de distillation fusionne les nouvelles conventions dans la mémoire du projet, injectée ensuite dans chaque prompt. Off par défaut.",
     "specRewrite": "Réécrire la spec après chaque release",

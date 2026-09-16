@@ -3,6 +3,7 @@
 import { useTranslations } from "next-intl";
 
 import { BandHeader, Mono, StrataBand } from "@/components/piscine";
+import { VISUAL_PROOF_ENABLED_SETTING_KEY } from "@/lib/claude/visual-proof-constants";
 
 import { SettingRow } from "./SettingRow";
 import { SettingToggle } from "./SettingToggle";
@@ -17,8 +18,9 @@ import type { SettingsDraft } from "./useSettingsDraft";
 /**
  * AGENTS & MÉMOIRE — the turquoise stratum of the Pipeline tab.
  *
- * Three switches that change what an agent session IS: whether it gets the
- * structured tool channel, whether a green build refreshes the project memory,
+ * Four switches that change what an agent session IS: whether it gets the
+ * structured tool channel, whether a build is asked to leave visual proof
+ * through that channel, whether a green build refreshes the project memory,
  * whether a release rewrites the spec. Each keeps the sentence that explains
  * it — those sentences are the only documentation of what the switches do.
  *
@@ -65,6 +67,25 @@ export function AgentsMemoryBand({ draft }: AgentsMemoryBandProps) {
         />
         <Mono size={10.5} tone="live-mid" as="div">
           {t("agentsMemory.mcpToolsNote")}
+        </Mono>
+
+        {/* Right under the MCP tools: `attach_artifact` is one of them, so the
+            proof needs that channel. Not a PIPELINE option — every build
+            prompt reads it, pipeline or not. */}
+        <SettingRow
+          toggle={
+            <SettingToggle
+              on={draft.flag(VISUAL_PROOF_ENABLED_SETTING_KEY)}
+              onChange={(next) => draft.set(VISUAL_PROOF_ENABLED_SETTING_KEY, next)}
+              label={t("agentsMemory.visualProof")}
+              testId="visual-proof-toggle"
+            />
+          }
+          off={!draft.flag(VISUAL_PROOF_ENABLED_SETTING_KEY)}
+          label={t("agentsMemory.visualProof")}
+        />
+        <Mono size={10.5} tone="live-mid" as="div">
+          {t("agentsMemory.visualProofNote")}
         </Mono>
 
         <SettingRow

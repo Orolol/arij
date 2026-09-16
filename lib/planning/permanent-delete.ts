@@ -6,10 +6,12 @@ import {
   chatAttachments,
   chatConversations,
   epics,
+  sessionArtifacts,
   ticketComments,
   ticketDependencies,
   userStories,
 } from "@/lib/db/schema";
+import { removeSessionArtifactDirectories } from "@/lib/agent-sessions/artifacts";
 import {
   removeUploadFiles,
   ticketUploadPaths,
@@ -44,6 +46,10 @@ export function deleteEpicPermanently(projectId: string, epicId: string) {
   // destroy a bug's screenshots for a delete that then rolled back.
   const uploadPaths = ticketUploadPaths(epicId);
 
+  // Session ids escape the transaction: their visual-proof copies are
+  // unlinked after it commits, for the same reason as the upload paths.
+  let removedSessionIds: string[] = [];
+
   const transaction = sqliteClient().transaction(() => {
     const storyIds = db
       .select({ id: userStories.id })
@@ -66,13 +72,19 @@ export function deleteEpicPermanently(projectId: string, epicId: string) {
       .all();
 
     const sessionIds = sessions.map((session) => session.id);
+    removedSessionIds = sessionIds;
 
     if (sessionIds.length > 0) {
       db.delete(ticketComments)
         .where(inArray(ticketComments.agentSessionId, sessionIds))
         .run();
+      // Stated, not left to the FK cascade (see chat attachments below).
+      db.delete(sessionArtifacts)
+        .where(inArray(sessionArtifacts.agentSessionId, sessionIds))
+        .run();
       db.delete(agentSessions).where(inArray(agentSessions.id, sessionIds)).run();
     }
+    db.delete(sessionArtifacts).where(eq(sessionArtifacts.epicId, epicId)).run();
 
     if (storyIds.length > 0) {
       db.delete(ticketComments)
@@ -94,6 +106,7 @@ export function deleteEpicPermanently(projectId: string, epicId: string) {
   transaction();
 
   removeUploadFiles(uploadPaths);
+  removeSessionArtifactDirectories(removedSessionIds);
 }
 
 export function deleteUserStoryPermanently(projectId: string, storyId: string) {
@@ -118,6 +131,7 @@ export function deleteUserStoryPermanently(projectId: string, storyId: string) {
   }
 
   assertTicketIdle(story.epicId);
+  let removedSessionIds: string[] = [];
   const transaction = sqliteClient().transaction(() => {
     const sessions = db
       .select({ id: agentSessions.id })
@@ -126,10 +140,14 @@ export function deleteUserStoryPermanently(projectId: string, storyId: string) {
       .all();
 
     const sessionIds = sessions.map((session) => session.id);
+    removedSessionIds = sessionIds;
 
     if (sessionIds.length > 0) {
       db.delete(ticketComments)
         .where(inArray(ticketComments.agentSessionId, sessionIds))
+        .run();
+      db.delete(sessionArtifacts)
+        .where(inArray(sessionArtifacts.agentSessionId, sessionIds))
         .run();
       db.delete(agentSessions).where(inArray(agentSessions.id, sessionIds)).run();
     }
@@ -139,6 +157,7 @@ export function deleteUserStoryPermanently(projectId: string, storyId: string) {
   });
 
   transaction();
+  removeSessionArtifactDirectories(removedSessionIds);
 
   return { epicId: story.epicId };
 }

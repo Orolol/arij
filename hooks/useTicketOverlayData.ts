@@ -32,6 +32,11 @@ import { markRead as markTicketRead } from "@/lib/inbox/client";
  *     the payload carries a bounded output tail per command — and it does not
  *     need to be: the pipeline and the manual run both announce a finished
  *     report through `ticket:updated`.
+ *  7. THE VISUAL PROOFS. `useEpicArtifacts` reads the ticket's attached
+ *     screenshots once; they are re-read on `artifact:created` for this
+ *     ticket, the event `attach_artifact` emits, and on the SSE fallback tick
+ *     while the stream is down. Not on the host's refresh bump (it would
+ *     double the event's read) and never on a timer — nothing else creates one.
  */
 
 import { useTicketDerivedCopy } from "@/components/ticket/copy";
@@ -41,6 +46,7 @@ import { useTranslations } from "next-intl";
 import { useAgentDispatch } from "@/hooks/useAgentDispatch";
 import { useEpicActivity } from "@/hooks/useEpicActivity";
 import { useEpicDependencies } from "@/hooks/useEpicDependencies";
+import { useEpicArtifacts } from "@/hooks/useEpicArtifacts";
 import { useEpicDetail } from "@/hooks/useEpicDetail";
 import { useEpicMutations } from "@/hooks/useEpicMutations";
 import { useEpicPr } from "@/hooks/useEpicPr";
@@ -181,6 +187,12 @@ export function useTicketOverlayData(
 
   const { agents: namedAgents } = useNamedAgentsList();
 
+  const {
+    artifacts,
+    error: artifactsError,
+    refresh: refreshArtifacts,
+  } = useEpicArtifacts(projectId, activeEpicId);
+
   /**
    * The ticket's transition log. FETCHED, NOT POLLED, while nothing runs: an
    * idle ticket's status history is static, so the 5s poll is gated on a live
@@ -233,7 +245,7 @@ export function useTicketOverlayData(
   // Grader/verify completions arrive as session:completed and ticket:updated.
   // Refresh immediately so the overlay does not wait on the next poll. The
   // subscription only exists while the overlay is mounted.
-  useProjectEvents(projectId, {
+  const { pollTick } = useProjectEvents(projectId, {
     "session:completed": () => {
       void refresh();
       void refreshSessions();
@@ -245,7 +257,22 @@ export function useTicketOverlayData(
         void refreshActivity();
       }
     },
+    "artifact:created": (event) => {
+      if (activeEpicId && event.epicId === activeEpicId) {
+        void refreshArtifacts();
+      }
+    },
   });
+
+  // The proofs are NOT re-read on `refreshTrigger`: on /projects/:id the host
+  // bumps it on the same `artifact:created` handled just above, which spent
+  // two GETs per screenshot. The event is the only path that also works under
+  // TicketOverlayProvider (no trigger at all). What the event cannot cover is
+  // a dropped stream, so the fallback tick this very subscription bumps while
+  // disconnected re-reads them too.
+  useEffect(() => {
+    if (pollTick > 0) void refreshArtifacts();
+  }, [pollTick, refreshArtifacts]);
 
   /* ---------------- derived-state reset on ticket switch ------------ */
 
@@ -628,6 +655,10 @@ export function useTicketOverlayData(
     runVerification,
     verifyRunning,
     verifyError,
+
+    artifacts,
+    artifactsError,
+    refreshArtifacts,
 
     diffstat,
     timeline,

@@ -119,6 +119,8 @@
     "mcpTools": "Arij MCP tools",
     "mcpToolsSuffix": "· on by default",
     "mcpToolsNote": "read its ticket, comment, change the status, ask a blocking question, file a finding — with no prose conventions. Off: new sessions start without the channel, running sessions do not move.",
+    "visualProof": "Capture visual proof in builds",
+    "visualProofNote": "every build, pipeline or not: when the change is visible and a browser is at hand, the agent screenshots it and attaches it to the ticket. Best-effort, needs the Arij MCP tools and a runnable UI. Off by default.",
     "memoryDistill": "Distil the memory after a successful build",
     "memoryDistillNote": "a distillation agent merges the new conventions into the project memory, which is then injected into every prompt. Off by default.",
     "specRewrite": "Rewrite the spec after every release",

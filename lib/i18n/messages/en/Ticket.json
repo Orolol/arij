@@ -134,5 +134,12 @@
     "priority": "priority {priority}",
     "created": "created {age}",
     "github": "from GH #{number}"
+  },
+  "artifacts": {
+    "label": "Visual proof",
+    "meta": "{count, plural, one {# screenshot} other {# screenshots}}",
+    "open": "Open visual proof: {caption}",
+    "session": "session #{id}",
+    "retry": "Retry"
   }
 }
