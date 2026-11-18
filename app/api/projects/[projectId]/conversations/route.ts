@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { chatConversations, chatMessages } from "@/lib/db/schema";
 import { eq, and, isNull } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
+import { resolveProvider } from "@/lib/claude/prompt-resolver";
 
 export async function GET(
   request: NextRequest,
@@ -71,7 +72,7 @@ export async function POST(
       type: body.type || "brainstorm",
       label: body.label || "Brainstorm",
       epicId: body.epicId || null,
-      provider: body.provider || "claude-code",
+      provider: body.provider || resolveProvider("chat", projectId),
       createdAt: now,
     })
     .run();

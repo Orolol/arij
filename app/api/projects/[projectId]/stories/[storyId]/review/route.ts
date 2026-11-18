@@ -18,7 +18,7 @@ import {
   buildCustomReviewPrompt,
   type ReviewType,
 } from "@/lib/claude/prompt-builder";
-import { resolveFullPrompt } from "@/lib/claude/prompt-resolver";
+import { resolveFullPrompt, resolveProvider } from "@/lib/claude/prompt-resolver";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import type { ProviderType } from "@/lib/providers";
 import type { AgentType } from "@/lib/types/agent-config";
@@ -58,7 +58,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     customAgentIds?: string[];
     provider?: ProviderType;
   };
-  const provider: ProviderType = providerParam || "claude-code";
+  const provider: ProviderType = providerParam || resolveProvider("review_code", projectId);
 
   // Must have at least one review type or custom agent
   if (

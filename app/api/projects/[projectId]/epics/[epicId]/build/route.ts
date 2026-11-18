@@ -7,7 +7,6 @@ import {
   documents,
   agentSessions,
   ticketComments,
-  settings,
 } from "@/lib/db/schema";
 import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
@@ -15,6 +14,8 @@ import { createWorktree, isGitRepo } from "@/lib/git/manager";
 import { processManager } from "@/lib/claude/process-manager";
 import { buildBuildPrompt } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import { resolveFullPrompt, resolveProvider } from "@/lib/claude/prompt-resolver";
+import type { ProviderType } from "@/lib/providers";
 import fs from "fs";
 import path from "path";
 
@@ -38,6 +39,7 @@ function hasRunningBuildForEpic(epicId: string): boolean {
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, epicId } = await params;
   const body = await request.json().catch(() => ({}));
+  const provider: ProviderType = body.provider || resolveProvider("build", projectId);
 
   // Validate epic exists
   const epic = db.select().from(epics).where(eq(epics.id, epicId)).get();
@@ -113,12 +115,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     .orderBy(userStories.position)
     .all();
 
-  const settingsRow = db
-    .select()
-    .from(settings)
-    .where(eq(settings.key, "global_prompt"))
-    .get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+  const globalPrompt = resolveFullPrompt("build", projectId);
 
   // Create worktree
   const { worktreePath, branchName } = await createWorktree(
@@ -144,6 +141,7 @@ export async function POST(request: NextRequest, { params }: Params) {
       epicId,
       status: "running",
       mode: "code",
+      provider,
       prompt,
       logsPath,
       branchName,

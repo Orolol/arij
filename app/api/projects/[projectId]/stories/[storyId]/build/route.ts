@@ -7,7 +7,6 @@ import {
   documents,
   agentSessions,
   ticketComments,
-  settings,
 } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
@@ -16,6 +15,7 @@ import { processManager } from "@/lib/claude/process-manager";
 import { buildTicketBuildPrompt } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
 import type { ProviderType } from "@/lib/providers";
+import { resolveFullPrompt, resolveProvider } from "@/lib/claude/prompt-resolver";
 import fs from "fs";
 import path from "path";
 
@@ -43,7 +43,7 @@ function hasRunningBuildForEpic(epicId: string): boolean {
 export async function POST(request: NextRequest, { params }: Params) {
   const { projectId, storyId } = await params;
   const body = await request.json().catch(() => ({}));
-  const provider: ProviderType = body.provider || "claude-code";
+  const provider: ProviderType = body.provider || resolveProvider("ticket_build", projectId);
 
   // Validate story exists
   const story = db
@@ -138,12 +138,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     .orderBy(ticketComments.createdAt)
     .all();
 
-  const settingsRow = db
-    .select()
-    .from(settings)
-    .where(eq(settings.key, "global_prompt"))
-    .get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+  const globalPrompt = resolveFullPrompt("ticket_build", projectId);
 
   // Create worktree (reuses existing)
   const { worktreePath, branchName } = await createWorktree(

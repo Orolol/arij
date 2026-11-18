@@ -6,7 +6,6 @@ import {
   userStories,
   documents,
   agentSessions,
-  settings,
 } from "@/lib/db/schema";
 import { eq, and, notInArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
@@ -18,6 +17,7 @@ import {
   type TeamEpic,
 } from "@/lib/claude/prompt-builder";
 import type { ProviderType } from "@/lib/providers";
+import { resolveFullPrompt, resolveProvider } from "@/lib/claude/prompt-resolver";
 import fs from "fs";
 import path from "path";
 import { tryExportArjiJson } from "@/lib/sync/export";
@@ -32,13 +32,14 @@ export async function POST(
     epicIds,
     mode = "parallel",
     team = false,
-    provider = "claude-code",
+    provider: providerParam,
   } = body as {
     epicIds: string[];
     mode?: "sequential" | "parallel";
     team?: boolean;
     provider?: ProviderType;
   };
+  const provider: ProviderType = providerParam || resolveProvider(team ? "team_build" : "build", projectId);
 
   if (!epicIds || !Array.isArray(epicIds) || epicIds.length === 0) {
     return NextResponse.json(
@@ -88,12 +89,7 @@ export async function POST(
     .where(eq(documents.projectId, projectId))
     .all();
 
-  const settingsRow = db
-    .select()
-    .from(settings)
-    .where(eq(settings.key, "global_prompt"))
-    .get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+  const globalPrompt = resolveFullPrompt(team ? "team_build" : "build", projectId);
 
   const sessionsCreated: string[] = [];
   const projectRef = project;

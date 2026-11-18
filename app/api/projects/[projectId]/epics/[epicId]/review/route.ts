@@ -18,8 +18,9 @@ import {
   buildCustomEpicReviewPrompt,
   type ReviewType,
 } from "@/lib/claude/prompt-builder";
-import { resolveFullPrompt } from "@/lib/claude/prompt-resolver";
+import { resolveFullPrompt, resolveProvider } from "@/lib/claude/prompt-resolver";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import type { ProviderType } from "@/lib/providers";
 import type { AgentType } from "@/lib/types/agent-config";
 import fs from "fs";
 import path from "path";
@@ -51,10 +52,13 @@ export async function POST(request: NextRequest, { params }: Params) {
   const {
     reviewTypes = [],
     customAgentIds = [],
+    provider: providerParam,
   } = body as {
     reviewTypes?: ReviewType[];
     customAgentIds?: string[];
+    provider?: ProviderType;
   };
+  const provider: ProviderType = providerParam || resolveProvider("review_code", projectId);
 
   if (
     (!reviewTypes || reviewTypes.length === 0) &&
@@ -150,6 +154,7 @@ export async function POST(request: NextRequest, { params }: Params) {
         epicId,
         status: "running",
         mode: "plan",
+        provider,
         prompt,
         logsPath,
         branchName,

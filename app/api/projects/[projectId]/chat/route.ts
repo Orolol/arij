@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { db } from "@/lib/db";
-import { chatMessages, chatAttachments, projects, documents, settings } from "@/lib/db/schema";
+import { chatMessages, chatAttachments, projects, documents } from "@/lib/db/schema";
 import { eq, and, desc, inArray } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { spawnClaude } from "@/lib/claude/spawn";
 import { buildChatPrompt } from "@/lib/claude/prompt-builder";
 import { parseClaudeOutput } from "@/lib/claude/json-parser";
+import { resolveFullPrompt } from "@/lib/claude/prompt-resolver";
 
 export async function GET(
   request: NextRequest,
@@ -110,9 +111,7 @@ export async function POST(
     .all()
     .reverse();
 
-  // Get global prompt from settings
-  const settingsRow = db.select().from(settings).where(eq(settings.key, "global_prompt")).get();
-  const globalPrompt = settingsRow ? JSON.parse(settingsRow.value) : "";
+  const globalPrompt = resolveFullPrompt("chat", projectId);
 
   const prompt = buildChatPrompt(
     project,

@@ -4,6 +4,25 @@ import { agentProviderDefaults } from "@/lib/db/schema";
 import { and, eq } from "drizzle-orm";
 import { createId } from "@/lib/utils/nanoid";
 import { isValidAgentType, isValidProvider } from "@/lib/types/agent-config";
+import { resolveProvider } from "@/lib/claude/prompt-resolver";
+import type { AgentType } from "@/lib/types/agent-config";
+
+export async function GET(
+  _request: NextRequest,
+  { params }: { params: Promise<{ projectId: string; agentType: string }> }
+) {
+  const { projectId, agentType } = await params;
+
+  if (!isValidAgentType(agentType)) {
+    return NextResponse.json(
+      { error: `Invalid agent type: ${agentType}` },
+      { status: 400 }
+    );
+  }
+
+  const provider = resolveProvider(agentType as AgentType, projectId);
+  return NextResponse.json({ data: { agentType, provider } });
+}
 
 export async function PUT(
   request: NextRequest,
